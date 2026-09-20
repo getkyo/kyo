@@ -9,9 +9,8 @@ import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 // fetch here finds nothing, and a guard keyed on what was fetched would pass this build and hand back a binary whose
 // Aeron entry points are stubs.
 //
-// The disagreement is stated in `.settings`, exactly where an application states it, which is the point: an
-// auto-plugin's settings are applied first, so a check reading `nativeConfig` while building `nativeConfig` sees the
-// default and never fires.
+// The disagreement is stated in `.settings`, exactly where an application states it, so the guard has to hold for a
+// setting written after the plugin's own.
 val hostOsArch = sys.props("kyo.hostOsArch")
 
 lazy val root = (project in file("."))

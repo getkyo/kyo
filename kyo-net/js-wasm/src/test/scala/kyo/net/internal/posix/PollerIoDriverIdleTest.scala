@@ -16,8 +16,7 @@ import kyo.scheduler.Task
   * every submit, because that is the one hook `submitChange`, `submitEngineOp` and `close` all reach. That a process built this way actually
   * exits is what `kyo-consumer-check`'s `js/net-natives-plugin` measures, since only a real process can show it.
   *
-  * [[IoUringDriver]] carries the same gate and has no unit-level guard here: it cannot be constructed without a ring, so a test would cancel
-  * on every host this suite runs on but Linux. Its end-to-end guard is the same fixture, which selects io_uring there.
+  * [[IoUringDriverIdleTest]] covers the ring driver, which carries the same gate.
   */
 class PollerIoDriverIdleTest extends kyo.net.Test:
 

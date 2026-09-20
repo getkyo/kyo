@@ -175,7 +175,7 @@ final private[net] class PollerIoDriver private[posix] (
     // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
     // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), and the JS scheduler
     // always defers to the macrotask queue, so a resumed cycle never runs on the submitting call's own stack. The store below and the read in
-    // `triggerWake` cannot interleave. `private[posix]` for `PollerIoDriverIdleTest`, which pins the park and the resume.
+    // `triggerWake` cannot interleave. `private[posix]` so `PollerIoDriverIdleTest` can set it and observe the resume.
     private[posix] var idleTask: Task = null
 
     // readFd -> handle, parallel to activeFds and maintained at the same register/deregister/clear sites. It exists so a FIN/error edge that lands
@@ -551,12 +551,9 @@ final private[net] class PollerIoDriver private[posix] (
                 diagPollCycles += 1L
                 wakePending.set(false)
                 drainChanges()
-                // A driver with nothing registered and nothing queued would poll for an event no fd can produce. On Node that poll is a
-                // `koffi.callAsync` request, which is one of the things the runtime counts when deciding whether the process may exit, so a
-                // program that finished its last connection would keep one outstanding for as long as it lives and never exit on its own.
-                // Park the chain instead of polling: every path that gives this driver work goes through `triggerWake`, which resumes the
-                // parked task, so this cannot strand one. JVM and Native poll on a thread the process already owns, which holds nothing
-                // open, so they park in the wait.
+                // Nothing registered and nothing queued means this cycle would poll for an event no fd can produce, and on Node that poll is
+                // what keeps the process alive (see idleTask). Park the chain instead: every path that gives this driver work goes through
+                // `triggerWake`, which resumes the parked task, so this cannot strand one.
                 if kyo.internal.Platform.isJS && idleNow then idleTask = task
                 else
                     // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically

@@ -111,42 +111,37 @@ object KyoNativesNativePlugin extends AutoPlugin {
         // The compiler the finished config names, which is the one that will run, rather than the one the delivery
         // derived its target from.
         val compilerTarget = NativeTargets.ofTriple(Discover.targetTriple(config.clang))
-        crossTargetError(config.targetTriple, compilerTarget, targets, requests.nonEmpty, kyoNativesTargets.value.nonEmpty)
+        crossTargetError(config.targetTriple, compilerTarget, targets.headOption, requests.nonEmpty, kyoNativesTargets.value.nonEmpty)
             .foreach(sys.error)
     }
 
     /** The error a build gets when the target its binary is built for and the libraries it asks to have linked into it
       * disagree, or None when they agree or the build asks for no libraries at all.
       *
-      * Two ways to disagree, because a build states its target in two places and the delivery reads only one of them.
-      * `wanted` comes from `kyoNativesTargets` when set and from the compiler otherwise, so:
-      *
-      *   - a `targetTriple` naming a different pole than the libraries is a build that cross-compiles and did not name
-      *     `kyoNativesTargets`, or named the wrong one;
-      *   - a `targetTriple` naming a pole kyo publishes nothing for leaves the delivery matching nothing, so the
-      *     libraries are the compiler's and the binary is not;
-      *   - with no triple, `kyoNativesTargets` naming a pole the compiler does not build for is the same mistake
-      *     without the triple: the libraries are foreign to the binary.
-      *
-      * All three end the same way, a binary linked against another pole's libraries, which fails in the linker with a
-      * file-format error at best and loads and crashes at worst when the poles share an architecture, as glibc and musl
-      * do.
+      * A build states its target in two places, `targetTriple` and `kyoNativesTargets`, and the delivery reads only the
+      * second. Either one naming a pole the other does not is a binary linked against another pole's libraries, which
+      * fails in the linker with a file-format error at best and loads and crashes at worst when the poles share an
+      * architecture, as glibc and musl do.
       *
       * `requested` is whether the dependencies declare any library, not whether one was found. A release that carries
       * nothing for the named pole produces the same empty delivery as a correct build with nothing to deliver, and it
       * is precisely the build that named an impossible pole which needs to be told so rather than quietly handed a
       * binary missing the capability.
+      *
+      * `named` distinguishes a target the build wrote from one derived from the clang on the PATH, which is what a
+      * `withClang` pointing at another toolchain produces: telling that build to change a setting it never wrote sends
+      * it looking in the wrong place.
       */
     private[sbt] def crossTargetError(
         triple: Option[String],
         compilerTarget: Option[String],
-        wanted: Seq[String],
+        wanted: Option[String],
         requested: Boolean,
-        named: Boolean = true
+        named: Boolean
     ): Option[String] =
         if (!requested) None
         else
-            wanted.headOption.flatMap { target =>
+            wanted.flatMap { target =>
                 triple match {
                     case Some(t) =>
                         NativeTargets.ofTriple(t) match {
@@ -165,9 +160,6 @@ object KyoNativesNativePlugin extends AutoPlugin {
                         }
                     case None =>
                         compilerTarget.filter(_ != target).map { host =>
-                            // A build reaches this either by naming the target or by having it derived from the clang on the
-                            // PATH, and telling the second kind to change a setting it never wrote sends it looking in the
-                            // wrong place. A `withClang` naming another toolchain is how that happens.
                             val source =
                                 if (named) s"kyoNativesTargets names $target"
                                 else s"the libraries were resolved for $target, derived from the clang on the PATH"

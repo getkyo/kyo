@@ -6,7 +6,6 @@ import kyo.ffi.sbt.NativeTargets
 import sbt._
 import sbt.librarymanagement.DependencyResolution
 import sbt.util.Logger
-import scala.collection.JavaConverters._
 
 /** Finding and unpacking the shared libraries a kyo artifact delivers.
   *
@@ -61,38 +60,16 @@ private[sbt] object Delivery {
         found
     }
 
-    /** Resolutions already made in this sbt session, keyed on the exact coordinate.
-      *
-      * Every task that needs a library resolves it: `nativeConfig`, the link, `fastLinkJS`, `run`, `test`, the
-      * report. sbt caches a task's value within one command, not across them, so without this a session spends a
-      * resolution on each. Keyed on the full coordinate including the classifier, so a republished version cannot
-      * be answered from here: kyo's snapshots carry a timestamp, and any version string that changes on republish
-      * changes the key. A mutable `-SNAPSHOT` republished DURING one sbt session is the case this would hold
-      * stale, and reloading the build clears it.
-      *
-      * Successes only. A resolution that failed may have failed on the network, and holding that answer for the
-      * session would turn one bad moment into "this release carries no library" for every later task, which under
-      * `Auto` is a warning and a binary without the capability.
-      */
-    private val resolved = new java.util.concurrent.ConcurrentHashMap[String, File]()
-
     /** Resolves `module` to its single jar, or a message saying why not.
       *
       * A classifier jar a release does not carry for this target is an ordinary outcome, not a build failure: the
       * caller decides, because whether a missing library is fatal depends on the source the application pinned.
+      *
+      * Not memoized across commands. `depRes.update` reads Coursier's own on-disk cache, so a repeat is a local
+      * metadata lookup, and a resolution held in this object would answer for a `-SNAPSHOT` republished beside a
+      * running session. sbt already memoizes the task within one command, which is where the repeats are.
       */
     def resolve(depRes: DependencyResolution, module: ModuleID, log: Logger): Either[String, File] = {
-        val key = s"${module.organization}:${module.name}:${module.revision}:${module.explicitArtifacts.flatMap(_.classifier).mkString(",")}"
-        Option(resolved.get(key)).filter(_.isFile) match {
-            case Some(jar) => Right(jar)
-            case None =>
-                val answer = resolveUncached(depRes, module, log)
-                answer.right.foreach(jar => resolved.put(key, jar))
-                answer
-        }
-    }
-
-    private def resolveUncached(depRes: DependencyResolution, module: ModuleID, log: Logger): Either[String, File] = {
         val descriptor = depRes.moduleDescriptor(
             sbt.librarymanagement.ModuleDescriptorConfiguration(
                 "io.getkyo" % "kyo-natives-resolver" % "0",
@@ -128,7 +105,7 @@ private[sbt] object Delivery {
         val path = entryPath(libId, osArch, os)
         val zip  = new ZipFile(jar)
         try
-            zip.entries().asScala.find(_.getName == path).map { entry =>
+            Option(zip.getEntry(path)).map { entry =>
                 val dest = out / NativeTargets.libraryFileName(libId, os)
                 IO.createDirectory(out)
                 val in = zip.getInputStream(entry)

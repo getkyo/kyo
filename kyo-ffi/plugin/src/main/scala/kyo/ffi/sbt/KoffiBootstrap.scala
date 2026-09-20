@@ -16,9 +16,9 @@ object KoffiBootstrap {
       * Idempotent on the installed marker and the manifest rather than on a timestamp: `npm install` is slow enough
       * that running it on every compile is felt, while a `clean` and a change to the pinned range both have to reach
       * npm. Without the manifest half a range bump would leave the previous koffi installed and the application would
-      * fail at load with a version the loader does not support. Returns the directory `node_modules` sits in.
+      * fail at load with a version the loader does not support.
       */
-    def install(base: File, packageName: String, log: Logger): File = {
+    def install(base: File, packageName: String, log: Logger): Unit = {
         val marker    = base / "node_modules" / "koffi" / "package.json"
         val range     = NpmBundleTemplate.KoffiSupportedRange
         val manifest  = s"""{"name":"$packageName","private":true,"dependencies":{"koffi":"$range"}}"""
@@ -35,6 +35,5 @@ object KoffiBootstrap {
             val rc  = scala.sys.process.Process(Seq(npm, "install", "--no-audit", "--no-fund", "--silent"), base).!
             if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
         }
-        base
     }
 }

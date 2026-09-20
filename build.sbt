@@ -1786,10 +1786,9 @@ lazy val `kyo-ffi-plugin` =
 // which is what a module BUILDING a binding enables. Separate coordinate for that reason: nothing an application does
 // should require the C toolchain, codegen and packaging machinery of the authoring plugin.
 //
-// Unlike kyo-ffi-plugin it depends on sbt-scalajs and sbt-scala-native, because it sets `nativeConfig` and `jsEnv`
-// itself rather than handing an application flags to wire. That pins those plugin versions for anyone who enables it,
-// which is the correct constraint rather than a cost: kyo's Native artifacts do not link under a different
-// sbt-scala-native, and its Scala.js IR does not read under a different sbt-scalajs.
+// It depends on sbt-scalajs and sbt-scala-native because it sets `nativeConfig` and `jsEnv` itself rather than handing
+// an application flags to wire, which pins those versions for anyone enabling it. kyo's Native and Scala.js artifacts
+// require those versions anyway.
 lazy val `kyo-natives-plugin` =
     project
         .in(file("kyo-natives/plugin"))

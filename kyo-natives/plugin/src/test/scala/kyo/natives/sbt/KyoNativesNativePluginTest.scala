@@ -17,7 +17,7 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
     private def error(
         triple: Option[String],
         compilerTarget: Option[String] = darwin,
-        wanted: Seq[String] = Seq("darwin-aarch64"),
+        wanted: Option[String] = Some("darwin-aarch64"),
         requested: Boolean = true,
         named: Boolean = true
     ): Option[String] =
@@ -29,7 +29,7 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
 
     test("a triple agreeing with the wanted target passes") {
         error(Some("arm64-apple-darwin23.3.0")) shouldBe None
-        error(Some("x86_64-unknown-linux-musl"), compilerTarget = Some("linux-musl-x86_64"), wanted = Seq("linux-musl-x86_64")) shouldBe None
+        error(Some("x86_64-unknown-linux-musl"), compilerTarget = Some("linux-musl-x86_64"), wanted = Some("linux-musl-x86_64")) shouldBe None
     }
 
     test("a triple naming another pole is named, with both values and the fix") {
@@ -46,7 +46,7 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
     }
 
     test("with no triple, a kyoNativesTargets the compiler does not build for is the same mistake") {
-        val message = error(triple = None, wanted = Seq("linux-x86_64")).getOrElse(fail("expected an error"))
+        val message = error(triple = None, wanted = Some("linux-x86_64")).getOrElse(fail("expected an error"))
         message should include("linux-x86_64")
         message should include("darwin-aarch64")
         message should include("targetTriple")
@@ -54,31 +54,25 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
 
     test("a build whose dependencies declare no library can mislink nothing, whatever the targets say") {
         error(Some("riscv64-unknown-linux-gnu"), requested = false) shouldBe None
-        error(triple = None, wanted = Seq("linux-x86_64"), requested = false) shouldBe None
+        error(triple = None, wanted = Some("linux-x86_64"), requested = false) shouldBe None
     }
 
     test("a target nobody named is not blamed on the setting that did not name it") {
         // A withClang pointing at another toolchain reaches this with the target derived from the clang on the PATH.
         // Telling that build to change kyoNativesTargets sends it looking at a setting it never wrote.
-        val message = error(triple = None, wanted = Seq("linux-x86_64"), named = false).getOrElse(fail("expected an error"))
+        val message = error(triple = None, wanted = Some("linux-x86_64"), named = false).getOrElse(fail("expected an error"))
         message should not include "kyoNativesTargets names"
         message should include("derived from the clang on the PATH")
         message should include("linux-x86_64")
         message should include("darwin-aarch64")
     }
 
-    test("a declared library nothing was found for still reports the disagreement") {
-        // The gate is the declaration, not the fetch: a release carrying nothing for the named pole leaves the same
-        // empty delivery as a correct build, and silence there hands back a binary missing the capability.
-        error(triple = None, wanted = Seq("linux-x86_64"), requested = true) shouldBe defined
-    }
-
     test("no resolved target means no claim about what would be linked") {
-        error(Some("x86_64-unknown-linux-gnu"), wanted = Nil) shouldBe None
+        error(Some("x86_64-unknown-linux-gnu"), wanted = None) shouldBe None
     }
 
     test("an unknown compiler target makes no claim, rather than a wrong one") {
-        error(triple = None, compilerTarget = None, wanted = Seq("linux-x86_64")) shouldBe None
+        error(triple = None, compilerTarget = None, wanted = Some("linux-x86_64")) shouldBe None
     }
 
     test("a Windows target delivers nothing, because a DLL with no import library cannot be linked") {

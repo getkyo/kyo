@@ -97,10 +97,10 @@ private[sbt] object Packager {
 
     // Strip platform suffix for the canonical runtime-expected name:
     //   libkyo_tcp-linux-x86_64.so -> libkyo_tcp.so
-    // `CCompiler.parseArtifactName` owns the rule, so the name written here cannot drift from the one a
-    // library records as its install name. `os`/`arch` are the artifact's own platform and are the fallback
-    // for a name that rule does not recognize, so a cross-built or staged foreign artifact is stripped as
-    // reliably as a host-built one's.
+    // A name this plugin compiled goes through `CCompiler.parseArtifactName`, so it cannot drift from the
+    // one the library records as its install name. A staged artifact outside that convention (no `lib`
+    // prefix, or an extension that is not the platform's) still has to lose its suffix, and `os`/`arch` are
+    // the artifact's own platform, so that case strips by name.
     private def canonicalName(name: String, os: String, arch: String): String =
         CCompiler.parseArtifactName(name) match {
             case Some((libId, parsedOs, _)) => CCompiler.libPrefix(parsedOs) + libId + "." + CCompiler.libExtension(parsedOs)

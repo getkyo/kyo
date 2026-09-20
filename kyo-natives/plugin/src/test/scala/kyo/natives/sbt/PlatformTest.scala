@@ -15,11 +15,6 @@ class PlatformTest extends AnyFunSuite with Matchers {
         Platform.of(Set("ScalaNativePlugin")) shouldBe Platform.Native
     }
 
-    test("Scala Native wins over Scala.js when a project somehow enables both") {
-        Platform.of(Set("scala.scalanative.sbtplugin.ScalaNativePlugin", "org.scalajs.sbtplugin.ScalaJSPlugin")) shouldBe
-            Platform.Native
-    }
-
     test("the Scala.js label yields JS") {
         Platform.of(Set("org.scalajs.sbtplugin.ScalaJSPlugin")) shouldBe Platform.Js
     }

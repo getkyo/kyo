@@ -202,7 +202,7 @@ object KyoFfiPlugin extends AutoPlugin {
         def ffiKoffiJsBootstrap(packageName: String): Seq[sbt.Def.Setting[?]] =
             Seq(
                 Test / compile := (Test / compile).dependsOn(Def.task {
-                    val _ = KoffiBootstrap.install(target.value, packageName, streams.value.log)
+                    KoffiBootstrap.install(target.value, packageName, streams.value.log)
                 }).value
             )
     }

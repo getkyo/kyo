@@ -50,10 +50,6 @@ object KyoNativesPlugin extends AutoPlugin {
 
         val kyoNativesResolvedTargets = taskKey[Seq[String]]("The targets in effect, after deriving the ones `kyoNativesTargets` left open.")
 
-        val kyoNativesJars = taskKey[Seq[File]]("The artifacts carrying this project's libraries, resolved for every target in effect.")
-
-        val kyoNativesLibraries = taskKey[Seq[File]]("The shared libraries, unpacked from `kyoNativesJars`.")
-
         val kyoNativesReport = taskKey[Unit]("Print what each library resolved to, and what it is wired into.")
 
         type NativesSource = kyo.natives.sbt.NativesSource
@@ -62,8 +58,8 @@ object KyoNativesPlugin extends AutoPlugin {
 
     import autoImport._
 
-    /** The libraries, grouped by the target they were unpacked for. Read by the per-platform plugins, which need the
-      * grouping that [[kyoNativesLibraries]] flattens away.
+    /** The libraries, grouped by the target they were unpacked for. `kyoNativesReport` is how a build asks what it
+      * got; this is what the per-platform plugins link, stage and materialize from.
       */
     private[sbt] val kyoNativesFetched = taskKey[Seq[(String, Delivery.Fetched)]]("Every library this project delivers, with its target.")
 
@@ -86,14 +82,13 @@ object KyoNativesPlugin extends AutoPlugin {
         },
         kyoNativesRequests  := requestsTask.value,
         kyoNativesFetched   := fetchTask.value,
-        kyoNativesJars      := kyoNativesFetched.value.map(_._2.jar).distinct,
-        kyoNativesLibraries := kyoNativesFetched.value.map(_._2.library).distinct,
-        kyoNativesReport    := reportTask.value,
+        kyoNativesReport := reportTask.value,
         // The JVM loader extracts from the classpath, so the classifier jars go on it. Through `unmanagedJars` rather
         // than `libraryDependencies`: a dependency reaches `makePom`, which would pin this build host's architecture
-        // onto everyone who then depends on this project. `unmanagedJars` reaches `Runtime` and `Test` `fullClasspath`,
-        // which is what `run`, `test`, sbt-assembly and sbt-native-packager read, and reaches neither `makePom` nor
-        // `packageBin`. `Compile` as well, for a task that reads the compile classpath to decide what a build holds.
+        // onto everyone who then depends on this project. `unmanagedJars` reaches `fullClasspath`, which is what `run`,
+        // `test`, sbt-assembly and sbt-native-packager read, and reaches neither `makePom` nor `packageBin`. All three
+        // scopes, because a packaging tool reads whichever one it was written against; the jars hold resources and no
+        // classes, so a scope that does not need them pays a directory scan and nothing else.
         Compile / unmanagedJars ++= jvmJars.value,
         Runtime / unmanagedJars ++= jvmJars.value,
         Test / unmanagedJars ++= jvmJars.value
@@ -145,7 +140,7 @@ object KyoNativesPlugin extends AutoPlugin {
         val outRoot = kyoNativesDirectory.value
         kyoNativesRequests.value.flatMap { case (osArch, request) =>
             val os = NativeTargets.osOf(osArch)
-            val fetched = Delivery.resolve(depRes, request.module, log).right.flatMap { jar =>
+            val fetched = Delivery.resolve(depRes, request.module, log).flatMap { jar =>
                 Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
                     .map(lib => Delivery.Fetched(request.libId, lib, jar, request.module))
                     .toRight(s"${jar.getName} carries no ${request.libId} for $osArch")
