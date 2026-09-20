@@ -4,6 +4,7 @@ import kyo.internal.*
 import kyo.internal.CdpTypes.*
 import kyo.internal.cdp.Accessibility
 import kyo.internal.cdp.PageDownload
+import kyo.kernel.ContextEffect
 import kyo.kernel.Isolate
 
 /** Drive a real browser (Chrome) from Kyo code.
@@ -2262,13 +2263,7 @@ object Browser:
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
-                    Scope.acquireRelease(
-                        MutationSettlement.afterAction {
-                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
-                                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
-                            )
-                        }(Absent)
-                    ) { _ =>
+                    val restore =
                         tab.viewportOverride.set(prior).andThen(
                             prior match
                                 case Present(vo) =>
@@ -2276,6 +2271,19 @@ object Browser:
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )
+                    // The override is owed its restore on this scope, named here because the settlement wait around the
+                    // override runs under a scope of its own that ends before `body`; the restore registers as the
+                    // override's reply arrives, whichever scope is innermost then.
+                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                        MutationSettlement.afterAction {
+                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                                tab.session.acquire[ViewportParams, Unit](
+                                    finalizer,
+                                    "Emulation.setDeviceMetricsOverride",
+                                    ViewportParams(width, height, deviceScaleFactor)
+                                )(_ => restore)
+                            )
+                        }(Absent)
                     }.andThen(body)
                 }
             }
