@@ -216,26 +216,41 @@ tasks_headline() {
 # Socket-pressure headline: the numbers that explain a WSAENOBUFS (Windows error 10055) or an EADDRNOTAVAIL.
 # `tcp=N` is the live TCP entry count and `timeWait=T` the subset sitting in TIME_WAIT, against `ephemeral=R`,
 # the size of the dynamic port range. A browser suite that opens a connection per test leaf walks T up toward R
-# (Windows holds TIME_WAIT for four minutes by default), and past it a connect fails with no memory or CPU
-# pressure to show for it, which is invisible in every other field here. Windows only: it is the pole where the
-# range is small enough to exhaust and the only one that has produced the failure. Best-effort; a field that
-# cannot be sampled prints `?`.
+# (Windows holds TIME_WAIT for 120s since Windows 8; the NT-era default was 240s), and past it a connect fails
+# with no memory or CPU pressure to show for it, which is invisible in every other field here. Windows only: it
+# is the pole where the range is small enough to exhaust and the only one that has produced the failure.
+# Best-effort; a field that cannot be sampled prints `?`.
+#
+# Both address families are counted. A JVM on Windows opens dual-stack sockets and localhost resolves to ::1, so
+# those rows appear only under `-p tcpv6`: counting IPv4 alone would under-report the churn this exists to show,
+# and the ranges are configured separately.
 sockets_headline() {
     case "$OS" in
         MINGW* | MSYS* | CYGWIN*) ;;
         *) return 0 ;;
     esac
     command -v netstat >/dev/null 2>&1 || return 0
-    local counts tcp timewait range
+    local counts tcp timewait v4range v6range range
     # Emit nothing when no TCP row was seen, so a netstat that errored or printed nothing reads as `?`
     # below rather than as `tcp=0 timeWait=0`. A zero is worse than a blank here: it says the sockets are
     # fine. A live Windows box always has at least one LISTENING row, so no-rows means no sample.
-    counts=$(MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcp 2>/dev/null | tr -d '\r' |
-        awk '/^ +TCP/ { total++; if ($4 == "TIME_WAIT") tw++ } END { if (total) printf "%d %d", total, tw }')
+    counts=$(
+        {
+            MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcp 2>/dev/null
+            MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcpv6 2>/dev/null
+        } | tr -d '\r' |
+            awk '/^ +TCP/ { total++; if ($4 == "TIME_WAIT") tw++ } END { if (total) printf "%d %d", total, tw }'
+    )
     tcp=${counts%% *}
     timewait=${counts##* }
-    range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv4 show dynamicport tcp 2>/dev/null | tr -d '\r' |
+    v4range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv4 show dynamicport tcp 2>/dev/null | tr -d '\r' |
         awk '/Number of Ports/ { print $NF }')
+    v6range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv6 show dynamicport tcp 2>/dev/null | tr -d '\r' |
+        awk '/Number of Ports/ { print $NF }')
+    # One figure when the two families share a range, which is the default, and both when they diverge.
+    if [ -n "$v4range" ] && [ "$v4range" = "$v6range" ]; then range="$v4range"
+    elif [ -n "$v4range" ] || [ -n "$v6range" ]; then range="${v4range:-?}/${v6range:-?}"
+    fi
     printf 'tcp=%s timeWait=%s ephemeral=%s' "${tcp:-?}" "${timewait:-?}" "${range:-?}"
 }
 

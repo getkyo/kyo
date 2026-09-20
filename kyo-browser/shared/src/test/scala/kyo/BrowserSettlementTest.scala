@@ -22,6 +22,9 @@ class BrowserSettlementTest extends BrowserTest:
         // response behind it. That is the shape every transport failure takes, including the socket exhaustion
         // that makes Windows CI legs fail: without the transport check the navigation reads as a success and the
         // caller only finds out via a missing element several calls later.
+        //
+        // Assumes no HTTP proxy is configured. Behind one, Chrome reaches the proxy and gets an HTTP error from
+        // it instead of failing below HTTP, which is a different path. CI runners have no proxy.
         withBrowser {
             Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
                 Abort.run[BrowserNavigationException] {
@@ -36,15 +39,19 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
-    "goto with failOnHttpError = false still surfaces the error page for inspection" in {
-        // The transport check is gated on the same flag as the HTTP-status check, so a caller that opted out of
-        // navigation failures keeps the error page instead of an abort.
+    "goto with failOnHttpError = false still fails a navigation that fails below HTTP" in {
+        // failOnHttpError exists so a caller can read the body of an error response. A transport failure has no
+        // response, only Chrome's error document, so the reason to suppress it never applies and the flag does
+        // not reach it.
         withBrowser {
             Browser.withConfig(_.loadSchedule(Schedule.fixed(50.millis).maxDuration(10.seconds))) {
                 Abort.run[BrowserNavigationException] {
                     Browser.goto("http://kyo-transport-failure.invalid/", failOnHttpError = false)
-                }.map { result =>
-                    assert(result.isSuccess, s"Expected the navigation to be reported as a success but got $result")
+                }.map {
+                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                        assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
+                    case other =>
+                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
                 }
             }
         }

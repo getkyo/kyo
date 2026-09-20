@@ -316,7 +316,8 @@ object Browser:
       *   the page content of an error response, typical for bot-detection 4xx pages (some package registries serve a useful challenge body
       *   alongside a 403), auth-walled 401 pages whose content you want to inspect, or scraping flows that treat the error page as data.
       *   The default fails loud because, for most automation, a 4xx/5xx mid-flow is a real bug: silently returning would leave subsequent
-      *   assertions to fail with confusing element-not-found errors against the error page.
+      *   assertions to fail with confusing element-not-found errors against the error page. This governs HTTP responses only: a navigation
+      *   that fails below HTTP (DNS failure, refused or reset connection) raises regardless, because it has no response body to read.
       */
     def goto(
         url: String,

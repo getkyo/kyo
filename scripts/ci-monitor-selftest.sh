@@ -100,8 +100,20 @@ expect_eq "missing ps" "$absent_out" ""
 # Sockets: `netstat -ano -p tcp` rows are indented and carry a state column only for TCP; the count that
 # matters is TIME_WAIT against the dynamic range `netsh` reports. Same parse-bug exposure as proc_top,
 # and it decides whether a WSAENOBUFS leg ran out of ports or out of something else.
+# The v6 rows are the reason both families are counted: a JVM opens dual-stack sockets and localhost
+# resolves to ::1, so an IPv4-only count misses exactly the churn the headline exists to show.
 cat > "$test_dir/bin/netstat" <<'STUB'
 #!/usr/bin/env bash
+if [ "${3:-}" = tcpv6 ]; then
+cat <<'ROWS'
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    [::1]:49200            [::1]:9222             TIME_WAIT       0
+  TCP    [::]:135               [::]:0                 LISTENING       900
+ROWS
+else
 cat <<'ROWS'
 
 Active Connections
@@ -112,6 +124,7 @@ Active Connections
   TCP    127.0.0.1:49154        127.0.0.1:9222         TIME_WAIT       0
   TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       900
 ROWS
+fi
 STUB
 chmod +x "$test_dir/bin/netstat"
 
@@ -134,9 +147,9 @@ sockets_out=$(
     "
 )
 
-# All four TCP rows count; only the two TIME_WAIT ones count again. The banner lines carry no leading
-# TCP token and must not inflate the total.
-expect_eq "windows sockets" "$sockets_out" 'tcp=4 timeWait=2 ephemeral=16384'
+# Four IPv4 rows plus two IPv6 ones; three of the six are TIME_WAIT. The banner lines carry no leading TCP
+# token and must not inflate the total. Both families report the same range, so it prints once.
+expect_eq "windows sockets" "$sockets_out" 'tcp=6 timeWait=3 ephemeral=16384'
 
 # The posix branch has no port range small enough to exhaust, so the headline is absent entirely rather
 # than reporting a partial line.

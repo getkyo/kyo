@@ -43,11 +43,14 @@ private[kyo] object NioExclusiveCreatePlatform:
       * The claim happens here rather than in the open, because javalib's `CREATE_NEW` does not exclude. It reaches the filesystem through
       * three stacked exists-checks (`FileChannel.open` to `Files.createFile` to `FileHelpers.createNewFile`) and lands on `fopen(path, "w")`
       * on POSIX and `CREATE_ALWAYS` on Windows. Neither carries `O_EXCL`, and both truncate, so two creators that interleave anywhere in
-      * that stack both succeed and the first one's content is destroyed. Measured at 2 in 3000 contended creations on linux-arm64.
+      * that stack both succeed and the first one's content is destroyed. Measured on linux-arm64 at 2 bad rounds in 3000 rounds of 32
+      * contending creators, so 96000 creations.
       *
       * `O_EXCL` (`CREATE_NEW` on Windows) gives the exclusion in one syscall. The descriptor is closed immediately: this call exists to win
-      * the race, and the caller reopens the file it provably created. A different process deleting the file in that gap surfaces as a
-      * `NoSuchFileException` from the reopen, which is visible rather than silent.
+      * the race, and the caller reopens the file it provably created. The window between the two is not closed: another process that
+      * deletes the file there turns the reopen into a `NoSuchFileException`, and one that replaces it with a symlink is followed silently.
+      * Holding the descriptor would close it, but `java.io.FileDescriptor`'s int constructor and `FileChannelImpl` are `private[java]`, so
+      * it takes a shim compiled into those packages rather than anything this file can reach.
       *
       * Throws `FileAlreadyExistsException` when the path already exists.
       */

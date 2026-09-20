@@ -322,7 +322,7 @@ private[kyo] object NavigationWatcher:
                                         )
                                     else Async.sleep(pollInterval).andThen(Loop.continue(()))
                                 }
-                            else if throwOnFailure && isTransportFailure(navUrl) then
+                            else if isTransportFailure(navUrl) then
                                 Abort.fail(
                                     BrowserNavigationFailedException(navUrl, transportFailureReason)
                                 )
@@ -427,7 +427,7 @@ private[kyo] object NavigationWatcher:
                             case Absent        => true
                         if !urlChanged then
                             PendingDecision.AbortNavigationNeverCommitted(expectedDifferentFrom.fold(navUrl)(_.url), settle)
-                        else if throwOnFailure && isTransportFailure(navUrl) then
+                        else if isTransportFailure(navUrl) then
                             PendingDecision.AbortTransportFailure(navUrl)
                         else if throwOnFailure && status >= 400 && status < 600 then
                             PendingDecision.AbortHttpError(navUrl, status)
@@ -503,6 +503,10 @@ private[kyo] object NavigationWatcher:
       * there is no HTTP response behind it, so `responseStatus` reads 0 and the 4xx/5xx test does not fire either. Without this the caller
       * is told the navigation succeeded and finds out only when the page turns out to be empty, which reads as a missing element several
       * calls later rather than as the navigation failure it is.
+      *
+      * Not gated on `throwOnFailure`, unlike the status check beside it. That flag is `failOnHttpError` at the public surface and exists so
+      * a caller can read the body of an error *response*; a transport failure has no response, only Chrome's error document, so the reason
+      * to suppress it never applies.
       */
     private[internal] def isTransportFailure(navUrl: String): Boolean =
         navUrl.startsWith("chrome-error://")
