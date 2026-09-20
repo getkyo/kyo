@@ -36,7 +36,13 @@ private[net] object CapabilityProbe:
             else if kyo.internal.Platform.isBsd then "bsd"
             else if kyo.internal.Platform.isWindows then "windows"
             else "unknown"
-        val arch = sys.props.getOrElse("os.arch", "unknown") match
+        // Unsafe: reads this host's architecture, which the safe tier exposes only inside Sync while this is a val
+        // on a diagnostic path. Read through the platform shim rather than `sys.props`, which carries no os.arch
+        // off the JVM and Native: reading it there named every JS and Wasm host "<os>-unknown" and sent the reader
+        // after a classifier artifact that does not exist under that name.
+        import AllowUnsafe.embrace.danger
+        val arch = kyo.internal.SystemPlatformSpecific.osArch() match
+            case ""                  => "unknown"
             case "amd64" | "x86_64"  => "x86_64"
             case "aarch64" | "arm64" => "aarch64"
             case other               => other
@@ -68,6 +74,12 @@ private[net] object CapabilityProbe:
       */
     def classify(thrown: Throwable, libraryIds: Chunk[String]): CapabilityOutcome =
         unwrapClassInit(thrown) match
+            // A system library is never bundled: it resolves from the process's own symbol scope, so what failed
+            // is a SYMBOL the binding declared and the loader's message is the only place naming which one.
+            // NotBundled would answer that with an instruction to add a classifier artifact, which carries no
+            // libc and cannot help.
+            case e: FfiLoadError.LibraryNotFound if kyo.ffi.internal.SystemLibraries.isSystem(e.libraryId) =>
+                CapabilityOutcome.Unavailable(e.getMessage)
             case e: FfiLoadError.LibraryNotFound => CapabilityOutcome.NotBundled(e.libraryId, platform)
             case e: FfiLoadError.AbiMismatch     => CapabilityOutcome.VersionTooOld(e.actual, e.expected)
             case _: FfiLoadError.Unsupported     => CapabilityOutcome.UnsupportedOS
