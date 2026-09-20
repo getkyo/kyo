@@ -103,6 +103,14 @@ object KyoFfiPlugin extends AutoPlugin {
             "Codegen classpath: kyo-ffi-codegen plus its Scala 3 toolchain. Defaults to resolving kyo-ffi-codegen from the project's resolvers; the in-repo integration test overrides it with the codegen project's classpath."
         )
 
+        val ffiNativeDelivery = settingKey[Map[String, String]](
+            "Per library id, the classifier pattern of the JVM artifact carrying its shared library, with " +
+                "`<os-arch>` standing for the target tag: \"\" for the main artifact, `<os-arch>-boringssl` for a " +
+                "sliced one. Published so a Native or Node consumer, whose own artifact carries no library, resolves " +
+                "the one that does. Defaults to the main artifact for every library with C sources; a module that " +
+                "slices its natives into classifier jars states the pattern instead."
+        )
+
         // Multi-library setting (DESIGN §3.4)
         val ffiLibraries = settingKey[Seq[FfiLibrary]]("Multi-library configuration. When non-empty, overrides single-lib settings.")
 
@@ -111,6 +119,9 @@ object KyoFfiPlugin extends AutoPlugin {
         val FfiLibrary = kyo.ffi.sbt.FfiLibrary
         type FfiSystemLibrary = kyo.ffi.sbt.FfiSystemLibrary
         val FfiSystemLibrary = kyo.ffi.sbt.FfiSystemLibrary
+
+        // Exposed so a build writing `ffiNativeDelivery` by hand names the target placeholder rather than spelling it.
+        val NativeDelivery = kyo.ffi.sbt.NativeDelivery
 
         // Tasks
         val ffiGenerate       = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
@@ -446,6 +457,10 @@ object KyoFfiPlugin extends AutoPlugin {
             libs.filter(_.cSources.nonEmpty).flatMap(_.osArchTags).distinct.sorted
         },
         ffiStubLibraries := Nil,
+        // Every library with C sources ships in the module's main JVM artifact, which is where a module that does
+        // not slice its natives keeps them. A module that does slice states the pattern, and the JVM leg's
+        // ffiNativeDeliveryCheck rejects a declaration that does not match what it packaged.
+        ffiNativeDelivery := ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id -> "").toMap,
         // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
         // ffiPackagingFormatCheckAll decide which projects enable this plugin by asking whether this
         // key resolves for the project, delegation included. That is exactly why a globalSettings
@@ -864,6 +879,10 @@ object KyoFfiPlugin extends AutoPlugin {
         // JVM/JS only: record what this build packages for each declared library id, so a packaging
         // completeness check reads a declaration instead of guessing from a file that is not there.
         Compile / resourceGenerators += ffiLibraryStateManifestGenerator.taskValue,
+
+        // Every platform: name the artifact carrying each library's shared library, for a Native or Node consumer
+        // whose own artifact carries none. See `ffiNativeDeliveryGenerator`.
+        Compile / resourceGenerators += ffiNativeDeliveryGenerator.taskValue,
 
         // JVM/JS only: emit the native manifest the runtime reads as DATA for the direct-load pre-check --
         // per library id its bundled `<os>-<arch>` platforms, version and minRuntime, plus a reflection-free
@@ -1483,6 +1502,33 @@ object KyoFfiPlugin extends AutoPlugin {
             }
         }
     )
+
+    /** Resource generator on every platform: publish [[ffiNativeDelivery]] as a [[NativeDelivery]] declaration.
+      *
+      * Written on every leg, unlike the other manifests, because the leg that reads it is the Native one and a Native
+      * artifact packages no natives at all. A Native or Node consumer's build reads its own classpath, finds this, and
+      * knows which JVM artifact of the same module and version carries the library it has to link or load.
+      */
+    private def ffiNativeDeliveryGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
+        val delivery = ffiNativeDelivery.value
+        val packaged = ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id).toSet
+        // Only the JVM leg knows the truth, being the leg that packages the libraries, and a module slicing its
+        // natives into classifier jars states the pattern by hand. Without this check an id added to one and not the
+        // other is silent: the consumer resolves an artifact that does not carry the library, or never looks for one
+        // that does.
+        if (ffiTargetPlatform.value == "JVM") {
+            val missing = packaged -- delivery.keySet
+            val extra    = delivery.keySet -- packaged
+            if (missing.nonEmpty || extra.nonEmpty)
+                sys.error(
+                    s"[kyo-ffi-plugin] ${name.value}'s ffiNativeDelivery does not match what this leg packages. " +
+                        (if (missing.nonEmpty) s"Packaged but undeclared: ${missing.toSeq.sorted.mkString(", ")}. " else "") +
+                        (if (extra.nonEmpty) s"Declared but not packaged: ${extra.toSeq.sorted.mkString(", ")}. " else "") +
+                        "A Native or Node consumer reads this declaration to find the artifact carrying each library."
+                )
+        }
+        writeFfiManifest((Compile / resourceManaged).value, NativeDelivery.dir, name.value + ".properties", NativeDelivery.render(delivery))
+    }
 
     /** The classpath-relative directory KyoFfiPlugin writes each module's library-state manifest into
       * (one `<module>.state` file per FFI module).

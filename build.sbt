@@ -279,6 +279,7 @@ Global / onLoad := {
             "kyo-test-sbt",
             "kyo-test-sbt-publish",
             "kyo-ffi-plugin",
+            "kyo-natives-plugin",
             "kyo-ffi-codegen",
             "kyo-doctest-plugin",
             "kyo-compat-plugin"
@@ -394,6 +395,7 @@ lazy val kyoJVM: Project = project
         `kyo-ffi`.jvm,
         `kyo-ffi-codegen`,
         `kyo-ffi-plugin`,
+        `kyo-natives-plugin`,
         `kyo-ffi-bench`,
         `kyo-ffi-it`.jvm,
         `kyo-net`.jvm,
@@ -1776,6 +1778,31 @@ lazy val `kyo-ffi-plugin` =
             }).value
         )
 
+// The plugin an APPLICATION enables to get the shared libraries kyo's artifacts carry, as against kyo-ffi-plugin,
+// which is what a module BUILDING a binding enables. Separate coordinate for that reason: nothing an application does
+// should require the C toolchain, codegen and packaging machinery of the authoring plugin.
+//
+// Unlike kyo-ffi-plugin it depends on sbt-scalajs and sbt-scala-native, because it sets `nativeConfig` and `jsEnv`
+// itself rather than handing an application flags to wire. That pins those plugin versions for anyone who enables it,
+// which is the correct constraint rather than a cost: kyo's Native artifacts do not link under a different
+// sbt-scala-native, and its Scala.js IR does not read under a different sbt-scalajs.
+lazy val `kyo-natives-plugin` =
+    project
+        .in(file("kyo-natives/plugin"))
+        .enablePlugins(SbtPlugin)
+        .dependsOn(`kyo-ffi-plugin`)
+        // Scala 2.12 sbt plugin: kyo-doctest's Scala 3 CLI cannot run on this module (as kyo-ffi-plugin).
+        .disablePlugins(KyoDoctestPlugin)
+        .settings(
+            scalaVersion       := "2.12.21",
+            crossScalaVersions := Seq("2.12.21"),
+            name               := "kyo-natives-plugin",
+            sbtPlugin          := true,
+            addSbtPlugin("org.scala-js"                % "sbt-scalajs"      % scalaJSVersion),
+            addSbtPlugin("org.scala-native"            % "sbt-scala-native" % nativeVersion),
+            libraryDependencies += "org.scalatest"    %% "scalatest"        % "3.2.20" % Test
+        )
+
 // JMH benchmarks for kyo-ffi. Separate from kyo-bench because Panama requires
 // `--enable-native-access`. Not part of routine CI; see kyo-ffi-bench/README.md for recipes.
 lazy val `kyo-ffi-bench` =
@@ -2547,7 +2574,14 @@ lazy val `kyo-net` =
             // `ffiLibraries` boringSsl branch above uses.
             ffiStubLibraries := {
                 if (boringSslStaged(baseDirectory.value / "..")) Nil else Seq("kyonet_boringssl")
-            }
+            },
+            // kyo-net's natives ship in classifier jars, so a Native or Node consumer has to be told which classifier
+            // holds which library. Asking `kyoNetNativeClassifier` with the target placeholder yields the pattern
+            // from the same function that names the jars, so the declaration cannot drift from the packaging. It also
+            // answers None for kyonet_openssl, which ships no native anywhere.
+            ffiNativeDelivery := ffiLibraries.value.flatMap { lib =>
+                kyoNetNativeClassifier(NativeDelivery.targetToken, lib.id).map(lib.id -> _)
+            }.toMap
         )
         .jvmSettings(
             mimaCheck(false),
@@ -3864,7 +3898,7 @@ lazy val `kyo-test-readme` =
 lazy val consumerCheckModules: Seq[ProjectReference] =
     Seq(`kyo-net`, `kyo-aeron`, `kyo-sql-sqlite`, `kyo-sql-doltlite`, `kyo-stats-machine`)
         .flatMap(m => Seq[ProjectReference](m.jvm, m.js, m.native)) ++
-        Seq[ProjectReference](`kyo-ffi-plugin`, `kyo-ffi-codegen`, `kyo-doctest-plugin`, `kyo-doctest`.jvm)
+        Seq[ProjectReference](`kyo-ffi-plugin`, `kyo-natives-plugin`, `kyo-ffi-codegen`, `kyo-doctest-plugin`, `kyo-doctest`.jvm)
 
 lazy val `kyo-consumer-check` =
     project

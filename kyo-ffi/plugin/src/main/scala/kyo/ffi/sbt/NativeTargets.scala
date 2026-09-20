@@ -1,0 +1,45 @@
+package kyo.ffi.sbt
+
+/** The `<os>-<arch>` tags kyo's natives are named and packaged by, for a build outside this plugin.
+  *
+  * The tag is load-bearing rather than cosmetic: it is the directory a library sits in under `META-INF/native/`, the
+  * classifier of the artifact carrying it, and the thing a consumer's build has to agree with exactly, since a tag
+  * spelled differently resolves nothing. So the answers come from the same detection the packaging used, rather than
+  * from a second reading of `os.name` that could drift from it.
+  */
+object NativeTargets {
+
+    /** Every tag this plugin's packaging supports. */
+    def supported: Seq[String] = CCompiler.supportedOsArchTags
+
+    /** The tag of the machine running the build. */
+    def host: String = s"${CCompiler.detectOs()}-${CCompiler.detectArch()}"
+
+    /** The `os` half of a tag: `darwin`, `linux`, `linux-musl` or `windows`. */
+    def osOf(tag: String): String = CCompiler.parseOsArch(tag)._1
+
+    /** The tag a Scala Native target triple names, or None when the triple is not one kyo publishes for.
+      *
+      * Scala Native writes the triple as `<arch>-<vendor>-<os>[-<abi>]`, and the abi is where musl appears, which is a
+      * separate pole here because a glibc library does not load under musl.
+      */
+    def ofTriple(triple: String): Option[String] = {
+        val parts = triple.split('-').toSeq
+        val arch = parts.headOption.map {
+            case "aarch64" | "arm64"     => "aarch64"
+            case "x86_64" | "amd64"      => "x86_64"
+            case other                   => other
+        }
+        val os =
+            if (parts.contains("darwin") || parts.exists(_.startsWith("macos"))) Some("darwin")
+            else if (parts.exists(_.startsWith("windows")) || parts.contains("msvc") || parts.contains("mingw32")) Some("windows")
+            else if (parts.contains("linux")) Some(if (parts.contains("musl")) "linux-musl" else "linux")
+            else None
+        for {
+            a <- arch
+            o <- os
+            tag = s"$o-$a"
+            if supported.contains(tag)
+        } yield tag
+    }
+}

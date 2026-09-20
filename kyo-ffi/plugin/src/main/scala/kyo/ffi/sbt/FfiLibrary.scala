@@ -202,5 +202,18 @@ object FfiLibrary {
 
     /** [[FfiLibrary.linkedDefine]] for a library known only by `id`, as a consumer reading a published declaration knows it. */
     def linkedDefineFor(id: String): String =
-        "KYO_FFI_LINKED_" + id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
+        "KYO_FFI_LINKED_" + macroSuffix(id)
+
+    /** The define that compiles a shim to nothing, for a build linking the prebuilt library instead.
+      *
+      * A Scala Native binary compiles the shim's C from the artifact's sources, so linking the library as well puts
+      * two definitions of every entry point in one link. The shim answers this define with an empty translation unit,
+      * leaving the library's symbols as the only ones. Distinct from [[linkedDefineFor]], which selects the shim's
+      * real body for a build that compiles it.
+      */
+    def externalDefineFor(id: String): String =
+        "KYO_FFI_EXTERNAL_" + macroSuffix(id)
+
+    private def macroSuffix(id: String): String =
+        id.map(c => if (c.isLetterOrDigit) c.toUpper else '_')
 }
