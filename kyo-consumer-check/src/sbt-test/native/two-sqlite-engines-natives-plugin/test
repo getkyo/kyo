@@ -1,0 +1,4 @@
+# The link must fail on the duplicate entry points, and leave no binary. A binary here would be one where every
+# doltlite:// call reaches kyo-sql-sqlite's engine instead of DoltLite's.
+-> nativeLink
+$ exec sh -c 'set -eu; if find target -type f -perm -u+x -name consumer | grep -q .; then echo "a binary holding both engines was produced"; exit 1; fi'

@@ -67,7 +67,8 @@ Native application needs the engine library delivered to it. `kyo-natives-plugin
 addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
 ```
 ```
-// the application project, or a crossProject's .nativeSettings
+// the application project; on a crossProject, `.enablePlugins` covers every leg and
+// `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers only one
 .enablePlugins(KyoNativesPlugin)
 ```
 
@@ -76,8 +77,11 @@ which is then what the binary needs beside it to run. Without the plugin the app
 opening a `doltlite://` URL fails with `DoltLiteEngineUnavailableException`, whose message says the binary was
 linked without the engine.
 
-One Native binary cannot hold both this artifact and kyo-sql-sqlite: each defines the `sqlite3_*` functions, so
-the link fails on duplicate symbols.
+One Native binary cannot hold both this artifact and kyo-sql-sqlite. The two compile the same shim, so both define
+the same entry points and the link fails on duplicate symbols. That holds whether or not the engine library is
+delivered: a delivered engine makes this artifact's copy of the shim empty, and the shim keeps one definition outside
+that gate so the collision survives it. Without that the link would succeed and every `doltlite://` call would reach
+kyo-sql-sqlite's plain engine, opening a Dolt database with something that does not understand it.
 
 ## Opening a database
 

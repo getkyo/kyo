@@ -32,6 +32,19 @@
 #include KYO_SQLITE_HEADER
 
 /*
+** One binary holds one embedded engine. kyo-sql-sqlite and kyo-sql-doltlite compile THIS file with the
+** same kyo_sqlite3_* entry points, and Scala Native unpacks each jar's sources into its own directory, so
+** a binary depending on both compiles both copies and the linker rejects the duplicates. That rejection is
+** the whole guard, and the branch below can remove it: a delivered DoltLite compiles its copy to nothing,
+** leaving one definition of each wrapper, and every doltlite:// call then binds to the plain-SQLite
+** definitions in the executable rather than to the delivered library, opening a Dolt database with an
+** engine that does not understand it. This definition is outside every branch so the duplicate survives
+** whatever the gate says, and it is a strong definition rather than a tentative one so -fcommon cannot
+** merge the two.
+*/
+int kyo_sql_one_embedded_sqlite_engine_per_binary = 0;
+
+/*
 ** kyo-sql-sqlite compiles SQLite's own source beside this file, so its engine is always on the link.
 ** kyo-sql-doltlite links a prebuilt engine instead, and on Scala Native this file compiles in whichever
 ** build links the binary, a consumer's included. Three states for that build:
@@ -44,9 +57,8 @@
 */
 #if defined(KYO_SQLITE_DOLTLITE) && defined(KYO_FFI_EXTERNAL_KYO_DOLTLITE)
 
-/* Deliberately empty: the entry points come from the linked library. An empty translation unit is not
-** valid C, so give it one declaration. */
-typedef int kyo_sqlite_external_translation_unit;
+/* Deliberately empty: the entry points come from the linked library. The definition above is what keeps
+** this a valid translation unit. */
 
 #else
 
