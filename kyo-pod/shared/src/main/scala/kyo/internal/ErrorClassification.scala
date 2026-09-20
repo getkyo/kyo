@@ -65,6 +65,19 @@ private[internal] object DaemonErrorPhrases:
       */
     val NoSuchImage: Seq[String] = Seq("no such image", "manifest unknown", "image not known")
 
+    /** Phrases by which a daemon quotes a status the registry gave it, rather than answering about the resource itself.
+      *
+      * Both daemons relay the registry's wording under a status of their own choosing, so the quoted status is the only reliable signal
+      * that the failure is the registry's and therefore transient. HTTP: `HttpContainerBackend.bodyNamesServerError` reads the response
+      * body. Shell: `ShellBackend.mapError` reads the command's output, where podman prints the same sentence.
+      */
+    val ServerError: Seq[String] = Seq(
+        "500 internal server error",
+        "502 bad gateway",
+        "503 service unavailable",
+        "504 gateway timeout"
+    )
+
     /** Phrases matching the "conflict / already in use" condition shared by both backends.
       *
       * HTTP: inferStatusFromMessage maps "already in use" and "name is reserved" to 409 (note: "name is reserved" is HTTP-only, stays
