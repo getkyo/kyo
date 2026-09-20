@@ -8,6 +8,8 @@ import kyo.AtomicRef
 import kyo.Duration
 import kyo.Frame
 import kyo.Maybe
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
 import kyo.Scope
 import kyo.SqlConfig
 import kyo.SqlException
@@ -70,9 +72,20 @@ final class Runtime[C <: Connection] private[kyo] (
       *   how long in-flight work has to finish; [[kyo.Duration.Zero]] closes immediately
       */
     private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        closedRef.compareAndSet(false, true).flatMap {
-            case true  => pool.closeAll(gracePeriod)
-            case false => ()
+        // The compare-and-set that commits this caller to closing and the ring extraction it commits to are ONE unsafe
+        // step: a stop cannot park between them, so the carrier is never marked closed with the ring left open. Were
+        // they two steps, a stop pending after the flag flips would strand every idle session, and the idempotent flag
+        // would then make the pool unclosable through the client. `ensureMap` installs the force-close drain in the
+        // step the extraction delivers its connections, again with no poll between.
+        Sync.Unsafe.defer {
+            if closedRef.unsafe.compareAndSet(false, true) then Present(pool.closeExtract())
+            else Absent
+        }.ensureMap { extracted =>
+            // `Present`'s extractor is not provably exhaustive over the opaque `Maybe`, and -Werror rejects it, so this
+            // matches `Absent` and reads the winner's connections with `get`.
+            extracted match
+                case Absent => ()
+                case _      => pool.closeDrain(extracted.get, gracePeriod)
         }
 
     /** Whether [[close]] has been called on this carrier.

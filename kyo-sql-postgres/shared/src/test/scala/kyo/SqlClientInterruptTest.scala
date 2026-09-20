@@ -209,14 +209,63 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
+    /** The leaf above locks a free key, so the grant is instant and a millisecond-offset interrupt never lands in the one-park window
+      * between the grant and the `Scope.ensure(release)` step. Here a second client holds the lock, so `locker`'s `pg_advisory_lock`
+      * genuinely blocks; the interrupt is requested while `locker` waits, then the holder releases so the grant lands into the abandoned
+      * fiber before its release registers. If the grant is taken and no release was registered, the lock rides the pooled session and
+      * `held` stays 1 after the fiber settled. Deterministic: the window is the real duration the holder keeps the lock, not a timer race.
+      */
+    "an interrupt landing as a contended advisory lock is granted strands no lock".pendingUntilFixed(
+        "withAdvisoryLock grants the lock in a server round trip and registers Scope.ensure(release) only in the next step; " +
+            "an interrupt in that window strands the lock on the pooled session, which the pool hands to its next borrower still locked"
+    ) in {
+        val key = 7340032L
+        val one = SqlConfig(maxConnections = 1, minConnections = 0, acquireTimeout = 15.seconds, queryTimeout = 15.seconds)
+        containerUrl("kyo-sql-lockdet-orphan") { url =>
+            SqlClient.init(url, one).map { locker =>
+                SqlClient.init(url.replace("kyo-sql-lockdet-orphan", "kyo-sql-lockdet-hold"), one).map { holder =>
+                    SqlClient.init(url.replace("kyo-sql-lockdet-orphan", "kyo-sql-lockdet-probe"), config).map { probe =>
+                        def count(granted: String): Int < (Async & Abort[SqlException]) =
+                            probe.query(
+                                s"SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = $key AND $granted"
+                            ).map(rows => rows(0).decode[Int](0))
+                        Latch.initWith(1) { lockHeld =>
+                            Latch.initWith(1) { release =>
+                                for
+                                    holderFiber <- Fiber.initUnscoped(
+                                        Abort.run[SqlException](holder.withAdvisoryLock(key)(lockHeld.release.andThen(release.await)))
+                                    )
+                                    _      <- lockHeld.await
+                                    _      <- assertEventually(count("granted").map(_ == 1))
+                                    aFiber <- Fiber.initUnscoped(Abort.run[SqlException](locker.withAdvisoryLock(key)(Async.never[Unit])))
+                                    _      <- assertEventually(count("NOT granted").map(_ >= 1))
+                                    _      <- aFiber.interrupt
+                                    _      <- release.release
+                                    _      <- holderFiber.getResult
+                                    _      <- aFiber.getResult
+                                    gone   <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(count("granted").map(_ == 0))))
+                                yield assert(gone.isSuccess, "the contended advisory lock leaked on the pooled session after the interrupt")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** `closeAll` drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing on the
       * poll between the two would abandon connections the pool no longer holds. The ring drain is microseconds, so the leaf's own fiber
       * spins to a staggered offset from the step before the close and requests the stop directly. A round whose stop landed before the
       * close began closes the client itself and proves nothing; one whose close began, which the pool's closed flag shows, must see the
       * server's session count for the client's `application_name` reach zero within the bound.
+      *
+      * The interrupt window is closed: `Runtime.close` flips the closed flag and extracts the ring in one unsafe step, and `closeDrain`
+      * force-closes what it extracted through a `Sync.ensure` the abandonment runs. This stays pending on a separate pool
+      * connection-lifecycle issue: a warm connection is intermittently a live server session outside the idle ring at close, so
+      * `closeAll` never sees it and it lingers until process exit.
       */
     "an interrupt landing as close extracts the idle ring strands no session".pendingUntilFixed(
-        "closeAll drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing on the poll between them abandons connections the pool no longer holds and nothing closes"
+        "a warm connection is intermittently a live server session outside the idle ring at close, so closeAll misses it and it lingers; a pool connection-lifecycle issue separate from the now-closed interrupt window"
     ).notJs.notWasm in {
         val rounds = 120
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
@@ -255,17 +304,14 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** A lease takes ownership of its connection across two steps on either path into the pool: the ring's empty case reserves a slot in one
-      * step and registers the reservation's release two steps later, in the `resolvingOnce` around the connect (`SqlConnectionPool.scala:577`,
-      * `:490-493`); the pooled case registers the lease's exit on the scope one step before the custody take (`:911-913`). A stop landing on
-      * either poll leaves a slot the pool cannot hand out again, and once enough leases have been stopped that way the pool refuses every
-      * acquire. The leaf stops leases against one pool of two, at staggered sub-millisecond offsets from the step before each, and asks the
-      * pool for a statement within its acquire budget after every one: the first refused acquire is the failure. Closing the pool afterwards
-      * must complete and leave no session behind.
+    /** A lease owns what the pool hands it from the step it is handed: a reservation is claimed into a flag whose release was registered
+      * before the ring was asked, and a pooled connection's exit registers in the step that takes custody of it. A stop landing on any
+      * poll in between must not leave a slot the pool cannot hand out again, or after enough such stops a pool of two refuses every
+      * acquire. The leaf stops leases against one pool of two, at staggered sub-millisecond offsets from the step before each, and asks
+      * the pool for a statement within its acquire budget after every one: the first refused acquire is the failure. Closing the pool
+      * afterwards must complete and leave no session behind.
       */
-    "leases stopped at staggered offsets leave a pool that still serves and closes clean".pendingUntilFixed(
-        "a lease takes ownership of its connection one step after the pool handed it a slot, a reservation or a pooled connection, so a stop landing on that poll leaves a slot the pool cannot hand out again and, after enough such stops, a pool of two refuses every acquire"
-    ).notJs.notWasm in {
+    "leases stopped at staggered offsets leave a pool that still serves and closes clean".notJs.notWasm in {
         val rounds = 200
         val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 2.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-lease-stops") { url =>
