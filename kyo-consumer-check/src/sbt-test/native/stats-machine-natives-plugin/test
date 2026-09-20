@@ -1,0 +1,11 @@
+# The stats-machine round trip with the link-time enlistment coming from the plugin rather than from a hand-written
+# nativeConfig line.
+> kyoNativesReport
+
+# The provider the jar declares, read back and enlisted. Asserted before the link because the failure it guards is
+# silent at run time: an un-enlisted provider links clean and simply never registers.
+> writeServiceProviders
+$ exec sh -c 'set -eu; cat service-providers.txt; grep -q "kyo.stats.internal.ExporterFactory=kyo.stats.machine.MachineStatFactory" service-providers.txt'
+
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER machine=sampled" out.txt'
