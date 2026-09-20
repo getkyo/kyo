@@ -131,6 +131,23 @@ class NativeLoaderJsTest extends Test:
         end try
     }
 
+    "detectOsWith reports musl as its own pole, since a glibc library does not load there" in {
+        val musl = Set("/lib/ld-musl-x86_64.so.1")
+        assert(NativeLoader.detectOsWith("linux", musl.contains) == "linux-musl")
+        assert(NativeLoader.detectOsWith("linux", Set("/lib/ld-musl-aarch64.so.1").contains) == "linux-musl")
+        assert(NativeLoader.detectOsWith("linux", _ => false) == "linux")
+    }
+
+    "detectOsWith maps the platforms Node names to the tags the artifacts are packaged under" in {
+        assert(NativeLoader.detectOsWith("darwin", _ => false) == "darwin")
+        assert(NativeLoader.detectOsWith("win32", _ => false) == "windows")
+        assert(NativeLoader.detectOsWith("freebsd", _ => false) == "freebsd")
+    }
+
+    "detectOsWith does not consult the filesystem off linux, where musl is not a distinction" in {
+        assert(NativeLoader.detectOsWith("darwin", _ => throw new AssertionError("must not probe")) == "darwin")
+    }
+
     // --- helpers ---
 
     private def setEnv(key: String, value: String): Unit =

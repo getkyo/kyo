@@ -203,26 +203,7 @@ object KyoFfiPlugin extends AutoPlugin {
         def ffiKoffiJsBootstrap(packageName: String): Seq[sbt.Def.Setting[?]] =
             Seq(
                 Test / compile := (Test / compile).dependsOn(Def.task {
-                    val log        = streams.value.log
-                    val targetBase = target.value
-                    val marker     = targetBase / "node_modules" / "koffi" / "package.json"
-                    val koffiRange = NpmBundleTemplate.KoffiSupportedRange
-                    val pjContent  = s"""{"name":"$packageName","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                    val pj         = targetBase / "package.json"
-                    if (!pj.exists() || IO.read(pj) != pjContent) {
-                        IO.createDirectory(targetBase)
-                        IO.write(pj, pjContent)
-                    }
-                    if (!marker.exists()) {
-                        log.info(s"[$packageName] installing koffi@$koffiRange into $targetBase ...")
-                        // npm is npm.cmd on Windows, and CreateProcess resolves only .exe from a bare name.
-                        val npm = if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
-                        val rc  = scala.sys.process.Process(
-                            Seq(npm, "install", "--no-audit", "--no-fund", "--silent"),
-                            targetBase
-                        ).!
-                        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                    }
+                    val _ = KoffiBootstrap.install(target.value, packageName, streams.value.log)
                 }).value
             )
     }

@@ -165,15 +165,25 @@ object NativeLoader:
     private def detectOs(): String =
         val p = js.Dynamic.global.process.platform
         if js.isUndefined(p) || p == null then "unknown"
-        else
-            p.asInstanceOf[String] match
-                case "darwin"  => "darwin"
-                case "linux"   => "linux"
-                case "win32"   => "windows"
-                case "freebsd" => "freebsd"
-                case other     => other
-        end if
+        else detectOsWith(p.asInstanceOf[String], fileExists)
     end detectOs
+
+    /** The os half of the tag a bundle is resolved under, for `platform` as Node reports it.
+      *
+      * `process.platform` says `linux` for both glibc and musl, and the two are separate poles: a glibc library does
+      * not load under musl, so an Alpine host resolving `linux-<arch>` finds a library it cannot open. musl is
+      * identified by its dynamic loader, which is what the JVM loader keys on too, so the two agree on which pole a
+      * host is. Takes `exists` so the branches are testable off their own host.
+      */
+    private[internal] def detectOsWith(platform: String, exists: String => Boolean): String =
+        platform match
+            case "darwin" => "darwin"
+            case "linux" =>
+                if exists("/lib/ld-musl-x86_64.so.1") || exists("/lib/ld-musl-aarch64.so.1") then "linux-musl"
+                else "linux"
+            case "win32"   => "windows"
+            case "freebsd" => "freebsd"
+            case other     => other
 
     private def detectArch(): String =
         val a = js.Dynamic.global.process.arch

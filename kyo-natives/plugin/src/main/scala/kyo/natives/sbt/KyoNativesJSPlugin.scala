@@ -1,5 +1,6 @@
 package kyo.natives.sbt
 
+import kyo.ffi.sbt.KoffiBootstrap
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
@@ -30,6 +31,11 @@ object KyoNativesJSPlugin extends AutoPlugin {
 
         val kyoNativesMaterialize = taskKey[File]("Write the libraries into target/node_modules as the package koffi resolves.")
 
+        val kyoNativesKoffi = settingKey[Boolean](
+            "Whether to install koffi into target/node_modules. On by default: koffi is a native Node addon, so it " +
+                "cannot arrive through the classpath, and without it a delivered library cannot be opened at all."
+        )
+
         val kyoNativesNodeEnv = taskKey[Map[String, String]](
             "The environment a Node process needs to resolve the materialized package, for a project that sets its own jsEnv."
         )
@@ -38,6 +44,7 @@ object KyoNativesJSPlugin extends AutoPlugin {
     import autoImport._
 
     override def projectSettings: Seq[Setting[_]] = Seq(
+        kyoNativesKoffi       := true,
         kyoNativesMaterialize := materializeTask.value,
         kyoNativesNodeEnv     := Map("NODE_PATH" -> (target.value / "node_modules").getAbsolutePath),
         jsEnv                 := new NodeJSEnv(NodeJSEnv.Config().withEnv(kyoNativesNodeEnv.value)),
@@ -51,7 +58,10 @@ object KyoNativesJSPlugin extends AutoPlugin {
 
     private def materializeTask: Def.Initialize[Task[File]] = Def.task {
         val fetched = kyoNativesFetched.value
-        val root    = target.value / "node_modules" / "@kyo" / "ffi-native"
+        val base    = target.value
+        if (kyoNativesKoffi.value && fetched.nonEmpty)
+            KoffiBootstrap.install(base, name.value, streams.value.log)
+        val root = base / "node_modules" / "@kyo" / "ffi-native"
         // The name has to be the one the runtime resolves, and `private` keeps an accidental `npm publish` from
         // pushing a directory of someone else's binaries.
         val manifest = """{"name":"@kyo/ffi-native","version":"0.0.0","private":true}"""
