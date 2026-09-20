@@ -21,29 +21,28 @@ object UringGate:
       */
     def assumeUring()(using Frame): Unit =
         if !PosixConstants.isLinux then throw new kyo.test.TestCancelled("io_uring is Linux-only")
-        import AllowUnsafe.embrace.danger
+        // Any failure reads as unavailable: a host without liburing throws from the load rather than returning.
         val available =
-            try
-                val uring = Ffi.load[IoUringBindings]
-                val depth = math.max(256, kyo.net.ioPoolSize() * 64)
-                val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
-                // The buffer is released on every exit, including a throw from the init itself: the catch below turns
-                // any failure into "unavailable", so without the finally a throwing probe would leak it silently.
-                try
-                    // liburing returns -errno directly rather than setting the global one, so a captured errno left
-                    // by an earlier syscall would report unavailable on a ring that initialized. The return value is
-                    // the reading.
-                    val rc = uring.io_uring_queue_init(depth, ring, 0)
-                    if rc != 0 then false
-                    else
-                        uring.io_uring_queue_exit(ring)
-                        true
-                    end if
-                finally ring.close()
-                end try
+            try probeRing()
             catch case _: Throwable => false
         if !available then
             throw new kyo.test.TestCancelled("io_uring unavailable at production depth on this kernel/runtime (needs Linux >= 5.6)")
     end assumeUring
+
+    /** Whether a ring initializes at the production depth, releasing the probe buffer on every exit including a throw
+      * from the init, which the caller's catch would otherwise swallow along with the buffer.
+      */
+    private def probeRing()(using Frame): Boolean =
+        import AllowUnsafe.embrace.danger
+        val uring = Ffi.load[IoUringBindings]
+        val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
+        try
+            // liburing returns -errno directly rather than setting the global one, so a captured errno left by an
+            // earlier syscall would report unavailable on a ring that initialized. The return value is the reading.
+            val rc = uring.io_uring_queue_init(math.max(256, kyo.net.ioPoolSize() * 64), ring, 0)
+            if rc == 0 then uring.io_uring_queue_exit(ring)
+            rc == 0
+        finally ring.close()
+    end probeRing
 
 end UringGate
