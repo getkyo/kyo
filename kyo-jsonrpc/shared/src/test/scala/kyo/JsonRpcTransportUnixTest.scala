@@ -24,15 +24,12 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
         }
 
-    // `unixDomain` binds the listener, which creates the socket file, in the step that starts the listen fiber, and
-    // registers their release in a later step, after the join on that fiber (a poll away where the bind completes
-    // synchronously, a scheduling round trip away where it does not). A stop landing between the two leaves both
-    // behind, so the rounds interrupt at staggered delays from the fiber's start. A registered release runs on the
-    // scope's detached drain, so each round waits, bounded, for the socket file to go: a release still in flight
-    // removes it within the bound, a listener nobody registered keeps it for good.
-    "an interrupt landing as the listener binds leaves no listener or socket file behind".pendingUntilFixed(
-        "unixDomain binds the listener, which creates the socket file, in the step that starts the listen fiber and registers their release in a later step after the join, so a stop landing between the two leaves both behind"
-    ) in {
+    // `unixDomain` binds the listener, which creates the socket file, on a fiber the caller joins, and the listener
+    // has to be owned whichever side of that join a stop lands on: registered as the join delivers it, or closed by
+    // the bind itself when it completes after the caller has gone. The rounds interrupt at staggered delays from the
+    // fiber's start. A registered release runs on the scope's detached drain, so each round waits, bounded, for the
+    // socket file to go: a release still in flight removes it within the bound, a listener nobody owns keeps it.
+    "an interrupt landing as the listener binds leaves no listener or socket file behind" in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
             val sock   = Path(tempDir, "test.sock")

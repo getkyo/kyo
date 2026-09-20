@@ -19,19 +19,41 @@ private[kyo] object UdsBackend:
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
-            val first = Promise.Unsafe.init[kyo.net.Connection, Abort[NetException | Closed]]()
-            NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
-                // Single-client server: the first accept wins and becomes the wire; a later client is closed immediately rather than left
-                // un-accepted in the kernel backlog.
-                if !first.complete(Result.succeed(conn)) then conn.close()
-            }.safe.get.map { listener =>
-                val wire: JsonRpcWireTransport = new UdsServerWireTransport(first)
-                Scope.ensure {
-                    wire.close
-                        .andThen(Sync.Unsafe.defer(listener.close()))
-                        .andThen(Abort.run[FileSystemException](Path.run(sockPath.remove)).unit)
+            val first                      = Promise.Unsafe.init[kyo.net.Connection, Abort[NetException | Closed]]()
+            val wire: JsonRpcWireTransport = new UdsServerWireTransport(first)
+            // The teardown finalizer is registered on the scope BEFORE the listen is launched, reading the listen fiber out of a
+            // cell it fills in the same unsafe step it launches in. That ordering is the point: `listenUnix` owns a bound socket
+            // (and its file) from the instant it is called, and on the JVM completes its fiber synchronously inside the call, so a
+            // finalizer registered on the far side of the join leaves a window where an interrupt lands with the listener bound,
+            // handed to a promise the interrupted caller never reads, and nobody owning its close. A finalizer registered before the
+            // launch finds `Absent` and does nothing; one that runs after interrupts the listen fiber, awaits it, and closes the
+            // listener it produced, then removes the socket file, whichever side of the caller's abandonment the bind landed on.
+            // `Scope.acquireRelease` is not a substitute: it has the same `acquire.map(r => ensure(release(r)))` shape and window.
+            Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[kyo.Fiber[kyo.net.Listener, Abort[NetException]]])).map { listenCell =>
+                Scope.ensure { _ =>
+                    wire.close.andThen {
+                        Sync.Unsafe.defer(listenCell.get()).map {
+                            case Present(listenFiber) =>
+                                listenFiber.interrupt.andThen(listenFiber.getResult).map {
+                                    case Result.Success(listener) => Sync.Unsafe.defer(listener.close())
+                                    case _                        => ()
+                                }
+                            case Absent => ()
+                        }
+                    }.andThen(Abort.run[FileSystemException](Path.run(sockPath.remove)).unit)
                 }.andThen {
-                    JsonRpcTransport.fromWire(wire, framer, codec)
+                    Sync.Unsafe.defer {
+                        val listenFiber =
+                            NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
+                                // Single-client server: the first accept wins and becomes the wire; a later client is closed
+                                // immediately rather than left un-accepted in the kernel backlog.
+                                if !first.complete(Result.succeed(conn)) then conn.close()
+                            }.safe
+                        listenCell.set(Maybe(listenFiber))
+                        listenFiber
+                    }.map { listenFiber =>
+                        listenFiber.get.map(_ => JsonRpcTransport.fromWire(wire, framer, codec))
+                    }
                 }
             }
         }
