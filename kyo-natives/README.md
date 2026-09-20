@@ -1,13 +1,25 @@
 # kyo-natives-plugin
 
-The sbt plugin an application enables to get the shared libraries kyo's published artifacts carry.
+The sbt plugin an application enables to get everything kyo's published artifacts need from the build that consumes
+them.
 
-On the JVM nothing is needed: the library rides inside a jar and kyo's loader extracts it on first use. Scala Native
-has no runtime loader, and on Node koffi opens a file by path and never sees a classpath, so on those two platforms a
-library has to be put somewhere before anything asks for it. That is this plugin's whole job.
+On the JVM that is almost nothing: a library rides inside a jar, kyo's loader extracts it on first use, and
+`ServiceLoader` finds a provider at run time. The other two platforms resolve at build time what the JVM resolves at
+run time, so the build has to answer for them.
 
-It is not `kyo-ffi-plugin`. That one is for a module *building* a binding, and brings a C toolchain, codegen and
-packaging with it. Enabling this one requires none of that.
+Three answers, and a module can need any combination:
+
+- **A delivered library.** Scala Native has no runtime loader, and on Node koffi opens a file by path and never sees
+  a classpath, so a library has to be put somewhere before anything asks for it.
+- **A system library.** A shim over OpenSSL or liburing needs the library on the machine doing the linking, and only
+  that machine can answer. The artifact carries what to look for.
+- **A service provider.** Scala Native resolves `ServiceLoader` when it links and drops any class nothing references,
+  so a provider also has to be named in the link. This is the one with no symptom: an un-enlisted provider links
+  clean and never registers.
+
+It is not `kyo-ffi-plugin`. That one is for a module *building* a binding, and brings codegen and packaging with it.
+Enabling this one brings neither. The system-library probe does compile and link a small C program, with the clang
+Scala Native already requires, and only on the Native leg.
 
 ## Setup
 
@@ -30,10 +42,21 @@ consumer needs and which artifact carries them, so there is no list of kyo modul
 
 ## What it does per platform
 
-**Scala Native.** Links the binary against each library and stages the library beside the linked binary. A deployment
-carries the two files together, the way a JVM application carries its jars. The directory `nativeLink` writes into
-holds build output besides them, so copy the binary and its `lib<id>.<ext>` rather than the directory. A binary
-deployed without its libraries fails in the dynamic loader naming the file it wanted.
+**Scala Native.** All three answers, folded into one `nativeConfig`.
+
+Links the binary against each delivered library and stages the library beside the linked binary. A deployment carries
+the two files together, the way a JVM application carries its jars. The directory `nativeLink` writes into holds
+build output besides them, so copy the binary and its `lib<id>.<ext>` rather than the directory. A binary deployed
+without its libraries fails in the dynamic loader naming the file it wanted.
+
+Probes this machine for each system library the dependencies declare, and adds the ones that link. A library that
+does not link is not an error: its shim compiles stubs and the capability reports itself unavailable at run time,
+which is what every platform does for a library that is not there. `sbt show kyoNativesSystemLibraries` lists what
+was found, and a `[kyo-natives]` line names each one that was not.
+
+Enlists every service provider the dependency jars declare, read from the `META-INF/services` entries the JVM reads
+at run time, so the two platforms discover the same set. `kyoNativesEnlistServices := false` hands that back to the
+build.
 
 **Node.** Writes each library under `target/node_modules/@kyo/ffi-native/native/<os>-<arch>/`, which is where the
 loader asks `require.resolve` for it, and installs koffi beside it. Both live under `target/`, where `sbt run` and
@@ -63,6 +86,9 @@ build fetches from npm rather than from Maven, and the thing to point your own r
 | `kyoNativesDirectory` | Where the unpacked libraries are written, one subdirectory per target. |
 | `kyoNativesResolvedTargets` | The targets in effect, after deriving the ones `kyoNativesTargets` left open. `show` it when a build delivers for a target you did not expect. |
 | `kyoNativesMaterialize` | Scala.js only: writes the libraries into `target/node_modules`. Runs as part of linking, so a build rarely calls it. |
+| `kyoNativesSystemLibraries` | Scala Native only: the declared system libraries this machine turned out to have, and the flags each one adds. |
+| `kyoNativesEnlistServices` | Scala Native only: whether to enlist the dependencies' declared service providers. On by default. |
+| `kyoNativesServiceProviders` | Scala Native only: the providers enlisted for the link, as interface to implementations. |
 | `kyoNativesReport` | Prints each library, the artifact it came from, the directory it was staged in, and what it is wired into. |
 
 ## When something is missing
@@ -75,5 +101,10 @@ is for.
 A Native build whose target triple and `kyoNativesTargets` disagree fails at the link rather than producing a binary
 linked against another pole's libraries. Those fail in the linker with a file-format error at best, and load and
 crash at worst where the poles share an architecture, as glibc and musl do.
+
+A capability that is silently absent on Native, with the build green and no error at run time, is usually an
+un-enlisted service provider. `sbt show kyoNativesServiceProviders` names what the link will carry. A build that
+replaces `nativeConfig` outright, rather than building on `nativeConfig.value`, discards this plugin's contribution
+along with everything else in it.
 
 `sbt kyoNativesReport` is the first thing to run when a library is not where you expected.
