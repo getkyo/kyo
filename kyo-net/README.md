@@ -255,10 +255,10 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 | JVM, Linux | io_uring / epoll | BoringSSL | NIO + JDK TLS |
 | JVM, macOS | kqueue | BoringSSL | NIO + JDK TLS |
 | JVM, Windows | (none) | (none) | NIO + JDK TLS |
-| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | system OpenSSL, with the kyo FFI plugin | epoll / kqueue, no TLS |
+| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL with kyo-natives-plugin, or system OpenSSL with the kyo FFI plugin | epoll / kqueue, no TLS |
 | JS / Wasm, Node | koffi io_uring / epoll / kqueue | koffi BoringSSL | Node transport + Node TLS |
 
-The native I/O backend is the primary on every posix platform, and so is BoringSSL on the JVM and Node; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, a Scala Native build that found no system library, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
+The native I/O backend is the primary on every posix platform, and so is BoringSSL on the JVM and Node; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, a Scala Native build that neither delivers BoringSSL nor finds a system library, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
 
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
@@ -291,7 +291,8 @@ TLS comes from the artifact. kyo-net publishes a BoringSSL library per os-arch, 
 addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
 ```
 ```
-// the Native project, or a crossProject's .nativeSettings
+// the Native project; on a crossProject, `.enablePlugins` covers every leg and
+// `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers only this one
 .enablePlugins(KyoNativesPlugin)
 ```
 
@@ -299,7 +300,7 @@ That is the whole setup, and it needs no OpenSSL on the machine: the shim compil
 
 The transport is not delivered this way and does not need to be: Scala Native compiles kyo-net's epoll and kqueue C into your binary from the sources the artifact ships, so the plain transport works with no setup at all.
 
-On Node the plugin delivers nothing for kyo-net, deliberately: its natives there would select the koffi posix transport, and a Node process on that transport does not exit, because the poll loop's indefinite `kevent` is dispatched to a libuv worker and an outstanding work request keeps Node's event loop alive. Node runs on the `JsTransport` floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
+On Node the plugin delivers nothing for kyo-net at present: its natives there would select the koffi posix transport, and a Node process on that transport does not exit, because the poll loop re-arms after every cycle and its `kevent` runs on a libuv worker, so a work request is outstanding whenever Node checks whether it can leave. Node runs on the `JsTransport` floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
 io_uring, and TLS from the machine's own OpenSSL rather than from the artifact, come from libraries on the machine that links. kyo-net's artifact declares them, system OpenSSL and a static liburing on Linux, and the kyo FFI plugin looks for them in your build: it compiles and links a small probe against each, and for each one that links it enables the shim and adds the library to your link. That plugin needs the two lines that fold its answer into `nativeConfig`:
 
@@ -309,7 +310,7 @@ addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
 ```
 
 ```
-// the Native project, or a crossProject's .nativeSettings
+// the Native project; on a crossProject, `.nativeConfigure(_.enablePlugins(...))` covers only this leg
 .enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
 .settings(
     nativeConfig := {

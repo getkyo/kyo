@@ -63,7 +63,8 @@ The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup 
 > addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
 > ```
 > ```
-> // the application project, or a crossProject's .nativeSettings / .jsSettings
+> // the application project; on a crossProject, `.enablePlugins` covers every leg and
+> // `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))` covers only one
 > .enablePlugins(KyoNativesPlugin)
 > ```
 >
