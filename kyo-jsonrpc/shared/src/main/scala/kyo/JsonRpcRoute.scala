@@ -134,7 +134,11 @@ object JsonRpcRoute:
         new RequestRoute[In, Out, E](name, capturedSchemaIn, capturedSchemaOut, handler, Chunk.empty)
     end request
 
-    /** Mirror of [[request]] for notification routes (no response). */
+    /** Mirror of [[request]] for notification routes (no response).
+      *
+      * A handler runs a peer's notifications one at a time in the order they arrive, and starts a request only after the
+      * notifications that arrived before it have been handled, so a notification handler that runs long delays what follows it.
+      */
     def notification[In: Schema](name: String)[E](
         handler: (In, JsonRpcRoute.Context) => Unit < (Async & Abort[E | JsonRpcResponse.Halt])
     )(using Frame): JsonRpcRoute[In, Unit, E] =
