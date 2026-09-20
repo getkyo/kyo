@@ -17,8 +17,8 @@ import scala.util.matching.Regex
   *
   * Each program lives in its own project under `kyo-link-check/`, depending only on the modules it uses, as a separate application would.
   * For each program on JS and Wasm the command:
-  *   - runs the linked output with plain `node`, nothing injected, from an empty standard input, and matches its last line of output (a
-  *     launch that only the sbt test harness makes work fails here);
+  *   - runs the linked output with plain `node`, nothing injected, from an empty standard input, and matches the last line it printed on
+  *     standard output (a launch that only the sbt test harness makes work fails here);
   *   - runs it again with the `process` global deleted before the program loads, the state of a browser, and matches the line expected
   *     there: the same one for a program that needs no Node, a typed or explicit failure for one that does (a bare `process` read or a
   *     missing guard fails here);
@@ -698,8 +698,8 @@ object LinkCheck {
     }
 
     /** Runs `entry` (an ES module's `main.mjs` by default) with plain node from its own directory, directly or, for an ES module, through
-      * [[withoutProcessLauncher]], and returns the lines it printed. The launcher is written beside the output, never into it, so it is not
-      * counted in the size.
+      * [[withoutProcessLauncher]], and returns the lines it printed on standard output. The launcher is written beside the output, never
+      * into it, so it is not counted in the size.
       */
     private def runNode(
         outDir: File,
@@ -723,19 +723,27 @@ object LinkCheck {
             // An empty file, not the build's own stdin, so a program that reads standard input sees its end instead of waiting.
             val stdin = outDir.getParentFile / "empty-stdin"
             IO.write(stdin, "")
+            // Standard error is kept out of the returned lines, so a background subsystem's diagnostic is not read as the
+            // program's own output. kyo's logger writes warn and error to standard error, and a module whose sampler reports a
+            // metric family it cannot read on this host would otherwise land after the program's line and be matched as it: a
+            // check that passed or failed by what the host happens to carry rather than by what the program printed. What the
+            // program did still has to be the last line it printed, and a run that died still fails on its exit status.
+            val errFile = outDir.getParentFile / s"${outDir.getName}$suffix.err"
             val process = new ProcessBuilder((Seq("node") ++ flags :+ launched)*)
                 .directory(outDir)
                 .redirectInput(stdin)
-                .redirectErrorStream(true)
                 .redirectOutput(outFile)
+                .redirectError(errFile)
                 .start()
             if (!process.waitFor(120, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 Left("node did not exit within 120 seconds")
             } else {
-                val lines = IO.readLines(outFile)
-                if (process.exitValue != 0) Left(s"node exited with ${process.exitValue}: ${lines.takeRight(5).mkString(" | ")}")
-                else Right(lines)
+                val printed = IO.readLines(outFile)
+                val failed  = IO.readLines(errFile)
+                if (process.exitValue != 0)
+                    Left(s"node exited with ${process.exitValue}: ${(printed ++ failed).takeRight(5).mkString(" | ")}")
+                else Right(printed)
             }
         }
     }
