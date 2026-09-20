@@ -51,6 +51,11 @@ object KyoNativesJSPlugin extends AutoPlugin {
         // Only for a project whose dependencies declare a library. A project that declares none runs on whatever
         // `jsEnv` it already had, which is the one thing this must not take away from a build that enabled the
         // plugin on a whole crossProject for the sake of one leg.
+        //
+        // Where it does apply it REPLACES rather than extends: `NodeJSEnv` exposes no accessor for its `Config`, so
+        // there is nothing to read out of the value being replaced. A project's own `jsEnv` in `.settings` survives,
+        // because a project's settings apply after an auto-plugin's; a `jsEnv` from another plugin applied earlier
+        // does not, and such a build sets `jsEnv` itself and folds in `kyoNativesNodeEnv`.
         jsEnv := {
             val env  = kyoNativesNodeEnv.value
             val base = jsEnv.value
@@ -95,12 +100,14 @@ object KyoNativesJSPlugin extends AutoPlugin {
             IO.createDirectory(root)
             if (!pkg.exists() || IO.read(pkg) != manifest) IO.write(pkg, manifest)
         }
-        // The tree is rewritten to hold exactly what was fetched, not added to. koffi resolves by path and never
+        // The package is rewritten to hold exactly what was fetched, not added to. koffi resolves by path and never
         // consults the classpath, so a library left by an earlier build keeps answering `require.resolve` after the
-        // module that delivered it stopped, and the run then exercises a library this build never produced.
+        // module that delivered it stopped, and the run then exercises a library this build never produced. A
+        // project that now delivers nothing loses the package itself, so "delivers nothing" leaves nothing.
         val wanted     = fetched.map { case (osArch, f) => root / "native" / osArch / f.library.getName }.toSet
         val nativeRoot = root / "native"
-        if (nativeRoot.isDirectory) {
+        if (fetched.isEmpty) IO.delete(root)
+        else if (nativeRoot.isDirectory) {
             (nativeRoot ** "*").get.filter(f => f.isFile && !wanted.contains(f)).foreach(IO.delete)
             (nativeRoot * "*").get.filter(d => d.isDirectory && IO.listFiles(d).isEmpty).foreach(IO.delete)
         }
