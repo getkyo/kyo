@@ -2,9 +2,10 @@ import org.scalajs.linker.interface.ModuleKind
 import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
 
 // One enablePlugins on the crossProject, which is what the module READMEs tell an application to write. Each leg
-// then picks up its own half of the delivery through the two sub-plugins' allRequirements trigger: the JVM leg puts
-// the classifier jar on its classpath, the Native leg links the engine into the binary, and the JS leg writes it
-// where koffi resolves it. The three legs share one source file, so what differs between them is the delivery.
+// then picks up its own half of the delivery through the two sub-plugins' allRequirements trigger: the Native leg
+// links the engine into the binary, the JS leg writes it where koffi resolves it, and the JVM leg takes nothing,
+// because this engine rides in the main jar the project already depends on and the JVM loader extracts from the
+// classpath. The three legs share one source file, so what differs between them is the delivery.
 lazy val app = crossProject(JVMPlatform, NativePlatform, JSPlatform)
     .crossType(CrossType.Full)
     .in(file("."))
