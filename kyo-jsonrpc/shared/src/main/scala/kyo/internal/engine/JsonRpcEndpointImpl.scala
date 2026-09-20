@@ -272,7 +272,7 @@ object JsonRpcEndpointImpl:
                     // after the one before it completes, and a request handler starts after every notification that arrived before
                     // it. Requests run concurrently with each other and hold up nothing after them. The cell holds the handler
                     // fiber of the latest notification; only the reader's decode callback, which sees messages one at a time in
-                    // arrival order, reads or replaces it. Handlers wait on a masked view of that fiber: waiting on a fiber links
+                    // arrival order, reads or replaces it. Handlers wait on an uninterruptible view of that fiber: waiting on a fiber links
                     // the waiter's interrupt to it, and a cancelled request must not interrupt an earlier notification's handler.
                     // Unsafe: written from the Sync-only decode callback, which has no Async to wait in.
                     val notificationTail = AtomicRef.Unsafe.init[Fiber[Unit, Any]](Fiber.unit)(using AllowUnsafe.embrace.danger)
@@ -480,7 +480,8 @@ object JsonRpcEndpointImpl:
                                                                                 // whose effect row admits no Abort, and it is REPORTED rather than
                                                                                 // dropped: a notification has no reply to carry a failure back on, so
                                                                                 // this log is the only place it can surface.
-                                                                                val previous = notificationTail.get().unsafe.mask().safe
+                                                                                val previous =
+                                                                                    notificationTail.get().unsafe.uninterruptible().safe
                                                                                 Fiber.initUnscoped(
                                                                                     previous.getResult.andThen(
                                                                                         Abort.run[Any](handlerEffect).map {
@@ -609,8 +610,9 @@ object JsonRpcEndpointImpl:
                                                                 pendingInbound.put(id, entry)
                                                                 // Starts once every notification that arrived before this request has been
                                                                 // handled (see notificationTail).
-                                                                val precedingNotifications = notificationTail.get().unsafe.mask().safe
-                                                                val handlerEffect          =
+                                                                val precedingNotifications =
+                                                                    notificationTail.get().unsafe.uninterruptible().safe
+                                                                val handlerEffect =
                                                                     precedingNotifications.getResult.andThen(
                                                                         m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
                                                                     )
