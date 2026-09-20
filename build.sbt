@@ -3671,8 +3671,11 @@ lazy val `native-settings` = `native-settings-base` ++ Seq(
 )
 
 lazy val `js-settings` = Seq(
-    Compile / doc / sources  := Seq.empty,
-    fork                     := false,
+    Compile / doc / sources := Seq.empty,
+    fork                    := false,
+    // Node's test process takes its options from jsEnv, so nothing reads these; empty says so rather
+    // than leaving a JVM-shaped setting that looks like it configures the run.
+    Test / javaOptions       := Nil,
     bspEnabled               := false,
     Test / parallelExecution := false,
     // Node's arguments and environment for the test rows are KyoJsRows' kyoNodeArgs and kyoNodeEnv (defaults there), which it

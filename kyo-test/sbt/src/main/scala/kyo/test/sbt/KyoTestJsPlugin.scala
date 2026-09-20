@@ -7,14 +7,14 @@ import sbt.Keys._
 import scala.util.Properties
 
 /** Auto-triggered companion that swaps the JVM framework for the Scala.js framework on any project where both [[KyoTestPlugin]] and
-  * [[ScalaJSPlugin]] are enabled, and offers an environment that runs the linked tests in Chrome.
+  * `ScalaJSPlugin` are enabled, and offers an environment that runs the linked tests in Chrome.
   *
   * To run a configuration's tests in a browser, assign the environment to its `jsEnv`:
   * {{{
   * Test / jsEnv := kyoTestBrowserEnv.value
   * }}}
-  * The environment starts kyo-test-browser, whose classpath [[SbtKyoTestBrowserPlugin]] resolves for projects that enable
-  * [[SbtKyoTestPlugin]]. A build that wires kyo-test by hand adds [[browserSettings]] to its Scala.js projects and sets
+  * The environment starts kyo-test-browser, whose classpath `SbtKyoTestBrowserPlugin` resolves for projects that enable
+  * `SbtKyoTestPlugin`. A build that wires kyo-test by hand adds [[browserSettings]] to its Scala.js projects and sets
   * `kyoTestBrowserClasspath` to that artifact's runtime classpath.
   */
 object KyoTestJsPlugin extends AutoPlugin {
