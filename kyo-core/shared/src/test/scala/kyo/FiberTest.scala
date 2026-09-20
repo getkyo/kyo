@@ -201,6 +201,45 @@ class FiberTest extends kyo.test.Test[Any]:
                     _      <- assertEventually(interruptCount.get.map(_ == 2))
                 yield assert(result == 1)
             }
+            "a completed child leaves no registration on its parent" in {
+                // A parent that keeps forking (a supervisor, a poll loop, anything long-lived) links each child so its
+                // own interrupt cascades down. A child that has already completed has nothing left to interrupt, so
+                // that link must go when the child does: otherwise the parent accumulates one registration per child
+                // it ever forked, for as long as it lives, and each one keeps a finished fiber reachable.
+                //
+                // Fenced on the children's own results, not on time: every child is awaited to completion before the
+                // parent's registrations are counted.
+                // Measured as GROWTH between two child counts rather than an absolute number: a parked parent always
+                // holds one registration of its own (joining a promise links the awaited promise on the joiner too),
+                // and pinning that constant would be a test of an internal detail. What must hold is that the count
+                // does not scale with how many children have come and gone.
+                def withParkedParent[A](children: Int)(f: Fiber[Unit, Any] => A < Async)(using Frame): A < Async =
+                    for
+                        forked  <- Latch.init(1)
+                        proceed <- Latch.init(1)
+                        parent  <- Fiber.initUnscoped {
+                            Kyo.foreachDiscard(1 to children)(i => Async.zip(Sync.defer(i), Sync.defer(i + 1)).unit)
+                                .andThen(forked.release)
+                                .andThen(proceed.await)
+                        }
+                        _      <- forked.await // every child has been awaited; the parent is parked on `proceed`
+                        result <- f(parent)
+                        _      <- proceed.release
+                        _      <- parent.getResult
+                    yield result
+
+                for
+                    // The floor: a parked parent always holds one registration of its own, because joining a promise
+                    // links the awaited promise on the joiner too.
+                    baseline <- withParkedParent(0)(_.waiters)
+                    // A child's last step after completing is dropping its link, which can trail the parent observing
+                    // the child's result by a moment; converging is the assertion, not the first reading. With a link
+                    // that outlives its child this sits near 400 and never comes down.
+                    _ <- withParkedParent(200)(parent => assertEventually(parent.waiters.map(_ == baseline)))
+                yield succeed
+                end for
+            }
+
             "interrupt with Defer prefix still cascades to awaited promise" in {
                 // In the Defer-prefix race the fiber can be interrupted before it processes the Async.Join
                 // and links the cascade; the link is then registered post-hoc in IOTask.ensureInterrupt
