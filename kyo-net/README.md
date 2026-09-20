@@ -302,33 +302,19 @@ The transport is not delivered this way and does not need to be: Scala Native co
 
 On Node the same plugin delivers the transport and BoringSSL libraries, and the application then runs on the posix transport rather than the `JsTransport` floor. A Node process on this transport stays alive while a listener is open and exits once its last connection closes. Without the plugin Node runs on the floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
-io_uring, and TLS from the machine's own OpenSSL rather than from the artifact, come from libraries on the machine that links. kyo-net's artifact declares them, system OpenSSL and a static liburing on Linux, and the kyo FFI plugin looks for them in your build: it compiles and links a small probe against each, and for each one that links it enables the shim and adds the library to your link. That plugin needs the two lines that fold its answer into `nativeConfig`:
+io_uring, and TLS from the machine's own OpenSSL rather than from the artifact, come from libraries on the machine that links rather than from the artifact. The same plugin finds them. kyo-net's artifact declares what to look for, system OpenSSL and a static liburing on Linux, and the plugin compiles and links a small probe against each: for every one that links, it enables that shim and adds the library to your link. Nothing further to add, and `sbt show kyoNativesSystemLibraries` lists what it found.
 
-```
-// project/plugins.sbt
-addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)
-```
+The probe has to run in your build rather than in kyo's because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
 
-```
-// the Native project; on a crossProject, `.nativeConfigure(_.enablePlugins(...))` covers only this leg
-.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin)
-.settings(
-    nativeConfig := {
-        val base = nativeConfig.value
-        base
-            .withLinkingOptions(base.linkingOptions ++ ffiNativeDependencyLinkingOptions.value)
-            .withCompileOptions(base.compileOptions ++ ffiNativeDependencyCompileOptions.value)
-    }
-)
-```
+A library that does not link is not an error. Its shim compiles stubs and the capability reports itself unavailable at run time, exactly as it does on a machine where the library is absent on any other platform. On Linux, `liburing-dev` is what turns io_uring on; without it epoll serves.
 
-`ffiNativeDependencyLinkingOptions` and `ffiNativeDependencyCompileOptions` carry, for each library found, the define that enables its shim, its include and library paths, and its link flags. They have to be wired in explicitly because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
-
-What kyo-ffi-plugin looks for:
+What the plugin looks for:
 
 - OpenSSL: `openssl/ssl.h` with `-lssl -lcrypto`, in the compiler's default paths and then, on macOS, under Homebrew's `openssl@3` and `openssl` prefixes and MacPorts' `/opt/local`. Install `libssl-dev` (Debian, Ubuntu), `openssl-devel` (Fedora), or `brew install openssl@3`.
 - liburing, Linux only: `liburing.h` linked statically, so the binary carries no runtime liburing dependency. Install `liburing-dev`; a machine with only the shared library leaves io_uring off, and epoll serves.
 
-`sbt show ffiNativeSystemLibraries` lists the libraries found and the flags each adds, and a `[kyo-ffi-plugin]` line in the build output names each one that was not found. The plugin is a build-time dependency only: nothing in the application imports it.
+`sbt show kyoNativesSystemLibraries` lists the libraries found and the flags each adds, and a `[kyo-natives]` line in the build output names each one that was not found. The plugin is a build-time dependency only: nothing in the application imports it.
 
-The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs, so a macOS binary links the same sources a Linux one does and selects kqueue. One TLS route is enough: `kyo-natives-plugin` for BoringSSL from the artifact, or kyo-ffi-plugin for the machine's OpenSSL. Enabling both costs a system library the binary will not use. They are separate providers over separate libraries, and the delivered BoringSSL library exports its own `kyo_bssl_*` wrappers and no BoringSSL symbols at all, so the machine's OpenSSL has nothing in it to bind to.
+The I/O backend is chosen at runtime, as on every other platform, and the shims that do not apply to the target compile to stubs, so a macOS binary links the same sources a Linux one does and selects kqueue.
+
+TLS has two providers and they are independent. The delivered BoringSSL library exports its own `kyo_bssl_*` wrappers and no BoringSSL symbols at all, so the machine's OpenSSL has nothing in it to bind to, and both can be linked without interfering. `BoringSslProvider` is the one selected when both are present; a machine with OpenSSL and no BoringSSL for its os-arch gets the OpenSSL one. The only cost of having both is a system library the binary does not call, which `-Dkyo.net.tls` can also decide explicitly.

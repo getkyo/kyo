@@ -120,6 +120,7 @@ object KyoNativesNativePlugin extends AutoPlugin {
       * The OS is the one the binary is being built for, not the one this build runs on, so a cross-compiling build
       * probes for the right libraries rather than the host's. `kyoNativesTargets` is preferred over the compiler's own
       * triple for the same reason `kyoNativesResolvedTargets` prefers it: a build that cross-compiles says so there.
+      * A target this build cannot name at all probes for nothing, rather than guessing the host's OS.
       *
       * A declared library that does not link is not an error. The producer's shim compiles its stub branch and the
       * capability reports itself unavailable at runtime, which is the same outcome every other platform gives for a
@@ -129,33 +130,32 @@ object KyoNativesNativePlugin extends AutoPlugin {
         val log     = streams.value.log
         val cp      = (Compile / dependencyClasspath).value.map(_.data)
         val workDir = target.value / "kyo-natives" / "system-library-probes"
-        val os      = probeOs(kyoNativesTargets.value.headOption)
-        if (kyoNativesSource.value == NativesSource.Disabled || os.isEmpty) Nil
+        if (kyoNativesSource.value == NativesSource.Disabled) Nil
         else {
-            // The compiler Scala Native will link with, so a machine whose LLVM_BIN clang differs from the one on the
-            // PATH is probed with the one that matters.
-            val cc = Discover.clang().toString
-            NativeSystemLibraries.readJars(cp).flatMap { declared =>
-                val probe    = NativeSystemLibraries.probeWith(cc, declared.system.headers, workDir / declared.id, log)
-                val resolved = NativeSystemLibraries.resolve(declared, os.get, probe)
-                resolved match {
-                    case Some(r) =>
-                        log.info(s"[kyo-natives] ${r.id}: linking the system library (${r.linkFlags.mkString(" ")})")
-                    case None =>
-                        log.info(
-                            s"[kyo-natives] ${declared.id}: ${declared.system.headers.mkString(", ")} with " +
-                                s"${declared.system.resolvedLinkLibs(os.get).mkString(", ")} does not link on this " +
-                                "machine; its shim compiles stubs."
-                        )
+            // Discovered once: each call shells out to find the toolchain, and the probe below asks the same question
+            // for every declared library.
+            val clang = Discover.clang()
+            val os    = kyoNativesTargets.value.headOption.orElse(NativeTargets.ofTriple(Discover.targetTriple(clang)))
+                .map(NativeTargets.osOf)
+            os.toSeq.flatMap { targetOs =>
+                NativeSystemLibraries.readJars(cp).flatMap { declared =>
+                    val probe    = NativeSystemLibraries.probeWith(clang.toString, declared.system.headers, workDir / declared.id, log)
+                    val resolved = NativeSystemLibraries.resolve(declared, targetOs, probe)
+                    resolved match {
+                        case Some(r) =>
+                            log.info(s"[kyo-natives] ${r.id}: linking the system library (${r.linkFlags.mkString(" ")})")
+                        case None =>
+                            log.info(
+                                s"[kyo-natives] ${declared.id}: ${declared.system.headers.mkString(", ")} with " +
+                                    s"${declared.system.resolvedLinkLibs(targetOs).mkString(", ")} does not link on " +
+                                    "this machine; its shim compiles stubs."
+                            )
+                    }
+                    resolved
                 }
-                resolved
             }
         }
     }
-
-    /** The OS to probe for: the named target's, else the one the compiler on this machine targets. */
-    private def probeOs(named: Option[String]): Option[String] =
-        named.orElse(NativeTargets.ofTriple(Discover.targetTriple(Discover.clang()))).map(NativeTargets.osOf)
 
     /** Why `target`'s libraries cannot reach a Scala Native link, or None when they can.
       *
