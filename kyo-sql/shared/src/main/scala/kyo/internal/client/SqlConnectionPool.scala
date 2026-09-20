@@ -208,10 +208,13 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * interrupt landing mid-drain cannot leave a connection open.
       */
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
-        // Marked closed first so tryReserve opens no new connection; slot channels stay open through the grace
-        // period for in-flight callers. `ensureMap`, not `map`: the drain must install in the step that extracts the
-        // ring, or a stop on the poll between abandons connections the pool no longer holds.
-        Sync.Unsafe.defer(closeExtract()).ensureMap(idleConns => closeDrain(idleConns, gracePeriod))
+        // Marked closed first so tryReserve opens no new connection; slot channels stay open through the grace period
+        // for in-flight callers. The logger is captured before the extract and `ensureMap` installs the force-close in
+        // the step that extracts the ring, so no poll sits between the extract and the finalizer: one there would
+        // strand connections the ring no longer holds, out of the ring and never closed.
+        Log.use { logger =>
+            Sync.Unsafe.defer(closeExtract()).ensureMap(idleConns => closeDrain(idleConns, logger, gracePeriod))
+        }
 
     /** Marks the ring closed and extracts its idle connections, in one unsafe step.
       *
@@ -224,31 +227,30 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
 
     /** Force-closes the connections [[closeExtract]] pulled from the ring, under a grace-period drain.
       *
-      * The force-close is a `Sync.ensure` finalizer, not a plain `andThen`, so an interrupt during the grace poll still
-      * closes the idle connections; it stays one `Sync.Unsafe.defer`, atomic once reached.
+      * `logger` is captured by the caller before the extract, so the `Sync.ensure` finalizer installs with no poll after
+      * `closeExtract` removed the connections from the ring: a poll there would strand them, out of the ring and never
+      * closed. The finalizer, not a plain `andThen`, closes them even on an interrupt during the grace poll.
       */
-    def closeDrain(idleConns: Chunk[C], gracePeriod: Duration)(using Frame): Unit < Async =
-        Log.use { logger =>
-            Sync.ensure {
-                // Unsafe: channel.close and the final connection closes require AllowUnsafe.
-                Sync.Unsafe.defer {
-                    slotChans.forEach { (_, ch) =>
-                        discard(Sync.Unsafe.evalOrThrow(ch.closeDiscard))
-                    }
-                    slotChans.clear()
-                    idleConns.foreach(_.closeNow)
-                    // Destroy any connection a reclaim left quarantined at grace expiry (its detached carrier is the only other
-                    // owner). `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
-                    quarantined.forEach { conn =>
-                        if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
-                    }
-                    // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
-                    // counters were still worth reporting, and a pool that outlived its registration would report another pool's
-                    // state under this one's name.
-                    diagRegistration.close()
+    def closeDrain(idleConns: Chunk[C], logger: Log, gracePeriod: Duration)(using Frame): Unit < Async =
+        Sync.ensure {
+            // Unsafe: channel.close and the final connection closes require AllowUnsafe.
+            Sync.Unsafe.defer {
+                slotChans.forEach { (_, ch) =>
+                    discard(Sync.Unsafe.evalOrThrow(ch.closeDiscard))
                 }
-            }(drain(gracePeriod))
-        }
+                slotChans.clear()
+                idleConns.foreach(_.closeNow)
+                // Destroy any connection a reclaim left quarantined at grace expiry (its detached carrier is the only other
+                // owner). `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
+                quarantined.forEach { conn =>
+                    if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
+                }
+                // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
+                // counters were still worth reporting, and a pool that outlived its registration would report another pool's
+                // state under this one's name.
+                diagRegistration.close()
+            }
+        }(drain(gracePeriod))
 
     /** How many reclaim chains are running right now. Zero once every interrupted lease has been resolved. */
     // Unsafe: read-only view of an already-Unsafe atomic, no suspension needed.

@@ -252,20 +252,13 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** `closeAll` drains the idle ring in one step and installs the force-close of what it extracted in the next, so a stop landing on the
-      * poll between the two would abandon connections the pool no longer holds. The ring drain is microseconds, so the leaf's own fiber
-      * spins to a staggered offset from the step before the close and requests the stop directly. A round whose stop landed before the
-      * close began closes the client itself and proves nothing; one whose close began, which the pool's closed flag shows, must see the
-      * server's session count for the client's `application_name` reach zero within the bound.
-      *
-      * The interrupt window is closed: `Runtime.close` flips the closed flag and extracts the ring in one unsafe step, and `closeDrain`
-      * force-closes what it extracted through a `Sync.ensure` the abandonment runs. This stays pending on a separate pool
-      * connection-lifecycle issue: a warm connection is intermittently a live server session outside the idle ring at close, so
-      * `closeAll` never sees it and it lingers until process exit.
+    /** `closeAll` / `Runtime.close` extract the idle ring and install the force-close of what they extracted with no poll
+      * between, so a stop landing there cannot abandon connections the pool no longer holds, out of the ring and unclosed.
+      * The ring drain is microseconds, so the leaf spins to a staggered offset and requests the stop directly; a round
+      * whose stop landed before the close began proves nothing, one whose close began must see the server's session count
+      * for the client's `application_name` reach zero within the bound.
       */
-    "an interrupt landing as close extracts the idle ring strands no session".pendingUntilFixed(
-        "a warm connection is intermittently a live server session outside the idle ring at close, so closeAll misses it and it lingers; a pool connection-lifecycle issue separate from the now-closed interrupt window"
-    ).notJs.notWasm in {
+    "an interrupt landing as close extracts the idle ring strands no session".notJs.notWasm in {
         val rounds = 120
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
         containerUrl("kyo-sql-close-orphan") { url =>

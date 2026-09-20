@@ -7,6 +7,7 @@ import kyo.AtomicBoolean
 import kyo.AtomicRef
 import kyo.Duration
 import kyo.Frame
+import kyo.Log
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
@@ -74,16 +75,18 @@ final class Runtime[C <: Connection] private[kyo] (
     private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
         // The compare-and-set that commits this caller to closing and the ring extraction are ONE unsafe step, so a
         // stop cannot mark the carrier closed with the ring left open (which the idempotent flag would make permanent).
-        // `ensureMap` installs the force-close drain in the step the extraction delivers its connections, no poll between.
-        Sync.Unsafe.defer {
-            if closedRef.unsafe.compareAndSet(false, true) then Present(pool.closeExtract())
-            else Absent
-        }.ensureMap { extracted =>
-            // `Present`'s extractor is not provably exhaustive over the opaque `Maybe`, and -Werror rejects it, so this
-            // matches `Absent` and reads the winner's connections with `get`.
-            extracted match
-                case Absent => ()
-                case _      => pool.closeDrain(extracted.get, gracePeriod)
+        // The logger is captured before the extract so `closeDrain` installs its force-close with no poll after it.
+        Log.use { logger =>
+            Sync.Unsafe.defer {
+                if closedRef.unsafe.compareAndSet(false, true) then Present(pool.closeExtract())
+                else Absent
+            }.ensureMap { extracted =>
+                // `Present`'s extractor is not provably exhaustive over the opaque `Maybe`, and -Werror rejects it, so this
+                // matches `Absent` and reads the winner's connections with `get`.
+                extracted match
+                    case Absent => ()
+                    case _      => pool.closeDrain(extracted.get, logger, gracePeriod)
+            }
         }
 
     /** Whether [[close]] has been called on this carrier.
