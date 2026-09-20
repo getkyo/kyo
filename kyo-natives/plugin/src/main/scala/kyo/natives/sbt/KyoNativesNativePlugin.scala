@@ -15,7 +15,7 @@ import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
   * compiled to nothing, and the binary is linked against the prebuilt library directly. Without that the link holds
   * two definitions of every entry point, the shim's stubs and the library's real ones.
   *
-  * The binary records `@rpath/lib<id>.dylib` (`$ORIGIN` on linux) and the libraries are staged beside it, so a linked
+  * The binary records `@rpath/lib<id>.dylib` (`\$ORIGIN` on linux) and the libraries are staged beside it, so a linked
   * binary runs from anywhere and deploys as a directory. That directory has to travel with it: a Native application
   * using kyo's natives is not a single file, in the same way a JVM application is not a single file.
   */

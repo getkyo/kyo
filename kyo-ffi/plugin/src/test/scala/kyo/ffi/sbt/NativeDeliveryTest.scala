@@ -12,8 +12,8 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
 
     test("render and parse round-trip a sliced module") {
         val delivery = Map(
-            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl"),
-            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>", Set("jvm", "js"))
+            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl", NativeDelivery.allPlatforms),
+            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>")
         )
         val parsed = NativeDelivery.parse(NativeDelivery.render(delivery).mkString("\n"))
         parsed.map(d => d.id -> NativeDelivery.Entry(d.classifierPattern, d.platforms)).toMap shouldBe delivery
@@ -21,7 +21,13 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
 
     test("render and parse round-trip a module keeping its natives in the main artifact") {
         val parsed = NativeDelivery.parse(NativeDelivery.render(Map("kyo_aeron" -> NativeDelivery.Entry(""))).mkString("\n"))
-        parsed shouldBe Seq(NativeDelivery.Declared("kyo_aeron", "", NativeDelivery.allPlatforms))
+        parsed shouldBe Seq(NativeDelivery.Declared("kyo_aeron", "", NativeDelivery.defaultPlatforms))
+    }
+
+    test("Native is not a default: a library gets there only where the module opts in") {
+        NativeDelivery.defaultPlatforms should not contain "native"
+        NativeDelivery.Declared("kyo_sqlite", "").deliversTo("native") shouldBe false
+        NativeDelivery.Declared("kyo_aeron", "", NativeDelivery.allPlatforms).deliversTo("native") shouldBe true
     }
 
     test("render emits nothing for a module that delivers no library") {
@@ -35,9 +41,11 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
         one.head shouldBe "libraries = a, b"
     }
 
-    test("render omits the platform line for a library every platform takes") {
+    test("render omits the platform line where it matches the default") {
         NativeDelivery.render(Map("kyo_aeron" -> NativeDelivery.Entry(""))).exists(_.contains("platforms")) shouldBe false
         NativeDelivery.render(Map("kyo_aeron" -> NativeDelivery.Entry("", Set("jvm")))) should contain("kyo_aeron.platforms = jvm")
+        NativeDelivery.render(Map("kyo_aeron" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))) should
+            contain("kyo_aeron.platforms = js, jvm, native")
     }
 
     test("render rejects a platform that is not one kyo publishes for") {
@@ -66,8 +74,8 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
         NativeDelivery.parse("libraries = kyo_aeron\n") shouldBe Seq(NativeDelivery.Declared("kyo_aeron", ""))
     }
 
-    test("parse of a declaration with no platform line delivers everywhere") {
-        NativeDelivery.parse("libraries = kyo_aeron\n").head.platforms shouldBe NativeDelivery.allPlatforms
+    test("parse of a declaration with no platform line takes the default, which excludes Native") {
+        NativeDelivery.parse("libraries = kyo_aeron\n").head.platforms shouldBe NativeDelivery.defaultPlatforms
     }
 
     test("parse of an unrelated properties file yields nothing") {

@@ -38,6 +38,15 @@ object NativeDelivery {
     /** The platform names a delivery can be scoped to, which are the platforms kyo publishes for. */
     val allPlatforms: Set[String] = Set("jvm", "js", "native")
 
+    /** The platforms a library is delivered to unless the module says otherwise.
+      *
+      * Native is not among them, because delivering there is only correct for a library whose shim answers
+      * [[FfiLibrary.externalDefineFor]] by compiling to nothing. Scala Native otherwise compiles the module's C into
+      * the binary, and a delivered library would sit beside it defining the same entry points, shadowed and still
+      * carried. A module whose shim has that state opts in; nothing can detect it from the outside.
+      */
+    val defaultPlatforms: Set[String] = Set("jvm", "js")
+
     /** What a module delivers for one library: the classifier pattern of the artifact carrying its shared library, and
       * the platforms that should take it.
       *
@@ -47,10 +56,10 @@ object NativeDelivery {
       * link a second copy the compiled-in one shadows, and saddle the binary with a file it has to carry and does not
       * use.
       */
-    final case class Entry(classifierPattern: String, platforms: Set[String] = allPlatforms)
+    final case class Entry(classifierPattern: String, platforms: Set[String] = defaultPlatforms)
 
     /** One library id and the [[Entry]] a declaration carries for it. */
-    final case class Declared(id: String, classifierPattern: String, platforms: Set[String] = allPlatforms) {
+    final case class Declared(id: String, classifierPattern: String, platforms: Set[String] = defaultPlatforms) {
 
         /** The classifier for `osArch`, or None when the library ships in the module's main artifact. */
         def classifier(osArch: String): Option[String] = {
@@ -76,8 +85,8 @@ object NativeDelivery {
                 sys.error(s"[kyo-ffi-plugin] '$bad' is not a platform; use ${allPlatforms.toSeq.sorted.mkString(", ")}.")
             }
             (s"libraries = ${ids.mkString(", ")}" +: ids.map(id => s"$id.classifier = ${delivery(id).classifierPattern}")) ++
-                // Only written where it narrows, so a module delivering to every platform keeps the shorter declaration.
-                ids.filter(id => delivery(id).platforms != allPlatforms)
+                // Only written where it differs from the default, so the common declaration stays short.
+                ids.filter(id => delivery(id).platforms != defaultPlatforms)
                     .map(id => s"$id.platforms = ${delivery(id).platforms.toSeq.sorted.mkString(", ")}")
         }
 
@@ -92,7 +101,7 @@ object NativeDelivery {
             Declared(
                 id,
                 Option(props.getProperty(s"$id.classifier")).map(_.trim).getOrElse(""),
-                if (platforms.isEmpty) allPlatforms else platforms
+                if (platforms.isEmpty) defaultPlatforms else platforms
             )
         }
     }

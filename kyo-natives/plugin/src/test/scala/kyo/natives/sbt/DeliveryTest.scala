@@ -28,7 +28,7 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         NativeDelivery.dir.mkString("/") + "/demo.properties" -> NativeDelivery.render(delivery).mkString("\n")
 
     test("a Native jar's declaration yields the JVM artifact of the same module and version") {
-        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.Entry(""))))) { jar =>
+        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))))) { jar =>
             val module   = "io.getkyo" % "kyo-aeron_native0.5_3" % "1.2.3"
             val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64", "native")
             requests.map(_.libId) shouldBe Seq("kyo_aeron")
@@ -42,7 +42,8 @@ class DeliveryTest extends AnyFunSuite with Matchers {
     }
 
     test("a sliced module's declaration names the classifier for the target asked for") {
-        withJar(Seq(deliveryEntry(Map("kyonet_boringssl" -> NativeDelivery.Entry("<os-arch>-boringssl"))))) { jar =>
+        val boringssl = Map("kyonet_boringssl" -> NativeDelivery.Entry("<os-arch>-boringssl", NativeDelivery.allPlatforms))
+        withJar(Seq(deliveryEntry(boringssl))) { jar =>
             val module  = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
             val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64", "native").head.module
             carrier.name shouldBe "kyo-net_3"
@@ -53,8 +54,8 @@ class DeliveryTest extends AnyFunSuite with Matchers {
     test("a library the declaration does not deliver to this platform is not requested") {
         // kyo-net's shape: the transport's C compiles into a Native binary already, the TLS shim's library does not.
         val delivery = Map(
-            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>", Set("jvm", "js")),
-            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl")
+            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>"),
+            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl", NativeDelivery.allPlatforms)
         )
         withJar(Seq(deliveryEntry(delivery))) { jar =>
             val module = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"

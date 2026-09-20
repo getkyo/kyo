@@ -687,10 +687,11 @@ work:
   READMEs carry the snippets.
 - **TLS, on Scala Native.** Every connection goes through kyo-net, whose C shims are compiled into the binary.
   Without further setup a Native build links and plaintext connections work, but TLS reports unavailable, so a
-  URL that requires TLS fails. TLS needs OpenSSL on the machine that links and the kyo FFI plugin to find it:
-  `addSbtPlugin("io.getkyo" % "kyo-ffi-plugin" % kyoVersion)`, `.nativeConfigure(_.enablePlugins(kyo.ffi.sbt.KyoFfiPlugin))`,
-  and the two `ffiNativeDependency*Options` tasks folded into `nativeConfig`. See kyo-net's
-  [Scala Native builds](../kyo-net/README.md#scala-native-builds) for the exact block.
+  URL that requires TLS fails. TLS comes from the BoringSSL library kyo-net's artifact carries, delivered by
+  `addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)` and
+  `.nativeConfigure(_.enablePlugins(KyoNativesPlugin))`, and needs nothing installed on the machine. See kyo-net's
+  [Scala Native builds](../kyo-net/README.md#scala-native-builds), which also covers running TLS on the machine's
+  own OpenSSL instead.
 - **A third engine is one artifact.** `db.Backend` (a scheme, a dialect, an `open`), a dialect written by
   overriding only what diverges from standard SQL (four members are abstract), and the registration above.
   Nothing in kyo-sql names an engine, so an out-of-tree driver is an ordinary dependency.
