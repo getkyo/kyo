@@ -39,13 +39,21 @@ class NodeRequireTest extends Test:
 
     /** Resolution walks up from the anchor, so anchoring at the working directory makes a package next to the
       * bundle reachable or not depending on where the process was started. Asserted on the anchor rather than on a
-      * load, because a load succeeds under either one whenever both trees happen to reach the package.
+      * load, because a load succeeds under either anchor whenever both trees happen to reach the package.
+      *
+      * Driven by a stub rather than by this process, whose argv carries no entry script: an assertion against
+      * whatever the runner happens to expose pins nothing, and reads as green on a runtime that cannot show the
+      * difference.
       */
-    "anchors at the entry script rather than the working directory" in {
-        val proc  = sjs.Dynamic.global.selectDynamic("process")
-        val entry = proc.selectDynamic("argv").asInstanceOf[sjs.Array[String]](1)
-        assert(entry.nonEmpty)
-        assert(NodeRequire.anchor(proc) == entry)
+    private def stubProc(argv: sjs.Array[String], cwd: String): sjs.Dynamic =
+        sjs.Dynamic.literal(argv = argv, cwd = (() => cwd): sjs.Function0[String])
+
+    "anchors at the entry script when there is one" in {
+        assert(NodeRequire.anchor(stubProc(sjs.Array("node", "/app/main.mjs"), "/elsewhere")) == "/app/main.mjs")
+    }
+
+    "anchors at the working directory when there is no entry script" in {
+        assert(NodeRequire.anchor(stubProc(sjs.Array("node"), "/elsewhere")) == "/elsewhere/")
     }
 
 end NodeRequireTest

@@ -60,6 +60,14 @@ class SystemPlatformSpecificJsWasmTest extends kyo.test.Test[Any]:
             assert(SystemPlatformSpecific.availableProcessors() == SystemPlatformSpecific.availableProcessors())
         }
 
+        // Asserted on the `os` route itself, not through availableProcessors: `navigator` reports the same number
+        // on Node 21 and later, so the aggregate stays green with this route dead and only an older Node, where
+        // neither answers, degrades to the stub. This axis links as ESModule, which is the module kind that has no
+        // `require` global to reach the builtin with.
+        "reaches the os builtin on this module kind" in {
+            assert(SystemPlatformSpecific.nodeProcessors() == NodeOsProbe.availableParallelism())
+        }
+
         "falls back to a positive count with no process global" in {
             assert(withoutProcessGlobal(SystemPlatformSpecific.availableProcessors()) >= 1)
         }

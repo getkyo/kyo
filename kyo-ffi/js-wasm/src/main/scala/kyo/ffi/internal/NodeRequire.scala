@@ -62,7 +62,7 @@ private[ffi] object NodeRequire:
       * so a test that only loads one cannot tell the entry script from the working directory.
       */
     private[ffi] def anchor(proc: js.Dynamic): String =
-        val argv = proc.selectDynamic("argv")
+        val argv  = proc.selectDynamic("argv")
         val entry =
             if js.isUndefined(argv) || argv == null then null
             else
