@@ -12,7 +12,7 @@ permissions:
 
 # The native producer jobs (P3) and the publish job all gate on the same condition: a push (main or
 # a v1.* tag) or a `/release` comment on a PR. Producers build ONE os-arch's classifier natives each
-# and upload only those; the publish job downloads all of them into ffiPrebuiltDir so the single JVM
+# and upload only those; the publish job downloads all of them into ffiPrebuiltPool so the single JVM
 # ci-release slices every os-arch's classifier jars (DECISION-P2b) and the completeness guard runs as
 # the pre-sonaRelease belt. Windows publishes kyo-aeron's shim and kyo-net's posix/uring shim: kyo_epoll.c
 # and kyo_uring.c define their entry points on every target, so those bindings resolve there and answer

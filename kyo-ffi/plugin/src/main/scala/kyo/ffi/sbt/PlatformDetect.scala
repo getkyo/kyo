@@ -1,10 +1,6 @@
 package kyo.ffi.sbt
 
-/** Detects the surrounding crossProject platform.
-  *
-  * Strategy: inspect the set of task-key labels defined in the project, Scala Native
-  * projects expose `nativeLink`, Scala.js projects expose `fastLinkJS`. Falls back to
-  * JVM if neither is present.
+/** Detects the surrounding crossProject platform from the project's enabled auto-plugins.
   *
   * Consumed by `KyoFfiPlugin` to auto-default `ffiTargetPlatform`, so that a plain
   * `enablePlugins(KyoFfiPlugin, ScalaNativePlugin)` or `enablePlugins(KyoFfiPlugin,
@@ -15,39 +11,23 @@ private[sbt] object PlatformDetect {
 
     sealed trait Platform {
         def name: String
-        def codegenName: String
     }
     case object Jvm extends Platform {
-        val name: String        = "JVM"
-        val codegenName: String = "JVM"
+        val name: String = "JVM"
     }
     case object Native extends Platform {
-        val name: String        = "Native"
-        val codegenName: String = "Native"
+        val name: String = "Native"
     }
     case object Js extends Platform {
-        val name: String        = "JS"
-        val codegenName: String = "JS"
+        val name: String = "JS"
     }
 
-    /** Heuristic detection based on task-key labels defined in the project.
+    /** sbt exposes the enabled auto-plugin list as a plain setting, and the plugin-class
+      * simpleName convention (`ScalaNativePlugin`, `ScalaJSPlugin`) is stable across releases.
       *
-      *  - Presence of `nativeLink`   ⇒ Scala Native.
-      *  - Presence of `fastLinkJS`   ⇒ Scala.js.
-      *  - Neither                    ⇒ JVM.
-      *
-      * The `nativeLink` check is intentionally before `fastLinkJS`: a misconfigured
-      * project that somehow enables both plugins would still compile (we pick one)
-      * instead of silently falling through to JVM.
-      */
-    def detectFromSettings(definedKeys: Set[String]): Platform =
-        if (definedKeys.contains("nativeLink")) Native
-        else if (definedKeys.contains("fastLinkJS")) Js
-        else Jvm
-
-    /** Auto-plugin-based detection, preferred, because sbt exposes the enabled
-      * auto-plugin list as a plain setting. The plugin-class-name simpleName
-      * convention (`ScalaNativePlugin`, `ScalaJSPlugin`) is stable across releases.
+      * The Native check runs before the JS one so a project that enables both still resolves to a
+      * platform rather than falling through to the JVM default, which would compile the C for the
+      * wrong target.
       */
     def detectFromAutoPlugins(pluginNames: Set[String]): Platform =
         if (containsSuffix(pluginNames, "ScalaNativePlugin")) Native
