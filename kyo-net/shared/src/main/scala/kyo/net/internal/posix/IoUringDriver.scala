@@ -123,10 +123,10 @@ final private[net] class IoUringDriver private[posix] (
     // JS only: the reap task of a driver that parked itself instead of taking another turn, or null while the chain runs.
     //
     // On Node the fused submit-and-wait is a `koffi.callAsync` request onto a libuv worker, and an outstanding work request is one of the things
-    // the runtime counts when it decides whether the process may exit. The chain re-arms after every turn, so an application that finished its
-    // last connection kept one outstanding for as long as it lived and the process never ended on its own. Holding the task here instead, and
-    // resuming it from `wakeReapLoop`, is what lets the event loop drain. JVM and Native park a thread this process already owns, which holds
-    // nothing open, so they re-arm unconditionally and never reach this field.
+    // the runtime counts when it decides whether the process may exit. Re-arming the chain on a turn with nothing outstanding keeps one such
+    // request alive for as long as the driver does, so an application that finished its last connection never exits on its own. Holding the task
+    // here instead, and resuming it from `wakeReapLoop`, is what lets the event loop drain. JVM and Native park a thread this process already
+    // owns, which holds nothing open, so they re-arm unconditionally and never reach this field.
     //
     // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
     // thread, and the JS scheduler always defers to the macrotask queue, so a resumed turn never runs on the submitting call's own stack. The

@@ -103,8 +103,7 @@ object KyoNativesPlugin extends AutoPlugin {
       *
       * Each carries the coordinate it was resolved from, and the artifact within it. sbt-assembly's dedup reads
       * `moduleID`; sbt-native-packager's `lib/` naming builds a name from the two TOGETHER and falls back to the bare
-      * file name when either is missing, so attaching only the coordinate would have left the jars named as they are
-      * on disk. The artifact carries the classifier, which is what keeps kyo-net's two apart.
+      * file name when either is missing. The artifact carries the classifier, which is what keeps kyo-net's two apart.
       */
     private def jvmJars: Def.Initialize[Task[Seq[Attributed[File]]]] = Def.task {
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet)

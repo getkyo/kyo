@@ -167,10 +167,10 @@ final private[net] class PollerIoDriver private[posix] (
     // JS only: the cycle task of a driver that parked itself instead of polling, or null when the chain is running.
     //
     // On Node the poll is a `koffi.callAsync` onto a libuv worker, and an outstanding work request is one of the things Node counts when it
-    // decides whether the process may exit. A driver with nothing registered re-arms anyway, so a program that finished its last connection
-    // keeps one request outstanding for as long as it lives and the process never exits on its own. Holding the task here instead, and
-    // resuming it from `triggerWake`, is what lets the event loop drain. JVM and Native park a thread this process already owns, which holds
-    // nothing open, so they re-arm unconditionally and never reach this field.
+    // decides whether the process may exit. Re-arming a driver with nothing registered keeps one such request alive for as long as the driver
+    // does, so a program that finished its last connection never exits on its own. Holding the task here instead, and resuming it from
+    // `triggerWake`, is what lets the event loop drain. JVM and Native park a thread this process already owns, which holds nothing open, so
+    // they re-arm unconditionally and never reach this field.
     //
     // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
     // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), and the JS scheduler
@@ -556,7 +556,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // program that finished its last connection would keep one outstanding for as long as it lives and never exit on its own.
                 // Park the chain instead of polling: every path that gives this driver work goes through `triggerWake`, which resumes the
                 // parked task, so this cannot strand one. JVM and Native poll on a thread the process already owns, which holds nothing
-                // open, so they park in the wait as before.
+                // open, so they park in the wait.
                 if kyo.internal.Platform.isJS && idleNow then idleTask = task
                 else
                     // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
@@ -589,9 +589,8 @@ final private[net] class PollerIoDriver private[posix] (
                         case Present(Result.Success(_)) =>
                             dispatchAndContinue(self)
                         case Present(_) =>
-                            // Wait failed: end the chain, mirroring the old loop's exit on a backend failure or panic. Unreachable through the
-                            // production backends, which fold every inline outcome into a Success carrying a ready count, but reachable through a
-                            // decorator. The crash path is the catch below, not this arm.
+                            // Wait failed: end the chain. Unreachable through the production backends, which fold every inline outcome into a
+                            // Success carrying a ready count, but reachable through a decorator. The crash path is the catch below, not this arm.
                             terminal(donePromise, Result.succeed(()))
                         case Absent =>
                             // The wait is genuinely pending. The scratch is still owned by the in-flight wait, so NOTHING may dispatch, re-arm or

@@ -9,11 +9,11 @@
 # release rather than of the linker.
 #
 # The table is chosen by the file's FORMAT, not by the host, because only one of the two is the export table this
-# argument is about. On ELF that is `.dynsym`, which `nm -D` reads; `nm -gU` there would read `.symtab` instead, and
-# GNU nm accepts `-U` so it would succeed rather than fall through to anything. The two agree today, since the linker
-# demotes a hidden-visibility global to a local in both. They stop agreeing the moment F30's `strip -S -x` lands:
-# `.symtab` goes with it, `.dynsym` does not, and an assertion reading the wrong one would then fail on the strip
-# rather than on the visibility change it exists to catch.
+# argument is about. On ELF that is `.dynsym`, which `nm -D` reads; `nm -gU` there reads `.symtab`, and GNU nm
+# accepts `-U`, so picking by which invocation succeeds would silently read the wrong table. The two agree while
+# both are present, since the linker demotes a hidden-visibility global to a local in either. Only `.dynsym`
+# survives `strip`, so a stripped library read through `.symtab` would report no symbols at all and fail this on the
+# stripping rather than on a visibility change.
 $ exec sh -c 'set -eu; lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); test -n "$lib"; case "$lib" in *.so) nm -D --defined-only "$lib" > syms.txt ;; *) nm -gU "$lib" > syms.txt ;; esac; echo "exported globals: $(wc -l < syms.txt)"; if grep -qE " _?SSL_" syms.txt; then echo "the delivered BoringSSL exports SSL_*, so a binary linking system OpenSSL too can bind to it"; grep -E " _?SSL_" syms.txt | head; exit 1; fi; grep -qE " _?kyo_bssl_" syms.txt'
 $ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); rm -rf deploy; mkdir deploy; cp "$bin" "$lib" server.pem server.key deploy/; here=$(pwd); cd deploy; ./consumer > "$here/out.txt" 2>&1 || { cat "$here/out.txt"; exit 1; }; cat "$here/out.txt"; grep -q "CONSUMER tls=hello" "$here/out.txt"'
 $ exec sh -c 'set -eu; rm -f deploy/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/deploy/consumer" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "libkyonet_boringssl" "$here/missing.txt"'
