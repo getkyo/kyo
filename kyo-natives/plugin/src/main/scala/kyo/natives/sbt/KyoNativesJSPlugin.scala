@@ -57,10 +57,11 @@ object KyoNativesJSPlugin extends AutoPlugin {
     )
 
     private def materializeTask: Def.Initialize[Task[File]] = Def.task {
-        val fetched = kyoNativesFetched.value
-        val base    = target.value
-        if (kyoNativesKoffi.value && fetched.nonEmpty)
-            KoffiBootstrap.install(base, name.value, streams.value.log)
+        val fetched    = kyoNativesFetched.value
+        val base       = target.value
+        val log        = streams.value.log
+        val moduleName = name.value
+        if (kyoNativesKoffi.value && fetched.nonEmpty) KoffiBootstrap.install(base, moduleName, log)
         val root = base / "node_modules" / "@kyo" / "ffi-native"
         // The name has to be the one the runtime resolves, and `private` keeps an accidental `npm publish` from
         // pushing a directory of someone else's binaries.
