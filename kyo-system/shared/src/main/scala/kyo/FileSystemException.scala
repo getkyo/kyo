@@ -49,6 +49,17 @@ case class FileIOException(path: Path, operation: FileSystemOperation, diagnosti
     with FileReadException with FileWriteException with FileStructureException with FileLockException with FileWatchException
     derives CanEqual
 
+/** A write consumed none of the bytes it was offered, leaving `remaining` of them unwritten.
+  *
+  * Distinct from a short write, which consumes some of the buffer and is retried from where it
+  * stopped. A write that consumes nothing would be retried with the same bytes at the same offset
+  * and would report the same result, so the write handles and raw channels stop at the first one
+  * and report this instead of looping.
+  */
+case class FileWriteStalledException(path: Path, remaining: ByteSize)(using Frame)
+    extends FileSystemException(s"Write made no progress on $path with ${remaining.show} unwritten")
+    with FileWriteException derives CanEqual
+
 case class FileAtomicMoveUnsupportedException(source: Path, target: Path)(using Frame)
     extends FileSystemException(s"Required atomic move from $source to $target is unsupported")
     with FileStructureException derives CanEqual

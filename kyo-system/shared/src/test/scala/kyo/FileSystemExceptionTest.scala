@@ -16,18 +16,20 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             FileDirectoryNotEmptyException(p),
             FileInvalidPathException("nul", FileSystemOperation.Read),
             FileIOException(p, FileSystemOperation.Read, cause),
+            FileWriteStalledException(p, 7.bytes),
             FileAtomicMoveUnsupportedException(p, target),
             FileLockUnavailableException(p),
             FileLockTimeoutException(p, 10.millis),
             FileLockOwnershipLostException(p),
             FileWatchInvalidatedException(p)
         )
-        assert(values.size == 12)
+        assert(values.size == 13)
         assert(values(5).asInstanceOf[FileInvalidPathException].input == "nul")
         assert(values(6).asInstanceOf[FileIOException].operation == FileSystemOperation.Read)
         assert(values(6).getCause eq cause)
-        assert(values(7).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
-        assert(values(7).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
+        assert(values(7).asInstanceOf[FileWriteStalledException].remaining == 7.bytes)
+        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].source == p)
+        assert(values(8).asInstanceOf[FileAtomicMoveUnsupportedException].target == target)
     }
 
     "leaves belong only to applicable operation categories" in {
@@ -35,6 +37,8 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
         assert(FileAlreadyExistsException(p).isInstanceOf[FileStructureException])
         assert(FileAtomicMoveUnsupportedException(p, Path("to")).isInstanceOf[FileStructureException])
         assert(FileLockTimeoutException(p, 1.millis).isInstanceOf[FileLockException])
+        assert(FileWriteStalledException(p, 1.bytes).isInstanceOf[FileWriteException])
+        assert(!FileWriteStalledException(p, 1.bytes).isInstanceOf[FileReadException])
         assert(FileLockOwnershipLostException(p).isInstanceOf[FileLockException])
         assert(FileWatchInvalidatedException(p).isInstanceOf[FileWatchException])
         assert(!FileWatchInvalidatedException(p).isInstanceOf[FileReadException])
@@ -120,7 +124,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
 
     // Exhaustive match on FileWriteException covers all concrete subtypes, with no wildcard.
     // FileNotFoundException, FileAccessDeniedException, FileIsADirectoryException,
-    // and FileIOException all implement FileWriteException.
+    // FileIOException, and FileWriteStalledException all implement FileWriteException.
     "exhaustive match on FileWriteException" in {
         val ex: FileWriteException = FileNotFoundException(p)
         val result                 = ex match
@@ -129,6 +133,7 @@ class FileSystemExceptionTest extends kyo.test.Test[Any]:
             case _: FileIsADirectoryException => "FileIsADirectoryException"
             case _: FileInvalidPathException  => "FileInvalidPathException"
             case _: FileIOException           => "FileIOException"
+            case _: FileWriteStalledException => "FileWriteStalledException"
         assert(result == "FileNotFoundException")
     }
 
