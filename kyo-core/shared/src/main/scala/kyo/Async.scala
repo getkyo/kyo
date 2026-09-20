@@ -825,18 +825,28 @@ object Async extends AsyncPlatformSpecific:
 
     abstract class JoinInput[A]:
         def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
+
+        /** The awaiting call site. Carried here because the link against the awaited promise is made by the
+          * scheduler, while the frame worth reporting is the one that asked to wait: linking against a promise
+          * whose awaiter has already died raises `Interrupted(frame)` on it, and that should name the await.
+          */
+        def frame: Frame
+    end JoinInput
     sealed trait Join extends ArrowEffect[JoinInput, Result[Nothing, *]]
 
     private[kyo] inline def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         useResult(v)(r => r)
 
     @scala.annotation.nowarn("msg=anonymous")
-    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(
+        using joinFrame: Frame
+    ): B < (S & Async) =
         // Hands the awaited promise over WITHOUT linking it. The link carries the resume callback the joiner
         // registers on `v`, so it can only be made once that callback exists, which is inside IOTask's join
         // handling. Linking before the promise's state is read stays the invariant; it just happens there.
         val input = new JoinInput[A]:
             def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] = v
+            def frame: Frame                                  = joinFrame
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
 

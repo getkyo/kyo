@@ -94,8 +94,10 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                             curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
                                             Scheduler.get.schedule(this)
                                     // Linked BEFORE the promise's state is read, so an interrupt racing the park still
-                                    // cascades into what this task awaits.
-                                    this.interrupts(input, resume)
+                                    // cascades into what this task awaits. The frame is the awaiting call site,
+                                    // carried by the join rather than taken from here, so an interrupt raised on the
+                                    // awaited promise names the await instead of the scheduler.
+                                    this.interrupts(input, resume)(using joinInput.frame)
                                     input.poll() match
                                         case null =>
                                             cont(null)
@@ -188,7 +190,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     // never reached the park), so the link carries nothing to reclaim.
     private def ensureInterrupt(remainder: A < (Ctx & Async & Abort[E]))(using Safepoint): Unit =
         ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Any < Async.Join]) {
-            [C] => joinInput => this.interrupts(joinInput(this))
+            [C] => joinInput => this.interrupts(joinInput(this))(using joinInput.frame)
         }
     end ensureInterrupt
 
