@@ -1138,13 +1138,17 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
             val uint8 = bytesToUint8Array(arr)
             // A short write leaves the tail of the buffer unwritten, so what is left is retried from where
             // it stopped. This is the loop NioWriteHandle runs against the channel, written against the
-            // buffer offset because the file offset belongs to the descriptor.
+            // buffer offset because the file offset belongs to the descriptor. A write taking no bytes
+            // returns the offset it stalled at, since the retry would offer the same bytes there.
             @scala.annotation.tailrec
-            def loop(offset: Int): Unit =
-                if offset < arr.length then
-                    loop(offset + NodeFs.writeSync(fd, uint8, offset, arr.length - offset))
-            loop(0)
-            Result.unit
+            def loop(offset: Int): Int =
+                if offset >= arr.length then offset
+                else
+                    val n = NodeFs.writeSync(fd, uint8, offset, arr.length - offset)
+                    if n <= 0 then offset else loop(offset + n)
+            val written = loop(0)
+            if written < arr.length then Result.fail(FileWriteStalledException(path, (arr.length - written).bytes))
+            else Result.unit
         catch
             case e: js.JavaScriptException =>
                 Result.fail(NodeError.translateWrite(path, e))
@@ -1200,9 +1204,12 @@ final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawCha
         try
             val uint8   = bytesToUint8Array(bytes)
             var written = 0
-            while written < bytes.length do
-                written += NodeFs.writeSync(fd, uint8, written, bytes.length - written, (pos + written).toDouble)
-            Result.unit
+            var stalled = false
+            while written < bytes.length && !stalled do
+                val n = NodeFs.writeSync(fd, uint8, written, bytes.length - written, (pos + written).toDouble)
+                if n <= 0 then stalled = true else written += n
+            if stalled then Result.fail(FileWriteStalledException(path, (bytes.length - written).bytes))
+            else Result.unit
         catch
             case e: js.JavaScriptException => Result.fail(NodeError.translateWrite(path, e))
             case e: Throwable              => Result.panic(e)
