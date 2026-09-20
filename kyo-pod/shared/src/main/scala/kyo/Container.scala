@@ -455,20 +455,23 @@ object Container:
     def init(config: Config)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         init(config, Retry.defaultSchedule)
 
-    /** As `init(config)`, but retries the image-vanished race on the given schedule.
+    /** As `init(config)`, but retries the image-vanished race and registry outages on the given schedule.
       *
       * @param retrySchedule
-      *   covers the image-vanished race noted on `init`: a concurrent operation removing the image after
-      *   `imageEnsure` and before `create`, which the HTTP backend surfaces as a 404 /
-      *   `ContainerImageMissingException`. A permanently absent image fails fast (the up-front `imageEnsure`
-      *   is not retried), as do `create` conflicts and other errors.
+      *   covers two transient conditions. The image-vanished race noted on `init`: a concurrent operation
+      *   removing the image after `imageEnsure` and before `create`, which the HTTP backend surfaces as a
+      *   404 / `ContainerImageMissingException`. And a registry that could not answer, which arrives as
+      *   `ContainerRegistryUnavailableException` from either backend. A permanently absent image fails
+      *   fast, as do auth rejections, `create` conflicts, and other errors.
       */
     def init(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         currentBackend.map { b =>
-            // Ensure the image up front. A permanently absent image (or auth/registry error) fails here,
-            // fast: retrying a genuinely absent image never helps. Only the transient post-ensure race is
-            // retried below.
-            b.imageEnsure(config.image, Absent, Absent).andThen {
+            // Ensure the image up front so a permanently absent image (or an auth rejection) fails here, fast:
+            // retrying either never helps. A registry that could not answer asserts neither, and is the one
+            // up-front failure worth another attempt, so it alone is retried.
+            Retry[ContainerRegistryUnavailableException](retrySchedule) {
+                b.imageEnsure(config.image, Absent, Absent)
+            }.andThen {
                 // The image was present, but under concurrent suites another operation can remove it before
                 // `create` runs (the HTTP backend's create then returns 404 / ImageMissing, since unlike
                 // `docker run` it does not auto-pull). Retry re-ensures (re-pulling the vanished image) then
@@ -578,15 +581,18 @@ object Container:
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         initUnscoped(config, Retry.defaultSchedule)
 
-    /** As `initUnscoped(config)`, but retries the image-vanished race on the given schedule (see `init`). */
+    /** As `initUnscoped(config)`, but retries the image-vanished race and registry outages on the given schedule (see `init`). */
     def initUnscoped(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                 AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
-                    // Ensure the image up front so a permanently absent image fails fast (no retry). Then
-                    // retry the create-side image-vanished race (see `init`), re-pulling on each attempt;
-                    // scoped to ImageMissing so create conflicts and other errors propagate at once.
-                    b.imageEnsure(config.image, Absent, Absent).andThen {
+                    // Ensure the image up front so a permanently absent image fails fast, retrying only a
+                    // registry that could not answer (see `init`). Then retry the create-side image-vanished
+                    // race, re-pulling on each attempt; scoped to ImageMissing so create conflicts and other
+                    // errors propagate at once.
+                    Retry[ContainerRegistryUnavailableException](retrySchedule) {
+                        b.imageEnsure(config.image, Absent, Absent)
+                    }.andThen {
                         Retry[ContainerImageMissingException](retrySchedule) {
                             b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                         }
@@ -1397,6 +1403,11 @@ object Container:
 
     /** Bidirectional connection to a container's stdin/stdout/stderr. Obtained from [[Container.attach]] or [[Container.execInteractive]];
       * the underlying connection is registered with the enclosing [[Scope]] and closes on scope exit.
+      *
+      * The process output is one ordered sequence of byte chunks, each tagged with the stream it came from ([[output]]). Every view of it
+      * ([[stdout]], [[stderr]], [[read]]) consumes from that same sequence, so each chunk is delivered once, and consuming a view again
+      * continues where the previous consumption stopped. Bytes are exact: nothing is decoded or split unless the caller asks for the
+      * line-oriented [[read]]. With a TTY every byte is stdout.
       */
     // CanEqual not derived — contains function-like methods (write, read, resize)
     abstract class AttachSession:
@@ -1406,11 +1417,33 @@ object Container:
         /** Send raw bytes to the container's stdin. */
         def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException])
 
-        /** Stream container output as [[LogEntry]] values; each entry's `source` distinguishes stdout from stderr. */
-        def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]]
+        /** The process output as exact byte chunks in the order the runtime delivered them, each tagged with its stream. Ends when the process
+          * closes its output (or the session closes).
+          */
+        def output(using Frame): Stream[AttachSession.Output, Async & Abort[ContainerException]]
+
+        /** The stdout bytes of [[output]]; stderr chunks met along the way are discarded. */
+        def stdout(using Frame): Stream[Span[Byte], Async & Abort[ContainerException]] =
+            output.collectPure(chunk => if chunk.source == LogEntry.Source.Stdout then Present(chunk.bytes) else Absent)
+
+        /** The stderr bytes of [[output]]; stdout chunks met along the way are discarded. */
+        def stderr(using Frame): Stream[Span[Byte], Async & Abort[ContainerException]] =
+            output.collectPure(chunk => if chunk.source == LogEntry.Source.Stderr then Present(chunk.bytes) else Absent)
+
+        /** Stream container output as [[LogEntry]] values, one per non-empty line; each entry's `source` distinguishes stdout from stderr.
+          * Lines are joined across chunk boundaries per stream before they are decoded as UTF-8, and a last line without a trailing newline is
+          * emitted when the output ends.
+          */
+        def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
+            internal.AttachOutput.lines(output)
 
         /** Resize the attached pseudo-terminal — only meaningful when the container was created with `allocateTty(true)`. */
         def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException])
+    end AttachSession
+
+    object AttachSession:
+        /** One chunk of process output: exact bytes and the stream they came from. */
+        final case class Output(source: LogEntry.Source, bytes: Span[Byte])
     end AttachSession
 
     // --- Info ---

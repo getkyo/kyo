@@ -410,6 +410,8 @@ final private[kyo] class JvmCommandUnsafe(
     // --- Effectful operations ---
 
     def spawn()(using AllowUnsafe, Frame): Result[CommandException, Process.Unsafe] =
+        // Every child's stdin is a pipe this process may write after the child is gone; the write must fail, not kill us.
+        ProcessSignalPlatform.ignoreBrokenPipes()
         // Validate program exists before spawning — on Scala Native, ProcessBuilder.start()
         // does not throw for a missing program (unlike JVM), so we check up front.
         validateProgram() match

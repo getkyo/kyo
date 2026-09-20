@@ -25,9 +25,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     // Container ops contend on a single daemon, so leaves must run sequentially (runBackends assumes <=1
     // in-flight op per daemon); parallel leaves produce port conflicts, already-exists, and pull errors.
     //
+    // globallySequential, not just sequential: the resource these suites share is the container daemon, which reaches beyond any one suite.
+    // `sequential` only orders a suite's own leaves inside the process-global pool, so two container suites sharing a fork would still
+    // interleave, and the per-leaf container-leak check below diffs the daemon's whole container list: a container another leaf created
+    // inside this leaf's window is indistinguishable from one this leaf leaked, and the leaf fails for it. The build puts every
+    // daemon-touching suite in one fork per daemon so this flag covers all of them.
+    //
     // Only socket leak-checking is disabled: the NIO transport defers a connection's fd close to its idle selector's
     // next select() (which nothing wakes), so the fd outlives the run and its opaque socket:[inode] matches no allowlist.
-    override def config = super.config.sequential.leakCheckSockets(false)
+    override def config = super.config.sequential.globallySequential(true).leakCheckSockets(false)
 
     // Linux CI's container runtime (podman REST API) intermittently takes longer than
     // the production 5-second `HttpClientConfig.timeout` default for ordinary Container ops
@@ -54,12 +60,21 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                         val candidates = after.filterNot(s => beforeIds.contains(s.id))
                         // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
                         // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
-                        Kyo.foreach(candidates) { s =>
+                        //
+                        // The inspect is retried rather than asked once. Removal is asynchronous: the scope's `remove` returns when the
+                        // daemon has accepted it, not when the container is gone, so a single immediate inspect can still find a container
+                        // whose removal already succeeded (observed as a leaf failing on a container reported Running with no teardown
+                        // warning logged for it). Retrying does not weaken the check, which still demands the container be gone; it only
+                        // stops the demand being made before the daemon could have met it. A container that really leaked is still there
+                        // after the whole window, since nothing else is going to remove it.
+                        def goneWithin(s: Container.Summary, attemptsLeft: Int): Maybe[Container.Summary] < (Async & Abort[Any]) =
                             Abort.run[ContainerException](backend.state(s.id)).map {
                                 case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]
-                                case _                                            => Maybe(s)
+                                case _                                            =>
+                                    if attemptsLeft <= 0 then Maybe(s)
+                                    else Clock.sleep(100.millis).andThen(goneWithin(s, attemptsLeft - 1))
                             }
-                        }.map { results =>
+                        Kyo.foreach(candidates)(s => goneWithin(s, attemptsLeft = 20)).map { results =>
                             val leaked = results.flatMap(m => Chunk.from(m.toList))
                             if leaked.isEmpty then Kyo.unit
                             else

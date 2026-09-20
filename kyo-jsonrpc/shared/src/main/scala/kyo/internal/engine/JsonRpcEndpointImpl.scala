@@ -267,6 +267,15 @@ object JsonRpcEndpointImpl:
                     // Unsafe: implRef populated after construction; used by decodeCallback for Reject-close
                     val implRefUnsafe = AtomicRef.Unsafe.init[Maybe[JsonRpcEndpointImpl]](Absent)(using AllowUnsafe.embrace.danger)
                     val implRef       = implRefUnsafe.safe
+                    // Dispatch order for inbound routes. A peer's notifications carry state changes whose order matters (an LSP
+                    // didChange edit, a streamed delta before the message that ends the stream), so each notification handler runs
+                    // after the one before it completes, and a request handler starts after every notification that arrived before
+                    // it. Requests run concurrently with each other and hold up nothing after them. The cell holds the handler
+                    // fiber of the latest notification; only the reader's decode callback, which sees messages one at a time in
+                    // arrival order, reads or replaces it. Handlers wait on a masked view of that fiber: waiting on a fiber links
+                    // the waiter's interrupt to it, and a cancelled request must not interrupt an earlier notification's handler.
+                    // Unsafe: written from the Sync-only decode callback, which has no Async to wait in.
+                    val notificationTail = AtomicRef.Unsafe.init[Fiber[Unit, Any]](Fiber.unit)(using AllowUnsafe.embrace.danger)
 
                     // Encode callback: runs inside Exchange.apply. An envelope the codec cannot encode
                     // (extras carrying a reserved key) aborts JsonRpcError here, so the call fails naming
@@ -465,9 +474,27 @@ object JsonRpcEndpointImpl:
                                                                                         env.params.getOrElse(Structure.Value.Null),
                                                                                         ctx
                                                                                     )(using frame)
-                                                                                Fiber.initUnscoped(handlerEffect).map(_ =>
+                                                                                // Runs once the previous notification's handler has completed, however it
+                                                                                // completed, so a failed handler does not stop the ones after it. The
+                                                                                // outcome is handled here because the cell holds a `Fiber[Unit, Any]`,
+                                                                                // whose effect row admits no Abort, and it is REPORTED rather than
+                                                                                // dropped: a notification has no reply to carry a failure back on, so
+                                                                                // this log is the only place it can surface.
+                                                                                val previous = notificationTail.get().unsafe.mask().safe
+                                                                                Fiber.initUnscoped(
+                                                                                    previous.getResult.andThen(
+                                                                                        Abort.run[Any](handlerEffect).map {
+                                                                                            case Result.Success(_) => ()
+                                                                                            case outcome           =>
+                                                                                                Log.warn(
+                                                                                                    s"kyo-jsonrpc: the handler for notification '$method' did not complete: $outcome"
+                                                                                                )
+                                                                                        }
+                                                                                    )
+                                                                                ).map { handled =>
+                                                                                    notificationTail.set(handled)
                                                                                     Exchange.Message.Skip
-                                                                                )
+                                                                                }
                                                                             }
                                                                         case None =>
                                                                             // Step 3: unknown-method dispatch for notifications
@@ -580,8 +607,13 @@ object JsonRpcEndpointImpl:
                                                                 val entry =
                                                                     InboundEntry.Running(method, handlerProxy.safe, cancelledUnsafe.safe)
                                                                 pendingInbound.put(id, entry)
-                                                                val handlerEffect =
-                                                                    m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                                // Starts once every notification that arrived before this request has been
+                                                                // handled (see notificationTail).
+                                                                val precedingNotifications = notificationTail.get().unsafe.mask().safe
+                                                                val handlerEffect          =
+                                                                    precedingNotifications.getResult.andThen(
+                                                                        m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                                    )
                                                                 Fiber.initUnscoped(handlerEffect).ensureMap { fiber =>
                                                                     // The link must attach in the same step that delivers the fiber. A safepoint between the spawn and the
                                                                     // link would let a stop land with the handler spawned but unlinked, and the endpoint close, which

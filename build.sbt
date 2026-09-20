@@ -3373,38 +3373,46 @@ lazy val `kyo-pod` =
                         connectInput = connectInput.value,
                         envVars = envsVarsValue ++ envOverrides
                     )
-                (Test / definedTests).value.flatMap { test =>
-                    // kyo-test suites cannot be reflectively instantiated to call `testNames` (the runner owns
-                    // instantiation via a thread-local). Instead, detect at config time whether the suite's source
-                    // uses the marker-registering helpers `runBackends` / `runBackendsLong` / `runRuntimes` (which
-                    // register the `[podman]` / `[docker]` runtime scopes). `runBackend` / `runBackendLong`
-                    // (single-fork, no marker) are deliberately not matched (the trailing `s` distinguishes them).
+                // kyo-test suites cannot be reflectively instantiated to call `testNames` (the runner owns
+                // instantiation via a thread-local). Instead, detect at config time whether the suite's source
+                // calls any of the helpers that reach a container daemon. Match actual CALLS (helper name
+                // immediately followed by `{` or `(`), not mere textual mentions: a suite's scaladoc can reference
+                // `runBackends` (ContainerOrchestrationItTest points readers at ContainerItTest) while the suite
+                // itself never touches a daemon.
+                val daemonHelperCall =
+                    """\b(runBackendsLong|runBackends|runBackendLong|runBackend|runRuntimes)\s*[{(]""".r
+                val (daemonTests, plainTests) = (Test / definedTests).value.partition { test =>
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
-                    // Match actual CALLS to the marker-registering helpers (helper name immediately followed by `{` or `(`),
-                    // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
-                    // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
-                    // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
-                    val runtimeHelperCall  = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
-                    val usesRuntimeMarkers = srcOpt.exists { f =>
-                        runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
-                    }
-                    val targetRuntimes = if (usesRuntimeMarkers) Seq("podman", "docker") else Seq.empty
-                    if (targetRuntimes.isEmpty)
-                        Seq(Tests.Group(
-                            name = test.name,
-                            tests = Seq(test),
-                            runPolicy = Tests.SubProcess(baseFork(Map.empty))
-                        ))
+                    srcOpt.exists(f => daemonHelperCall.findFirstIn(IO.read(f)).isDefined)
+                }
+                // Every daemon-touching suite shares ONE fork per runtime, rather than getting a fork each. The
+                // per-leaf container-leak check in BasePodTest diffs the daemon's whole container list, so it cannot
+                // tell a container another fork created inside its window from one the leaf leaked, and fails the
+                // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
+                // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
+                // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
+                // reach the daemon, which is what decides this. A fork pinned to a runtime that is a duplicate of
+                // another registers no leaves at all (see ContainerRuntimeBase.available), so it costs an idle JVM.
+                val daemonGroups =
+                    if (daemonTests.isEmpty) Seq.empty
                     else
-                        targetRuntimes.map { runtime =>
+                        Seq("podman", "docker").map { runtime =>
                             Tests.Group(
-                                name = s"${test.name}#$runtime",
-                                tests = Seq(test),
+                                name = s"container#$runtime",
+                                tests = daemonTests,
                                 runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
                             )
                         }
+                // Suites that never reach a daemon keep a fork each and stay parallel; they contend for nothing.
+                val plainGroups = plainTests.map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(baseFork(Map.empty))
+                    )
                 }
+                daemonGroups ++ plainGroups
             }
         )
         .nativeSettings(

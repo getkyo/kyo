@@ -287,6 +287,30 @@ class HttpContainerBackendTest extends BasePodTest:
             }
         }
 
+        // Not being a missing image is only half of it. Container.init retries this class and nothing else on
+        // the up-front ensure, so the fault has to arrive as the type that retry names: an unclassified
+        // operation failure reads to every caller as terminal and is what CI saw when a 502 reached the pull.
+        "a registry fault is typed so the caller can retry it" in {
+            classify(404, hubFailure).map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerRegistryUnavailableException]),
+                    s"expected a registry-unavailable failure, got $result"
+                )
+            }
+        }
+
+        // The exact shape the podman daemon returned on main run 35491732864: its own 500 wrapping the
+        // gateway status the registry gave it, for an image that does not exist. The image being absent is
+        // not something this response establishes, because the registry never got far enough to say so.
+        "the captured podman 500 quoting a 502 is a registry fault" in {
+            classify(500, """{"message":"received unexpected HTTP status: 502 Bad Gateway"}""").map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerRegistryUnavailableException]),
+                    s"expected a registry-unavailable failure, got $result"
+                )
+            }
+        }
+
         "a 5xx from the daemon itself is not a missing image" in {
             classify(500, """{"message":"internal error"}""").map { result =>
                 assert(

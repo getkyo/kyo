@@ -585,10 +585,16 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
 
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
-            val arr = chunk.toArray
-            val buf = java.nio.ByteBuffer.wrap(arr)
-            while buf.hasRemaining do discard(channel.write(buf))
-            Result.unit
+            val arr     = chunk.toArray
+            val buf     = java.nio.ByteBuffer.wrap(arr)
+            var stalled = false
+            // A short write leaves the tail of the buffer unwritten and is retried from the
+            // buffer's own cursor. A write taking no bytes ends the loop instead, since the retry
+            // would offer the same bytes at the same offset.
+            while buf.hasRemaining && !stalled do
+                if channel.write(buf) <= 0 then stalled = true
+            if stalled then Result.fail(FileWriteStalledException(path, buf.remaining.bytes))
+            else Result.unit
         catch
             case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
             case e: IOException                                          => Result.fail(FileIOException(path, FileSystemOperation.Write, e))
@@ -637,8 +643,12 @@ final private[kyo] class NioRawChannel(channel: FileChannel, path: Path) extends
         try
             val buf     = java.nio.ByteBuffer.wrap(bytes)
             var written = 0
-            while buf.hasRemaining do written += channel.write(buf, pos + written)
-            Result.unit
+            var stalled = false
+            while buf.hasRemaining && !stalled do
+                val n = channel.write(buf, pos + written)
+                if n <= 0 then stalled = true else written += n
+            if stalled then Result.fail(FileWriteStalledException(path, buf.remaining.bytes))
+            else Result.unit
         catch
             case e: IOException if NioExceptionBoundary.isInterrupted(e) => Result.panic(e)
             case e: IOException                                          => Result.fail(FileIOException(path, FileSystemOperation.Write, e))

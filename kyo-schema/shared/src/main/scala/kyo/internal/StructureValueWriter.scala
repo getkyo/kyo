@@ -41,6 +41,21 @@ final class StructureValueWriter extends Writer:
     private var stack: List[StackFrame]      = Nil
     private var resultValue: Structure.Value = Structure.Value.Null
 
+    // The map nodes this writer built from the pair-array framing (mapEntriesStart / mapEntriesEnd)
+    // rather than the object framing (mapStart / mapEnd). Both produce a Structure.Value.MapEntries,
+    // because a map node is semantic and carries no framing (Structure.encode's contract keeps map
+    // entries distinguishable from product fields and pair lists, not from each other), so a replay
+    // cannot read the framing back off the node. The transform path needs it: it replays this tree
+    // into the real writer, and a mapping field whose bound given writes the pair-array form for a
+    // String key would otherwise come out in the object form, which the schema that wrote it cannot
+    // read back. Held by identity, since two empty mappings are equal values from different givens.
+    private var pairArrayFramed: List[Structure.Value] = Nil
+
+    /** The map nodes in [[getResult]] that were written in the pair-array framing, for a caller
+      * replaying this tree through `SchemaSerializer.writeStructureValue`.
+      */
+    private[kyo] def pairArrayFramedNodes: List[Structure.Value] = pairArrayFramed
+
     private def addValue(dv: Structure.Value): Unit =
         stack match
             case (f: ObjectFrame) :: _ =>
@@ -134,7 +149,9 @@ final class StructureValueWriter extends Writer:
         stack match
             case (f: MapPairsFrame) :: rest =>
                 stack = rest
-                addValue(Structure.Value.MapEntries(Chunk.from(f.entries)))
+                val node = Structure.Value.MapEntries(Chunk.from(f.entries))
+                pairArrayFramed = node :: pairArrayFramed
+                addValue(node)
             case _ =>
                 bug("StructureValueWriter.mapEntriesEnd: no active map frame")
     end mapEntriesEnd
