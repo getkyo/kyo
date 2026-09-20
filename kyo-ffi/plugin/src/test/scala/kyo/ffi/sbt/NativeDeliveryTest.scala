@@ -55,6 +55,22 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
         thrown.getMessage should include("wasm")
     }
 
+    test("render rejects a classifier pattern that would not survive the round trip") {
+        def reject(pattern: String): String =
+            intercept[RuntimeException] {
+                NativeDelivery.render(Map("kyonet_boringssl" -> NativeDelivery.Entry(pattern)))
+            }.getMessage
+        reject("<os-arch>\n-boringssl") should include("line break")
+        reject(" <os-arch>-boringssl") should include("whitespace")
+        reject("<os-arch>-boringssl ") should include("whitespace")
+        reject("""<os-arch>\boringssl""") should include("backslash")
+    }
+
+    test("render keeps a comma, which the reader takes as part of the value rather than a separator") {
+        val delivery = Map("kyonet_boringssl" -> NativeDelivery.Entry("<os-arch>,boringssl"))
+        NativeDelivery.parse(NativeDelivery.render(delivery).mkString("\n")).head.classifierPattern shouldBe "<os-arch>,boringssl"
+    }
+
     test("an empty classifier names the main artifact and a pattern is substituted") {
         NativeDelivery.Declared("kyo_aeron", "").classifier("darwin-aarch64") shouldBe None
         NativeDelivery.Declared("kyonet_boringssl", "<os-arch>-boringssl").classifier("linux-x86_64") shouldBe

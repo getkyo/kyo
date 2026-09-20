@@ -84,11 +84,29 @@ object NativeDelivery {
             delivery.values.flatMap(_.platforms).find(!allPlatforms.contains(_)).foreach { bad =>
                 sys.error(s"[kyo-ffi-plugin] '$bad' is not a platform; use ${allPlatforms.toSeq.sorted.mkString(", ")}.")
             }
+            ids.flatMap(id => classifierProblem(delivery(id).classifierPattern).map(id -> _)).headOption.foreach {
+                case (id, why) =>
+                    sys.error(s"[kyo-ffi-plugin] $id's classifier pattern $why, so it cannot be written to a native-delivery declaration.")
+            }
             (s"libraries = ${ids.mkString(", ")}" +: ids.map(id => s"$id.classifier = ${delivery(id).classifierPattern}")) ++
                 // Only written where it differs from the default, so the common declaration stays short.
                 ids.filter(id => delivery(id).platforms != defaultPlatforms)
                     .map(id => s"$id.platforms = ${delivery(id).platforms.toSeq.sorted.mkString(", ")}")
         }
+
+    /** Why `pattern` would not survive the round trip through a properties file, or None when it would.
+      *
+      * A comma is fine: [[parse]] reads `<id>.classifier` as one property rather than splitting it. What does not
+      * survive is a line break, which ends the property; a leading or trailing space, which the reader trims and the
+      * writer keeps, so the value read back differs from the value declared; and a backslash, which `Properties.load`
+      * unescapes on read while this writes it raw. Each of those produces a classifier that resolves nothing in a
+      * consumer's build, with the declaration itself looking correct.
+      */
+    private def classifierProblem(pattern: String): Option[String] =
+        if (pattern.exists(c => c == '\n' || c == '\r')) Some("contains a line break")
+        else if (pattern != pattern.trim) Some("has leading or trailing whitespace, which a reader trims away")
+        else if (pattern.contains('\\')) Some("contains a backslash, which a properties reader unescapes")
+        else None
 
     /** Parses a declaration written by [[render]]. */
     def parse(text: String): Seq[Declared] = {
