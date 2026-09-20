@@ -2,5 +2,12 @@
 # plugin. Staged with its library beside it and run from an unrelated working directory, so the rpath is what
 # resolves it, then run again without the library to prove the dependency is real.
 > nativeLink
+# The library exports its own wrappers and no BoringSSL, which is what makes a binary that ALSO links the machine's
+# OpenSSL safe rather than a crash: with no SSL_* in this export table there is nothing for the system libssl's
+# symbols to bind to here, and BoringSSL's own calls resolve inside the library. Asserted on the packaged artifact,
+# on whichever platform the suite runs, because the two formats say it differently: Mach-O through `nm -gU`, ELF
+# through the dynamic table. Both export every global by default, so this holds only while the vendored archive is
+# built with hidden visibility, and that is a property of the release rather than of the linker.
+$ exec sh -c 'set -eu; lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); test -n "$lib"; if nm -gU "$lib" > syms.txt 2>/dev/null; then :; else nm -D --defined-only "$lib" > syms.txt; fi; wc -l < syms.txt; if grep -qE " _?SSL_" syms.txt; then echo "the delivered BoringSSL exports SSL_*, so a binary linking system OpenSSL too can bind to it"; grep -E " _?SSL_" syms.txt | head; exit 1; fi; grep -qE " _?kyo_bssl_" syms.txt'
 $ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); rm -rf deploy; mkdir deploy; cp "$bin" "$lib" server.pem server.key deploy/; here=$(pwd); cd deploy; ./consumer > "$here/out.txt" 2>&1 || { cat "$here/out.txt"; exit 1; }; cat "$here/out.txt"; grep -q "CONSUMER tls=hello" "$here/out.txt"'
 $ exec sh -c 'set -eu; rm -f deploy/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/deploy/consumer" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "libkyonet_boringssl" "$here/missing.txt"'
