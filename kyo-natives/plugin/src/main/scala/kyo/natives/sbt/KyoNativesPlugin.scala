@@ -36,8 +36,9 @@ object KyoNativesPlugin extends AutoPlugin {
 
         val kyoNativesTargets = settingKey[Seq[String]](
             "The `<os>-<arch>` targets to deliver libraries for; empty (the default) means the one this build is for. " +
-                "A JVM classpath is portable, so naming more than one there is how an image built on one machine carries " +
-                "another's natives. A linked binary and a Node bundle have exactly one target, so more than one is an error."
+                "A JVM classpath and a Node bundle are portable and resolve their library at runtime, so naming more than " +
+                "one there is how an artifact built on one machine runs on another. A linked binary is built for exactly " +
+                "one target, so more than one is an error there."
         )
 
         val kyoNativesSource = settingKey[NativesSource](
