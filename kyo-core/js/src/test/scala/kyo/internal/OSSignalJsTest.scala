@@ -20,15 +20,21 @@ class OsSignalJsTest extends kyo.test.Test[Any]:
     "a signal the host delivers reaches the handler" in {
         if !isNodeLike then succeed("no process to signal on this host")
         else
-            var handled = false
-            OsSignal.handle("USR2", () => handled = true)
             val process = sjs.Dynamic.global.selectDynamic("process")
-            discard(process.applyDynamic("kill")(process.selectDynamic("pid"), "SIGUSR2"))
-            // Node delivers a signal as an event, so it arrives on a later turn of the loop rather than inside the
-            // call above. Waiting on the condition gives the loop those turns without pinning a duration.
-            assertEventually(Sync.defer(handled)).andThen {
-                assert(handled, "the handler did not run for a signal the host delivered")
-            }
+            // Windows carries no user-defined signal: Node rejects SIGUSR2 by name, and the signals it does accept
+            // for process.kill end the target rather than reaching a handler, so there is nothing to observe there.
+            if process.selectDynamic("platform").asInstanceOf[String] == "win32" then
+                succeed("this host delivers no user-defined signal")
+            else
+                var handled = false
+                OsSignal.handle("USR2", () => handled = true)
+                discard(process.applyDynamic("kill")(process.selectDynamic("pid"), "SIGUSR2"))
+                // Node delivers a signal as an event, so it arrives on a later turn of the loop rather than inside the
+                // call above. Waiting on the condition gives the loop those turns without pinning a duration.
+                assertEventually(Sync.defer(handled)).andThen {
+                    assert(handled, "the handler did not run for a signal the host delivered")
+                }
+            end if
         end if
     }
 

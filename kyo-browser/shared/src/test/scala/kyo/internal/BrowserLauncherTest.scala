@@ -198,8 +198,11 @@ class BrowserLauncherTest extends BaseChromeTest:
                 BrowserLauncher.createTempDir.map { dir =>
                     Scope.ensure(Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).andThen {
                         val flags = BrowserLauncher.chromiumFlags(dir, headless = true).filterNot(_ == "--remote-debugging-port=0")
-                        val page  =
-                            """data:text/html,<script>console.log(["console","probe"].join("-")); document.title = ["title","probe"].join("-")</script>"""
+                        // The two probes are joined at runtime so that neither appears literally in the command line: finding
+                        // one in the output is then the page having run, never Chrome echoing its own arguments back. Single
+                        // quotes because a double quote inside an argument does not survive the Windows command line.
+                        val page =
+                            "data:text/html,<script>console.log(['console','probe'].join('-')); document.title = ['title','probe'].join('-')</script>"
                         Command(((cfg.executable +: flags) ++ Chunk("--dump-dom", page))*).redirectErrorStream(true).text.map { output =>
                             assert(output.contains("<title>title-probe</title>"), s"the page should have run; Chrome printed: $output")
                             assert(!output.contains("console-probe"), s"Chrome logged the page's console message: $output")
