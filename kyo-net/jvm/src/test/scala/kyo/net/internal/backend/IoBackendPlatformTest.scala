@@ -46,6 +46,27 @@ class IoBackendPlatformTest extends Test:
         assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}, expected=$expected")
     }
 
+    /** The selection assertion above compares against `expected`, and `expected` is derived from the same probes
+      * selection reads. A backend that wrongly denies its own OS therefore moves `expected` to "nio" and the
+      * comparison still holds, which is how a loader failure reaching the report as a platform verdict stays
+      * green. This leaf reads the outcome instead of the boolean, so it can separate a backend that is correctly
+      * absent (nothing bundled, syscall missing, kernel too old) from one claiming the OS it was written for does
+      * not apply.
+      */
+    "the OS-appropriate posix backend never denies its own OS" in {
+        def assertApplicable(name: String, outcome: CapabilityOutcome) =
+            outcome match
+                case CapabilityOutcome.UnsupportedOS =>
+                    fail(s"$name probed as inapplicable on the OS it exists for: ${outcome.describe}")
+                case CapabilityOutcome.ProbeFailed(cause) =>
+                    fail(s"$name probe failed rather than classifying: $cause")
+                case _ => succeed
+        if PosixConstants.isMacOrBsd then assertApplicable("kqueue", KqueueBackend.probe)
+        else if PosixConstants.isLinux then assertApplicable("epoll", EpollBackend.probe)
+        else succeed
+        end if
+    }
+
     "SslEngineProvider is the always-available JVM TLS floor" in {
         assert(SslEngineProvider.probe == CapabilityOutcome.Available)
         assert(SslEngineProvider.name == "jdk")
