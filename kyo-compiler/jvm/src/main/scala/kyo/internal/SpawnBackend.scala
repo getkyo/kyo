@@ -87,26 +87,26 @@ private[kyo] object SpawnBackend:
         val respStreamId = streamIdBase * 2 + 1
         Abort.run[Throwable] {
             Abort.catching[Throwable] {
-                spawnWorker(config, driver, reqStreamId, respStreamId).map { process =>
-                    aeronClient(driver).map { aeron =>
-                        connect(aeron, reqStreamId, respStreamId).map { exchange =>
-                            val backend = new SpawnBackend(process, aeron, exchange)
-                            // `close` owns the process and aeron client only once init succeeds; until then, a
-                            // failure or interrupt during the readiness probe must force-kill the partial
-                            // worker and close the client, else it leaks an orphaned JVM and aeron thread. The
-                            // finalizer runs uninterruptibly; on success, ownership transfers to `close`.
-                            AtomicBoolean.init(false).map { started =>
-                                Sync.ensure(
-                                    started.get.map(ok =>
-                                        if ok then () else Sync.Unsafe.defer(aeron.unsafe.close()).andThen(process.destroyForcibly)
-                                    )
-                                ) {
-                                    // onSpawn fires inside the armed finalizer's scope, so a test observing the
-                                    // process knows the kill-on-interrupt path is live before it interrupts.
-                                    Sync.defer(onSpawn(process))
-                                        .andThen(ready(backend, config.toolchain.scalaVersion, readyTimeout))
-                                        .andThen(started.set(true).andThen(backend))
-                                }
+                // `close` owns the process and aeron client only once init succeeds; until then a failure or interrupt
+                // anywhere after each was produced must force-kill the partial worker and close the client, else an
+                // orphaned JVM and aeron thread leak. Each is the acquire of its own bracket, whose release is armed in
+                // the step that produces it: a stop landing on the aeron connect or the exchange wiring, both of which
+                // park, then still kills the worker. On success, ownership transfers to `close` and the releases stand
+                // down through the flag.
+                AtomicBoolean.init(false).map { started =>
+                    Sync.acquireReleaseWith(spawnWorker(config, driver, reqStreamId, respStreamId)) { process =>
+                        started.get.map(ok => if ok then () else process.destroyForcibly)
+                    } { process =>
+                        Sync.acquireReleaseWith(aeronClient(driver)) { aeron =>
+                            started.get.map(ok => if ok then () else Sync.Unsafe.defer(aeron.unsafe.close()))
+                        } { aeron =>
+                            connect(aeron, reqStreamId, respStreamId).map { exchange =>
+                                val backend = new SpawnBackend(process, aeron, exchange)
+                                // onSpawn fires with the kill armed, so a test observing the process knows the
+                                // kill-on-interrupt path is live before it interrupts.
+                                Sync.defer(onSpawn(process))
+                                    .andThen(ready(backend, config.toolchain.scalaVersion, readyTimeout))
+                                    .andThen(started.set(true).andThen(backend))
                             }
                         }
                     }
@@ -168,10 +168,17 @@ private[kyo] object SpawnBackend:
                 Chunk("-cp", targetClasspath, "kyo.internal.CompilerWorker")
         // The worker is spawned unscoped: its lifetime is owned by this backend's `close` (and the
         // pool's close-on-evict finalizer), not by an enclosing scope.
-        Abort.run[CommandException](Command(args*).inheritStderr.spawnUnscoped).map {
-            case Result.Success(proc) => proc
-            case Result.Failure(e)    => Abort.fail(CompilerWorkerSpawnException(config.toolchain.scalaVersion, e))
-            case Result.Panic(t)      => Abort.fail(CompilerWorkerSpawnException(config.toolchain.scalaVersion, t))
+        //
+        // The fork and the error translation are one unsafe step, so the process arrives from `Abort.get` with no kernel
+        // `.map` behind it: `init` brackets this to arm the kill, and a kernel `.map` between the fork and that bracket's
+        // registration would be a poll a stop parks in front of, orphaning the worker JVM. `.map(_.safe)` and `mapError`
+        // are pure `Result` combinators, not kernel steps.
+        Sync.Unsafe.defer {
+            Abort.get(
+                Command(args*).inheritStderr.unsafe.spawn()
+                    .map(_.safe)
+                    .mapError(e => CompilerWorkerSpawnException(config.toolchain.scalaVersion, e.failureOrPanic))
+            )
         }
     end spawnWorker
 

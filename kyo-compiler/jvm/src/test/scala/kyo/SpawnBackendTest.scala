@@ -292,17 +292,15 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         }
     }
 
-    // `SpawnBackend.init` spawns the worker JVM in one step and arms the kill-on-interrupt finalizer only after
-    // the aeron client has connected and the exchange is wired, two parks later. A stop landing on either park
-    // abandons the continuation that would arm the kill, and the worker JVM outlives the caller. That window opens
+    // `SpawnBackend.init` spawns the worker JVM, then parks on the aeron connect and the exchange wiring before the
+    // readiness probe. The kill must be armed in the step that produces the process, or a stop landing on either
+    // park abandons the continuation that would arm it and the worker JVM outlives the caller. That window opens
     // when the spawn returns and closes a few milliseconds later, so the rounds sweep the first twelve
     // milliseconds in quarter-millisecond steps and then coarser steps for a slower machine. Each round's worker
     // carries a unique token in its command line (a `-Wconf` filter that matches nothing, forwarded as a scalac
     // option), so the count afterwards is of this round's workers alone, whatever else the suite is spawning; a
     // worker left over is killed by the leaf.
-    "an interrupt landing before the kill is armed does not orphan the worker JVM".pendingUntilFixed(
-        "SpawnBackend.init spawns the worker JVM and arms its kill only after the aeron connect and the exchange wiring, two parks later, so a stop landing on either park leaves the worker running with no owner"
-    ) in {
+    "an interrupt landing before the kill is armed does not orphan the worker JVM" in {
         withDriver { driver =>
             val rounds                              = 64
             def workers(token: String): Int < Async =
