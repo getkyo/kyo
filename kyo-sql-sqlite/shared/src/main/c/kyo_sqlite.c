@@ -33,11 +33,23 @@
 
 /*
 ** kyo-sql-sqlite compiles SQLite's own source beside this file, so its engine is always on the link.
-** kyo-sql-doltlite links a prebuilt engine instead. On Scala Native this file compiles in whichever build
-** links the binary, a consumer's included, and that build has the engine on its link only when it
-** defines KYO_FFI_LINKED_KYO_DOLTLITE. Without it the stubs at the end compile in place of the wrappers,
-** so the binary still links and DoltLite reports the engine unavailable when a database is opened.
+** kyo-sql-doltlite links a prebuilt engine instead, and on Scala Native this file compiles in whichever
+** build links the binary, a consumer's included. Three states for that build:
+**
+**   KYO_FFI_LINKED_KYO_DOLTLITE    the DoltLite archive is on this link, so the wrappers compile.
+**   KYO_FFI_EXTERNAL_KYO_DOLTLITE  the build links the prebuilt shim library the artifact carries, so
+**                                  this file compiles to nothing and every entry point resolves there.
+**   neither                        the stubs at the end compile, so the binary still links and DoltLite
+**                                  reports the engine unavailable when a database is opened.
 */
+#if defined(KYO_SQLITE_DOLTLITE) && defined(KYO_FFI_EXTERNAL_KYO_DOLTLITE)
+
+/* Deliberately empty: the entry points come from the linked library. An empty translation unit is not
+** valid C, so give it one declaration. */
+typedef int kyo_sqlite_external_translation_unit;
+
+#else
+
 #if defined(KYO_SQLITE_DOLTLITE) && !defined(KYO_FFI_LINKED_KYO_DOLTLITE)
 #define KYO_SQLITE_ENGINE_STUBS
 #endif
@@ -230,4 +242,6 @@ sqlite3_int64 sqlite3_changes64(sqlite3 *db) { return 0; }
 sqlite3_int64 sqlite3_last_insert_rowid(sqlite3 *db) { return 0; }
 void sqlite3_interrupt(sqlite3 *db) {}
 
-#endif
+#endif /* KYO_SQLITE_ENGINE_STUBS */
+
+#endif /* KYO_FFI_EXTERNAL_KYO_DOLTLITE */

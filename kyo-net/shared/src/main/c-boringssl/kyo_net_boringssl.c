@@ -24,13 +24,23 @@
  * Opaque `SSL_CTX*` / `SSL*` cross the FFI boundary as pointers (carried as `long`). The caller
  * never dereferences them; it only round-trips them back into these functions.
  *
- * Link gate: the real shim compiles only under KYO_FFI_LINKED_KYONET_BORINGSSL, which kyo-ffi defines
- * in exactly the build that links the BoringSSL archives. On Scala Native this file is compiled by the
- * consumer's build, and a consumer that does not link BoringSSL (the archives do not travel in the
- * artifact) must still link: the #else branch defines the same kyo_bssl_* surface as stubs that
- * reference no OpenSSL symbol and need no openssl/ header.
+ * Link gate, three states, because on Scala Native this file is compiled by the consumer's build:
+ *
+ *   KYO_FFI_LINKED_KYONET_BORINGSSL    the BoringSSL archives are on this link, so the real shim
+ *                                      compiles against the staged openssl/ headers.
+ *   KYO_FFI_EXTERNAL_KYONET_BORINGSSL  the build links the prebuilt shim library the artifact carries,
+ *                                      so this file compiles to nothing and the kyo_bssl_* surface
+ *                                      resolves there. A stub defined here would shadow it.
+ *   neither                            the same kyo_bssl_* surface as stubs that reference no OpenSSL
+ *                                      symbol and need no openssl/ header, so the binary still links.
  */
-#if defined(KYO_FFI_LINKED_KYONET_BORINGSSL)
+#if defined(KYO_FFI_EXTERNAL_KYONET_BORINGSSL)
+
+/* Deliberately empty: the entry points come from the linked library. An empty translation unit is not
+ * valid C, so give it one declaration. */
+typedef int kyo_net_boringssl_external_translation_unit;
+
+#elif defined(KYO_FFI_LINKED_KYONET_BORINGSSL)
 
 #include <openssl/ssl.h>
 #include <openssl/bio.h>

@@ -1,0 +1,6 @@
+# TLS on Native through the BoringSSL library the published artifact carries: no system OpenSSL, no kyo
+# plugin. Staged with its library beside it and run from an unrelated working directory, so the rpath is what
+# resolves it, then run again without the library to prove the dependency is real.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); rm -rf deploy; mkdir deploy; cp "$bin" "$lib" server.pem server.key deploy/; here=$(pwd); cd deploy; ./consumer > "$here/out.txt" 2>&1 || { cat "$here/out.txt"; exit 1; }; cat "$here/out.txt"; grep -q "CONSUMER tls=hello" "$here/out.txt"'
+$ exec sh -c 'set -eu; rm -f deploy/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/deploy/consumer" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "libkyonet_boringssl" "$here/missing.txt"'
