@@ -25,7 +25,7 @@ object NativeFacade:
         else
             WasmFacadeRegistry.get(libraryId) match
                 case Some(provider) => provider(fns)
-                case None =>
+                case None           =>
                     throw new FfiLoadError.Unsupported(
                         s"No way to reach native library '$libraryId' on this JS runtime. koffi is unavailable, " +
                             "which is expected in a browser, and no WebAssembly provider is registered for this " +

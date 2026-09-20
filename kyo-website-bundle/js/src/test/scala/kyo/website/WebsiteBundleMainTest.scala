@@ -42,7 +42,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
     // After addChartDrawn runs, classList.add must have been called (node is present).
     "addChartDrawn adds the chart-drawn class when the node is present" in {
         var classAdded = false
-        val fakeEl = scala.scalajs.js.Dynamic.literal(
+        val fakeEl     = scala.scalajs.js.Dynamic.literal(
             classList = scala.scalajs.js.Dynamic.literal(
                 add = (cls: String) =>
                     classAdded = true; ()
@@ -61,7 +61,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
     // Case 1b: the same mechanism is generalized by id, so it also arms the platforms connector.
     "addChartDrawn adds the chart-drawn class to the pf-connect node when present" in {
         var classAdded = false
-        val fakeEl = scala.scalajs.js.Dynamic.literal(
+        val fakeEl     = scala.scalajs.js.Dynamic.literal(
             classList = scala.scalajs.js.Dynamic.literal(
                 add = (cls: String) =>
                     classAdded = true; ()
@@ -81,7 +81,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
     // addChartDrawn must complete without exception and must not call classList.add.
     "addChartDrawn is a no-op and throws nothing when the node is absent" in {
         var classAdded = false
-        val fakeDoc = scala.scalajs.js.Dynamic.literal(
+        val fakeDoc    = scala.scalajs.js.Dynamic.literal(
             getElementById = (id: String) => null
         )
         withDocument(fakeDoc) {

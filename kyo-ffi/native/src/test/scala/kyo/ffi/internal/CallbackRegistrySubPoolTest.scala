@@ -173,7 +173,7 @@ class CallbackRegistrySubPoolTest extends Test:
             val done      = new CountDownLatch(threads)
             var t         = 0
             while t < threads do
-                val tok = new Object()
+                val tok         = new Object()
                 val r: Runnable = () =>
                     try
                         start.await()

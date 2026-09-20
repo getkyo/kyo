@@ -21,14 +21,14 @@ final class JsGuard private[ffi] (frame: Frame) extends Ffi.Guard:
             try CallbackRegistry.unregister(h.asInstanceOf[js.Any])
             catch
                 case NonFatal(_) => ()
-                case e: Error =>
+                case e: Error    =>
                     java.lang.System.err.println(s"[kyo-ffi] Error during guard teardown: ${e.getClass.getName}: ${e.getMessage}")
         }
         core.forEachRetainedCleanup { f =>
             try f()
             catch
                 case NonFatal(_) => ()
-                case e: Error =>
+                case e: Error    =>
                     java.lang.System.err.println(s"[kyo-ffi] Error during guard teardown: ${e.getClass.getName}: ${e.getMessage}")
         }
     end closeRetainedKoffi

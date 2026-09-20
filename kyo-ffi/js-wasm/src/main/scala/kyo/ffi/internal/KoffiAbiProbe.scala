@@ -93,7 +93,7 @@ private[ffi] object KoffiAbiProbe:
             val core =
                 val dash = version.indexOf('-')
                 val plus = version.indexOf('+')
-                val end =
+                val end  =
                     if dash >= 0 && plus >= 0 then math.min(dash, plus)
                     else if dash >= 0 then dash
                     else if plus >= 0 then plus

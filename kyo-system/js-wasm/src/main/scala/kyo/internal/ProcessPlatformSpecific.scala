@@ -234,7 +234,7 @@ final private[kyo] class NodeProcessUnsafe(
         if !resolved then
             // Held so every resolution path can clear it. An uncleared timer keeps the Node event
             // loop alive for the whole timeout after the child has already exited.
-            var timer: js.Any = null
+            var timer: js.Any      = null
             def clearTimer(): Unit =
                 if timer != null then
                     discard(js.Dynamic.global.clearTimeout(timer.asInstanceOf[js.Dynamic]))
@@ -316,9 +316,8 @@ final private[kyo] class NodeProcessUnsafe(
     // child.killed reports that a signal was *delivered*, not that the child died. Consulting it
     // makes a process that has been sent SIGTERM but has not yet exited look dead, so Command's
     // scope release skips the force-kill and leaves it running.
-    def isAlive()(using AllowUnsafe): Boolean =
-        (child.exitCode == null || js.isUndefined(child.exitCode)) &&
-            (child.signalCode == null || js.isUndefined(child.signalCode))
+    def isAlive()(using AllowUnsafe): Boolean = (child.exitCode == null || js.isUndefined(child.exitCode)) &&
+        (child.signalCode == null || js.isUndefined(child.signalCode))
 
     def pid()(using AllowUnsafe): Long = child.pid.toLong
 
@@ -366,7 +365,7 @@ final private[kyo] class NodeCommandUnsafe(
 
     // --- Builder methods — all return new instances ---
 
-    def withCwd(path: kyo.Path): NodeCommandUnsafe = copy(workDir = Present(path))
+    def withCwd(path: kyo.Path): NodeCommandUnsafe                  = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
         val newMode = envMode match
             case EnvMode.Clear                         => EnvMode.ClearThenAppend(vars)
@@ -437,7 +436,7 @@ final private[kyo] class NodeCommandUnsafe(
         workDir.foreach { path => opts.cwd = path.unsafe.show }
 
         envMode match
-            case EnvMode.Inherit => ()
+            case EnvMode.Inherit      => ()
             case EnvMode.Append(vars) =>
                 val env = js.Dynamic.global.Object.assign(
                     js.Dynamic.literal(),
@@ -633,7 +632,7 @@ final private[kyo] class NodeCommandUnsafe(
                     }
                     wdError match
                         case Present(err) => Result.fail(err)
-                        case Absent =>
+                        case Absent       =>
                             try
                                 val chain = pipelineChain
                                 if chain.length == 1 then
@@ -655,7 +654,7 @@ final private[kyo] class NodeCommandUnsafe(
 
                                     stdinStream match
                                         case Present(s) => feedStream(s, child.stdin)
-                                        case Absent =>
+                                        case Absent     =>
                                             stdinSource match
                                                 case Process.Input.FromStream(is) => feedInputStream(is, child.stdin)
                                                 case Process.Input.Inherit        => ()
@@ -683,7 +682,7 @@ final private[kyo] class NodeCommandUnsafe(
                                         val opts = js.Dynamic.literal()
                                         cmd.workDir.foreach { path => opts.cwd = path.unsafe.show }
                                         cmd.envMode match
-                                            case EnvMode.Inherit => ()
+                                            case EnvMode.Inherit      => ()
                                             case EnvMode.Append(vars) =>
                                                 val env = js.Dynamic.global.Object.assign(
                                                     js.Dynamic.literal(),
@@ -736,7 +735,7 @@ final private[kyo] class NodeCommandUnsafe(
                                     val firstCmd = chain.head
                                     firstCmd.stdinStream match
                                         case Present(s) => feedStream(s, children.head.stdin)
-                                        case Absent =>
+                                        case Absent     =>
                                             firstCmd.stdinSource match
                                                 case Process.Input.FromStream(is) => feedInputStream(is, children.head.stdin)
                                                 case Process.Input.Inherit        => ()
@@ -776,8 +775,8 @@ final private[kyo] class NodeCommandUnsafe(
     def text()(using AllowUnsafe, Frame): Fiber.Unsafe[String, Abort[CommandException]] =
         val p = Promise.Unsafe.init[String, Abort[CommandException]]()
         spawn() match
-            case Result.Failure(err) => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)    => p.completeDiscard(Result.panic(ex))
+            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
+            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: NodeProcessUnsafe) =>
                 val outIs = proc.stdoutJava
                 // Register 'error' handler to propagate spawn failures (e.g. ENOENT) as CommandException.
@@ -817,8 +816,8 @@ final private[kyo] class NodeCommandUnsafe(
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Abort[CommandException]] =
         val p = Promise.Unsafe.init[Process.ExitCode, Abort[CommandException]]()
         spawn() match
-            case Result.Failure(err) => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)    => p.completeDiscard(Result.panic(ex))
+            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
+            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: NodeProcessUnsafe) =>
                 val ec = proc.child.exitCode
                 if ec != null && !js.isUndefined(ec) then
@@ -850,8 +849,8 @@ final private[kyo] class NodeCommandUnsafe(
     def waitForSuccess()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[CommandException | Process.ExitCode]] =
         val p = Promise.Unsafe.init[Unit, Abort[CommandException | Process.ExitCode]]()
         spawn() match
-            case Result.Failure(err) => p.completeDiscard(Result.fail(err))
-            case Result.Panic(ex)    => p.completeDiscard(Result.panic(ex))
+            case Result.Failure(err)                     => p.completeDiscard(Result.fail(err))
+            case Result.Panic(ex)                        => p.completeDiscard(Result.panic(ex))
             case Result.Success(proc: NodeProcessUnsafe) =>
                 val ec = proc.child.exitCode
                 if ec != null && !js.isUndefined(ec) then

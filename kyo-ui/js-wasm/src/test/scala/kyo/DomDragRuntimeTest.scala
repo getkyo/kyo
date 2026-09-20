@@ -84,8 +84,8 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             eventType,
             scalajs.Dynamic.literal(bubbles = true, cancelable = true)
         ).asInstanceOf[dom.Event]
-        val dyn = event.asInstanceOf[scalajs.Dynamic]
-        val obj = scalajs.Dynamic.global.Object
+        val dyn                                          = event.asInstanceOf[scalajs.Dynamic]
+        val obj                                          = scalajs.Dynamic.global.Object
         def prop(name: String, value: scalajs.Any): Unit =
             discard(obj.defineProperty(dyn, name, scalajs.Dynamic.literal(value = value, configurable = true)))
         prop("dataTransfer", transfer.raw)
@@ -173,7 +173,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     val handle   = fixture.querySelector("#handle").asInstanceOf[dom.Element]
                     val nested   = fixture.querySelector("#nested").asInstanceOf[dom.Element]
@@ -293,7 +293,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     }
 
     "selects the nearest accepted target and suppresses false descendant leaves" in {
-        val source = Drag.Source("source", Chunk(dragText("text/plain" -> "one")))
+        val source   = Drag.Source("source", Chunk(dragText("text/plain" -> "one")))
         val rejected = Drag.Target(
             "inner",
             Drag.Accept(mediaTypes = Set(mediaTypePattern("image/png")), operations = Drag.AllowedOperations.copy)
@@ -323,7 +323,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     val sourceEl = fixture.querySelector("#source-child").asInstanceOf[dom.Element]
                     val a        = fixture.querySelector("#a").asInstanceOf[dom.Element]
@@ -370,7 +370,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     transfer.allow("copy")
                     transfer.setData("text/plain", "external")
@@ -458,7 +458,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     assert(runtime.transitionCount == awaitingTransitions)
                     assert(events.size == 2)
 
-                    val detail = Json.encode[HtmlOp](HtmlOp.ResolveDrag(start.event.sessionId, Drag.Decision.Accept))
+                    val detail     = Json.encode[HtmlOp](HtmlOp.ResolveDrag(start.event.sessionId, Drag.Decision.Accept))
                     val resolution = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].CustomEvent)(
                         "kyo:resolve-drag",
                         scalajs.Dynamic.literal(detail = detail)
@@ -498,7 +498,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     transfer.allow("copy")
                     transfer.addFile(
@@ -549,7 +549,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val targetEl = fixture.querySelector("#target").asInstanceOf[dom.Element]
 
                     val invalidProbe = new FakeTransfer
@@ -643,12 +643,12 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     cases.zipWithIndex.foreach { entry =>
                         val (allowed, expected)       = entry._1
                         val (browserValue, operation) = expected
                         val index                     = entry._2
-                        val source = Drag.Source(
+                        val source                    = Drag.Source(
                             s"source-$index",
                             Chunk(dragText("text/plain" -> s"item-$index")),
                             operations = allowed,
@@ -718,7 +718,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             DragProtocol.Limits.default
         ))
         val invalidSource = validSource.copy(label = Present("x" * (DragProtocol.Limits.default.maxNameLength + 1)))
-        val validTarget = success(DragProtocol.targetConfig(
+        val validTarget   = success(DragProtocol.targetConfig(
             Drag.Target("target", Drag.Accept(mediaTypes = Set(mediaTypePattern("text/plain")))),
             DragProtocol.Limits.default
         ))
@@ -744,7 +744,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     root
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     val sourceEl = fixture.querySelector("#bad-source").asInstanceOf[dom.Element]
                     discard(sourceEl.dispatchEvent(dragEvent("dragstart", sourceEl, transfer, 0, 0)))
@@ -791,7 +791,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     element
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     val transfer = new FakeTransfer
                     discard(fixture.dispatchEvent(dragEvent("dragstart", fixture, transfer, 0, 0)))
                     val id        = events.head.asInstanceOf[UIEvent.DragStart].event.sessionId
@@ -825,7 +825,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                     element
                 }
                 runtime <- DomDragRuntime.install(fixture, event => events += event, timing)
-                _ <- Sync.defer {
+                _       <- Sync.defer {
                     discard(fixture.dispatchEvent(dragEvent("dragstart", fixture, new FakeTransfer, 0, 0)))
                     assert(timing.activeTimers == 1)
                     timing.checkAt(DomDragRuntime.pendingTimeoutMs - 1)
@@ -880,7 +880,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
                         )("target")
                 )
             fiber <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, diagnostics)))
-            _ <- assertEventually(Sync.defer(
+            _     <- assertEventually(Sync.defer(
                 diagnostics.runtime != null && diagnostics.started && dom.document.getElementById("mounted-target") != null
             ))
             _ <- Sync.defer {
@@ -907,7 +907,7 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             actualEnds   <- ends.get
             mountDone    <- fiber.done
             drainDone    <- diagnostics.drain.getOrElse(Fiber.unit).done
-            _ <- Sync.defer {
+            _            <- Sync.defer {
                 assert(
                     (
                         actualStarts.size,
@@ -972,8 +972,8 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
     end FakeHit
 
     final private class FakeFrames extends DomDragRuntime.Frames:
-        private var queue = List.empty[() => Unit]
-        var active        = 0
+        private var queue                                        = List.empty[() => Unit]
+        var active                                               = 0
         def request(run: () => Unit): DomDragRuntime.CancelTimer =
             queue = queue :+ run
             active += 1
@@ -1003,8 +1003,8 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
             eventType,
             scalajs.Dynamic.literal(bubbles = true, cancelable = true)
         ).asInstanceOf[dom.Event]
-        val dyn = event.asInstanceOf[scalajs.Dynamic]
-        val obj = scalajs.Dynamic.global.Object
+        val dyn                                          = event.asInstanceOf[scalajs.Dynamic]
+        val obj                                          = scalajs.Dynamic.global.Object
         def prop(name: String, value: scalajs.Any): Unit =
             discard(obj.defineProperty(dyn, name, scalajs.Dynamic.literal(value = value, configurable = true)))
         prop("clientX", x)

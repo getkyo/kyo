@@ -78,7 +78,7 @@ private[kyo] trait SecureRandomPlatformSpecific:
         val len = bytes.length
         if len > 0 then
             resolve(sources) match
-                case Absent => throw new SecureRandom.EntropyUnavailable(describe(sources))
+                case Absent        => throw new SecureRandom.EntropyUnavailable(describe(sources))
                 case Present(fill) =>
                     val buf = new Int8Array(len)
                     fill(buf)

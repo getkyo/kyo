@@ -84,11 +84,16 @@ jobs:
           jvm: corretto:25
           apps: sbt
 
+      # scalafmtAll aggregates from the CURRENT project, and build.sbt makes that kyoJVM unless
+      # -Dplatform says otherwise, so a bare `sbt scalafmtAll` only ever reaches the JVM project set:
+      # every js/, native/ and js-wasm/ source stays unformatted and undetected. All four aggregates
+      # exist in every session regardless of -Dplatform, so naming them covers the whole tree in one
+      # project load (seconds, not a fourfold job).
       - name: Check formatting
         run: |
-          sbt scalafmtAll scalafmtSbt
+          sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt
           if ! git diff --quiet; then
-            echo "::error::Files are not formatted. Run 'sbt scalafmtAll scalafmtSbt' locally."
+            echo "::error::Files are not formatted. Run 'sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt' locally."
             git diff
             exit 1
           fi
