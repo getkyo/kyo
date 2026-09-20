@@ -1038,6 +1038,7 @@ The teaching sections above cover when to reach for each knob. This is the looku
 | `ffiPrebuiltPool` | `Option[File]` | `None` | directory of prebuilt natives shared by several projects; each takes only the ids it declares |
 | `ffiRequiredPlatforms` | `Seq[String]` | `Nil` | platform keys `ffiPackagingCheck` requires a native for, per bundled library |
 | `ffiStubLibraries` | `Seq[String]` | `Nil` | library ids whose C sources are a placeholder rather than the real binding |
+| `ffiNativeDelivery` | `Map[String, NativeDelivery.Entry]` | main artifact, per library with C sources | which published artifact carries each library and which platforms take it; published for `kyo-natives-plugin` to read in a consumer's build |
 
 > **Caution:** `ffiCFlags` replaces the default list when assigned with `:=`. Assigning `ffiCFlags := Seq("-DFOO")` drops `-O2 -fPIC -Wall`; use `ffiCFlags += "-DFOO"` to keep the defaults and append.
 

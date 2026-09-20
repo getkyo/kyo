@@ -5,10 +5,10 @@
 > kyoNativesReport
 > fastLinkJS
 $ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
-# The os is derived the way `NativeLoader.detectOsWith` derives it, musl included: process.platform says linux for
-# both libcs, and a glibc library does not open under musl, so asking for the wrong pole here would report a miss
-# that is this test's rather than the delivery's. The specifier is resolved from the linked output's own directory,
-# which is where the application resolves it from.
-$ exec node -e "const path=require('path'),fs=require('fs');const musl=fs.existsSync('/lib/ld-musl-x86_64.so.1')||fs.existsSync('/lib/ld-musl-aarch64.so.1');const os=process.platform==='darwin'?'darwin':process.platform==='win32'?'windows':(musl?'linux-musl':'linux');const arch=process.arch==='x64'?'x86_64':process.arch==='arm64'?'aarch64':process.arch;const ext=os==='darwin'?'dylib':os==='windows'?'dll':'so';const dirs=fs.readdirSync('target').filter(d=>d.startsWith('scala-'));if(dirs.length!==1)throw new Error('expected one scala- output directory, found '+dirs.join(', '));const out=fs.readdirSync(path.join('target',dirs[0])).filter(d=>d.endsWith('-fastopt'));if(out.length!==1)throw new Error('expected one -fastopt directory, found '+out.join(', '));const anchor=path.resolve('target',dirs[0],out[0],'main.js');const spec='@kyo/ffi-native/native/'+os+'-'+arch+'/libkyo_doltlite.'+ext;const r=require('module').createRequire(anchor);console.log('resolved',r.resolve(spec));"
+# Resolution from a DEPLOYED position, which `run` below does not cover: `run` inherits the NODE_PATH the plugin sets,
+# while a deployed application finds the package by walking up from the linked output. The anchor is that output, and
+# the specifier is built from the directory the delivery actually wrote rather than from a second copy of
+# `NativeLoader.detectOsWith`'s rule; that the tag it wrote is the one the loader asks for is what `run` proves.
+$ exec node -e "const path=require('path'),fs=require('fs');const native=path.resolve('target','node_modules','@kyo','ffi-native','native');const tags=fs.readdirSync(native);if(tags.length!==1)throw new Error('expected one delivered target, found '+tags.join(', '));const libs=fs.readdirSync(path.join(native,tags[0])).filter(f=>f.startsWith('libkyo_doltlite.'));if(libs.length!==1)throw new Error('expected one doltlite library, found '+libs.join(', '));const dirs=fs.readdirSync('target').filter(d=>d.startsWith('scala-'));if(dirs.length!==1)throw new Error('expected one scala- output directory, found '+dirs.join(', '));const out=fs.readdirSync(path.join('target',dirs[0])).filter(d=>d.endsWith('-fastopt'));if(out.length!==1)throw new Error('expected one -fastopt directory, found '+out.join(', '));const anchor=path.resolve('target',dirs[0],out[0],'main.js');const spec='@kyo/ffi-native/native/'+tags[0]+'/'+libs[0];console.log('resolved',require('module').createRequire(anchor).resolve(spec));"
 > run
 $ exec sh -c 'cat out.txt; grep -q "CONSUMER doltlite=2" out.txt'

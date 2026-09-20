@@ -68,9 +68,7 @@ The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup 
 > .enablePlugins(KyoNativesPlugin)
 > ```
 >
-> On Scala Native it links the binary against the library and stages it beside the binary: a deployment carries the two files together, and a binary deployed without `libkyo_aeron.<ext>` beside it fails in the dynamic loader naming the file. On Node it writes the library where the loader resolves it, under `target/node_modules/@kyo/ffi-native`, and installs koffi beside it; koffi is a native Node addon rather than a Scala.js dependency and so cannot travel in a jar, so the plugin pins it to `^2.7` in `target/package.json` and runs `npm install` once per clean, the one thing in this path fetched from npm rather than Maven. A deployed Node application resolves both by walking up from the linked output, so both `node_modules` entries travel with `main.js`. Without the plugin a Native binary still links, and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`.
->
-> The plugin brings sbt-scalajs and sbt-scala-native with it, so a build that has neither takes both into its meta-build by adding it.
+> Without the plugin a Native binary still links, and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`. What each platform does with the library, what a deployment has to carry beside the binary, and the koffi install on Node are in [kyo-natives-plugin's README](../kyo-natives/README.md).
 >
 > On the JVM the downcalls go through `java.lang.foreign`, which warns about restricted methods unless you add:
 > ```

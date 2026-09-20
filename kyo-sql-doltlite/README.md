@@ -72,21 +72,15 @@ addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
 .enablePlugins(KyoNativesPlugin)
 ```
 
-It links the binary against the engine library the published artifact carries and stages it beside the binary, and
-a deployment carries the two files together. Without the plugin the application still links, and opening a
-`doltlite://` URL fails with `DoltLiteEngineUnavailableException`, whose message says the binary was linked
-without the engine.
-
-On Node the same plugin writes the engine under `target/node_modules/@kyo/ffi-native`, where koffi resolves it
-from the filesystem, and installs koffi beside it from npm, pinned to `^2.7`. A deployed Node application resolves
-both by walking up from the linked output, so both `node_modules` entries travel with `main.js`. The plugin brings
-sbt-scalajs and sbt-scala-native with it, so a build that has neither takes both into its meta-build by adding it.
+It links the binary against the engine library the published artifact carries, and on Node writes that library where
+koffi resolves it. Without the plugin the application still links, and opening a `doltlite://` URL fails with
+`DoltLiteEngineUnavailableException`, whose message says the binary was linked without the engine. What a deployment
+has to carry on each platform is in [kyo-natives-plugin's README](../kyo-natives/README.md).
 
 One Native binary cannot hold both this artifact and kyo-sql-sqlite. The two compile the same shim, so both define
-the same entry points and the link fails on duplicate symbols. That holds whether or not the engine library is
-delivered: a delivered engine makes this artifact's copy of the shim empty, and the shim keeps one definition outside
-that gate so the collision survives it. Without that the link would succeed and every `doltlite://` call would reach
-kyo-sql-sqlite's plain engine, opening a Dolt database with something that does not understand it.
+the same entry points and the link fails on duplicate symbols, whether or not the engine library is delivered.
+Without that failure the link would succeed and every `doltlite://` call would reach kyo-sql-sqlite's plain engine,
+opening a Dolt database with something that does not understand it.
 
 ## Opening a database
 
