@@ -92,16 +92,25 @@ object KyoNativesJSPlugin extends AutoPlugin {
       * package lookup rather than pointing Node at a library it cannot load.
       */
     private def nodeEnvTask: Def.Initialize[Task[Map[String, String]]] = Def.task {
+        val log = streams.value.log
         if (kyoNativesRequests.value.isEmpty) Map.empty[String, String]
         else {
             val dir       = (target.value / "node_modules").getAbsolutePath
             val inherited = sys.env.getOrElse("NODE_PATH", "")
             val nodePath  = Map("NODE_PATH" -> (if (inherited.isEmpty) dir else dir + java.io.File.pathSeparator + inherited))
             val host      = NativeTargets.host
-            val libraries = kyoNativesFetched.value.collect {
+            val fetched   = kyoNativesFetched.value
+            val libraries = fetched.collect {
                 case (osArch, f) if osArch == host =>
                     s"KYO_FFI_${f.libId.toUpperCase.replace('-', '_')}_PATH" -> f.library.getAbsolutePath
             }.toMap
+            // Saying so matters most on an ESModule build, where the override is the only candidate that resolves and
+            // its absence is a green build that runs on the floor.
+            if (fetched.nonEmpty && libraries.isEmpty)
+                log.info(
+                    s"[kyo-natives] nothing was delivered for $host, so no KYO_FFI_<ID>_PATH is set and this process " +
+                        s"resolves libraries only through the package lookup (targets: ${fetched.map(_._1).distinct.mkString(", ")})"
+                )
             nodePath ++ libraries
         }
     }

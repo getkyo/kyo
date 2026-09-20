@@ -12,14 +12,15 @@ lazy val root = (project in file("."))
     .settings(
         scalaVersion := sys.props("kyo.scalaVersion"),
         libraryDependencies += "io.getkyo" %%% "kyo-stats-machine" % sys.props("kyo.version"),
-        // No withServiceProviders. Without the plugin's enlistment the link drops MachineStatFactory, the sampler
-        // never starts, and the assertion below fails with no error of its own: that silence is the failure mode.
+        // No withServiceProviders here. The enlistment has to reach nativeConfig, which is what the linker reads, so
+        // that is what the test asserts on rather than the task feeding it.
         nativeConfig ~= (_.withBaseName("consumer")),
         TaskKey[Unit]("writeServiceProviders") := {
-            val enlisted = kyoNativesServiceProviders.value
+            val enlisted = nativeConfig.value.serviceProviders
             IO.write(
                 baseDirectory.value / "service-providers.txt",
-                enlisted.toSeq.sortBy(_._1).map { case (i, impls) => s"$i=${impls.mkString(",")}" }.mkString("", "\n", "\n")
+                enlisted.toSeq.sortBy(_._1).map { case (i, impls) => s"$i=${impls.toSeq.sorted.mkString(",")}" }
+                    .mkString("", "\n", "\n")
             )
         }
     )

@@ -20,5 +20,16 @@ lazy val root = (project in file("."))
         scalaJSLinkerConfig ~= (
             _.withModuleKind(ModuleKind.ESModule)
                 .withOutputPatterns(OutputPatterns.fromJSFile("%s.mjs"))
-        )
+        ),
+        // The environment the plugin contributes, written where the test can read it and source it. `jsEnv` only
+        // reaches Node processes sbt itself spawns, and this fixture runs node directly so it can bound the run and
+        // so it can run the same binary a second time WITHOUT the overrides. Writing the map out is also what makes
+        // the override itself assertable rather than inferred from the run.
+        TaskKey[Unit]("writeNodeEnv") := {
+            val env = kyoNativesNodeEnv.value
+            IO.write(
+                baseDirectory.value / "node-env.sh",
+                env.toSeq.sortBy(_._1).map { case (k, v) => s"""export $k="$v"""" }.mkString("", "\n", "\n")
+            )
+        }
     )

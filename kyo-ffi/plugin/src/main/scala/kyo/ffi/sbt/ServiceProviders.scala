@@ -80,10 +80,12 @@ object ServiceProviders {
       * The format is the `ServiceLoader` one: one class per line, `#` starts a comment, blank lines are ignored.
       */
     def parse(text: String): Seq[String] =
+        // toList, not toSeq: an Iterator's toSeq is a lazy Stream on 2.12, and these values end up in a config map
+        // that is read long after this call.
         text.linesIterator.map { line =>
             val hash = line.indexOf('#')
             (if (hash >= 0) line.substring(0, hash) else line).trim
-        }.filter(_.nonEmpty).toSeq.distinct
+        }.filter(_.nonEmpty).toList.distinct
 
     /** `declared` merged over `existing`, so a value already in the config survives rather than being replaced. */
     def merge(

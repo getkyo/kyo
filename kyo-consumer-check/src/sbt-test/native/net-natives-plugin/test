@@ -2,20 +2,26 @@
 # nativeConfig, which is what the net-plugin fixture beside this one needs to reach the same round trip.
 > kyoNativesReport
 
-# The system-library probe belongs to this plugin now. It runs here with only kyo-natives-plugin enabled, which is the
-# half that used to require enabling kyo-ffi-plugin as well.
 > writeSystemLibraries
-# Which libraries resolve is the machine's answer, not this fixture's: a Linux host with liburing-dev links io_uring,
-# one without it compiles the shim's stubs and epoll serves. Either is a pass. What must hold is that a resolved
-# library carries link flags, since an id on its own is a resolution that contributes no library.
-$ exec sh -c 'set -eu; cat system-libraries.txt; grep -qE "^[^ ]+$" system-libraries.txt && { echo "a resolved system library carries no link flags" >&2; exit 1; }; exit 0'
+
+# Which system libraries resolve is the machine's answer, not this fixture's: a Linux host with liburing-dev links
+# io_uring, a macOS host with Homebrew's openssl@3 links that, a bare host links neither and the shims compile stubs.
+# So the assertion is a relation rather than a set: whatever the probe resolved must have reached nativeConfig, which
+# is what the linker reads. Deleting the system half from the fold breaks this on any host that resolved anything.
+$ exec sh -c 'set -eu; cat system-libraries.txt; cat native-config.txt; while read -r id rest; do [ -n "$id" ] || continue; up=$(echo "$id" | tr "[:lower:]-" "[:upper:]_"); grep -qx -- "-DKYO_FFI_LINKED_$up" native-config.txt || { echo "probe resolved $id but its define never reached nativeConfig" >&2; exit 1; }; for f in $rest; do grep -qx -- "$f" native-config.txt || { echo "probe resolved $id but its flag $f never reached nativeConfig" >&2; exit 1; }; done; done < system-libraries.txt'
+
+# The delivered library is folded in through the same nativeConfig, so its define has to be there too. This one does
+# not depend on the machine: kyo-net publishes BoringSSL for every pole this fixture can run on, and kyoNativesSource
+# is Jar, so a missing delivery fails the build before here.
+$ exec sh -c 'set -eu; grep -qx -- "-DKYO_FFI_EXTERNAL_KYONET_BORINGSSL" native-config.txt'
 
 > nativeLink
 
 # The delivered BoringSSL library is staged beside the binary, which is how it resolves at run time.
 $ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); [ -n "$bin" ] || { echo "no consumer binary under target/" >&2; exit 1; }; ls "$(dirname "$bin")"/libkyonet_boringssl.* > /dev/null'
 
-# The round trip itself, run from an unrelated working directory so the rpath is what resolves the library.
+# The round trip. TLS here is BoringSSL's, at priority 30 over system OpenSSL's 20, so this proves the delivery
+# rather than the probe; the probe is what the nativeConfig assertions above cover.
 $ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); "$bin" > out.txt 2>&1 || { cat out.txt; exit 1; }; cat out.txt; grep -q "CONSUMER tls=hello" out.txt'
 
 # The library is a real dependency, not a copy the binary happens to ignore: without it the program fails naming it.

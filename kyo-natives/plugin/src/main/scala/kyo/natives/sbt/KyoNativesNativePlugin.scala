@@ -92,7 +92,18 @@ object KyoNativesNativePlugin extends AutoPlugin {
         },
         kyoNativesEnlistServices   := true,
         kyoNativesSystemLibraries  := systemLibrariesTask.value,
-        kyoNativesServiceProviders := serviceProvidersTask.value,
+        kyoNativesServiceProviders := serviceProvidersTask(Compile).value,
+        // A test binary links its own classpath, where a test-only dependency can declare a provider of its own. The
+        // production config stays on Compile: enlisting a class that is not on the production classpath would fail
+        // that link rather than degrade. Reading the project-scope value here rather than this key is what keeps the
+        // two configurations distinct instead of self-referential.
+        Test / kyoNativesServiceProviders := serviceProvidersTask(Test).value,
+        Test / nativeConfig := {
+            val base     = nativeConfig.value
+            val declared = (Test / kyoNativesServiceProviders).value
+            if (declared.isEmpty) base
+            else base.withServiceProviders(ServiceProviders.merge(base.serviceProviders, declared))
+        },
         nativeConfig := {
             val base     = nativeConfig.value
             val services = kyoNativesServiceProviders.value
@@ -183,24 +194,29 @@ object KyoNativesNativePlugin extends AutoPlugin {
         }
     }
 
-    /** Every service provider the dependency jars declare.
+    /** Every service provider the entries on `configuration`'s dependency classpath declare.
       *
-      * Not filtered to kyo's own artifacts. On the JVM `ServiceLoader` finds every provider on the classpath, and the
-      * Native allowlist exists because the linker drops unreferenced classes, not because a narrower set was wanted.
-      * Filling it from the classpath is what makes the two platforms agree, and `kyoNativesEnlistServices := false`
-      * is for a build that would rather name the set itself.
+      * Not filtered to kyo's own artifacts, and enlisting one that nothing loads is safe rather than merely tolerable.
+      * A config entry pulls a provider into the binary only where a reachable `ServiceLoader.load` names its service,
+      * so dead-code elimination still decides what is linked and an entry for a service nobody loads costs a line in
+      * the linker's provider table. That is the argument for reading the whole classpath: it cannot over-link, and
+      * under-reading drops a provider with no symptom at all.
+      *
+      * `kyoNativesEnlistServices := false` is for a build that would rather name the set itself.
       */
-    private def serviceProvidersTask: Def.Initialize[Task[Map[String, Seq[String]]]] = Def.task {
-        val log = streams.value.log
-        if (!kyoNativesEnlistServices.value) Map.empty[String, Seq[String]]
-        else {
-            val declared = ServiceProviders.read((Compile / dependencyClasspath).value.map(_.data))
-            declared.toSeq.sortBy(_._1).foreach { case (iface, impls) =>
-                log.info(s"[kyo-natives] service provider $iface: ${impls.mkString(", ")}")
+    private def serviceProvidersTask(configuration: Configuration): Def.Initialize[Task[Map[String, Seq[String]]]] =
+        Def.task {
+            val log = streams.value.log
+            if (!kyoNativesEnlistServices.value || kyoNativesSource.value == NativesSource.Disabled)
+                Map.empty[String, Seq[String]]
+            else {
+                val declared = ServiceProviders.read((configuration / dependencyClasspath).value.map(_.data))
+                declared.toSeq.sortBy(_._1).foreach { case (iface, impls) =>
+                    log.info(s"[kyo-natives] service provider $iface: ${impls.mkString(", ")}")
+                }
+                declared
             }
-            declared
         }
-    }
 
     /** Why `target`'s libraries cannot reach a Scala Native link, or None when they can.
       *
