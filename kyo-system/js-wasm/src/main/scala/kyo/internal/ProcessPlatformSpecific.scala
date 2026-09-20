@@ -56,8 +56,26 @@ end NodeReadableStream
 
 @js.native
 private[kyo] trait NodeWritableStream extends js.Object:
-    def write(data: Uint8Array): Boolean = js.native
-    def end(): Unit                      = js.native
+    def write(data: Uint8Array): Boolean                                            = js.native
+    def end(): Unit                                                                 = js.native
+    def on(event: String, listener: js.Function1[js.Any, Unit]): NodeWritableStream = js.native
+    // True once the stream has been torn down: after an error such as EPIPE, or when Node destroys a child's stdin as the child exits.
+    def destroyed: Boolean = js.native
+    // True once end() has been called.
+    def writableEnded: Boolean = js.native
+end NodeWritableStream
+
+private[kyo] object NodeWritableStream:
+
+    /** Keeps a failed write to `stream` from ending the process.
+      *
+      * A write to a pipe whose reader is gone fails asynchronously: Node emits an 'error' event (EPIPE) on the stream after `write` has
+      * returned, and an 'error' event with no listener is thrown as an uncaught exception, which ends the whole Node process. With a listener
+      * installed the stream is only destroyed, and [[NodeOutputStream]] reports the failure to the next write as an `IOException`.
+      */
+    def guard(stream: NodeWritableStream): Unit =
+        if stream != null && !js.isUndefined(stream) then
+            discard(stream.on("error", { (_: js.Any) => () }))
 end NodeWritableStream
 
 // --- NodeInputStream — InputStream backed by a Node.js Readable stream ---
@@ -154,13 +172,21 @@ end NodeInputStream
 
 final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends OutputStream:
 
+    // A write to a torn-down stream is silently discarded by Node, so the closed state is checked here and reported the way
+    // java.io.OutputStream reports it: the stream is destroyed after a pipe error or when its child exited, or ended by close().
+    private def ensureOpen(): Unit =
+        if writable.destroyed || writable.writableEnded then
+            throw new java.io.IOException("Stream closed")
+
     override def write(b: Int): Unit =
+        ensureOpen()
         val arr = new Uint8Array(1)
         arr(0) = (b & 0xff).toShort
         discard(writable.write(arr))
     end write
 
     override def write(b: Array[Byte], off: Int, len: Int): Unit =
+        ensureOpen()
         val arr = new Uint8Array(len)
         var i   = 0
         while i < len do
@@ -169,7 +195,8 @@ final private[kyo] class NodeOutputStream(writable: NodeWritableStream) extends 
         discard(writable.write(arr))
     end write
 
-    override def close(): Unit = writable.end()
+    override def close(): Unit =
+        if !writable.destroyed && !writable.writableEnded then writable.end()
 
 end NodeOutputStream
 
@@ -226,11 +253,14 @@ final private[kyo] class NodeProcessUnsafe(
     def waitFor(timeout: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Process.ExitCode], Any] =
         val p        = Promise.Unsafe.init[Maybe[Process.ExitCode], Any]()
         var resolved = false
-        val ec       = child.exitCode
-        if ec != null && !js.isUndefined(ec) then
-            resolved = true
-            p.completeDiscard(Result.succeed(Present(Process.ExitCode(ec.asInstanceOf[Int]))))
-        end if
+        // A process that already died, from a signal as much as from an exit, has already fired its 'exit' event, so the listener below
+        // would never be called: answer from the recorded state, as the untimed overload does.
+        exitCode() match
+            case Present(code) =>
+                resolved = true
+                p.completeDiscard(Result.succeed(Present(code)))
+            case Absent => ()
+        end match
         if !resolved then
             // Held so every resolution path can clear it. An uncleared timer keeps the Node event
             // loop alive for the whole timeout after the child has already exited.
@@ -304,10 +334,12 @@ final private[kyo] class NodeProcessUnsafe(
         }(n => Process.ExitCode(128 + n))
     end exitCodeFrom
 
+    // A signal death leaves exitCode null and records the signal in signalCode, so both are consulted, as isAlive does.
     def exitCode()(using AllowUnsafe): Maybe[Process.ExitCode] =
         val ec = child.exitCode
-        if ec == null || js.isUndefined(ec) then Absent
-        else Present(Process.ExitCode(ec.asInstanceOf[Int]))
+        val sc = child.signalCode
+        if (ec == null || js.isUndefined(ec)) && (sc == null || js.isUndefined(sc)) then Absent
+        else Present(exitCodeFrom(ec, sc))
     end exitCode
 
     def destroy()(using AllowUnsafe): Unit         = discard(child.kill("SIGTERM"))
@@ -640,7 +672,8 @@ final private[kyo] class NodeCommandUnsafe(
                                     val opts   = buildOptions()
                                     val jsArgs = js.Array(args.drop(1).toSeq*)
                                     val child  = NodeChildProcess.spawn(args.head, jsArgs, opts)
-                                    val proc   = new NodeProcessUnsafe(child, stderrEnded = redirectError)
+                                    NodeWritableStream.guard(child.stdin)
+                                    val proc = new NodeProcessUnsafe(child, stderrEnded = redirectError)
 
                                     // Register an error handler to prevent Node.js from crashing on unhandled
                                     // 'error' events (e.g. ENOENT when the program is not found). The error is
@@ -724,7 +757,9 @@ final private[kyo] class NodeCommandUnsafe(
                                     val children = chain.map { cmd =>
                                         val opts   = pipeOpts(cmd)
                                         val jsArgs = js.Array(cmd.args.drop(1).toSeq*)
-                                        NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
+                                        val child  = NodeChildProcess.spawn(cmd.args.head, jsArgs, opts)
+                                        NodeWritableStream.guard(child.stdin)
+                                        child
                                     }
 
                                     // Wire pipes: stdout of N -> stdin of N+1
