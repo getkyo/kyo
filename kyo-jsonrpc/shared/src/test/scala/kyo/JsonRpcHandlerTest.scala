@@ -1153,19 +1153,17 @@ class JsonRpcHandlerTest extends JsonRpcTest:
 
     "a close sweeping the recorded proxy before its link still reaches the handler".notJs.notWasm in {
         // Window 2: the hook performs the close's sweep of pendingInbound inside the handler spawn, settling the proxy
-        // before the link. become then refuses the settled proxy and links nothing; forwarding its interrupt to the
-        // scheduled handler is what stops it. The handler never enters in the passing case, so the wait is on released,
-        // which the abandon walk fires through the route's eagerly-forced Sync.ensure cell.
+        // before the link. become then refuses the settled proxy and links nothing, so forwarding its interrupt to the
+        // scheduled fiber is the only thing that stops it. The forward lands before the fiber runs a step, so the
+        // handler's own result never exists and the completion hook answers the caller with the interrupt instead.
+        // Nothing gates the route, so a handler the forward failed to reach answers with its own result. The caller's
+        // outcome separates the two with no timing dependence; the timeout only guards against a hang.
         val hook = new SpawnHook
         for
-            gate     <- Latch.init(1)
-            released <- Latch.init(1)
-            route = JsonRpcRoute.request[AddReq, AddResp]("park") { (_, _) =>
-                Sync.ensure(released.release)(gate.await).andThen(AddResp(0))
-            }
             transports <- JsonRpcTransport.inMemory
             (ta, tb) = transports
-            freed <- Scope.run {
+            route    = JsonRpcRoute.request[AddReq, AddResp]("park") { (_, _) => AddResp(7) }
+            outcome <- Scope.run {
                 probing(hook)(JsonRpcHandler.init(tb, Seq(route))).map { b =>
                     val impl = b.unsafe.asInstanceOf[JsonRpcEndpointImpl]
                     Scope.run {
@@ -1180,18 +1178,24 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                                         case _ => ()
                                 }
                             }).andThen {
-                                Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
-                            }.andThen {
-                                Abort.run[Timeout](Async.timeout(2.seconds)(released.await)).map(_.isSuccess)
+                                Abort.run[Timeout] {
+                                    Async.timeout(5.seconds) {
+                                        Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0)))
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            _ <- gate.release
             _ <- ta.close
             _ <- tb.close
-        yield assert(freed, "the interrupt the sweep left on the unlinked proxy never reached the handler")
+        yield outcome match
+            case Result.Success(Result.Failure(_: JsonRpcError)) => succeed
+            case Result.Success(Result.Success(r))               =>
+                fail(s"the sweep's interrupt never reached the handler: it ran and answered $r")
+            case other =>
+                fail(s"expected the interrupted handler's error response, got $other")
         end for
     }
 
