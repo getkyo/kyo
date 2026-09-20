@@ -79,6 +79,11 @@ object NativeDelivery {
 
     /** The declaration lines for `delivery`, keyed by library id. Written in a fixed order so an unchanged declaration
       * is byte-identical and does not change the jar.
+      *
+      * `parse(render(d).mkString("\n")) == d` for everything this accepts, which is what an entry scoped to no
+      * platform at all would break: it writes an empty platform line, and a reader takes an absent value as the
+      * default rather than as nothing. Such an entry is refused where it is written, since a library nothing takes
+      * is a library the module should not be declaring.
       */
     def render(delivery: Map[String, Entry]): Seq[String] =
         if (delivery.isEmpty) Nil
@@ -86,6 +91,9 @@ object NativeDelivery {
             val ids = delivery.keys.toSeq.sorted
             ids.find(id => id.exists(c => c == ',' || c == '=' || c == '\n' || c == '\r')).foreach { bad =>
                 sys.error(s"[kyo-ffi-plugin] library id '$bad' cannot be written to a native-delivery declaration.")
+            }
+            ids.find(id => delivery(id).platforms.isEmpty).foreach { bad =>
+                sys.error(s"[kyo-ffi-plugin] $bad is declared for no platform; drop it instead, or name the platforms that take it.")
             }
             ids.flatMap(id => delivery(id).classifierPattern.flatMap(classifierProblem).map(id -> _)).headOption.foreach {
                 case (id, why) =>

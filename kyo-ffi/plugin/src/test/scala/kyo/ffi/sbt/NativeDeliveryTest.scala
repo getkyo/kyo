@@ -48,6 +48,13 @@ class NativeDeliveryTest extends AnyFunSuite with Matchers {
             contain("kyo_aeron.platforms = js, jvm, native")
     }
 
+    test("render rejects an entry scoped to no platform, which would read back as the default") {
+        val thrown = intercept[RuntimeException] {
+            NativeDelivery.render(Map("kyo_aeron" -> NativeDelivery.mainArtifact(Set.empty)))
+        }
+        thrown.getMessage should include("kyo_aeron")
+    }
+
     test("render rejects a classifier pattern that would not survive the round trip") {
         def reject(pattern: String): String =
             intercept[RuntimeException] {
