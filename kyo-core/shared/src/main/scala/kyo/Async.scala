@@ -824,17 +824,29 @@ object Async extends AsyncPlatformSpecific:
         useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     abstract class JoinInput[A]:
-        def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
+        /** Hands over the awaited promise, already linked to be interrupted with `task`.
+          *
+          * The link is made HERE rather than by the caller so the promise cannot be obtained without it: a joiner that
+          * skipped the link would leave the awaited promise holding a waiter that nothing ever reclaims.
+          *
+          * `release` is the registration `task` is about to make on the returned promise, [[Absent]] when it will make
+          * none. The link carries it so that interrupting `task` takes it back off the promise; without that, a task
+          * that dies parked on a promise which never completes stays reachable from it forever.
+          */
+        def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A]
+    end JoinInput
     sealed trait Join extends ArrowEffect[JoinInput, Result[Nothing, *]]
 
     private[kyo] inline def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         useResult(v)(r => r)
 
     @scala.annotation.nowarn("msg=anonymous")
-    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(
+        using joinFrame: Frame
+    ): B < (S & Async) =
         val input = new JoinInput[A]:
-            def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
-                task.interrupts(v)
+            def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A] =
+                task.interrupts(v, release)(using joinFrame)
                 v
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
