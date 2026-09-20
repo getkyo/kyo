@@ -1299,28 +1299,26 @@ class SignalTest extends kyo.test.Test[Any]:
           * that is the only thing the loop does, so the waiter count is what says whether re-arming REPLACES the
           * previous registration or stacks on top of it.
           *
-          * Virtual time drives the repair ticks, so the leaf neither sleeps nor depends on how fast the host runs; the
-          * count is monotone (a registration that survives is already counted), so reading it after the advances cannot
-          * pass by catching the loop mid-re-arm. The observer is proven still live afterwards, so a loop that died and
-          * stopped re-arming cannot pass either.
+          * Virtual time drives the repair ticks. Every fence is `awaitPendingSleepers`, never `assertEventually`: under
+          * time control a retry's backoff is itself a virtual sleep that nothing here would advance, so a first attempt
+          * that missed would park forever. Fencing on the re-armed sleeper also makes the tick count exact, and doubles
+          * as the liveness check, since a loop that died arms nothing and the fence would not return.
           */
         "a parked observe does not accumulate waiters across repair ticks" in {
             val repairInterval = 1.second
             val ticks          = 20
             Clock.withTimeControl { control =>
                 for
-                    ref    <- Signal.initRef(0)
-                    seen   <- AtomicRef.init(Chunk.empty[Int])
-                    fiber  <- Fiber.initUnscoped(ref.observe(repairInterval)(recordValue(seen, _)))
-                    _      <- assertEventually(seen.get.map(_ == Chunk(0))) // the first value is set up
-                    _      <- assertEventually(ref.waiters.map(_ == 1))     // and the loop is parked on the next change
-                    _      <- Kyo.foreachDiscard(1 to ticks)(_ => control.advance(repairInterval))
+                    ref   <- Signal.initRef(0)
+                    fiber <- Fiber.initUnscoped(ref.observe(repairInterval)(_ => Kyo.unit))
+                    // The loop arms its repair sleep only after setting the first value up, so a pending sleeper means
+                    // the observer is parked waiting for a change.
+                    _ <- control.awaitPendingSleepers(1)
+                    _ <- Kyo.foreachDiscard(1 to ticks) { _ =>
+                        control.advance(repairInterval).andThen(control.awaitPendingSleepers(1))
+                    }
                     parked <- ref.waiters
-                    // Liveness: the loop survived every repair tick and still delivers, so `parked` describes a
-                    // working observer rather than one that stopped re-arming.
-                    _ <- ref.set(1)
-                    _ <- assertEventually(seen.get.map(_.contains(1)))
-                    _ <- fiber.interrupt
+                    _      <- fiber.interrupt
                 yield assert(
                     parked == 1,
                     s"after $ticks repair ticks on an unchanged signal the observer holds $parked registrations; " +
