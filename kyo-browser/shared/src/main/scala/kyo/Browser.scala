@@ -2579,6 +2579,31 @@ object Browser:
     def evalDiscard(js: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         eval(js).unit
 
+    // --- Memory ---
+
+    /** Reads the page's JS heap occupancy via `Runtime.getHeapUsage`.
+      *
+      * The read counts garbage the collector has not reached yet, so a single sample says little on its own. To measure what the page
+      * RETAINS, call [[collectGarbage]] first and compare `used` across samples taken the same way.
+      *
+      * Reads the isolate behind the active tab's CDP session, so a measurement taken while other tabs are open still reflects only that
+      * page.
+      */
+    def heapUsage(using Frame): HeapUsage < (Browser & Abort[BrowserReadException]) =
+        Env.use[BrowserTab] { tab =>
+            CdpBackend.getHeapUsage(tab.session).map(r => HeapUsage(r.usedSize.toLong, r.totalSize.toLong))
+        }
+
+    /** Runs a full GC in the page's isolate via `HeapProfiler.collectGarbage`, returning once the collection has finished.
+      *
+      * Pair it with [[heapUsage]] to measure retention: what survives a forced collection is reachable, so growth across collected samples
+      * is growth in what the page holds on to, not collection lag.
+      */
+    def collectGarbage(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        Env.use[BrowserTab] { tab =>
+            CdpBackend.collectGarbage(tab.session)
+        }
+
     /** Returns all console messages captured since the last call (or since page load on the first call) and clears the buffer.
       *
       * The `console.debug` / `console.info` / `console.log` / `console.warn` / `console.error` override is installed eagerly when the tab is
@@ -3851,6 +3876,14 @@ object Browser:
       * `ScreenshotFrame`.
       */
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** JS heap occupancy of the page's isolate, in bytes, as returned by [[heapUsage]].
+      *
+      * `used` is live plus not-yet-collected data; `total` is what V8 has reserved for the heap. Only `used` taken right after
+      * [[collectGarbage]] is a retention measurement: without a preceding collection it also counts garbage, and `total` moves with V8's
+      * own growth heuristics rather than with what the page retains.
+      */
+    final case class HeapUsage(used: Long, total: Long) derives Schema, CanEqual
 
     /** One frame recorded by [[screenshotFrames]]. `image` is the captured frame; `offsetMs` is `round(timestamp * 1000) - t0` from the
       * screencast metadata (with a wall-clock fallback), relative to the cast start and floored at the previous frame's offset so a
