@@ -103,12 +103,11 @@ object KyoFfiPlugin extends AutoPlugin {
             "Codegen classpath: kyo-ffi-codegen plus its Scala 3 toolchain. Defaults to resolving kyo-ffi-codegen from the project's resolvers; the in-repo integration test overrides it with the codegen project's classpath."
         )
 
-        val ffiNativeDelivery = settingKey[Map[String, String]](
-            "Per library id, the classifier pattern of the JVM artifact carrying its shared library, with " +
-                "`<os-arch>` standing for the target tag: \"\" for the main artifact, `<os-arch>-boringssl` for a " +
-                "sliced one. Published so a Native or Node consumer, whose own artifact carries no library, resolves " +
-                "the one that does. Defaults to the main artifact for every library with C sources; a module that " +
-                "slices its natives into classifier jars states the pattern instead."
+        val ffiNativeDelivery = settingKey[Map[String, NativeDelivery.Entry]](
+            "Per library id, which artifact carries its shared library and which platforms should take it. The " +
+                "classifier pattern uses `<os-arch>` for the target tag, empty meaning the module's main artifact. " +
+                "Published so a Native or Node consumer, whose own artifact carries no library, resolves the one " +
+                "that does. Defaults to the main artifact on every platform for each library with C sources."
         )
 
         // Multi-library setting (DESIGN §3.4)
@@ -441,7 +440,7 @@ object KyoFfiPlugin extends AutoPlugin {
         // Every library with C sources ships in the module's main JVM artifact, which is where a module that does
         // not slice its natives keeps them. A module that does slice states the pattern, and the JVM leg's
         // ffiNativeDeliveryCheck rejects a declaration that does not match what it packaged.
-        ffiNativeDelivery := ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id -> "").toMap,
+        ffiNativeDelivery := ffiLibrariesResolved.value.filter(_.cSources.nonEmpty).map(_.id -> NativeDelivery.Entry("")).toMap,
         // Load-bearing beyond its value: ffiCompileAll, ffiPackagingCheckAll and
         // ffiPackagingFormatCheckAll decide which projects enable this plugin by asking whether this
         // key resolves for the project, delegation included. That is exactly why a globalSettings

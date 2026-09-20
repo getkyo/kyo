@@ -7,12 +7,16 @@ package kyo.natives.sbt
   * which is the JVM classpath contribution: adding a carrier jar to a Native or JS project would put a second copy of
   * every library into its artifact.
   */
-private[sbt] sealed trait Platform
+private[sbt] sealed trait Platform {
+
+    /** This platform's name in a [[kyo.ffi.sbt.NativeDelivery]] declaration's platform scope. */
+    def declarationName: String
+}
 
 private[sbt] object Platform {
-    case object Jvm    extends Platform
-    case object Native extends Platform
-    case object Js     extends Platform
+    case object Jvm    extends Platform { val declarationName = "jvm"    }
+    case object Native extends Platform { val declarationName = "native" }
+    case object Js     extends Platform { val declarationName = "js"     }
 
     /** The platform `pluginLabels` names. The class names are sbt-scala-native's and sbt-scalajs' own and are stable
       * across their releases, which is why matching on them is sound.

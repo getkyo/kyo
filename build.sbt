@@ -2579,8 +2579,17 @@ lazy val `kyo-net` =
             // holds which library. Asking `kyoNetNativeClassifier` with the target placeholder yields the pattern
             // from the same function that names the jars, so the declaration cannot drift from the packaging. It also
             // answers None for kyonet_openssl, which ships no native anywhere.
+            //
+            // kyonet_posix_uring is not delivered to Native: its C IS the transport rather than a shim over a
+            // vendored library, and Scala Native compiles it into the binary from the sources the artifact ships. A
+            // delivered copy would be shadowed by that one and still have to travel beside the binary. BoringSSL is
+            // the opposite case, a shim whose library a Native binary has no other way to get.
             ffiNativeDelivery := ffiLibraries.value.flatMap { lib =>
-                kyoNetNativeClassifier(NativeDelivery.targetToken, lib.id).map(lib.id -> _)
+                kyoNetNativeClassifier(NativeDelivery.targetToken, lib.id).map { pattern =>
+                    val platforms =
+                        if (lib.id == "kyonet_posix_uring") Set("jvm", "js") else NativeDelivery.allPlatforms
+                    lib.id -> NativeDelivery.Entry(pattern, platforms)
+                }
             }.toMap
         )
         .jvmSettings(

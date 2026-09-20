@@ -30,18 +30,21 @@ private[sbt] object Delivery {
     def entryPath(libId: String, osArch: String, os: String): String =
         s"META-INF/native/$osArch/${libraryFileName(libId, os)}"
 
-    /** What `classpath` asks for, for target `osArch`.
+    /** What `classpath` asks for on `platform`, for target `osArch`.
       *
       * A Native or JS artifact declares the delivery but carries no library, so each request names the JVM artifact of
       * the same module and version: the declaration supplies the classifier, and [[NativeDelivery.jvmArtifactName]]
       * maps the platform-suffixed name back. `intransitive` because only that one jar is wanted, never the module's
       * dependency closure, which the project already has.
+      *
+      * A declaration that does not deliver to `platform` is skipped, which is how a library whose C already compiles
+      * into a Native binary stays out of that link.
       */
-    def requests(classpath: Seq[(ModuleID, File)], osArch: String): Seq[Request] =
+    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: String): Seq[Request] =
         classpath.flatMap { case (module, file) =>
             if (!file.isFile || !file.getName.endsWith(".jar")) Nil
             else
-                NativeDelivery.readJar(file).map { declared =>
+                NativeDelivery.readJar(file).filter(_.deliversTo(platform)).map { declared =>
                     val carrier = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
                     val withClassifier =
                         declared.classifier(osArch).fold(carrier)(c => carrier.classifier(c))

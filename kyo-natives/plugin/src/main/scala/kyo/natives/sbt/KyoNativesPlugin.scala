@@ -92,11 +92,12 @@ object KyoNativesPlugin extends AutoPlugin {
     }
 
     private def fetchTask: Def.Initialize[Task[Seq[(String, Delivery.Fetched)]]] = Def.task {
-        val log     = streams.value.log
-        val source  = kyoNativesSource.value
-        val targets = kyoNativesResolvedTargets.value
-        val depRes  = dependencyResolution.value
-        val outRoot = kyoNativesDirectory.value
+        val log      = streams.value.log
+        val source   = kyoNativesSource.value
+        val targets  = kyoNativesResolvedTargets.value
+        val depRes   = dependencyResolution.value
+        val outRoot  = kyoNativesDirectory.value
+        val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet).declarationName
         val modules = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
             report.artifacts.map { case (_, file) => report.module -> file }
         }
@@ -110,7 +111,7 @@ object KyoNativesPlugin extends AutoPlugin {
                 )
             targets.flatMap { osArch =>
                 val os = NativeTargets.osOf(osArch)
-                Delivery.requests(modules, osArch).flatMap { request =>
+                Delivery.requests(modules, osArch, platform).flatMap { request =>
                     val fetched = Delivery.resolve(depRes, request.module, log).right.flatMap { jar =>
                         Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
                             .map(lib => Delivery.Fetched(request.libId, lib, jar))

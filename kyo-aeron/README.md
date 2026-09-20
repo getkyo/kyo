@@ -54,7 +54,20 @@ The `Topic` effect is discharged by `run`; what remains in the row is `Async` (b
 
 The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup defect (a temp dir that cannot be allocated, or an embedded driver that fails to launch, e.g. a native library that cannot be loaded) surfaces as a panic, not a recoverable abort, because it is an environment defect rather than a per-call condition. The external overloads (`Topic.run(aeronDir)` and `AeronClient.connect`) instead surface a missing external driver as a typed `Abort[TopicTransportFailedException]`, because that connect failure is a per-call recoverable condition.
 
-> **Note:** Every platform runs Aeron's C client and embedded C media driver through kyo-ffi, so the native library must be loadable at runtime. On the JVM it ships inside the artifact per os-arch and is extracted on first use; point `-Dkyo.ffi.kyo_aeron.path=<file>` at your own build to override that. On Linux the driver links `libuuid` dynamically (plus `libatomic` on aarch64), so a minimal container image needs those present. On Scala Native the shim compiles in your build and the Aeron archive does not travel in the artifact, so a Native binary links without Aeron and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`.
+> **Note:** Every platform runs Aeron's C client and embedded C media driver through kyo-ffi, so the native library must be loadable at runtime. On the JVM it ships inside the artifact per os-arch and is extracted on first use; point `-Dkyo.ffi.kyo_aeron.path=<file>` at your own build to override that. On Linux the driver links `libuuid` dynamically (plus `libatomic` on aarch64), so a minimal container image needs those present.
+>
+> On Scala Native and on Node the library does not reach an application by itself: Scala Native has no runtime loader, and koffi reads the filesystem rather than the classpath. `kyo-natives-plugin` delivers it on both:
+>
+> ```
+> // project/plugins.sbt
+> addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+> ```
+> ```
+> // the application project, or a crossProject's .nativeSettings / .jsSettings
+> .enablePlugins(KyoNativesPlugin)
+> ```
+>
+> On Scala Native it links the binary against the library and stages it beside the binary, so the directory `nativeLink` writes travels as a unit: a binary deployed without `libkyo_aeron.<ext>` beside it fails in the dynamic loader naming the file. On Node it writes the library where the loader resolves it and installs koffi. Without the plugin a Native binary still links, and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`.
 >
 > On the JVM the downcalls go through `java.lang.foreign`, which warns about restricted methods unless you add:
 > ```
@@ -449,7 +462,7 @@ If you need to share publishing or subscribing logic across modules, write metho
 
 ## Cross-platform backends
 
-The same `Topic` API (`run`, `publish[A: Schema]`, `stream[A: Schema]`, `AeronClient.connect`) compiles and runs identically on JVM, Scala Native, Scala.js, and Wasm, on one transport: Aeron's C client and an embedded C media driver, bound through kyo-ffi and statically linked from libaeron built for the target. Only the binding backend differs (Panama on the JVM, `@extern` on Native, koffi-on-Node for JS and Wasm), so behavior does not vary by platform. Every platform therefore requires libaeron staged for the target at build time. The external-driver path (`Topic.run(aeronDir)` and `AeronClient.connect(aeronDir)`) works on all four platforms with the same `kyo.Path` type and the same `Abort[TopicTransportFailedException]` failure channel. The wire format, MsgPack envelopes, is byte-identical across platforms, so a JVM publisher and a Native subscriber on the same Aeron URI interoperate.
+The same `Topic` API (`run`, `publish[A: Schema]`, `stream[A: Schema]`, `AeronClient.connect`) compiles and runs identically on JVM, Scala Native, Scala.js, and Wasm, on one transport: Aeron's C client and an embedded C media driver, bound through kyo-ffi and statically linked from libaeron built for the target. Only the binding backend differs (Panama on the JVM, `@extern` on Native, koffi-on-Node for JS and Wasm), so behavior does not vary by platform. libaeron is linked inside the shared library the artifact carries, so an application never stages or builds Aeron itself; it needs that library delivered, which is what the note under "Getting started" covers. The external-driver path (`Topic.run(aeronDir)` and `AeronClient.connect(aeronDir)`) works on all four platforms with the same `kyo.Path` type and the same `Abort[TopicTransportFailedException]` failure channel. The wire format, MsgPack envelopes, is byte-identical across platforms, so a JVM publisher and a Native subscriber on the same Aeron URI interoperate.
 
 ## Putting it together
 

@@ -35,38 +35,66 @@ object NativeDelivery {
     /** The placeholder a classifier pattern uses for the target os-arch tag. */
     val targetToken: String = "<os-arch>"
 
-    /** One library id and the classifier pattern of the artifact carrying its shared library. */
-    final case class Declared(id: String, classifierPattern: String) {
+    /** The platform names a delivery can be scoped to, which are the platforms kyo publishes for. */
+    val allPlatforms: Set[String] = Set("jvm", "js", "native")
+
+    /** What a module delivers for one library: the classifier pattern of the artifact carrying its shared library, and
+      * the platforms that should take it.
+      *
+      * The platform scope exists because a library is not always something a consumer needs delivered. Scala Native
+      * compiles a module's C into the binary from the sources the artifact ships, so where that C is the whole
+      * implementation rather than a shim over a vendored library, the binary already has it. Delivering it there would
+      * link a second copy the compiled-in one shadows, and saddle the binary with a file it has to carry and does not
+      * use.
+      */
+    final case class Entry(classifierPattern: String, platforms: Set[String] = allPlatforms)
+
+    /** One library id and the [[Entry]] a declaration carries for it. */
+    final case class Declared(id: String, classifierPattern: String, platforms: Set[String] = allPlatforms) {
 
         /** The classifier for `osArch`, or None when the library ships in the module's main artifact. */
         def classifier(osArch: String): Option[String] = {
             val resolved = classifierPattern.replace(targetToken, osArch)
             if (resolved.isEmpty) None else Some(resolved)
         }
+
+        /** Whether `platform` (`jvm`, `js` or `native`) should take this library. */
+        def deliversTo(platform: String): Boolean = platforms.contains(platform)
     }
 
     /** The declaration lines for `delivery`, keyed by library id. Written in a fixed order so an unchanged declaration
       * is byte-identical and does not change the jar.
       */
-    def render(delivery: Map[String, String]): Seq[String] =
+    def render(delivery: Map[String, Entry]): Seq[String] =
         if (delivery.isEmpty) Nil
         else {
             val ids = delivery.keys.toSeq.sorted
             ids.find(id => id.exists(c => c == ',' || c == '=' || c == '\n' || c == '\r')).foreach { bad =>
                 sys.error(s"[kyo-ffi-plugin] library id '$bad' cannot be written to a native-delivery declaration.")
             }
-            s"libraries = ${ids.mkString(", ")}" +: ids.map(id => s"$id.classifier = ${delivery(id)}")
+            delivery.values.flatMap(_.platforms).find(!allPlatforms.contains(_)).foreach { bad =>
+                sys.error(s"[kyo-ffi-plugin] '$bad' is not a platform; use ${allPlatforms.toSeq.sorted.mkString(", ")}.")
+            }
+            (s"libraries = ${ids.mkString(", ")}" +: ids.map(id => s"$id.classifier = ${delivery(id).classifierPattern}")) ++
+                // Only written where it narrows, so a module delivering to every platform keeps the shorter declaration.
+                ids.filter(id => delivery(id).platforms != allPlatforms)
+                    .map(id => s"$id.platforms = ${delivery(id).platforms.toSeq.sorted.mkString(", ")}")
         }
 
     /** Parses a declaration written by [[render]]. */
     def parse(text: String): Seq[Declared] = {
         val props = new Properties()
         props.load(new StringReader(text))
-        Option(props.getProperty("libraries")).toSeq
-            .flatMap(_.split(','))
-            .map(_.trim)
-            .filter(_.nonEmpty)
-            .map(id => Declared(id, Option(props.getProperty(s"$id.classifier")).map(_.trim).getOrElse("")))
+        def list(key: String): Seq[String] =
+            Option(props.getProperty(key)).toSeq.flatMap(_.split(',')).map(_.trim).filter(_.nonEmpty)
+        list("libraries").map { id =>
+            val platforms = list(s"$id.platforms").toSet
+            Declared(
+                id,
+                Option(props.getProperty(s"$id.classifier")).map(_.trim).getOrElse(""),
+                if (platforms.isEmpty) allPlatforms else platforms
+            )
+        }
     }
 
     /** The declarations `jar` carries, empty when it carries none. */

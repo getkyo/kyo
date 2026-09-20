@@ -24,13 +24,13 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         }
     }
 
-    private def deliveryEntry(delivery: Map[String, String]): (String, String) =
+    private def deliveryEntry(delivery: Map[String, NativeDelivery.Entry]): (String, String) =
         NativeDelivery.dir.mkString("/") + "/demo.properties" -> NativeDelivery.render(delivery).mkString("\n")
 
     test("a Native jar's declaration yields the JVM artifact of the same module and version") {
-        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> "")))) { jar =>
+        withJar(Seq(deliveryEntry(Map("kyo_aeron" -> NativeDelivery.Entry(""))))) { jar =>
             val module   = "io.getkyo" % "kyo-aeron_native0.5_3" % "1.2.3"
-            val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64")
+            val requests = Delivery.requests(Seq(module -> jar), "darwin-aarch64", "native")
             requests.map(_.libId) shouldBe Seq("kyo_aeron")
             val carrier = requests.head.module
             carrier.organization shouldBe "io.getkyo"
@@ -42,23 +42,37 @@ class DeliveryTest extends AnyFunSuite with Matchers {
     }
 
     test("a sliced module's declaration names the classifier for the target asked for") {
-        withJar(Seq(deliveryEntry(Map("kyonet_boringssl" -> "<os-arch>-boringssl")))) { jar =>
+        withJar(Seq(deliveryEntry(Map("kyonet_boringssl" -> NativeDelivery.Entry("<os-arch>-boringssl"))))) { jar =>
             val module  = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
-            val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64").head.module
+            val carrier = Delivery.requests(Seq(module -> jar), "linux-x86_64", "native").head.module
             carrier.name shouldBe "kyo-net_3"
             carrier.explicitArtifacts.flatMap(_.classifier) shouldBe Vector("linux-x86_64-boringssl")
         }
     }
 
+    test("a library the declaration does not deliver to this platform is not requested") {
+        // kyo-net's shape: the transport's C compiles into a Native binary already, the TLS shim's library does not.
+        val delivery = Map(
+            "kyonet_posix_uring" -> NativeDelivery.Entry("<os-arch>", Set("jvm", "js")),
+            "kyonet_boringssl"   -> NativeDelivery.Entry("<os-arch>-boringssl")
+        )
+        withJar(Seq(deliveryEntry(delivery))) { jar =>
+            val module = "io.getkyo" % "kyo-net_native0.5_3" % "1.2.3"
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", "native").map(_.libId) shouldBe Seq("kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", "jvm").map(_.libId).sorted shouldBe
+                Seq("kyonet_boringssl", "kyonet_posix_uring")
+        }
+    }
+
     test("a jar carrying no declaration asks for nothing") {
         withJar(Seq("kyo/Something.class" -> "irrelevant")) { jar =>
-            Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64") shouldBe Nil
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", "jvm") shouldBe Nil
         }
     }
 
     test("a classpath entry that is a directory rather than a jar is skipped") {
         IO.withTemporaryDirectory { dir =>
-            Delivery.requests(Seq(("org" % "thing_3" % "1") -> dir), "darwin-aarch64") shouldBe Nil
+            Delivery.requests(Seq(("org" % "thing_3" % "1") -> dir), "darwin-aarch64", "jvm") shouldBe Nil
         }
     }
 

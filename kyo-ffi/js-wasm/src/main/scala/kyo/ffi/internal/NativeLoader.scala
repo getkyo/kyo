@@ -178,7 +178,7 @@ object NativeLoader:
     private[internal] def detectOsWith(platform: String, exists: String => Boolean): String =
         platform match
             case "darwin" => "darwin"
-            case "linux" =>
+            case "linux"  =>
                 if exists("/lib/ld-musl-x86_64.so.1") || exists("/lib/ld-musl-aarch64.so.1") then "linux-musl"
                 else "linux"
             case "win32"   => "windows"
