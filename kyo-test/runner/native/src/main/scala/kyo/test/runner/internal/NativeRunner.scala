@@ -48,7 +48,7 @@ final private[runner] class NativeRunner(
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
         parsedArgs match
             case Args.Result.Ok(_) => taskDefs.map(td => new NativeTask(td, baseConfig, testClassLoader, results))
-            case _ =>
+            case _                 =>
                 Array.empty
 
     /** Not used: kyo-test does not support the master/worker communication model.
@@ -76,7 +76,7 @@ final private[runner] class NativeRunner(
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
-            case Args.Result.Ok(_) =>
+            case Args.Result.Ok(_)      =>
                 import scala.jdk.CollectionConverters.*
                 Summary.render(results.asScala, Chunk.empty, positionalArgs)
     end done

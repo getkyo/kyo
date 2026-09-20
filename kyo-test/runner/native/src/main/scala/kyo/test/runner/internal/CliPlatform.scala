@@ -23,7 +23,7 @@ private[runner] object CliPlatform:
         var anyError = false
 
         for suite <- suites do
-            val fut = kyo.test.runner.TestRunner.runToFutureAtCliEdge(suite, config)
+            val fut    = kyo.test.runner.TestRunner.runToFutureAtCliEdge(suite, config)
             val report =
                 try
                     Await.result(fut, Duration.Inf)

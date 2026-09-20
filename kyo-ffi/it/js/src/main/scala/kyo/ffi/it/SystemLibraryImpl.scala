@@ -17,7 +17,7 @@ private[it] object SystemLibraryInitImpl:
     // Module-level `val`, evaluated lazily at first access (via
     // `ensureInitialized` below), guaranteed to run at most once.
     private val initialized: Unit =
-        val platform = js.Dynamic.global.process.platform.toString
+        val platform         = js.Dynamic.global.process.platform.toString
         val libcPath: String =
             if platform == "darwin" then "/usr/lib/libSystem.B.dylib"
             else if platform == "linux" then "libc.so.6"

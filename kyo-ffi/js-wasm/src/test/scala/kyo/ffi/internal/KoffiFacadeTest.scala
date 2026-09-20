@@ -68,11 +68,11 @@ class KoffiFacadeTest extends Test:
 
         "KoffiFn fields have the expected Scala-level types" in {
             // Compile-time: declaring these vals locks in the field types on KoffiFn.
-            val fn: KoffiFn         = KoffiFn("n", "s", "r", Seq[sjs.Any]("a".asInstanceOf[sjs.Any]))
-            val _scalaName: String  = fn.scalaName
-            val _cSymbol: String    = fn.cSymbol
-            val _result: String     = fn.result
-            val _args: Seq[sjs.Any] = fn.args
+            val fn: KoffiFn                                    = KoffiFn("n", "s", "r", Seq[sjs.Any]("a".asInstanceOf[sjs.Any]))
+            val _scalaName: String                             = fn.scalaName
+            val _cSymbol: String                               = fn.cSymbol
+            val _result: String                                = fn.result
+            val _args: Seq[sjs.Any]                            = fn.args
             val _tuple: (String, String, String, Seq[sjs.Any]) =
                 (_scalaName, _cSymbol, _result, _args)
             assert(_tuple._1 == "n")

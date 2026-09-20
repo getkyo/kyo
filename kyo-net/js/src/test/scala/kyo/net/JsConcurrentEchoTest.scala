@@ -97,7 +97,7 @@ class JsConcurrentEchoTest extends Test:
     end driveConnection
 
     private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[NetException | Closed] & Scope) =
-        val transport = NetPlatform.transport
+        val transport                         = NetPlatform.transport
         val serverHandler: Connection => Unit = serverConn =>
             // Echo loop using the Unsafe API: take a span from inbound, offer it back to outbound, repeat. Each connection's echo runs as its
             // own onComplete chain on the single event loop, interleaved with every other connection's by Node.

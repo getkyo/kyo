@@ -111,9 +111,9 @@ private[kyo] object UnsafeBufferPlatform:
                 val err     = errno.errno
                 if basePtr == null || err != 0 then
                     throw new java.io.IOException(s"mmap failed for $path: errno=$err")
-                val ptr            = basePtr + extraBytes.toInt
-                val closerTotalMap = totalMap
-                val isRO           = readOnly
+                val ptr                    = basePtr + extraBytes.toInt
+                val closerTotalMap         = totalMap
+                val isRO                   = readOnly
                 val mmapCloser: () => Unit = () =>
                     if isRO then
                         discard(MmapC.munmapNative(basePtr, closerTotalMap))

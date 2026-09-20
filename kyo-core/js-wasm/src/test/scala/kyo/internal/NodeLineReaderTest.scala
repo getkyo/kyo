@@ -26,7 +26,7 @@ class NodeLineReaderTest extends kyo.test.Test[Any]:
         TestNodeFs.openSync(path, "r")
     end descriptorOf
 
-    private var next = 0
+    private var next           = 0
     private def counter(): Int =
         next += 1
         next

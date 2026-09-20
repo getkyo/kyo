@@ -40,7 +40,7 @@ object BlockingBridge:
     def runAsync[A](facade: js.Dynamic, name: String, args: js.Array[js.Any], marshal: js.Any => A)(using
         AllowUnsafe
     ): Fiber.Unsafe[A, Any] =
-        val p = Promise.Unsafe.init[A, Any]()
+        val p                = Promise.Unsafe.init[A, Any]()
         def dispatch(): Unit =
             try
                 KoffiFacade.callAsync(
