@@ -6,6 +6,7 @@ import kyo.Actor.Subject
 class ActorTest extends kyo.test.Test[Any]:
 
     private case class Publish(value: Int, replyTo: Subject[Int])
+    private case class Sub(id: Int, replyTo: Subject[Unit])
 
     opaque type Amount = BigDecimal
     object Amount:
@@ -1145,6 +1146,37 @@ class ActorTest extends kyo.test.Test[Any]:
                     reply <- actor.ask(7)
                     _     <- actor.close
                 yield assert(reply == 7)
+            }
+        }
+    }
+
+    "resource safety under interruption" - {
+        // A subscriber adds itself through the actor's reply (the ask) and registers its removal with `Scope.ensure`
+        // only after the ask resumes. An interrupt landing at the reply's resume abandons that continuation, so the
+        // subscriber stays in the set and every later publish would block on a mailbox nobody drains. This is the
+        // `PubSub.subscribe` window, pinned through a raw actor. The reply-promise probe lands the stop
+        // deterministically: an `onComplete` registered after the caller parked fires LIFO before the caller's resume.
+        "a subscriber interrupted at the ask reply is left in the actor's set".pendingUntilFixed(
+            "a subscriber adds via actor.ask and registers its removal with Scope.ensure only after the reply resumes; an interrupt in that window leaves it in the set"
+        ) in {
+            Scope.run {
+                for
+                    set   <- AtomicRef.init(Set.empty[Int])
+                    gate  <- Latch.init(1)
+                    actor <- Actor.run(Actor.receiveLoop[Sub] { msg =>
+                        gate.await.andThen(set.updateAndGet(_ + msg.id)).andThen(msg.replyTo.send(())).andThen(Loop.continue)
+                    })
+                    subscriber <- Fiber.initUnscoped(
+                        Scope.run(actor.ask(Sub(1, _)).andThen(Scope.ensure(set.updateAndGet(_ - 1).unit)))
+                    )
+                    _ <- assertEventually(Sync.defer(actor.inFlightReplies.nonEmpty))
+                    reply = actor.inFlightReplies.head
+                    _ <- assertEventually(reply.waiters.map(_ >= 1))
+                    _ <- reply.onComplete(_ => subscriber.interrupt.unit)
+                    _ <- gate.release
+                    _ <- subscriber.getResult
+                    n <- set.get
+                yield assert(n.isEmpty, s"the subscriber stayed in the set after being interrupted at the ask reply: $n")
             }
         }
     }
