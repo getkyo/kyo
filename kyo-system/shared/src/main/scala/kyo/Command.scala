@@ -65,16 +65,16 @@ object Command:
           * If the scope closes before `waitFor` completes, the process is forcibly killed.
           */
         def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
-            Sync.Unsafe.defer {
-                Abort.get(self.unsafe.spawn()).map { proc =>
-                    Scope.acquireRelease(proc.safe) { p =>
-                        Sync.Unsafe.defer {
-                            // Feeds are stopped unconditionally: the process may have exited
-                            // while a feed is still parked reading its own source.
-                            p.unsafe.stopInputFeeds()
-                            if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                        }
-                    }
+            // The fork is the acquire: the release is registered in the step that produces the process, so a stop
+            // delivered during the fork cannot land between the two and leave the process with no owner. The `.safe`
+            // conversion is a pure `Result.map` inside the unsafe block, not a kernel `.map`: a kernel `.map` between
+            // the fork and `acquireRelease`'s `ensureMap` would be a poll a stop parks in front of, stranding the fork.
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
+                Sync.Unsafe.defer {
+                    // Feeds are stopped unconditionally: the process may have exited
+                    // while a feed is still parked reading its own source.
+                    p.unsafe.stopInputFeeds()
+                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
                 }
             }
 
@@ -84,8 +84,11 @@ object Command:
           * backend owns and closes explicitly.
           */
         def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
+            // `.safe` is a pure `Result.map` inside the unsafe block, so the process arrives from `Abort.get` with no
+            // trailing kernel `.map`. A caller that brackets this (SpawnBackend) then has its release sit directly on
+            // the produced value, with no poll between the fork and the registration for a stop to park in front of.
             Sync.Unsafe.defer {
-                Abort.get(self.unsafe.spawn()).map(_.safe)
+                Abort.get(self.unsafe.spawn().map(_.safe))
             }
 
         /** Spawns the process, waits for it to complete, and returns its combined stdout as a UTF-8 string. */
@@ -95,20 +98,17 @@ object Command:
         /** Spawns the process and returns its stdout as a byte stream (scope-managed). */
         def stream(using Frame): Stream[Byte, Async & Scope & Abort[CommandException]] =
             Stream {
-                Sync.Unsafe.defer {
-                    Abort.get(self.unsafe.spawn()).map { proc =>
-                        val safeProc = proc.safe
-                        Scope.acquireRelease(safeProc) { p =>
-                            Sync.Unsafe.defer {
-                                // Feeds are stopped unconditionally: the process may have exited
-                                // while a feed is still parked reading its own source.
-                                p.unsafe.stopInputFeeds()
-                                if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                            }
-                        }.map { p =>
-                            p.stdout.emit
-                        }
+                // As in `spawn`: the fork is the acquire, and `.safe` is a pure `Result.map` inside the unsafe block so no
+                // kernel `.map` poll sits between the fork and `acquireRelease`'s `ensureMap`.
+                Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
+                    Sync.Unsafe.defer {
+                        // Feeds are stopped unconditionally: the process may have exited
+                        // while a feed is still parked reading its own source.
+                        p.unsafe.stopInputFeeds()
+                        if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
                     }
+                }.map { p =>
+                    p.stdout.emit
                 }
             }
 
