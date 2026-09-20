@@ -52,7 +52,7 @@ a jar. The plugin writes `target/package.json` pinning `koffi` to a supported ra
 build fetches from npm rather than from Maven, and the thing to point your own registry, lockfile or audit at.
 `kyoNativesKoffi := false` turns the install off for a build that provides koffi itself.
 
-## Settings
+## Settings and tasks
 
 | Key | Meaning |
 |-----|---------|
@@ -61,6 +61,8 @@ build fetches from npm rather than from Maven, and the thing to point your own r
 | `kyoNativesKoffi` | Whether to install koffi into `target/node_modules`. On by default. |
 | `kyoNativesNodeEnv` | The environment a Node process needs to resolve the delivered package. A project that sets its own `jsEnv` keeps it and folds this in. |
 | `kyoNativesDirectory` | Where the unpacked libraries are written, one subdirectory per target. |
+| `kyoNativesResolvedTargets` | The targets in effect, after deriving the ones `kyoNativesTargets` left open. `show` it when a build delivers for a target you did not expect. |
+| `kyoNativesMaterialize` | Scala.js only: writes the libraries into `target/node_modules`. Runs as part of linking, so a build rarely calls it. |
 | `kyoNativesReport` | Prints each library, the artifact it came from, the directory it was staged in, and what it is wired into. |
 
 ## When something is missing
