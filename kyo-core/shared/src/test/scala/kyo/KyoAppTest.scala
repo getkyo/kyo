@@ -198,14 +198,12 @@ class KyoAppTest extends kyo.test.Test[Any]:
     }
 
     // `runAndBlock` forks the computation and blocks on the fiber with the timeout as a deadline. On expiry it
-    // reports `Timeout` and leaves the fiber it forked running: nothing else holds it, so the computation is
-    // orphaned with whatever it acquired. The body releases a latch as it starts and owes a finalizer, so the
-    // check is on the finalizer once the body is known to have started; a body the timeout stopped before it
-    // started owes nothing. The timeout is a real one because the block parks the calling thread, which is the
-    // thread a controlled clock would have to be advanced from; nothing here asserts on elapsed time.
-    "runAndBlock's timeout does not leave the forked computation running".pendingUntilFixed(
-        "runAndBlock forks the computation and reports Timeout from the block without interrupting the fiber it forked, so the computation runs on with no owner"
-    ).notJs.notWasm in {
+    // reports `Timeout` and must interrupt the fiber it forked, or the computation runs on with whatever it
+    // acquired and no owner. The body releases a latch as it starts and owes a finalizer, so the check is on the
+    // finalizer once the body is known to have started; a body the timeout stopped before it started owes
+    // nothing. The timeout is a real one because the block parks the calling thread, which is the thread a
+    // controlled clock would have to be advanced from; nothing here asserts on elapsed time.
+    "runAndBlock's timeout does not leave the forked computation running".notJs.notWasm in {
         for
             gate     <- Promise.init[Unit, Any]
             started  <- Latch.init(1)

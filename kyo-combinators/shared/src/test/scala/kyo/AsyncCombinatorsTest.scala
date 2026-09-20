@@ -117,12 +117,10 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
         }
 
         "async" - {
-            // `Kyo.async` spawns the effect handed to its continuation with Fiber.initUnscoped, which parents nothing,
-            // and the caller parks on a promise that fiber completes. An interrupt of the caller abandons it and
-            // nothing reaches the spawned fiber: it runs on, holding whatever it acquired, until it ends by itself.
-            "interrupting the caller of async interrupts the effect it registered".pendingUntilFixed(
-                "Kyo.async spawns the registered effect with Fiber.initUnscoped and never links it to the caller, so an interrupted caller leaves it running unowned"
-            ) in {
+            // `Kyo.async` spawns the effect handed to its continuation and the caller parks on a promise that fiber
+            // completes. An interrupt of the caller reaches the promise through that join and has to stop the spawned
+            // fiber, or it runs on, holding whatever it acquired, until it ends by itself.
+            "interrupting the caller of async interrupts the effect it registered" in {
                 for
                     gate     <- Latch.init(1)
                     entered  <- Latch.init(1)

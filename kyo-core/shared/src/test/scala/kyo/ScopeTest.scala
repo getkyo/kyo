@@ -1311,6 +1311,33 @@ class ScopeTest extends kyo.test.Test[Any]:
                 assert(r.closes == 1, s"the outer exit must close the resource once: closes=${r.closes}")
             end for
         }
+
+        // #1381's isolation driven from the callee side, no dedicated API needed: `generic` masks the incoming
+        // effect's `Scope` before its own `Scope.run`, so its run answers none of the caller's finalizers. The caller
+        // hands in a plain `Scope` argument and re-exposes it with `Mask.run` for its own outer `Scope.run`, so the
+        // caller-supplied finalizer runs at the outer exit rather than inside the callee.
+        "a generic function isolates the caller's Scope itself via Mask" in {
+            import kyo.kernel.ArrowEffect.Mask
+
+            def generic[A, S](effect: A < (Scope & S)): A < (Async & Mask[Scope] & S) =
+                Scope.run(Sync.defer(()).andThen(Mask[Scope](effect)))
+
+            for
+                supplied <- AtomicInt.init(0)
+                seen     <- Scope.run {
+                    Mask.run[Scope](generic(Scope.ensure(supplied.incrementAndGet.unit).andThen(42))).map { r =>
+                        // read inside the outer scope, after the callee's scope has closed
+                        supplied.get.map(s => (r, s))
+                    }
+                }
+                (r, insideCount) = seen
+                afterSupplied <- supplied.get
+            yield
+                assert(r == 42)
+                assert(insideCount == 0, s"the callee's scope ran the caller's finalizer: inside=$insideCount")
+                assert(afterSupplied == 1, s"the caller's finalizer must run once, at the outer exit: after=$afterSupplied")
+            end for
+        }
     }
 
     "forks" - {

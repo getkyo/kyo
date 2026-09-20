@@ -205,10 +205,10 @@ object Async extends AsyncPlatformSpecific:
                     // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
                     // completed promise, so a sleep completing before the wiring below still interrupts at registration.
                     val sleepFiber = clock.unsafe.sleep(after)
-                    // `ensureMap` rather than `map`: `map` polls the safepoint first, so a pending interrupt would park
-                    // here and leave the task running with nothing holding it; `ensureMap` applies as the value arrives,
-                    // spawn and wiring in one step.
-                    Fiber.internal.initUnscoped(v).ensureMap { task =>
+                    // A bracket owns the child and interrupts it on release, so the caller's abandonment reaches it on
+                    // every exit. Not `Fiber.use`: that needs a `Sync` isolate, and here it is `Abort[E] & Async`;
+                    // `internal.initUnscoped` keeps `Abort[E]` in the child so `task.get` resurfaces the body's failure.
+                    Sync.acquireReleaseWith(Fiber.internal.initUnscoped(v))(_.interrupt)[A, Nothing, Abort[E] & Async & S] { task =>
                         sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
                         task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
                         task.get

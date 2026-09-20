@@ -610,14 +610,11 @@ class SyncTest extends kyo.test.Test[Any]:
             }.andThen(assert(true))
         }
 
-        // The region's clean end and the caller's next step are two polls apart: the finalizer runs as the region
-        // ends, and the step that raises the recorded abort polls after it. A stop delivered while the finalizer
-        // runs, here requested by the finalizer itself, parks on that poll. A guard that hands its value on at a
-        // clean end (the shape Topic's add-deadline guards document) has closed nothing by then, and the caller's
-        // `ensureMap`, chained after the poll, never runs: the value is owned by nobody.
-        "a caller's ensureMap after the region runs when the interrupt lands as the region ends".pendingUntilFixed(
-            "Sync.ensure raises the recorded abort in a map that polls after the region's release, so a stop delivered while the finalizer runs parks between the region's end and the caller's ensureMap, and the value the region handed on is owned by nobody"
-        ) in {
+        // The finalizer runs as the region ends, and the step that raises the recorded abort applies as the value
+        // arrives, so a stop delivered while the finalizer runs, here requested by the finalizer itself, cannot
+        // separate the region's clean end from the caller's `ensureMap`. A guard that hands its value on at a clean
+        // end (the shape Topic's add-deadline guards document) closes nothing, and the caller must own the value.
+        "a caller's ensureMap after the region runs when the interrupt lands as the region ends" in {
             for
                 handoff <- Promise.init[Fiber[Unit, Any], Any]
                 ended   <- AtomicBoolean.init(false)

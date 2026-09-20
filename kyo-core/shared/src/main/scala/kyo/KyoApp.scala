@@ -31,7 +31,9 @@ object KyoApp:
     )(timeout: Duration)(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E | Timeout] & Sync & S) =
-        Fiber.initUnscoped(v).map { fiber =>
+        // The forked fiber is interrupted when the block returns, so a timeout, or an interrupt of the blocked
+        // thread, leaves nothing running with no owner; on completion the interrupt finds a settled fiber.
+        Fiber.use[E, A, S, Any](v) { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
 

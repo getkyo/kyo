@@ -85,7 +85,8 @@ object Sync:
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here
-            // and only its own Abort surfaces, as a throw
+            // and only its own Abort surfaces, as a throw. `ensureMap`, not `map`, raises the recorded abort: a
+            // `map` polls after the release, parking a value it handed on with nobody to own it.
             Bracket(acquire) { resource =>
                 Abort.runWith[E](use(resource)) { result =>
                     result.foldError(
@@ -102,7 +103,7 @@ object Sync:
                         case Present(ex) => new Result.Panic(ex)
                         case Absent      => aborted.get()(using AllowUnsafe.embrace.danger).getOrElse(Result.unit)
                 discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
-            }.map(result => Abort.get(result))
+            }.ensureMap(result => Abort.get(result))
         }
     end acquireReleaseWith
 
@@ -142,6 +143,7 @@ object Sync:
         // `Bracket.ensuringWith`, not a bracket over a `()` acquire: a bracket installs its region only when the acquire's value arrives, so
         // a computation abandoned before it ran gets no finalizer; `ensuringWith` is a region from the start with a per-run slot for the
         // recorded failure. The finalizer runs from the release, not the body, so a replaying handler ending the extent per branch releases once.
+        // `ensureMap`, not `map`, raises the recorded abort: a `map` polls after the finalizer, parking a value it handed on with nobody to own it.
         Bracket.ensuringWith(AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)) {
             (aborted, failure) =>
                 val outcome: Maybe[Result.Error[Any]] =
@@ -159,7 +161,7 @@ object Sync:
                 )
                 result
             }
-        }.map(result => Abort.get(result))
+        }.ensureMap(result => Abort.get(result))
     end ensure
 
     /** Retrieves a local value and applies a function that can perform side effects.

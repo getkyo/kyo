@@ -42,12 +42,12 @@ extension (kyoObject: Kyo.type)
         for
             promise <- Promise.init[A, Abort[E]]
             registerFn = (eff: A < (Abort[E] & Async)) =>
-                val effFiber      = Fiber.initUnscoped(eff)
-                val updatePromise =
-                    effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
-                val updatePromiseIO = Fiber.initUnscoped(updatePromise).unit
                 import AllowUnsafe.embrace.danger
-                Sync.Unsafe.evalOrThrow(updatePromiseIO)
+                // Spawned, wired to the promise, and linked to it in one step: an interrupt of the caller reaches the
+                // promise through the join below and stops the effect, so nothing it registered runs on unowned.
+                val effFiber = Fiber.Unsafe.init(eff)
+                effFiber.onComplete(a => promise.unsafe.completeDiscard(a))
+                Fiber.Unsafe.onInterrupt(promise.unsafe)(e => discard(effFiber.interrupt(e)))
             _ <- register(registerFn)
             a <- promise.get
         yield a
