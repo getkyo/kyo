@@ -24,8 +24,14 @@ class FrameAssemblerTest extends kyo.BasePodTest:
 
     private def span(arr: Array[Byte]): Span[Byte] = Span.from(arr)
 
+    private def decode(payloads: Chunk[(Span[Byte], LogEntry.Source)]): Chunk[(String, LogEntry.Source)] =
+        payloads.map((bytes, source) => (new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8), source))
+
+    /** The pipe emits exact payload bytes; these leaves assert the text they carry, so each payload is decoded here. Bytes themselves are
+      * asserted by the binary leaf below.
+      */
     private def runPipe(spans: Span[Byte]*)(using Frame): Chunk[(String, LogEntry.Source)] < Sync =
-        Stream.init(spans).into(FrameAssembler.pipe).run
+        Stream.init(spans).into(FrameAssembler.pipe).run.map(decode)
 
     "FrameAssembler" - {
 
@@ -128,7 +134,7 @@ class FrameAssemblerTest extends kyo.BasePodTest:
             val payload = ("x" * 16384).getBytes("UTF-8")
             val full    = frame(1, payload)
             val spans   = full.map(b => span(Array(b))).toSeq
-            Stream.init(spans).into(FrameAssembler.pipe).run.map { r =>
+            Stream.init(spans).into(FrameAssembler.pipe).run.map(decode).map { r =>
                 assert(r == Chunk(("x" * 16384, LogEntry.Source.Stdout)))
             }
         }
@@ -156,7 +162,7 @@ class FrameAssemblerTest extends kyo.BasePodTest:
             val c2 = Array[Byte](1, 0, 0, 0) // would look like a stdout frame header in multiplexed mode
             // Two separate stream emissions, so the pipe sees two polls: the mode decided on the
             // first poll must carry over, never re-deciding on the second poll's first byte.
-            Stream.init(Seq(span(c1))).concat(Stream.init(Seq(span(c2)))).into(FrameAssembler.pipe).run.map { r =>
+            Stream.init(Seq(span(c1))).concat(Stream.init(Seq(span(c2)))).into(FrameAssembler.pipe).run.map(decode).map { r =>
                 assert(r.size == 2)
                 assert(r(0) == ("raw text", LogEntry.Source.Stdout))
                 assert(r(1) == (new String(c2, "UTF-8"), LogEntry.Source.Stdout))
@@ -173,6 +179,22 @@ class FrameAssemblerTest extends kyo.BasePodTest:
         "multiplexed stream whose payload starts with a printable byte is still parsed as frames" in {
             // Only the FIRST byte of the stream decides the mode; payload bytes never re-decide.
             runPipe(span(stdoutFrame("from-host"))).map(r => assert(r == Chunk(("from-host", LogEntry.Source.Stdout))))
+        }
+
+        // --- binary payloads ---
+
+        "a payload that is not text is emitted byte for byte" in {
+            // Every byte value, including 0x00 and sequences no UTF-8 decoder accepts: an attached process's output is binary until the caller
+            // asks for lines, so the payload must survive the assembler unchanged.
+            val payload  = Array.tabulate[Byte](256)(i => i.toByte)
+            val full     = frame(1, payload)
+            val (c1, c2) = full.splitAt(100)
+            Stream.init(Seq(span(c1), span(c2))).into(FrameAssembler.pipe).run.map { r =>
+                assert(r.size == 1, s"one frame, got ${r.size}")
+                val (bytes, source) = r.head
+                assert(source == LogEntry.Source.Stdout)
+                assert(bytes.toArray.sameElements(payload), "the payload bytes must be delivered unchanged")
+            }
         }
     }
 
