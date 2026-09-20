@@ -101,25 +101,23 @@ object NativeLoader:
     /** Probe whether koffi can load `name` (an installed system library by SONAME / default search). `false` when
       * koffi is unavailable or the load fails. Used only as the last presence gate; the caller loads for real.
       *
-      * koffi is required DYNAMICALLY (`require("koffi")`), not through the static `@JSImport` facade, so this
-      * loader keeps no static dependency on the koffi package: a runtime with no koffi installed just makes the
-      * probe return `false` instead of failing to load this module.
+      * koffi is reached through [[Koffi.dynamic]] rather than a require of its own, and that is what orders this
+      * against the async-pool configuration. koffi refuses `config` once any library has been loaded ("Cannot
+      * change Koffi configuration once a library has been loaded"), and this probe loads one. Resolving through
+      * the shared accessor configures the pool on first use, before the load below; reaching for the module
+      * directly would lock the configuration at koffi's default of 256 instead of the configured pool, halve the
+      * meter bound to match, and report it as another koffi user in the process when the other user is this one.
       *
-      * The require comes from [[NodeRequire]] rather than the global, because this probe is a presence gate: on a
-      * module kind with no global `require` a direct reach answers `false` for every library on the machine, and
-      * the caller reports that as the backend being inapplicable to the OS.
+      * The accessor raises when koffi is absent, which `Try` turns back into `false`: this is a presence gate, and
+      * a runtime with no koffi installed answers no rather than failing the caller.
       */
     private def tryKoffiLoad(name: String): Boolean =
         Try {
-            NodeRequire.find() match
-                case None      => false
-                case Some(req) =>
-                    val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                    if js.isUndefined(koffi) || koffi == null then false
-                    else
-                        val lib = koffi.applyDynamic("load")(name)
-                        !js.isUndefined(lib) && lib != null
-                    end if
+            val koffi = Koffi.dynamic
+            if js.isUndefined(koffi) || koffi == null then false
+            else
+                val lib = koffi.applyDynamic("load")(name)
+                !js.isUndefined(lib) && lib != null
         }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).
