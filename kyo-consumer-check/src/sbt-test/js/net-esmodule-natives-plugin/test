@@ -21,8 +21,12 @@ $ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
 $ exec sh -c 'set -eu; . ./node-env.sh; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); test -n "$entry"; node "$entry" > run.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the process was still alive after ${i}s with its transport open"; cat run.log; exit 1; fi; wait "$pid" || { cat run.log; exit 1; }; echo "exited after ${i}s"'
 $ exec sh -c 'cat run.log; grep -q "CONSUMER transport=PosixTransport plain=hello tls=hello" run.log'
 
-# The negative control, and the assertion that actually pins the claim. The same binary with the overrides unset
-# must fall to the JS floor: under ESModule there is no global `require` for the package lookup or the koffi probe
-# to use, so nothing else can find the library. A run that still reports PosixTransport here would mean the
-# override is not what carries this module kind, and the plugin is contributing nothing.
-$ exec sh -c 'set -eu; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); env -u KYO_FFI_KYONET_BORINGSSL_PATH -u KYO_FFI_KYONET_POSIX_URING_PATH node "$entry" > floor.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; fi; cat floor.log; grep -q "CONSUMER transport=JsTransport" floor.log'
+# The negative control, and the assertion that actually pins the claim. The same binary with ONLY the two overrides
+# removed must fall to the JS floor: under ESModule there is no global `require` for the package lookup or the koffi
+# probe to use, so nothing else can find the library. A run that still reports PosixTransport would mean the override
+# is not what carries this module kind and the plugin is contributing nothing.
+#
+# The environment is sourced first and then the two variables are removed, so the override is the only difference
+# between this run and the one above. Dropping NODE_PATH as well would let this pass because koffi went missing,
+# which is a different failure wearing the same result.
+$ exec sh -c 'set -eu; . ./node-env.sh; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); test -n "$entry"; env -u KYO_FFI_KYONET_BORINGSSL_PATH -u KYO_FFI_KYONET_POSIX_URING_PATH node "$entry" > floor.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the floor run was still alive after ${i}s"; cat floor.log; exit 1; fi; wait "$pid" || { cat floor.log; exit 1; }; cat floor.log; grep -q "CONSUMER transport=JsTransport" floor.log'

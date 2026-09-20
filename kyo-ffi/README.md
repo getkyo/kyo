@@ -963,6 +963,8 @@ FfiLibrary(
 
 A consumer's build with the plugin compiles and links a probe against each declared library (the compiler's default paths first, then each prefix) and, for each one that links, adds the define, include and library paths, and link flags to `ffiNativeDependencyCompileOptions` and `ffiNativeDependencyLinkingOptions`. `show ffiNativeSystemLibraries` lists what it found. A library this build vendors (a staged archive) is not declared: no consumer machine has it.
 
+An application consuming kyo reaches the same probe through `kyo-natives-plugin`, which folds its answer into `nativeConfig` along with the delivered libraries and the link-time service providers, so the keys above are what a build wires itself when it does not take that plugin.
+
 ### Cross-platform differences
 
 Behavior is uniform for: trait API, `Buffer` lifetime semantics, `Ffi.Guard` registration, errno capture, struct layout, and multi-value returns. The differences:

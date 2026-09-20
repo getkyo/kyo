@@ -4,10 +4,14 @@
 
 > writeSystemLibraries
 
-# Which system libraries resolve is the machine's answer, not this fixture's: a Linux host with liburing-dev links
-# io_uring, a macOS host with Homebrew's openssl@3 links that, a bare host links neither and the shims compile stubs.
-# So the assertion is a relation rather than a set: whatever the probe resolved must have reached nativeConfig, which
-# is what the linker reads. Deleting the system half from the fold breaks this on any host that resolved anything.
+# OpenSSL is a precondition of this suite rather than a property of the host: the release runner installs libssl-dev
+# for these fixtures and native/net-plugin already requires it. Asserting it resolved is what stops the relation
+# below from passing over an empty file, which is the state a broken probe produces as well as a bare machine.
+$ exec sh -c 'set -eu; grep -q "^kyonet_openssl " system-libraries.txt'
+
+# Which of the rest resolve is the machine's answer: a Linux host with liburing-dev links io_uring, one without it
+# compiles the shim's stubs. So the rest is a relation rather than a set: whatever the probe resolved must have
+# reached nativeConfig, which is what the linker reads. Deleting the system half from the fold breaks this.
 $ exec sh -c 'set -eu; cat system-libraries.txt; cat native-config.txt; while read -r id rest; do [ -n "$id" ] || continue; up=$(echo "$id" | tr "[:lower:]-" "[:upper:]_"); grep -qx -- "-DKYO_FFI_LINKED_$up" native-config.txt || { echo "probe resolved $id but its define never reached nativeConfig" >&2; exit 1; }; for f in $rest; do grep -qx -- "$f" native-config.txt || { echo "probe resolved $id but its flag $f never reached nativeConfig" >&2; exit 1; }; done; done < system-libraries.txt'
 
 # The delivered library is folded in through the same nativeConfig, so its define has to be there too. This one does

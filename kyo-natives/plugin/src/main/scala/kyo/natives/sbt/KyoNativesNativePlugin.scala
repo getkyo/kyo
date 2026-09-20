@@ -99,10 +99,11 @@ object KyoNativesNativePlugin extends AutoPlugin {
         // production config stays on Compile: enlisting a class that is not on the production classpath would fail
         // that link rather than degrade.
         //
-        // Contributed to `Test / nativeLink / nativeConfig`, which is the key `nativeLinkCachedTask` reads, rather
-        // than to `Test / nativeConfig`. Redefining the latter in terms of itself is what a `Test / nativeConfig :=`
-        // reading an unscoped `nativeConfig.value` would amount to, since the reference resolves in the setting's own
-        // scope. The task axis here differs from everything read below, so the graph is acyclic by construction.
+        // Contributed to `Test / nativeLink / nativeConfig`, the key `nativeLinkCachedTask` reads by name, rather
+        // than to `Test / nativeConfig`. Scala Native applies `withBuildTarget(application)` to the latter for the
+        // test configuration, so a `:=` there would replace that transformation along with everything else, and a
+        // test binary would link for the wrong build target. Reading it and writing the link's own key keeps it.
+        // The mode variants are named for the same reason: each holds its own copy of the config.
         Test / kyoNativesServiceProviders := serviceProvidersTask(Test).value,
         Test / nativeLink / nativeConfig := testConfigWithProviders.value,
         Test / nativeLinkReleaseFast / nativeConfig := testConfigWithProviders.value.withMode(Mode.releaseFast),
@@ -200,7 +201,11 @@ object KyoNativesNativePlugin extends AutoPlugin {
     /** The test link's config: the project's own, plus the providers only the test classpath declares.
       *
       * Reads `Test / nativeConfig`, which delegates to the project-scope value this plugin already built, so the
-      * delivered libraries and the system-library flags are carried through rather than rebuilt here.
+      * delivered libraries and the system-library flags are carried through rather than rebuilt here, and Scala
+      * Native's own test-configuration transformation survives.
+      *
+      * A build that sets `Test / nativeLink / nativeConfig` itself, which is the documented way to tune one link,
+      * replaces this and takes the providers with it. Such a build folds `kyoNativesServiceProviders` in by hand.
       */
     private def testConfigWithProviders: Def.Initialize[Task[NativeConfig]] = Def.task {
         val base     = (Test / nativeConfig).value
@@ -211,11 +216,15 @@ object KyoNativesNativePlugin extends AutoPlugin {
 
     /** Every service provider the entries on `configuration`'s dependency classpath declare.
       *
-      * Not filtered to kyo's own artifacts, and enlisting one that nothing loads is safe rather than merely tolerable.
-      * A config entry pulls a provider into the binary only where a reachable `ServiceLoader.load` names its service,
-      * so dead-code elimination still decides what is linked and an entry for a service nobody loads costs a line in
-      * the linker's provider table. That is the argument for reading the whole classpath: it cannot over-link, and
-      * under-reading drops a provider with no symptom at all.
+      * Not filtered to kyo's own artifacts, and enlisting one that nothing loads is free rather than merely safe. The
+      * linker examines a config entry only where a reachable `ServiceLoader.load` names its service, so an entry for
+      * a service nothing loads is never looked at and dead-code elimination still decides what is linked. That is the
+      * argument for reading the whole classpath: it cannot over-link, and under-reading drops a provider with no
+      * symptom at all.
+      *
+      * The project's own output is included as well as its dependencies. `Test / dependencyClasspath` carries this
+      * project's classes while `Compile / dependencyClasspath` does not, so reading only that would enlist an
+      * application's own provider in its test binary and not in the one it ships.
       *
       * `kyoNativesEnlistServices := false` is for a build that would rather name the set itself.
       */
@@ -225,7 +234,8 @@ object KyoNativesNativePlugin extends AutoPlugin {
             val enabled = kyoNativesEnlistServices.value && kyoNativesSource.value != NativesSource.Disabled
             // Read outside the branch, because a regular task evaluates every `.value` whatever the branch decides.
             // Keeping the lookup here says so, rather than reading as a guard that does not guard.
-            val classpath = (configuration / dependencyClasspath).value.map(_.data)
+            val classpath = (configuration / dependencyClasspath).value.map(_.data) ++
+                (configuration / exportedProducts).value.map(_.data)
             if (!enabled) Map.empty[String, Seq[String]]
             else {
                 val declared = ServiceProviders.read(classpath)
