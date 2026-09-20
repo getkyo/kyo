@@ -158,6 +158,15 @@ Split the work, dispatch, verify centrally, commit once. Do not clean files your
 bash .claude/skills/prose-cleanup/batch.sh 8            # -> /tmp/prose-batches/batch-N.txt
 ```
 
+**Before dispatching, prove the tools hold under concurrency.** A wave runs these scripts from many agents at once, which is not the condition they were written or tested in.
+
+```sh
+bash .claude/skills/prose-cleanup/race-probe.sh .claude/skills/prose-cleanup/prose-scope.sh <a few files>
+bash .claude/skills/prose-cleanup/race-probe.sh .claude/skills/prose-cleanup/verify.sh <a few edited files>
+```
+
+Both must print `PASS`. This step exists because it was once skipped: the scripts shared fixed scratch paths, and at wave scale they answered wrongly on most concurrent runs. Probing before that had varied which files were cleaned but never how many agents ran at once, so the fault had never been exposed. Sampling the work is not sampling the conditions.
+
 Size the wave by comment volume, not file count: around 400 comment lines per agent. Dispatch the batches in one message so they run in parallel; the batches are disjoint, so no two agents ever open the same file.
 
 Give each agent this prompt, with nothing else:

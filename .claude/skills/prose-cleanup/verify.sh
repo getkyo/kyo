@@ -27,16 +27,21 @@ else
 fi
 [ -z "$changed" ] && { echo "no files changed"; exit 0; }
 
+# Private scratch: a wave runs several of these at once, and a shared path would have one agent
+# verifying against another's data, which is the one wrong answer this script must never give.
+BRANCH=$(mktemp); OLD=$(mktemp); NEW=$(mktemp)
+trap 'rm -f "$BRANCH" "$OLD" "$NEW"' EXIT
+
 for f in $changed; do
     # Lines this branch contributed: the legitimate pool a pass may remove from.
-    git diff "$BASE"..HEAD -- "$f" | grep -E '^\+' | sed 's/^+//' | sed 's/^[[:space:]]*//' | sort -u > /tmp/pv-branch.txt
+    git diff "$BASE"..HEAD -- "$f" | grep -E '^\+' | sed 's/^+//' | sed 's/^[[:space:]]*//' | sort -u > "$BRANCH"
 
     # Code lines with whitespace collapsed, each side of the change, to tell a re-spacing from an edit.
     git diff -U0 -- "$f" | grep -E '^-' | grep -vE '^---' | sed 's/^-//' | sed 's/^[[:space:]]*//' \
-        | grep -vE '^(//|\*|/\*)' | tr -s ' \t' ' ' | sed 's/[[:space:]]*$//' | sort > /tmp/pv-code-old.txt
+        | grep -vE '^(//|\*|/\*)' | tr -s ' \t' ' ' | sed 's/[[:space:]]*$//' | sort > "$OLD"
     git diff -U0 -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+' | sed 's/^+//' | sed 's/^[[:space:]]*//' \
-        | grep -vE '^(//|\*|/\*)' | tr -s ' \t' ' ' | sed 's/[[:space:]]*$//' | sort > /tmp/pv-code-new.txt
-    reflowed=$(comm -3 /tmp/pv-code-old.txt /tmp/pv-code-new.txt | grep -c . || true)
+        | grep -vE '^(//|\*|/\*)' | tr -s ' \t' ' ' | sed 's/[[:space:]]*$//' | sort > "$NEW"
+    reflowed=$(comm -3 "$OLD" "$NEW" | grep -c . || true)
 
     bad_code=0; stolen=0
     while IFS= read -r line; do
@@ -49,7 +54,7 @@ for f in $changed; do
         esac
         # A removed line must have been this branch's prose.
         if [ "${line:0:1}" = "-" ]; then
-            grep -qxF "$trimmed" /tmp/pv-branch.txt || stolen=$((stolen+1))
+            grep -qxF "$trimmed" "$BRANCH" || stolen=$((stolen+1))
         fi
     done < <(git diff -U0 -- "$f" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)')
 

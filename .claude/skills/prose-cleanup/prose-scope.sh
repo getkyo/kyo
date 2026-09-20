@@ -23,6 +23,10 @@ fi
 FILE="$1"
 [ -f "$FILE" ] || { echo "no such file: $FILE" >&2; exit 1; }
 
+# Private scratch: several of these run concurrently in a wave, and a shared path would have them
+# reading each other's line numbers.
+ADDED=$(mktemp); trap 'rm -f "$ADDED"' EXIT
+
 # New-file line numbers of lines this branch added, from the hunk headers.
 git diff -U0 "$BASE"..HEAD -- "$FILE" | awk '
     /^@@/ {
@@ -32,14 +36,14 @@ git diff -U0 "$BASE"..HEAD -- "$FILE" | awk '
         for (i = 0; i < cnt; i++) print start + i
         next
     }
-' | sort -n -u > /tmp/prose-added-lines.txt
+' | sort -n -u > "$ADDED"
 
-if [ ! -s /tmp/prose-added-lines.txt ]; then
+if [ ! -s "$ADDED" ]; then
     echo "NO BRANCH-ADDED LINES in $FILE"
     exit 0
 fi
 
-awk -v addedfile=/tmp/prose-added-lines.txt '
+awk -v addedfile="$ADDED" '
     BEGIN { while ((getline l < addedfile) > 0) added[l] = 1 }
     {
         line[NR] = $0
