@@ -55,7 +55,7 @@ private[sbt] object Delivery {
                     val classifier = entry.classifier(osArch)
                     if (platform == DeliveryPlatform.Jvm && classifier.isEmpty) None
                     else {
-                        val carrier = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
+                        val carrier        = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
                         val withClassifier = classifier.fold(carrier)(c => carrier.classifier(c))
                         Some(Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), id))
                     }

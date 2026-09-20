@@ -9,7 +9,7 @@ import kyo.ffi.sbt.DeliveryPlatform
   * which is the JVM classpath contribution: adding a carrier jar to a Native or JS project would put a second copy of
   * every library into its artifact.
   */
-private[sbt] sealed trait Platform {
+sealed private[sbt] trait Platform {
 
     /** The platform a [[kyo.ffi.sbt.NativeDelivery]] declaration scopes to for this runtime. */
     def delivery: DeliveryPlatform

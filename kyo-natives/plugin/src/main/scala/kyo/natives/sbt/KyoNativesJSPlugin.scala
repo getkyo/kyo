@@ -4,8 +4,8 @@ import kyo.ffi.sbt.KoffiBootstrap
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
-import sbt.Keys._
 import sbt._
+import sbt.Keys._
 
 /** The Scala.js half of [[KyoNativesPlugin]]: put the libraries where koffi looks for them.
   *
@@ -45,7 +45,7 @@ object KyoNativesJSPlugin extends AutoPlugin {
 
     import autoImport._
 
-    override def projectSettings: Seq[Setting[_]] = Seq(
+    override def projectSettings: Seq[Setting[?]] = Seq(
         kyoNativesKoffi       := true,
         kyoNativesMaterialize := materializeTask.value,
         kyoNativesNodeEnv     := nodeEnvTask.value,

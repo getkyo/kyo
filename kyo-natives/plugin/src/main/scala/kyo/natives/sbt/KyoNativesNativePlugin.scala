@@ -2,8 +2,8 @@ package kyo.natives.sbt
 
 import kyo.ffi.sbt.FfiLibrary
 import kyo.ffi.sbt.NativeTargets
-import sbt.Keys._
 import sbt._
+import sbt.Keys._
 import scala.scalanative.build.Discover
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
@@ -28,7 +28,7 @@ object KyoNativesNativePlugin extends AutoPlugin {
     import KyoNativesPlugin.kyoNativesFetched
     import KyoNativesPlugin.kyoNativesRequests
 
-    override def projectSettings: Seq[Setting[_]] = Seq(
+    override def projectSettings: Seq[Setting[?]] = Seq(
         // A binary is built for one target, so more than one is a contradiction rather than a wider delivery.
         //
         // The target comes from the compiler rather than from `nativeConfig`, which would be the more direct source
@@ -42,8 +42,8 @@ object KyoNativesNativePlugin extends AutoPlugin {
                 sys.error(s"[kyo-natives] a Native binary has one target; kyoNativesTargets names ${explicit.mkString(", ")}.")
             val target = explicit.headOption match {
                 case some @ Some(_) => some
-                case None =>
-                    val triple = Discover.targetTriple(Discover.clang())
+                case None           =>
+                    val triple  = Discover.targetTriple(Discover.clang())
                     val derived = NativeTargets.ofTriple(triple)
                     if (derived.isEmpty)
                         log.info(s"[kyo-natives] no target kyo publishes for matches $triple; delivering nothing")

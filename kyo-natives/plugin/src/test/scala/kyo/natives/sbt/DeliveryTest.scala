@@ -72,7 +72,7 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         withJar(Seq(deliveryEntry(delivery))) { first =>
             withJar(Seq(deliveryEntry(delivery))) { second =>
                 val classpath = Seq(
-                    ("io.getkyo" % "kyo-sql-sqlite_native0.5_3" % "1.2.3")   -> first,
+                    ("io.getkyo" % "kyo-sql-sqlite_native0.5_3"   % "1.2.3") -> first,
                     ("io.getkyo" % "kyo-sql-doltlite_native0.5_3" % "1.2.3") -> second
                 )
                 val message = intercept[RuntimeException] {

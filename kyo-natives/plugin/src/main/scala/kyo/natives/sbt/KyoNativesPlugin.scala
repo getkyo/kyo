@@ -1,8 +1,8 @@
 package kyo.natives.sbt
 
 import kyo.ffi.sbt.NativeTargets
-import sbt.Keys._
 import sbt._
+import sbt.Keys._
 
 /** Delivers the shared libraries kyo's published artifacts carry to the application that depends on them.
   *
@@ -71,7 +71,7 @@ object KyoNativesPlugin extends AutoPlugin {
     private[sbt] val kyoNativesRequests =
         taskKey[Seq[(String, Delivery.Request)]]("Every library this project's dependencies declare, with the target it is wanted for.")
 
-    override def projectSettings: Seq[Setting[_]] = Seq(
+    override def projectSettings: Seq[Setting[?]] = Seq(
         kyoNativesTargets   := Nil,
         kyoNativesSource    := NativesSource.Auto,
         kyoNativesDirectory := target.value / "kyo-natives",
@@ -81,9 +81,9 @@ object KyoNativesPlugin extends AutoPlugin {
             val explicit = kyoNativesTargets.value
             if (explicit.nonEmpty) explicit else Seq(NativeTargets.host)
         },
-        kyoNativesRequests  := requestsTask.value,
-        kyoNativesFetched   := fetchTask.value,
-        kyoNativesReport := reportTask.value,
+        kyoNativesRequests := requestsTask.value,
+        kyoNativesFetched  := fetchTask.value,
+        kyoNativesReport   := reportTask.value,
         // The JVM loader extracts from the classpath, so the classifier jars go on it. Through `unmanagedJars` rather
         // than `libraryDependencies`: a dependency reaches `makePom`, which would pin this build host's architecture
         // onto everyone who then depends on this project. `unmanagedJars` reaches `fullClasspath`, which is what `run`,
@@ -119,7 +119,7 @@ object KyoNativesPlugin extends AutoPlugin {
         val source   = kyoNativesSource.value
         val targets  = kyoNativesResolvedTargets.value
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet).delivery
-        val modules = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
+        val modules  = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
             report.artifacts.map { case (_, file) => report.module -> file }
         }
         if (source == NativesSource.Disabled) Nil
@@ -140,14 +140,14 @@ object KyoNativesPlugin extends AutoPlugin {
         val depRes  = dependencyResolution.value
         val outRoot = kyoNativesDirectory.value
         kyoNativesRequests.value.flatMap { case (osArch, request) =>
-            val os = NativeTargets.osOf(osArch)
+            val os      = NativeTargets.osOf(osArch)
             val fetched = Delivery.resolve(depRes, request.module, log).flatMap { jar =>
                 Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
                     .map(lib => Delivery.Fetched(request.libId, lib, jar, request.module))
                     .toRight(s"${jar.getName} carries no ${request.libId} for $osArch")
             }
             fetched match {
-                case Right(f) => Seq(osArch -> f)
+                case Right(f)  => Seq(osArch -> f)
                 case Left(why) =>
                     if (source == NativesSource.Jar)
                         sys.error(s"[kyo-natives] $why. Set kyoNativesSource := NativesSource.Auto to build without it.")
