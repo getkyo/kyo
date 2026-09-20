@@ -6,9 +6,8 @@ import kyo.scheduler.Task
 
 /** The JS-only idle gate on the ring driver, which is [[PollerIoDriverIdleTest]]'s subject for the other half of the posix transport.
   *
-  * Both drivers need it and only one of them could be missed: the JS backend registry ranks io_uring above epoll, so a Linux Node
-  * application runs on this driver, and a macOS host has no ring at all. [[UringGate]] is what keeps that asymmetry visible: on a host
-  * without a ring these cancel by name instead of silently covering nothing.
+  * The JS backend registry ranks io_uring above epoll, so a Linux Node application runs on this driver rather than the poller. A macOS host
+  * has no ring, so a run there exercises none of this: [[UringGate]] cancels by name instead of letting it read as covered.
   *
   * The assertions are the poller's, synchronous and clock-free: what counts as nothing outstanding, and that a submit arriving at a parked
   * chain reclaims the task. Whether a process built this way exits is `kyo-consumer-check`'s `js/net-natives-plugin`, which selects this

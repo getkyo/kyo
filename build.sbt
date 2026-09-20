@@ -1783,8 +1783,9 @@ lazy val `kyo-ffi-plugin` =
         )
 
 // The plugin an APPLICATION enables to get the shared libraries kyo's artifacts carry, as against kyo-ffi-plugin,
-// which is what a module BUILDING a binding enables. Separate coordinate for that reason: nothing an application does
-// should require the C toolchain, codegen and packaging machinery of the authoring plugin.
+// which is what a module BUILDING a binding enables. Separate coordinate so an application enables delivery without
+// enabling the authoring plugin, whose codegen, C compilation and packaging would then run in its build. It depends
+// on kyo-ffi-plugin's code, for the declaration format and the target tags both sides have to agree on.
 //
 // It depends on sbt-scalajs and sbt-scala-native because it sets `nativeConfig` and `jsEnv` itself rather than handing
 // an application flags to wire, which pins those versions for anyone enabling it. kyo's Native and Scala.js artifacts

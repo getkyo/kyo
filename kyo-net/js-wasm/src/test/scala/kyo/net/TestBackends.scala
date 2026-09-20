@@ -35,7 +35,7 @@ object TestBackends:
             synchronized {
                 built match
                     case Present(t) => t
-                    case Absent =>
+                    case Absent     =>
                         val t = make(frame)
                         built = Present(t)
                         t

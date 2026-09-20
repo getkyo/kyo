@@ -1534,7 +1534,7 @@ object KyoFfiPlugin extends AutoPlugin {
 
     /** Resource generator on every platform: publish [[ffiNativeDelivery]] as a [[NativeDelivery]] declaration.
       *
-      * Written on every leg, unlike the other manifests, because the leg that reads it is the Native one and a Native
+      * Written on every leg, unlike `ffiNativeManifestGenerator`, because the leg that reads it is the Native one and a Native
       * artifact packages no natives at all. A Native or Node consumer's build reads its own classpath, finds this, and
       * knows which JVM artifact of the same module and version carries the library it has to link or load.
       */

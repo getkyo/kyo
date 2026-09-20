@@ -352,7 +352,7 @@ final private[kyo] class JsTransport private (
       */
     private def trackAcceptHandshakes(server: js.Dynamic)(using AllowUnsafe, Frame): JsTransport.AcceptHandshakeTracking =
         // JS is single-threaded, so a plain mutable buffer needs no synchronization: every mutation runs on the Node event loop.
-        val inFlight = scala.collection.mutable.ListBuffer.empty[js.Dynamic]
+        val inFlight                            = scala.collection.mutable.ListBuffer.empty[js.Dynamic]
         def settle(rawSocket: js.Dynamic): Unit =
             if !js.isUndefined(rawSocket) && rawSocket != null then discard(inFlight.subtractOne(rawSocket))
         discard(server.on("connection", { (rawSocket: js.Dynamic) => discard(inFlight.append(rawSocket)) }: js.Function1[js.Dynamic, Unit]))
@@ -658,7 +658,6 @@ final private[kyo] class JsTransport private (
             host,
             backlog,
             { () =>
-
                 val addr = server.address()
                 // Node's net.Server#address() returns {port, family, address} for a bound TCP server per the documented Node API; js.Dynamic
                 // erases that shape to untyped JS values, so recovering the typed Int/String fields needs these narrowing casts. Safe per
@@ -878,7 +877,6 @@ final private[kyo] class JsTransport private (
         discard(server.listen(
             js.Dynamic.literal(path = path, backlog = backlog),
             { () =>
-
                 listener.setAddress(-1, path)
                 promise.completeDiscard(Result.succeed(listener))
             }: js.Function0[Unit]

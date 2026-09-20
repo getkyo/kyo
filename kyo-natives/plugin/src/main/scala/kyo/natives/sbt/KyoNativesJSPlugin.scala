@@ -14,9 +14,10 @@ import sbt._
   * Node's own resolution walks up from the linked output and reaches that directory, which is also where the koffi
   * bootstrap installs.
   *
-  * The default `jsEnv` gains `NODE_PATH` pointing at the same directory. An ESModule build resolves through
-  * `node:module`'s `createRequire`, which anchors on the working directory rather than the module, and reaches the
-  * package only through `NODE_PATH`. A project that sets its own `jsEnv` keeps it, and folds in
+  * `jsEnv` is replaced with a `NodeJSEnv` carrying `NODE_PATH` for that directory, for a project that delivers
+  * something and does not set `jsEnv` itself. An ESModule build resolves through `node:module`'s `createRequire`,
+  * which anchors on the working directory rather than the module, and reaches the package only through `NODE_PATH`.
+  * A project that sets its own `jsEnv` keeps it, and folds in
   * [[KyoNativesJSPlugin.autoImport.kyoNativesNodeEnv]] to get the same resolution.
   */
 object KyoNativesJSPlugin extends AutoPlugin {

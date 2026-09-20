@@ -592,7 +592,7 @@ final private[net] class PollerIoDriver private[posix] (
                         case Absent =>
                             // The wait is genuinely pending. The scratch is still owned by the in-flight wait, so NOTHING may dispatch, re-arm or
                             // tear down here: doing so frees the scratch out from under a live poll. Continue the chain from the completion
-                            // callback instead, which is the same handoff the previous loop used for a pending wait.
+                            // callback instead, which is the handoff a pending wait takes.
                             waitFiber.onComplete {
                                 case Result.Success(_) =>
                                     try dispatchAndContinue(self)
@@ -688,11 +688,11 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** The single terminal exit, shared by the closed, defensive-arm and crash paths.
       *
-      * Runs the teardown the old loop ran on its way out: terminalTeardown drains any close-teardown engine op that close() submitted concurrently
+      * Runs the exit teardown: terminalTeardown drains any close-teardown engine op that close() submitted concurrently
       * with the closedFlag set and sweeps any fd-close obligation a TLS closeHandle registered too late for a normal drain; backend.close(pollerFd)
       * runs AFTER the last poll, so the poller fd is never closed under an in-flight epoll_wait/kevent; freeScratch is CAS-guarded against close()'s
-      * never-started path. It runs on whichever carrier ran the final cycle, which is safe for the same reason the old single carrier was: exactly
-      * one activation is ever live, so the maps stay confined to it.
+      * never-started path. It runs on whichever carrier ran the final cycle, which is safe because exactly one activation is ever live, so the
+      * maps stay confined to it.
       */
     private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =
         terminalTeardown()
