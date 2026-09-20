@@ -93,13 +93,15 @@ object KyoNativesJSPlugin extends AutoPlugin {
       */
     private def nodeEnvTask: Def.Initialize[Task[Map[String, String]]] = Def.task {
         val log = streams.value.log
+        // Read outside the branch, because a regular task evaluates every `.value` whatever the branch decides. With
+        // no requests the fetch is empty anyway, so this costs nothing and does not pretend to be a guard.
+        val fetched = kyoNativesFetched.value
         if (kyoNativesRequests.value.isEmpty) Map.empty[String, String]
         else {
             val dir       = (target.value / "node_modules").getAbsolutePath
             val inherited = sys.env.getOrElse("NODE_PATH", "")
             val nodePath  = Map("NODE_PATH" -> (if (inherited.isEmpty) dir else dir + java.io.File.pathSeparator + inherited))
             val host      = NativeTargets.host
-            val fetched   = kyoNativesFetched.value
             val libraries = fetched.collect {
                 case (osArch, f) if osArch == host =>
                     s"KYO_FFI_${f.libId.toUpperCase.replace('-', '_')}_PATH" -> f.library.getAbsolutePath

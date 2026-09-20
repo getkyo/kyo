@@ -7,6 +7,8 @@ import kyo.ffi.sbt.ServiceProviders
 import sbt._
 import sbt.Keys._
 import scala.scalanative.build.Discover
+import scala.scalanative.build.Mode
+import scala.scalanative.build.NativeConfig
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 
@@ -95,15 +97,16 @@ object KyoNativesNativePlugin extends AutoPlugin {
         kyoNativesServiceProviders := serviceProvidersTask(Compile).value,
         // A test binary links its own classpath, where a test-only dependency can declare a provider of its own. The
         // production config stays on Compile: enlisting a class that is not on the production classpath would fail
-        // that link rather than degrade. Reading the project-scope value here rather than this key is what keeps the
-        // two configurations distinct instead of self-referential.
+        // that link rather than degrade.
+        //
+        // Contributed to `Test / nativeLink / nativeConfig`, which is the key `nativeLinkCachedTask` reads, rather
+        // than to `Test / nativeConfig`. Redefining the latter in terms of itself is what a `Test / nativeConfig :=`
+        // reading an unscoped `nativeConfig.value` would amount to, since the reference resolves in the setting's own
+        // scope. The task axis here differs from everything read below, so the graph is acyclic by construction.
         Test / kyoNativesServiceProviders := serviceProvidersTask(Test).value,
-        Test / nativeConfig := {
-            val base     = nativeConfig.value
-            val declared = (Test / kyoNativesServiceProviders).value
-            if (declared.isEmpty) base
-            else base.withServiceProviders(ServiceProviders.merge(base.serviceProviders, declared))
-        },
+        Test / nativeLink / nativeConfig := testConfigWithProviders.value,
+        Test / nativeLinkReleaseFast / nativeConfig := testConfigWithProviders.value.withMode(Mode.releaseFast),
+        Test / nativeLinkReleaseFull / nativeConfig := testConfigWithProviders.value.withMode(Mode.releaseFull),
         nativeConfig := {
             val base     = nativeConfig.value
             val services = kyoNativesServiceProviders.value
@@ -194,6 +197,18 @@ object KyoNativesNativePlugin extends AutoPlugin {
         }
     }
 
+    /** The test link's config: the project's own, plus the providers only the test classpath declares.
+      *
+      * Reads `Test / nativeConfig`, which delegates to the project-scope value this plugin already built, so the
+      * delivered libraries and the system-library flags are carried through rather than rebuilt here.
+      */
+    private def testConfigWithProviders: Def.Initialize[Task[NativeConfig]] = Def.task {
+        val base     = (Test / nativeConfig).value
+        val declared = (Test / kyoNativesServiceProviders).value
+        if (declared.isEmpty) base
+        else base.withServiceProviders(ServiceProviders.merge(base.serviceProviders, declared))
+    }
+
     /** Every service provider the entries on `configuration`'s dependency classpath declare.
       *
       * Not filtered to kyo's own artifacts, and enlisting one that nothing loads is safe rather than merely tolerable.
@@ -206,11 +221,14 @@ object KyoNativesNativePlugin extends AutoPlugin {
       */
     private def serviceProvidersTask(configuration: Configuration): Def.Initialize[Task[Map[String, Seq[String]]]] =
         Def.task {
-            val log = streams.value.log
-            if (!kyoNativesEnlistServices.value || kyoNativesSource.value == NativesSource.Disabled)
-                Map.empty[String, Seq[String]]
+            val log     = streams.value.log
+            val enabled = kyoNativesEnlistServices.value && kyoNativesSource.value != NativesSource.Disabled
+            // Read outside the branch, because a regular task evaluates every `.value` whatever the branch decides.
+            // Keeping the lookup here says so, rather than reading as a guard that does not guard.
+            val classpath = (configuration / dependencyClasspath).value.map(_.data)
+            if (!enabled) Map.empty[String, Seq[String]]
             else {
-                val declared = ServiceProviders.read((configuration / dependencyClasspath).value.map(_.data))
+                val declared = ServiceProviders.read(classpath)
                 declared.toSeq.sortBy(_._1).foreach { case (iface, impls) =>
                     log.info(s"[kyo-natives] service provider $iface: ${impls.mkString(", ")}")
                 }
