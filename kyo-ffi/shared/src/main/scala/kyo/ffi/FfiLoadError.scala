@@ -18,16 +18,25 @@ sealed abstract class FfiLoadError(msg: String, cause: Throwable | Null)
 
 object FfiLoadError:
 
-    /** The native library could not be located via any of the searched paths (bundled resource, system path, operator override). */
+    /** The native library could not be located via any of the searched paths (bundled resource, system path, operator override).
+      *
+      * `platformTag` is the `<os>-<arch>` the loader actually searched under, empty where a caller did not supply one. It travels with the
+      * error because only the loader can name it: it knows the libc flavour (`linux-musl` against `linux`), which a reader downstream
+      * cannot portably rediscover, and a tag re-derived elsewhere names a different artifact than the one that was missed.
+      */
     final class LibraryNotFound(
         val libraryId: String,
         val candidates: Chunk[String],
         msg: String,
-        cause: Throwable | Null
+        cause: Throwable | Null,
+        val platformTag: String
     ) extends FfiLoadError(msg, cause):
+        def this(libraryId: String, candidates: Chunk[String], msg: String, cause: Throwable | Null) =
+            this(libraryId, candidates, msg, cause, "")
+
         /** Convenience constructor using the default `"Library '<id>' not found. Tried: ..."` message. */
         def this(libraryId: String, candidates: Chunk[String], cause: Throwable | Null) =
-            this(libraryId, candidates, s"Library '$libraryId' not found. Tried: ${candidates.mkString(", ")}", cause)
+            this(libraryId, candidates, s"Library '$libraryId' not found. Tried: ${candidates.mkString(", ")}", cause, "")
     end LibraryNotFound
 
     /** The generated impl's ABI expectation does not match the runtime, packed-struct layout disagreement, koffi version out of range, etc.

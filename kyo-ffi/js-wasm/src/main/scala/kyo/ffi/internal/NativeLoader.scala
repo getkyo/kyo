@@ -78,7 +78,8 @@ object NativeLoader:
                 s"${libraryId.toUpperCase.replace('-', '_')}_PATH to an absolute path, install the '$packagePrefix' " +
                 s"package for $os-$arch, or install the '$libraryId' system library. Tried, in order: " +
                 s"${candidates.mkString("; ")}.",
-            null
+            null,
+            s"$os-$arch"
         )
     end jsResolve
 
@@ -118,6 +119,7 @@ object NativeLoader:
             else
                 val lib = koffi.applyDynamic("load")(name)
                 !js.isUndefined(lib) && lib != null
+            end if
         }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).

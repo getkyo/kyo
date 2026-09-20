@@ -80,7 +80,11 @@ private[net] object CapabilityProbe:
             // libc and cannot help.
             case e: FfiLoadError.LibraryNotFound if kyo.ffi.internal.SystemLibraries.isSystem(e.libraryId) =>
                 CapabilityOutcome.Unavailable(e.getMessage)
-            case e: FfiLoadError.LibraryNotFound => CapabilityOutcome.NotBundled(e.libraryId, platform)
+            // The loader's own tag wins where it supplied one: it searched under it, and it is the only side that
+            // knows the libc flavour, so a musl host reads `linux-musl-x86_64` here instead of the glibc tag this
+            // object would derive and the glibc artifact that tag would recommend.
+            case e: FfiLoadError.LibraryNotFound =>
+                CapabilityOutcome.NotBundled(e.libraryId, if e.platformTag.nonEmpty then e.platformTag else platform)
             case e: FfiLoadError.AbiMismatch     => CapabilityOutcome.VersionTooOld(e.actual, e.expected)
             case _: FfiLoadError.Unsupported     => CapabilityOutcome.UnsupportedOS
             case e: FfiLoadError.ImplNotFound    => CapabilityOutcome.ProbeFailed(e)
