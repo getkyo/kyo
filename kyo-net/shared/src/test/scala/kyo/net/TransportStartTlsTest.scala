@@ -24,7 +24,7 @@ class TransportStartTlsTest extends Test:
     // cancel every cell, so the suite runs only the success/round-trip upgrade leaves. Then any handshake EngineError or strand is the upgrade-handoff
     // delivery bug rather than an expected reject, making it directly attributable without a per-leaf trace tag. Default (unset) runs every leaf.
     private val successLeavesOnly: Boolean =
-        sys.env.get("KYO_NET_SUCCESS_ONLY").contains("1") || sys.props.get("kyo.net.successLeavesOnly").contains("true")
+        Test.isolationEnv("KYO_NET_SUCCESS_ONLY").contains("1") || sys.props.get("kyo.net.successLeavesOnly").contains("true")
     private val rejectSkip: (String, String) => Maybe[String] =
         (_, _) => if successLeavesOnly then Present("focused corrupt-delivery repro: reject leaf excluded") else Absent
 

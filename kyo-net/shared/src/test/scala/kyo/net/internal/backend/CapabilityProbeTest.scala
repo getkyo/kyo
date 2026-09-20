@@ -28,6 +28,7 @@ class CapabilityProbeTest extends Test:
                     assert(!reason.contains("classifier"))
                 case other =>
                     fail(s"a system library must not classify as a packaging problem: ${other.describe}")
+            end match
         }
 
         "a bundled library's failure names the library to add" in {
@@ -36,6 +37,7 @@ class CapabilityProbeTest extends Test:
                 case CapabilityOutcome.NotBundled(id, _) => assert(id == "kyonet_posix_uring")
                 case other                               =>
                     fail(s"a bundled library must classify as NotBundled: ${other.describe}")
+            end match
         }
     }
 
