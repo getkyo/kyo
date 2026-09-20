@@ -122,7 +122,9 @@ object KyoNativesPlugin extends AutoPlugin {
                         case Left(why) =>
                             if (source == NativesSource.Jar)
                                 sys.error(s"[kyo-natives] $why. Set kyoNativesSource := NativesSource.Auto to build without it.")
-                            log.info(s"[kyo-natives] $why; building without it")
+                            // A warning, not information: the build asked for this library by enabling the plugin, and
+                            // what it gets instead is the capability reporting itself unavailable at run time.
+                            log.warn(s"[kyo-natives] $why; building without it")
                             Nil
                     }
                 }
