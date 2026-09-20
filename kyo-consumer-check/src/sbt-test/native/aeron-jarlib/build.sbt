@@ -25,14 +25,14 @@ lazy val root = (project in file("."))
             val ext = if (hostOsArch.startsWith("darwin")) "dylib" else "so"
             val jar     = update.value.select(configurationFilter(NativeLib.name)).head
             val staging = IO.createTemporaryDirectory
-            try
+            try {
                 IO.unzip(jar, staging, (_: String).endsWith(s"$hostOsArch/libkyo_aeron.$ext"), preserveLastModified = true)
                 val lib = (staging ** s"libkyo_aeron.$ext").get.headOption
                     .getOrElse(sys.error(s"no libkyo_aeron.$ext for $hostOsArch in $jar"))
                 // Flat, because `-L` names this directory and `-l` expects `lib<id>.<ext>` directly in it.
                 IO.copyFile(lib, out / lib.getName)
                 streams.value.log.info(s"[jarlib] ${lib.getName} from ${jar.getName}")
-            finally IO.delete(staging)
+            } finally IO.delete(staging)
             Nil
         }.taskValue,
         nativeConfig := {

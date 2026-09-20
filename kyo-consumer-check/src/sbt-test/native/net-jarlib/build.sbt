@@ -23,13 +23,13 @@ lazy val root = (project in file("."))
             val ext     = if (hostOsArch.startsWith("darwin")) "dylib" else "so"
             val jar     = update.value.select(configurationFilter(NativeLib.name)).head
             val staging = IO.createTemporaryDirectory
-            try
+            try {
                 IO.unzip(jar, staging, (_: String).endsWith(s"libkyonet_boringssl.$ext"), preserveLastModified = true)
                 val lib = (staging ** s"libkyonet_boringssl.$ext").get.headOption
                     .getOrElse(sys.error(s"no libkyonet_boringssl.$ext for $hostOsArch in $jar"))
                 IO.copyFile(lib, out / lib.getName)
                 streams.value.log.info(s"[jarlib] ${lib.getName} from ${jar.getName}")
-            finally IO.delete(staging)
+            } finally IO.delete(staging)
             Nil
         }.taskValue,
         nativeConfig := {
