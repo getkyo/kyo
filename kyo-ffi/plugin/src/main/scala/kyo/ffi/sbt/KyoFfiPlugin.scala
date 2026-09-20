@@ -813,9 +813,11 @@ object KyoFfiPlugin extends AutoPlugin {
                             val configSentinel = perLibCacheDir / "config.hash"
                             IO.write(configSentinel, configHash)
 
+                            val deliversToNative =
+                                ffiNativeDelivery.value.get(lib.id).exists(_.platforms.contains("native"))
                             val cached = FileFunction.cached(perLibCacheDir, FilesInfo.hash, FilesInfo.exists) { _ =>
                                 log.info(s"[kyo-ffi-plugin] ffiCompile: cc invocation for ${lib.id}.")
-                                CCompiler.compile(
+                                val built = CCompiler.compile(
                                     cc = libCc,
                                     cFlags = flags,
                                     linkFlags = linkFlags,
@@ -829,7 +831,10 @@ object KyoFfiPlugin extends AutoPlugin {
                                     includes = includes,
                                     staticLink = staticLink,
                                     libDirs = libDirs
-                                ).toSet
+                                )
+                                if (deliversToNative)
+                                    checkExternalState(lib, libCc, globalFlags, includes, perLibCacheDir / "external", log)
+                                built.toSet
                             }
                             val trackInputs: Set[File] = lib.cSources.toSet ++ lib.cHeaders.toSet + configSentinel
                             cached(trackInputs).toSeq
@@ -1482,6 +1487,40 @@ object KyoFfiPlugin extends AutoPlugin {
             }
         }
     )
+
+    /** Fails the build when a library declaring a Native delivery still compiles entry points under
+      * `KYO_FFI_EXTERNAL_<ID>`.
+      *
+      * Delivering to Scala Native is correct only where the shim answers that define with a translation unit
+      * defining no entry point. The consumer's build compiles the shim INTO the binary, so a definition there
+      * shadows the delivered library's, and what the application gets is a dead load command and a capability that
+      * fails the way it fails with no library at all. Nothing downstream can detect it: both builds succeed.
+      *
+      * The declaration cannot carry the fact, since it is a property of the C rather than of the module, so it is
+      * checked here, where the C is compiled anyway and the flags are already derived. Inside the compile cache, so
+      * it re-runs exactly when the sources change.
+      */
+    private def checkExternalState(
+        lib: FfiLibrary,
+        cc: String,
+        globalFlags: Seq[String],
+        includes: Seq[File],
+        probeDir: File,
+        log: Logger
+    ): Unit = {
+        val flags = globalFlags ++ lib.cFlags :+ ("-D" + FfiLibrary.externalDefineFor(lib.id))
+        CCompiler.definedFunctions(cc, flags, includes, lib.cSources, probeDir, log).foreach { defined =>
+            if (defined.nonEmpty)
+                sys.error(
+                    s"[kyo-ffi-plugin] ${lib.id} declares a Native delivery, but its C still defines " +
+                        s"${defined.size} function(s) under ${FfiLibrary.externalDefineFor(lib.id)}: " +
+                        s"${defined.toSeq.sorted.take(5).mkString(", ")}${if (defined.size > 5) ", ..." else ""}. " +
+                        "A consumer compiles this C into its binary, where those definitions shadow the delivered " +
+                        "library's and leave it a dead dependency. Either give the shim an empty translation unit " +
+                        "under that define, or drop \"native\" from the library's ffiNativeDelivery platforms."
+                )
+        }
+    }
 
     /** Resource generator on every platform: publish [[ffiNativeDelivery]] as a [[NativeDelivery]] declaration.
       *

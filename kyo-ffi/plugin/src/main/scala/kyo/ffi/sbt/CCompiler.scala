@@ -402,6 +402,54 @@ private[sbt] object CCompiler {
         Seq(outFile)
     }
 
+    /** The names of the global FUNCTIONS `sources` define when compiled with `cFlags`, or None where the toolchain
+      * cannot be asked.
+      *
+      * Functions only. A data definition cannot shadow an entry point, and one shim deliberately carries a global
+      * `int` so that two copies of itself collide at link time; reporting that would make this unusable.
+      *
+      * None rather than empty when `nm` is missing or MSVC is the compiler, so a caller can tell "nothing defined"
+      * from "could not look", and none of the callers turns a missing toolchain into a build failure.
+      */
+    def definedFunctions(
+        cc: String,
+        cFlags: Seq[String],
+        includes: Seq[File],
+        sources: Seq[File],
+        outDir: File,
+        log: Logger
+    ): Option[Set[String]] = {
+        if (detectFamily(cc) == Msvc || sources.isEmpty) None
+        else {
+            Files.createDirectories(outDir.toPath)
+            val includeFlags = includes.flatMap(dir => Seq("-I", dir.getAbsolutePath))
+            val objects = sources.zipWithIndex.map { case (src, i) =>
+                val obj = new File(outDir, s"probe-$i.o")
+                val cmd = splitCc(cc) ++ Seq("-c") ++ cFlags ++ includeFlags ++ Seq(src.getAbsolutePath, "-o", obj.getAbsolutePath)
+                val rc  = Process(cmd).!
+                if (rc != 0)
+                    sys.error(s"[kyo-ffi-plugin] ${src.getName} does not compile with ${cFlags.mkString(" ")} (exit=$rc).")
+                obj
+            }
+            val lines = new StringBuilder
+            // `nm -g` over an OBJECT file, whose format is the same on darwin and ELF: an address, a one-letter
+            // type, and the name, with an undefined symbol carrying `U` and no address. Reading objects rather than
+            // the built library is what keeps this off `nm -D`, which darwin does not have.
+            val rc =
+                try Process(Seq("nm", "-g") ++ objects.map(_.getAbsolutePath))
+                        .!(ProcessLogger(line => { lines.append(line).append('\n'); () }, _ => ()))
+                catch { case _: Exception => -1 }
+            if (rc != 0) {
+                log.info("[kyo-ffi-plugin] nm is unavailable, so the external-state check did not run.")
+                None
+            } else
+                Some(lines.toString.split("\n").iterator.flatMap { line =>
+                    val parts = line.trim.split("\\s+")
+                    if (parts.length >= 3 && parts(parts.length - 2) == "T") Some(parts.last) else None
+                }.toSet)
+        }
+    }
+
     /** The BUILD HOST's OS tag. Reached only through `resolveTargetOsArch` on the producing paths,
       * which is what makes the host a default rather than an assumption baked into each producer.
       */

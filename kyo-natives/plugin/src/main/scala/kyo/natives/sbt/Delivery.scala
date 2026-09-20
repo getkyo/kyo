@@ -61,12 +61,34 @@ private[sbt] object Delivery {
         found
     }
 
+    /** Resolutions already made in this sbt session, keyed on the exact coordinate.
+      *
+      * Every task that needs a library resolves it: `nativeConfig`, the link, `fastLinkJS`, `run`, `test`, the
+      * report. sbt caches a task's value within one command, not across them, so without this a session spends a
+      * resolution on each. Keyed on the full coordinate including the classifier, so a republished version cannot
+      * be answered from here: kyo's snapshots carry a timestamp, and any version string that changes on republish
+      * changes the key. A mutable `-SNAPSHOT` republished DURING one sbt session is the case this would hold
+      * stale, and reloading the build clears it.
+      */
+    private val resolved = new java.util.concurrent.ConcurrentHashMap[String, Either[String, File]]()
+
     /** Resolves `module` to its single jar, or a message saying why not.
       *
       * A classifier jar a release does not carry for this target is an ordinary outcome, not a build failure: the
       * caller decides, because whether a missing library is fatal depends on the source the application pinned.
       */
     def resolve(depRes: DependencyResolution, module: ModuleID, log: Logger): Either[String, File] = {
+        val key = s"${module.organization}:${module.name}:${module.revision}:${module.explicitArtifacts.flatMap(_.classifier).mkString(",")}"
+        Option(resolved.get(key)) match {
+            case Some(hit) if hit.right.toOption.forall(_.isFile) => hit
+            case _ =>
+                val answer = resolveUncached(depRes, module, log)
+                resolved.put(key, answer)
+                answer
+        }
+    }
+
+    private def resolveUncached(depRes: DependencyResolution, module: ModuleID, log: Logger): Either[String, File] = {
         val descriptor = depRes.moduleDescriptor(
             sbt.librarymanagement.ModuleDescriptorConfiguration(
                 "io.getkyo" % "kyo-natives-resolver" % "0",

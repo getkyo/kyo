@@ -120,6 +120,18 @@ final private[net] class IoUringDriver private[posix] (
     // drained inline at the top of each reap cycle). The per-field comments name each field's owning carrier; no raw type is shared unsafely.
     private val pending = new ConcurrentHashMap[Long, PendingOp]()
 
+    // JS only: the reap task of a driver that parked itself instead of taking another turn, or null while the chain runs.
+    //
+    // On Node the fused submit-and-wait is a `koffi.callAsync` request onto a libuv worker, and an outstanding work request is one of the things
+    // the runtime counts when it decides whether the process may exit. The chain re-arms after every turn, so an application that finished its
+    // last connection kept one outstanding for as long as it lived and the process never ended on its own. Holding the task here instead, and
+    // resuming it from `wakeReapLoop`, is what lets the event loop drain. JVM and Native park a thread this process already owns, which holds
+    // nothing open, so they re-arm unconditionally and never reach this field.
+    //
+    // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
+    // thread, so the store and the read in `wakeReapLoop` cannot interleave. `private[posix]` for the test that pins the park and the resume.
+    private[posix] var idleTask: Task = null
+
     // Cross-carrier submission handoff: every SQ operation (get_sqe + prep + submit) and every TLS engine op for every connection on this driver
     // runs on the single reap carrier, which drains this queue at the top of each reap cycle (see [[submitEngineOp]] / [[runCycle]]). One producer
     // for the io_uring submission ring; no two engine ops overlap on the same engine because one carrier runs them in FIFO order.
@@ -1536,6 +1548,7 @@ final private[net] class IoUringDriver private[posix] (
                 val cad = new StringBuilder
                 closeAfterDrain.forEach((k, _) => discard(cad.append(k).append(' ')))
                 s"closed=${closedFlag.get()} reapExited=${reapExited.get()} ringExited=${ringExited.get()} reapCycles=$diagReapCycles " +
+                    s"idle=${idleTask ne null} " +
                     s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] " +
                     s"pendingCloses=${pendingCloses.size} stalledSends=${stalledSends.size} " +
                     s"cancelSubmitted=${diagCancelSubmitted.get()} cancelParked=${diagCancelParked.get()} " +
@@ -1597,6 +1610,14 @@ final private[net] class IoUringDriver private[posix] (
       * reap carrier is already running cost only a coalesced counter increment and at most one spurious early return from the next park.
       */
     private def wakeReapLoop()(using AllowUnsafe): Unit =
+        // A parked chain has no wait to cut short, so the wake is a re-arm instead. Taken before the eventfd write so the work just offered is
+        // never left with neither a running turn nor a scheduled one. See idleTask for why this needs no atomic.
+        if kyo.internal.Platform.isJS then
+            val parked = idleTask
+            if parked ne null then
+                idleTask = null
+                reArm(parked)
+        end if
         if wakeFd >= 0 && acquireWake() then
             try discard(uring.kyo_uring_eventfd_write(wakeFd))
             finally releaseWake()
@@ -1788,9 +1809,28 @@ final private[net] class IoUringDriver private[posix] (
             // Every benign turn re-arms ops parked on a full SQ: the fused submit+wait freed the slots, and SQ space is freed by submitting,
             // not by reaping, so they must not wait for an unrelated CQE.
             reArmStalled()
-            reArm(task)
+            // A turn that leaves the driver with nothing outstanding would wait for a completion no submission can produce. Park the chain
+            // instead of re-arming it: on Node the wait itself is what keeps the process alive. Tested after this turn's drain, so what it
+            // reads is the state the next turn would start from, and every path that gives this driver work goes through `wakeReapLoop`,
+            // which resumes the parked task.
+            if kyo.internal.Platform.isJS && idleNow then idleTask = task
+            else reArm(task)
         end if
     end afterWait
+
+    /** Whether the driver has nothing outstanding: no submitted operation awaiting its completion, no close obligation, no queued engine op,
+      * and nothing parked on a full submission queue.
+      *
+      * Read on the reap carrier after a turn's drain. `pending` and `pendingCloses` are the pair [[start]]'s diagnostics probe calls `pending`,
+      * and the three stalled queues plus `closeAfterDrain` are the same set `runCycle` refuses to park indefinitely on, for the same reason:
+      * each is re-driven by a turn rather than by a completion, so parking on one would strand it.
+      *
+      * `inFlight` is deliberately not among them. Its entries can sit at zero for a handle that has no operation outstanding, so it reports
+      * activity that `pending` does not, and a driver keyed on it would never park.
+      */
+    private[posix] def idleNow: Boolean =
+        pending.isEmpty && pendingCloses.isEmpty && engineQueue.isEmpty &&
+            stalledSends.isEmpty && stalledSubmits.isEmpty && stalledCancels.isEmpty && closeAfterDrain.isEmpty
 
     /** Re-arm the next turn onto a DIFFERENT carrier, so the one that just ran the turn is free to run the completions it produced.
       *

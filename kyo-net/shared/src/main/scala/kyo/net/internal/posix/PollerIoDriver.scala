@@ -627,8 +627,14 @@ final private[net] class PollerIoDriver private[posix] (
       * discharge.
       *
       * Read on the poll carrier after `drainChanges()`, so a registration or command submitted before this cycle has already been applied.
-      * The four are the same state [[start]]'s diagnostics probe calls `pending`, which is what makes an idle driver indistinguishable from a
+      * These are the same state [[start]]'s diagnostics probe calls `pending`, which is what makes an idle driver indistinguishable from a
       * finished one: nothing here can complete without a submit, and every submit wakes.
+      *
+      * `activeFds` standing in for the three pending tables is not an approximation. Every put into `pendingReads`, `pendingWritables` or
+      * `pendingAccepts` either accompanies an `activeFds` put from the same registration or, in `rearmOwned`, re-deposits on a fd whose
+      * `activeFds` entry the original `awaitRead` left in place; the only site that removes an `activeFds` entry removes all three tables'
+      * entries for that fd with it. So an empty `activeFds` implies all three are empty, and the reverse does not hold, which is the harmless
+      * direction: a registered fd with nothing pending polls.
       *
       * `activeFds` covers a listener as well as a connection, so a driver holding an open server socket is never idle, which is what keeps a
       * server process alive.

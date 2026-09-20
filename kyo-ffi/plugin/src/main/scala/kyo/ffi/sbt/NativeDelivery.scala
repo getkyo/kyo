@@ -54,7 +54,13 @@ object NativeDelivery {
       * compiles a module's C into the binary from the sources the artifact ships, so where that C is the whole
       * implementation rather than a shim over a vendored library, the binary already has it. Delivering it there would
       * link a second copy the compiled-in one shadows, and saddle the binary with a file it has to carry and does not
-      * use.
+      * use. `ffiCompile` checks that half on the producer side: a library scoped to `native` whose C still defines
+      * entry points under [[FfiLibrary.externalDefineFor]] fails the build that writes the declaration.
+      *
+      * The scope carries a second kind of judgement the check cannot make, which is whether the implementation the
+      * library selects is ready. Delivering is not neutral: it moves the application onto that implementation. Read a
+      * platform's absence as either "the C is wrong for it" or "the implementation is not ready there", and the
+      * module's own comment as the place that says which.
       */
     final case class Entry(classifierPattern: String, platforms: Set[String] = defaultPlatforms)
 

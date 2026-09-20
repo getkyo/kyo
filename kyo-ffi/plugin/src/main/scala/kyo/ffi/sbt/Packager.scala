@@ -97,16 +97,21 @@ private[sbt] object Packager {
 
     // Strip platform suffix for the canonical runtime-expected name:
     //   libkyo_tcp-linux-x86_64.so -> libkyo_tcp.so
-    // `os`/`arch` are the artifact's own platform, so the suffix of a cross-built or staged
-    // foreign artifact is stripped as reliably as a host-built one's.
-    private def canonicalName(name: String, os: String, arch: String): String = {
-        val dot = name.lastIndexOf('.')
-        if (dot < 0) name
-        else {
-            val ext        = name.substring(dot)
-            val dropSuffix = s"-$os-$arch$ext"
-            if (name.endsWith(dropSuffix)) name.substring(0, name.length - dropSuffix.length) + ext
-            else name
+    // `CCompiler.parseArtifactName` owns the rule, so the name written here cannot drift from the one a
+    // library records as its install name. `os`/`arch` are the artifact's own platform and are the fallback
+    // for a name that rule does not recognize, so a cross-built or staged foreign artifact is stripped as
+    // reliably as a host-built one's.
+    private def canonicalName(name: String, os: String, arch: String): String =
+        CCompiler.parseArtifactName(name) match {
+            case Some((libId, parsedOs, _)) => CCompiler.libPrefix(parsedOs) + libId + "." + CCompiler.libExtension(parsedOs)
+            case None =>
+                val dot = name.lastIndexOf('.')
+                if (dot < 0) name
+                else {
+                    val ext        = name.substring(dot)
+                    val dropSuffix = s"-$os-$arch$ext"
+                    if (name.endsWith(dropSuffix)) name.substring(0, name.length - dropSuffix.length) + ext
+                    else name
+                }
         }
-    }
 }
