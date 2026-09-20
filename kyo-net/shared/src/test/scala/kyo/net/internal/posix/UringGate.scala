@@ -43,6 +43,7 @@ object UringGate:
             if rc == 0 then uring.io_uring_queue_exit(ring)
             rc == 0
         finally ring.close()
+        end try
     end probeRing
 
 end UringGate
