@@ -1428,7 +1428,8 @@ lazy val `kyo-system-doltfs` =
                 val newLink    = (linkExtra :+ archive).filterNot(base.linkingOptions.contains)
                 val withLink   = base.withLinkingOptions(base.linkingOptions ++ newLink)
                 val newCompile = compileExtra.filterNot(withLink.compileOptions.contains)
-                if (newCompile.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ newCompile)
+                // In front of what is there, for the include-order reason recorded on `native-settings`' own fold.
+                if (newCompile.isEmpty) withLink else withLink.withCompileOptions(newCompile ++ withLink.compileOptions)
             }
         )
         .wasmSettings(
@@ -2270,11 +2271,17 @@ def systemOpensslPrefix: Option[File] = {
 def systemOpensslIncludeDirs: Seq[File] =
     systemOpensslPrefix.map(p => Seq(p / "include")).getOrElse(Seq(new java.io.File("/usr/include")))
 
+// The `-L` for a non-default OpenSSL prefix, empty where OpenSSL is on the default search path. Shared with
+// kyonet_openssl's `linkFlags` so the flags the FFI manifest emits are spelled identically to the ones below,
+// which is what keeps the subsequence match exact.
+def systemOpensslLibSearchOpts: Seq[String] =
+    systemOpensslPrefix.map(p => Seq(s"-L${(p / "lib").getAbsolutePath}")).getOrElse(Nil)
+
 // The exact flags `openssl-native-settings` appends for system OpenSSL; factored out so
 // `stripSystemOpensslForStagedBoringSsl` can undo them by exact subsequence match (a bare -lssl/-lcrypto
 // token filter would also strip BoringSSL's identically-spelled Linux flags).
 def systemOpensslNativeLinkOpts: Seq[String] =
-    systemOpensslPrefix.map(p => Seq(s"-L${(p / "lib").getAbsolutePath}", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
+    systemOpensslLibSearchOpts ++ Seq("-lssl", "-lcrypto")
 
 def systemOpensslNativeCompileOpts: Seq[String] =
     systemOpensslPrefix.map(p => Seq(s"-I${(p / "include").getAbsolutePath}")).getOrElse(Nil)
@@ -2547,7 +2554,9 @@ lazy val `kyo-net` =
                 // defines KYO_FFI_LINKED_KYONET_OPENSSL. This build defines it by declaring linkLibs wherever it can link an
                 // OpenSSL: the system one when its headers are here, or the staged BoringSSL, which provides the same names
                 // (the plugin then links no second -lssl, and the shim compiles against the staged headers that precede the
-                // system ones). `includeDirs` only steers this host's compile toward a non-default OpenSSL prefix. `system`
+                // system ones). `includeDirs` and `linkFlags` steer this host's compile and link toward a non-default
+                // OpenSSL prefix (Homebrew's openssl@3); both ride the in-build FFI manifest, which is how a dependent
+                // Native module such as kyo-pod resolves the same prefix without naming it in its own settings. `system`
                 // is what a consumer's build looks for on its own machine, independent of what this host has.
                 // On the JVM (where BoringSslProvider over the JDK SSLEngine floor covers TLS and no code path loads it) it
                 // is still declared as a STUB with no C sources, so no static OpenSSL blob is bundled. The stub still declares
@@ -2562,6 +2571,7 @@ lazy val `kyo-net` =
                             cHeaders = (sharedBase / "src" / "main" / "c-openssl" ** "*.h").get,
                             includeDirs = systemIncludes,
                             linkLibs = if (staged || systemIncludes.nonEmpty) Seq("ssl", "crypto") else Nil,
+                            linkFlags = if (systemIncludes.isEmpty) Nil else systemOpensslLibSearchOpts,
                             system = Some(kyoNetSystemOpenssl)
                         )
                     } else
@@ -3477,37 +3487,11 @@ lazy val `kyo-pod` =
                 }
             }
         )
-        .nativeSettings(
-            `native-settings`,
-            nativeConfig ~= { c =>
-                val opensslOpts =
-                    if (System.getProperty("os.name").toLowerCase.contains("mac")) {
-                        val prefix = {
-                            val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                            val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                            val p0 = new java.io.File("/usr/local/opt/openssl")
-                            if (p3.exists()) p3.getAbsolutePath
-                            else if (p1.exists()) p1.getAbsolutePath
-                            else p0.getAbsolutePath
-                        }
-                        Seq(s"-L$prefix/lib", s"-I$prefix/include", "-lssl", "-lcrypto")
-                    } else Seq("-lssl", "-lcrypto")
-                c.withLinkingOptions(c.linkingOptions ++ opensslOpts)
-                    .withCompileOptions(c.compileOptions ++ {
-                        if (System.getProperty("os.name").toLowerCase.contains("mac")) {
-                            val prefix = {
-                                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                                val p0 = new java.io.File("/usr/local/opt/openssl")
-                                if (p3.exists()) p3.getAbsolutePath
-                                else if (p1.exists()) p1.getAbsolutePath
-                                else p0.getAbsolutePath
-                            }
-                            Seq(s"-I$prefix/include")
-                        } else Nil
-                    })
-            }
-        )
+        // No OpenSSL settings of its own: kyo-net's FFI manifest carries the prefix's `-L`, the `-l` names and
+        // the matching `-I` to every module that depends on it, and it carries the staged BoringSSL archives
+        // instead wherever those are staged. Naming the system OpenSSL here as well would link it alongside
+        // those archives, which is the ABI mismatch `stripSystemOpensslForStagedBoringSsl` exists to prevent.
+        .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -4016,7 +4000,12 @@ lazy val `native-settings-base` = Seq(
         val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
         val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
         val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
-        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+        // The dependency's flags go IN FRONT of the ones already there. clang takes the first `-I` that holds the
+        // header, and Scala Native's discovery contributes generic system paths (`/opt/homebrew/include`) that can
+        // carry a different OpenSSL than the one the dependency linked: where they do, a staged BoringSSL build
+        // compiles the shims against system OpenSSL headers and the link ends on SSL_CTX_ctrl, which BoringSSL does
+        // not export. Appending puts the dependency's own include behind that and loses the race.
+        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(compileExtra ++ withLink.compileOptions)
     }
 )
 

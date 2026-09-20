@@ -1018,8 +1018,17 @@ object KyoFfiPlugin extends AutoPlugin {
                         // reference: -lc++ / -lstdc++) follow the archives so they resolve too.
                         CCompiler.vendoredArchiveForceLoadFlags(libDirs, lib.resolvedLinkLibs(buildOs), lib.staticLink, buildOs) ++
                             lib.linkFlags
-                    else
-                        CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs).filterNot(vendoredLinkLibs), lib.staticLink)
+                    else {
+                        val systemLibs =
+                            CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs).filterNot(vendoredLinkLibs), lib.staticLink)
+                        // A library resolved from a system prefix needs its `-L` beside the `-l` names, and the
+                        // declaration is the only place that prefix is known: a downstream module that does not
+                        // name the prefix itself leaves the linker with a name it cannot find. Emitted only when
+                        // a name survives the vendored filter, so a library whose names a staged archive already
+                        // supplies contributes no unused search path, and the flags precede the names so the
+                        // emitted run stays contiguous for a build that matches on it.
+                        if (systemLibs.isEmpty) Nil else lib.linkFlags ++ systemLibs
+                    }
                 }
             }
         },
