@@ -143,8 +143,10 @@ object NativeDelivery {
     def readJar(jar: File): Seq[(String, Entry)] = {
         val prefix = dir.mkString("", "/", "/")
         val zip    = new ZipFile(jar)
+        // toList, not toSeq: an Iterator's toSeq is a lazy Stream here, and every entry below is read through the
+        // ZipFile that `finally` closes. A lazy chain escapes the try and reads from a closed file.
         try
-            zip.entries().asScala.toSeq
+            zip.entries().asScala.toList
                 .filter(e => e.getName.startsWith(prefix) && e.getName.endsWith(".properties"))
                 .sortBy(_.getName)
                 .flatMap { e =>
