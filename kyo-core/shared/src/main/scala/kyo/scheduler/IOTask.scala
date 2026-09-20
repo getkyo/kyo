@@ -91,25 +91,29 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                         new (Result[Any, C] => Any):
                                             self =>
                                             def apply(r: Result[Any, C]): Any =
+                                                // The one removal that cannot be typed: `self` is a callback on the
+                                                // AWAITED promise being dropped from the link on THIS task, so no
+                                                // signature here can name its type.
                                                 IOTask.this.remove(self)
                                                 curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
                                                 Scheduler.get.schedule(IOTask.this)
                                             end apply
                                     // Invoking joinInput links the awaited promise against THIS task, carrying
                                     // `resume` so an interrupt reclaims it, and does so before we read the promise's
-                                    // state (see Async.useResult).
-                                    val input = joinInput(this, Present(resume))
+                                    // state (see Async.useResult). The awaited promise's error type is opaque here and
+                                    // only `resume` consumes it, so it is bound once for the registration calls below.
+                                    val input = joinInput(this, Present(resume)).asInstanceOf[IOPromise[Any, C]]
                                     input.poll() match
                                         case null =>
                                             cont(null)
                                         case Present(r) =>
                                             // Promise was already complete when the thunk ran, so drop the
                                             // cascade link the thunk pre-registered so it doesn't accumulate.
-                                            this.remove(resume)
+                                            this.remove(input)
                                             cont(r.asInstanceOf[Result[Nothing, C]])
                                         case Absent =>
                                             curr = nullResult
-                                            input.asInstanceOf[IOPromise[Any, C]].onComplete(resume)
+                                            input.onComplete(resume)
                                             // An interrupt that landed while this task was registering already fired
                                             // the link, which found nothing to reclaim. Both the link's read of this
                                             // task's state and the interrupt's write of it are volatile, so if the

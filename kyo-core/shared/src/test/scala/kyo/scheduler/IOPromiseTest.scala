@@ -781,27 +781,27 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
     }
 
-    "removeInterrupt" - {
-        "basic removeInterrupt" in {
+    "remove" - {
+        "basic remove" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p2)
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p1.block(deadline()).isPanic)
             assert(!p2.done())
         }
 
-        "removeInterrupt with multiple linked promises" in {
+        "remove with multiple linked promises" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p2)
             p1.interrupts(p3)
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p1.block(deadline()).isPanic)
@@ -809,14 +809,14 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p3.block(deadline()).isPanic)
         }
 
-        "removeInterrupt with chain of promises" in {
+        "remove with chain of promises" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p2)
             p2.interrupts(p3)
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p1.block(deadline()).isPanic)
@@ -824,79 +824,79 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!p3.done())
         }
 
-        "removeInterrupt with non-linked promise" in {
+        "remove with non-linked promise" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p2)
-            p1.removeInterrupt(p3)
+            p1.remove(p3)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p1.block(deadline()).isPanic)
             assert(p2.block(deadline()).isPanic)
         }
 
-        "removeInterrupt after completion" in {
+        "remove after completion" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p2)
             p1.complete(Result.succeed(42))
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             assert(p1.block(deadline()) == Result.succeed(42))
             assert(!p2.done())
         }
 
-        "removeInterrupt with become" in {
+        "remove with become" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p3)
             p1.become(p2)
-            p1.removeInterrupt(p3)
+            p1.remove(p3)
 
             assert(p2.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p2.block(deadline()).isPanic)
             assert(p3.done())
         }
 
-        "removeInterrupt with mask" in {
+        "remove with mask" in {
             val original = new IOPromise[Nothing, Int]()
             val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
             masked.interrupts(other)
-            masked.removeInterrupt(other)
+            masked.remove(other)
 
             assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(!other.done())
         }
 
-        "removeInterrupt preserves other callbacks" in {
+        "remove preserves other callbacks" in {
             val p1               = new IOPromise[Nothing, Int]()
             val p2               = new IOPromise[Nothing, Int]()
             var callbackExecuted = false
 
             p1.interrupts(p2)
             p1.onComplete(_ => callbackExecuted = true)
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             p1.complete(Result.succeed(42))
             assert(callbackExecuted)
             assert(!p2.done())
         }
 
-        "removeInterrupt with onInterrupt callbacks" in {
+        "remove with onInterrupt callbacks" in {
             val p1                        = new IOPromise[Nothing, Int]()
             val p2                        = new IOPromise[Nothing, Int]()
             var interruptCallbackExecuted = false
 
             p1.interrupts(p2)
             p1.onInterrupt(_ => interruptCallbackExecuted = true)
-            p1.removeInterrupt(p2)
+            p1.remove(p2)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(interruptCallbackExecuted)

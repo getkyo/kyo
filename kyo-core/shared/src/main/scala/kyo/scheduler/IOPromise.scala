@@ -74,7 +74,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
       * cascades into `other` first, because that is what may complete `other` and deliver the awaiter its final
       * wakeup; only then is the callback reclaimed, which is a no-op if the wakeup already consumed it.
       */
-    final def interrupts(other: IOPromise[?, ?], release: Maybe[AnyRef])(using frame: Frame): Unit =
+    final def interrupts[E2, A2](other: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -87,14 +87,18 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         interruptsLoop(this)
     end interrupts
 
-    /** Drops the registration made under `key`: the promise passed to [[interrupts]], or the function passed to
-      * [[onComplete]] / [[onInterrupt]]. A completed promise holds no registrations, so this is a no-op there.
+    /** Drops whichever registration was made under `key`, matched by reference: the promise given to [[interrupts]],
+      * or the function given to [[onComplete]] / [[onInterrupt]]. A completed promise holds no registrations, so this
+      * is a no-op there.
+      *
+      * The two arms do not reduce to one. A join link carries a callback belonging to the promise being AWAITED rather
+      * than to the one holding the link, so no type parameterized by the holder covers both.
       *
       * A registration that is never dropped is what makes a waiter permanent. A promise that stays pending keeps every
       * registration reachable, and a completion callback holds the whole computation waiting on it, so a waiter that
       * goes away before the promise completes has to take its registration with it.
       */
-    final def remove(key: AnyRef): Unit =
+    final def remove(key: IOPromise[?, ?] | Function1[?, ?]): Unit =
         @tailrec def removeLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -105,15 +109,6 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                 case _ =>
         removeLoop(this)
     end remove
-
-    final def removeInterrupt(other: IOPromise[?, ?])(using frame: Frame): Unit =
-        remove(other)
-
-    /** Drops a callback registered with [[onComplete]]. Typed at the callback rather than at [[remove]]'s bare
-      * identity, so a caller cannot pass something that was never registered as one.
-      */
-    final def removeComplete(f: Result[E, A] => Any): Unit =
-        remove(f)
 
     def preInterrupt(): Boolean = true
 
@@ -343,7 +338,7 @@ private[kyo] object IOPromise:
           * Dropping the FIRST match is enough: a registration is dropped by whoever made it, and one waiter makes one
           * registration per wait.
           */
-        def remove(key: AnyRef): Pending[E, A]
+        def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
@@ -352,7 +347,7 @@ private[kyo] object IOPromise:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def remove(key: AnyRef) =
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
                     if key eq f then self
                     else self.remove(key).onComplete(f)
                 def run(v: Result[E, A]) =
@@ -363,7 +358,7 @@ private[kyo] object IOPromise:
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             interrupts(p, Absent)
 
-        final def interrupts(p: IOPromise[?, ?], release: Maybe[AnyRef]): Pending[E, A] =
+        final def interrupts[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(error: Error[E]) =
                     val ex =
@@ -385,7 +380,7 @@ private[kyo] object IOPromise:
                 // the dead links are behind it.
                 // Matches either identity the link was made under: the awaited promise, or the registration it
                 // carries. The awaiting task reclaims by the latter, because the callback is what it holds.
-                def remove(key: AnyRef) =
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
                     if (key eq p) || release.exists(_ eq key) || p.done() then self.remove(key)
                     else self.remove(key).interrupts(p, release)
                 def waiters: Int         = self.waiters + 1
@@ -397,7 +392,7 @@ private[kyo] object IOPromise:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def remove(key: AnyRef) =
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
                     if key eq f then self
                     else self.remove(key).onInterrupt(f)
                 def waiters: Int         = self.waiters + 1
@@ -422,8 +417,8 @@ private[kyo] object IOPromise:
                 // `run` and `interrupt` PEEL one node per step, which is what lets their loops walk to Empty.
                 // `remove` rebuilds the whole chain instead, so looping over it never reaches Empty: rebuild this
                 // half once, then re-merge.
-                def remove(key: AnyRef)  = self.remove(key).merge(tail)
-                def run(v: Result[E, A]) = runLoop(self, v)
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) = self.remove(key).merge(tail)
+                def run(v: Result[E, A])                           = runLoop(self, v)
             end new
         end merge
 
@@ -450,10 +445,10 @@ private[kyo] object IOPromise:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                     = 0
-            def interrupt(v: Error[Nothing])     = this
-            def remove(key: AnyRef)              = this
-            def run(v: Result[Nothing, Nothing]) = this
+            def waiters: Int                                   = 0
+            def interrupt(v: Error[Nothing])                   = this
+            def remove(key: IOPromise[?, ?] | Function1[?, ?]) = this
+            def run(v: Result[Nothing, Nothing])               = this
         end Empty
     end Pending
 
