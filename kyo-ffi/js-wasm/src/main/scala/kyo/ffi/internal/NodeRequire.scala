@@ -31,8 +31,12 @@ private[ffi] object NodeRequire:
 
     /** Anchored at the working directory with a trailing separator, so createRequire treats it as a directory and
       * NODE_PATH governs the search the same way it does for the global.
+      *
+      * Reachable from tests because it is the branch an ESModule bundle depends on and the only one a test can
+      * pin: a runner that happens to expose a global `require` would otherwise satisfy [[find]] through
+      * [[fromGlobal]] and leave this path unexercised.
       */
-    private def fromNodeModule(): Option[js.Dynamic] =
+    private[ffi] def fromNodeModule(): Option[js.Dynamic] =
         try
             val proc = js.Dynamic.global.selectDynamic("process")
             if js.isUndefined(proc) || proc == null then None

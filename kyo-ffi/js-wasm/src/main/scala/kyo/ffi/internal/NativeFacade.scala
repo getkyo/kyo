@@ -57,7 +57,7 @@ object NativeFacade:
     private def koffiAvailable(): Boolean =
         try
             NodeRequire.find() match
-                case None => false
+                case None      => false
                 case Some(req) =>
                     val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
                     !js.isUndefined(koffi) && koffi != null
