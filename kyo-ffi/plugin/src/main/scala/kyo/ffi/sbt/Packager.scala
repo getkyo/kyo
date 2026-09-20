@@ -103,7 +103,7 @@ private[sbt] object Packager {
     // the artifact's own platform, so that case strips by name.
     private def canonicalName(name: String, os: String, arch: String): String =
         CCompiler.parseArtifactName(name) match {
-            case Some((libId, parsedOs, _)) => CCompiler.libPrefix(parsedOs) + libId + "." + CCompiler.libExtension(parsedOs)
+            case Some((libId, parsedOs, _)) => CCompiler.libraryFileName(libId, parsedOs)
             case None =>
                 val dot = name.lastIndexOf('.')
                 if (dot < 0) name

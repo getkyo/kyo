@@ -18,14 +18,8 @@ object NativeTargets {
     /** The `os` half of a tag: `darwin`, `linux`, `linux-musl` or `windows`. */
     def osOf(tag: String): String = CCompiler.parseOsArch(tag)._1
 
-    /** The file name a packaged shared library carries: `lib<id>.<ext>`, or `<id>.dll` on Windows.
-      *
-      * The compile output carries a disambiguating `-<os>-<arch>` suffix that `Packager` strips when staging into
-      * `META-INF/native/<os-arch>/`, so this is the staged name, which is what a consumer looks for and what `-l<id>`
-      * resolves. Composed from the same two pieces the packaging uses rather than spelled again here.
-      */
-    def libraryFileName(libraryId: String, os: String): String =
-        s"${CCompiler.libPrefix(os)}$libraryId.${CCompiler.libExtension(os)}"
+    /** The file name a packaged shared library carries: see [[CCompiler.libraryFileName]], which owns the rule. */
+    def libraryFileName(libraryId: String, os: String): String = CCompiler.libraryFileName(libraryId, os)
 
     /** The tag a Scala Native target triple names, or None when the triple is not one kyo publishes for.
       *

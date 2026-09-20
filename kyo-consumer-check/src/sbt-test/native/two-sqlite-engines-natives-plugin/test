@@ -1,3 +1,9 @@
+# The engine has to be on disk before the link, because it is what makes this fixture's subject reachable: a
+# delivered engine compiles DoltLite's copy of the shim to nothing, leaving the sentinel as the only definition left
+# to collide. Without delivery both shims compile in full and the link fails on the ordinary wrapper duplicates, so
+# the step below would pass having tested the wrong collision.
+> kyoNativesReport
+$ exec sh -c 'set -eu; find target/kyo-natives -name "libkyo_doltlite.*" | grep -q . || { echo "no engine was delivered, so the link below would not reach the sentinel"; exit 1; }'
 # The link must fail on the duplicate entry points, and leave no binary. A binary here would be one where every
 # doltlite:// call reaches kyo-sql-sqlite's engine instead of DoltLite's.
 -> nativeLink

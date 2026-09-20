@@ -12,6 +12,10 @@ lazy val root = (project in file("."))
     .enablePlugins(ScalaNativePlugin, KyoNativesPlugin)
     .settings(
         scalaVersion := sys.props("kyo.scalaVersion"),
+        // Jar rather than Auto: under Auto a release carrying no engine for this host delivers nothing and says
+        // nothing, both shims then compile in full, and the link below fails on the ordinary wrapper duplicates
+        // instead of on the sentinel. This fixture would pass having never reached its subject.
+        kyoNativesSource := NativesSource.Jar,
         libraryDependencies ++= Seq(
             "io.getkyo" %%% "kyo-sql-sqlite"   % sys.props("kyo.version"),
             "io.getkyo" %%% "kyo-sql-doltlite" % sys.props("kyo.version")

@@ -808,17 +808,22 @@ object KyoFfiPlugin extends AutoPlugin {
                             val includes   = (globalIncludes ++ headerDirs ++ lib.includeDirs).distinct
                             val libDirs    = lib.libDirs.distinct
 
+                            val deliversToNative =
+                                ffiNativeDelivery.value.get(lib.id).exists(_.deliversTo(DeliveryPlatform.Native))
+
                             // `target=` keys the cache on the resolved os/arch: the artifact NAME is
                             // derived from it, so without it a re-run under a different
                             // ffiTargetOsArch would hit the cache and hand back the previous
                             // target's file.
+                            //
+                            // `delivers-native=` keys it on the declaration checkExternalState validates. Adding
+                            // "native" to a library's ffiNativeDelivery changes no C file and no flag, so without
+                            // this the check that exists for exactly that change would not run until someone
+                            // happened to touch a source afterwards.
                             val configHash =
-                                s"$libCc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink|target=$targetOs-$targetArch"
+                                s"$libCc|${flags.mkString(",")}|${linkFlags.mkString(",")}|${linkLibs.mkString(",")}|${lib.id}|${includes.map(_.getAbsolutePath).mkString(",")}|libdirs=${libDirs.map(_.getAbsolutePath).mkString(",")}|static=$staticLink|target=$targetOs-$targetArch|delivers-native=$deliversToNative"
                             val configSentinel = perLibCacheDir / "config.hash"
                             IO.write(configSentinel, configHash)
-
-                            val deliversToNative =
-                                ffiNativeDelivery.value.get(lib.id).exists(_.deliversTo(DeliveryPlatform.Native))
                             val cached = FileFunction.cached(perLibCacheDir, FilesInfo.hash, FilesInfo.exists) { _ =>
                                 log.info(s"[kyo-ffi-plugin] ffiCompile: cc invocation for ${lib.id}.")
                                 val built = CCompiler.compile(
@@ -1501,8 +1506,9 @@ object KyoFfiPlugin extends AutoPlugin {
       * fails the way it fails with no library at all. Nothing downstream can detect it: both builds succeed.
       *
       * The declaration cannot carry the fact, since it is a property of the C rather than of the module, so it is
-      * checked here, where the C is compiled anyway and the flags are already derived. Inside the compile cache, so
-      * it re-runs exactly when the sources change.
+      * checked here, where the C is compiled anyway and the flags are already derived. Inside the compile cache,
+      * whose sentinel carries the delivery declaration as well as the sources and flags, so it re-runs both when the
+      * C changes and when a module opts the library into Native delivery.
       */
     private def checkExternalState(
         lib: FfiLibrary,

@@ -85,6 +85,24 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         }
     }
 
+    test("the JVM asks for a classifier jar and not for the main artifact it already depends on") {
+        // A main-artifact library is already on a JVM classpath, and the loader extracts from there. Requesting it
+        // would resolve that same jar and unpack a file nothing on this platform reads.
+        val delivery = Map(
+            "kyonet_boringssl" -> NativeDelivery.underClassifier("<os-arch>-boringssl", NativeDelivery.allPlatforms),
+            "kyo_aeron"        -> NativeDelivery.mainArtifact(NativeDelivery.allPlatforms)
+        )
+        withJar(Seq(deliveryEntry(delivery))) { jar =>
+            val module = "io.getkyo" % "kyo-net_3" % "1.2.3"
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Jvm).map(_.libId) shouldBe
+                Seq("kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Native).map(_.libId).sorted shouldBe
+                Seq("kyo_aeron", "kyonet_boringssl")
+            Delivery.requests(Seq(module -> jar), "linux-x86_64", DeliveryPlatform.Js).map(_.libId).sorted shouldBe
+                Seq("kyo_aeron", "kyonet_boringssl")
+        }
+    }
+
     test("a jar carrying no declaration asks for nothing") {
         withJar(Seq("kyo/Something.class" -> "irrelevant")) { jar =>
             Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", DeliveryPlatform.Jvm) shouldBe Nil

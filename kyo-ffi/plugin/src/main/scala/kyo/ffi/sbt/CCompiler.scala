@@ -242,7 +242,7 @@ private[sbt] object CCompiler {
             // parseArtifactName owns the rule, so this cannot strip a different suffix than the packaging does.
             val libraryName =
                 parseArtifactName(outFile.getName)
-                    .map { case (libId, libOs, _) => libPrefix(libOs) + libId + "." + libExtension(libOs) }
+                    .map { case (libId, libOs, _) => libraryFileName(libId, libOs) }
                     .getOrElse(outFile.getName)
             val nameFlags =
                 if (os == "darwin") Seq("-Wl,-install_name,@rpath/" + libraryName)
@@ -294,6 +294,14 @@ private[sbt] object CCompiler {
 
     /** Shared-library filename prefix for a target OS: `lib` everywhere but Windows. */
     def libPrefix(os: String): String = if (os == "windows") "" else "lib"
+
+    /** The STAGED filename for `libraryId` on `os`: `lib<id>.<ext>`, or `<id>.dll` on Windows.
+      *
+      * This is the name without the disambiguating `-<os>-<arch>` suffix the compile output carries. Three things
+      * have to agree on it and would each otherwise spell it: the install name a library records, the name the
+      * packaging writes into `META-INF/native/<os-arch>/`, and the name `-l<id>` resolves when a consumer links it.
+      */
+    def libraryFileName(libraryId: String, os: String): String = libPrefix(os) + libraryId + "." + libExtension(os)
 
     /** The compile-output filename for `libraryId` on a target os/arch:
       * `lib<id>-<os>-<arch>.<ext>` (POSIX) or `<id>-<os>-<arch>.dll` (Windows). `Packager` strips

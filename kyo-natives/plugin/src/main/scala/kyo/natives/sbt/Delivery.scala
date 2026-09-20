@@ -37,6 +37,12 @@ private[sbt] object Delivery {
       * A declaration that does not deliver to `platform` is skipped, which is how a library whose C already compiles
       * into a Native binary stays out of that link.
       *
+      * On the JVM a library in the module's MAIN artifact is skipped too, because there is nothing to deliver: the
+      * project already depends on that jar, and the JVM loader extracts from the classpath. Requesting it would
+      * resolve the jar the build already has, unpack a file no JVM path reads, and put a second classpath entry for
+      * it. Only a classifier jar, which a plain dependency does not bring, adds anything there. The other two
+      * platforms take both kinds, since neither can read a jar at run time at all.
+      *
       * Two modules declaring the same library id is an error rather than a choice. The id names the file that both the
       * Native `-L` directory and the Node package hold, so the second would overwrite the first and the build would
       * link or open whichever was unpacked last, with nothing said.
@@ -45,11 +51,14 @@ private[sbt] object Delivery {
         val found = classpath.flatMap { case (module, file) =>
             if (!file.isFile || !file.getName.endsWith(".jar")) Nil
             else
-                NativeDelivery.readJar(file).filter(_._2.deliversTo(platform)).map { case (id, entry) =>
-                    val carrier = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
-                    val withClassifier =
-                        entry.classifier(osArch).fold(carrier)(c => carrier.classifier(c))
-                    Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), id)
+                NativeDelivery.readJar(file).filter(_._2.deliversTo(platform)).flatMap { case (id, entry) =>
+                    val classifier = entry.classifier(osArch)
+                    if (platform == DeliveryPlatform.Jvm && classifier.isEmpty) None
+                    else {
+                        val carrier = module.organization % NativeDelivery.jvmArtifactName(module.name) % module.revision
+                        val withClassifier = classifier.fold(carrier)(c => carrier.classifier(c))
+                        Some(Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), id))
+                    }
                 }
         }.distinct
         found.groupBy(_.libId).find(_._2.size > 1).foreach { case (libId, clashing) =>

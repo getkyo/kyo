@@ -166,8 +166,9 @@ object KyoNativesPlugin extends AutoPlugin {
         log.info(s"[kyo-natives] ${kyoNativesSource.value}, platform $platform, target(s) ${targets.mkString(", ")}")
         // A JVM classpath is portable and the default target is not: an image built here and run on another OS
         // carries this machine's pole and falls back to whatever floor the module has. Nothing else says so, since
-        // the delivery itself succeeds.
-        if (platform == Platform.Jvm && kyoNativesTargets.value.isEmpty)
+        // the delivery itself succeeds. Only where something was delivered, since it is those jars that are
+        // host-shaped; a module keeping its natives in the main artifact carries every pole and is not delivered here.
+        if (platform == Platform.Jvm && kyoNativesTargets.value.isEmpty && fetched.nonEmpty)
             log.info(
                 s"[kyo-natives] ${targets.mkString(", ")} is this build host; an image that runs on another OS or " +
                     "architecture needs that target named in kyoNativesTargets"
