@@ -35,7 +35,22 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: coursier/cache-action@v8.1.1
+      # The deps-<os>- namespace .github/actions/setup uses, not coursier/cache-action's own. That action
+      # keys on the job name, minting another ~1.6 GB entry holding the coursier tree the ci poles already
+      # cache, against a 10 GB per-repo budget where eviction is what pushed the deps and kyo-browser
+      # entries out. ubuntu-latest is the linux-x64 pole.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-x64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25

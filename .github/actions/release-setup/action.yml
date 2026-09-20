@@ -9,7 +9,38 @@ description: >-
 runs:
   using: composite
   steps:
-    - uses: coursier/cache-action@v8.1.1
+    # The deps-<pole>- namespace .github/actions/setup uses, not coursier/cache-action's own. That action
+    # keys on the job name, so release and the probe each mint their own entry of roughly 1.6 GB holding
+    # the same coursier tree the ci poles already cache. Against GitHub's 10 GB per-repo budget that is
+    # what evicts the deps and kyo-browser entries: a run on 2026-09-19 missed even the bare
+    # deps-windows-x64- and kyo-browser-windows-x64- prefixes. Sharing the namespace removes the pressure
+    # and warms both callers from the far more frequent ci runs.
+    #
+    # The two callers run on different architectures, the same split the staged natives below handle, so
+    # the pole is resolved from the runner rather than pinned. The names here are ci's (linux-x64,
+    # linux-arm64), which differ from the os-arch values below (linux-x86_64, linux-aarch64).
+    - name: Resolve cache pole
+      id: pole
+      shell: bash
+      run: |
+        case "$(uname -m)" in
+          x86_64)          echo "value=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          aarch64 | arm64) echo "value=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+          *)               echo "release-setup: unsupported machine $(uname -m)" >&2; exit 1 ;;
+        esac
+
+    - uses: actions/cache@v6
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: |
+          ~/.cache/coursier
+          ~/Library/Caches/Coursier
+          ~/AppData/Local/Coursier/Cache
+          ~/.sbt
+          ~/.ivy2/cache
+        key: deps-${{ steps.pole.outputs.value }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+        restore-keys: deps-${{ steps.pole.outputs.value }}-
 
     # The staged trees below are per-architecture, and the two callers do not share one: publish
     # runs on x64, the probe on arm64. Resolve it from the runner rather than pinning a value that

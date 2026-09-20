@@ -78,7 +78,26 @@ jobs:
         uses: rhysd/actionlint@v1.7.12
 
       # --- then formatting (~3m) ---
-      - uses: coursier/cache-action@v8.1.1
+      # Same key namespace as .github/actions/setup, rather than coursier/cache-action's own. That action
+      # mints a cache entry per job name, each around 1.6 GB and each holding the same coursier tree the
+      # deps-<os>- entries already hold. Three of them resident at once take roughly half of GitHub's 10 GB
+      # per-repo budget, and eviction is what pushed the deps and kyo-browser entries out: a run on
+      # 2026-09-19 missed even the bare deps-windows-x64- and kyo-browser-windows-x64- prefixes, so the leg
+      # refetched every dependency and redownloaded chrome-headless-shell inside a test with a 60s timeout.
+      # Sharing the namespace both removes that pressure and warms this job from the far more frequent ci runs.
+      # This job runs on ubuntu-24.04-arm, which is the linux-arm64 pole.
+      - uses: actions/cache@v6
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/Library/Caches/Coursier
+            ~/AppData/Local/Coursier/Cache
+            ~/.sbt
+            ~/.ivy2/cache
+          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+          restore-keys: deps-linux-arm64-
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
