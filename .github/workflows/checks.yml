@@ -86,7 +86,12 @@ jobs:
       # refetched every dependency and redownloaded chrome-headless-shell inside a test with a 60s timeout.
       # Sharing the namespace both removes that pressure and warms this job from the far more frequent ci runs.
       # This job runs on ubuntu-24.04-arm, which is the linux-arm64 pole.
-      - uses: actions/cache@v6
+      #
+      # restore, not the full cache action: a key is immutable once written, so a job that saves first owns
+      # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
+      # tree a ci leg on this pole pulls, and minting the key from it would lock out the fuller save for
+      # that hash. The ci legs are the writers; every consumer here restores.
+      - uses: actions/cache/restore@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:

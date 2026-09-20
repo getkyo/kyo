@@ -39,7 +39,10 @@ jobs:
       # keys on the job name, minting another ~1.6 GB entry holding the coursier tree the ci poles already
       # cache, against a 10 GB per-repo budget where eviction is what pushed the deps and kyo-browser
       # entries out. ubuntu-latest is the linux-x64 pole.
-      - uses: actions/cache@v6
+      #
+      # restore, not the full cache action: a key is immutable once written, so a consumer with a thinner
+      # tree than a ci leg must not be the one that mints it. The ci legs write; this restores.
+      - uses: actions/cache/restore@v6
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
         with:

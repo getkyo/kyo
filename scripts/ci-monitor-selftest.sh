@@ -148,6 +148,27 @@ posix_sockets_out=$(
 )
 expect_eq "posix sockets" "$posix_sockets_out" ""
 
+# A netstat that runs but yields no TCP rows (it errored, or printed only a banner) must read as
+# unsampled. Counting it as zero would report healthy sockets on exactly the leg that cannot be sampled.
+cat > "$test_dir/bin/netstat" <<'STUB'
+#!/usr/bin/env bash
+echo "netstat: something went wrong" >&2
+exit 1
+STUB
+chmod +x "$test_dir/bin/netstat"
+
+unsampled_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 bash -c "
+        $(sed -n '/^sockets_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sockets_headline
+    " || fail "a failing netstat made sockets_headline exit non-zero"
+)
+expect_eq "unsampled sockets" "$unsampled_out" 'tcp=? timeWait=? ephemeral=16384'
+
+case "$unsampled_out" in
+    *'tcp=0'*) fail "a failing netstat reported zero sockets instead of an unsampled field" ;;
+esac
+
 # Absent netstat must print nothing and exit zero, for the same reason proc_top must.
 absent_sockets_out=$(
     PATH="$test_dir/empty" OS=MINGW64_NT-10.0 "$bash_bin" -c "

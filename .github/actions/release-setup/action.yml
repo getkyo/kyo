@@ -29,7 +29,10 @@ runs:
           *)               echo "release-setup: unsupported machine $(uname -m)" >&2; exit 1 ;;
         esac
 
-    - uses: actions/cache@v6
+    # restore, not the full cache action: a key is immutable once written, so whichever job saves first
+    # owns it for that hash. Releases are infrequent and the ci legs on these poles are not, so ci writes
+    # and both callers here restore.
+    - uses: actions/cache/restore@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       with:

@@ -227,8 +227,11 @@ sockets_headline() {
     esac
     command -v netstat >/dev/null 2>&1 || return 0
     local counts tcp timewait range
+    # Emit nothing when no TCP row was seen, so a netstat that errored or printed nothing reads as `?`
+    # below rather than as `tcp=0 timeWait=0`. A zero is worse than a blank here: it says the sockets are
+    # fine. A live Windows box always has at least one LISTENING row, so no-rows means no sample.
     counts=$(MSYS2_ARG_CONV_EXCL='*' netstat -ano -p tcp 2>/dev/null | tr -d '\r' |
-        awk '/^ +TCP/ { total++; if ($4 == "TIME_WAIT") tw++ } END { printf "%d %d", total, tw }')
+        awk '/^ +TCP/ { total++; if ($4 == "TIME_WAIT") tw++ } END { if (total) printf "%d %d", total, tw }')
     tcp=${counts%% *}
     timewait=${counts##* }
     range=$(MSYS2_ARG_CONV_EXCL='*' netsh int ipv4 show dynamicport tcp 2>/dev/null | tr -d '\r' |

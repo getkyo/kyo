@@ -94,6 +94,34 @@ class NavigationWatcherTest extends kyo.BrowserTest:
         )
     }
 
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(chrome-error, 0, throwOnFailure=true) → AbortTransportFailure" in {
+        // A navigation that failed below HTTP carries no status, so the 4xx/5xx branch cannot see it and the
+        // URL did change, which leaves DegradeToLoad reporting success. NetworkIdle is goto's default settle,
+        // so this is the path a socket-exhausted runner takes.
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("chrome-error://chromewebdata/", 0)),
+            throwOnFailure = true
+        )
+        assert(
+            decision == NavigationWatcher.PendingDecision.AbortTransportFailure("chrome-error://chromewebdata/"),
+            s"expected AbortTransportFailure(chrome-error://chromewebdata/) but got $decision"
+        )
+    }
+
+    "NavigationWatcher.decidePending: NetworkIdle + Ready(chrome-error, 0, throwOnFailure=false) → DegradeToLoad (transport check is gated)" in {
+        val decision = NavigationWatcher.decidePending(
+            expectedDifferentFrom = Present(snap),
+            settle = Browser.Settle.NetworkIdle,
+            urlHint = "https://example.com/landed",
+            loadProbe = Present(NavigationWatcher.SettleStatus.Ready("chrome-error://chromewebdata/", 0)),
+            throwOnFailure = false
+        )
+        assert(decision == NavigationWatcher.PendingDecision.DegradeToLoad, s"expected DegradeToLoad but got $decision")
+    }
+
     "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 500, throwOnFailure=false) → DegradeToLoad (HTTP-status check is gated)" in {
         val decision = NavigationWatcher.decidePending(
             expectedDifferentFrom = Present(snap),

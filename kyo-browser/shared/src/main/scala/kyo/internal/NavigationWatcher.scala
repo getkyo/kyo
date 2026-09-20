@@ -385,6 +385,11 @@ private[kyo] object NavigationWatcher:
           */
         final case class AbortNavigationNeverCommitted(snapshotUrl: String, settle: Browser.Settle) extends PendingDecision
 
+        /** `Settle.Load` reprobe came back Ready on Chrome's error document: the navigation failed below HTTP, so there is no status to
+          * check. Ordered ahead of [[AbortHttpError]] because such a reprobe reads status 0 and would otherwise degrade to success.
+          */
+        final case class AbortTransportFailure(navUrl: String) extends PendingDecision
+
         /** `Settle.Load` reprobe came back Ready with a 4xx/5xx response and the caller asked for HTTP-status enforcement. */
         final case class AbortHttpError(navUrl: String, status: Int) extends PendingDecision
 
@@ -422,6 +427,8 @@ private[kyo] object NavigationWatcher:
                             case Absent        => true
                         if !urlChanged then
                             PendingDecision.AbortNavigationNeverCommitted(expectedDifferentFrom.fold(navUrl)(_.url), settle)
+                        else if throwOnFailure && isTransportFailure(navUrl) then
+                            PendingDecision.AbortTransportFailure(navUrl)
                         else if throwOnFailure && status >= 400 && status < 600 then
                             PendingDecision.AbortHttpError(navUrl, status)
                         else
@@ -452,6 +459,8 @@ private[kyo] object NavigationWatcher:
                     snapshotUrl,
                     s"navigation never committed (still at original URL); settle mode ${settle}"
                 ))
+            case PendingDecision.AbortTransportFailure(navUrl) =>
+                Abort.fail(BrowserNavigationFailedException(navUrl, transportFailureReason))
             case PendingDecision.AbortHttpError(navUrl, status) =>
                 Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
             case PendingDecision.AbortLoadEventNeverFired(urlHint) =>
