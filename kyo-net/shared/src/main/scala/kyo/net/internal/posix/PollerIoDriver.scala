@@ -164,6 +164,19 @@ final private[net] class PollerIoDriver private[posix] (
     // fd -> current handle id. Used to discard stale poller events after fd reuse.
     private val activeFds = new IntLongMap()
 
+    // JS only: the cycle task of a driver that parked itself instead of polling, or null when the chain is running.
+    //
+    // On Node the poll is a `koffi.callAsync` onto a libuv worker, and an outstanding work request is one of the things Node counts when it
+    // decides whether the process may exit. A driver with nothing registered re-arms anyway, so a program that finished its last connection
+    // keeps one request outstanding for as long as it lives and the process never exits on its own. Holding the task here instead, and
+    // resuming it from `triggerWake`, is what lets the event loop drain. JVM and Native park a thread this process already owns, which holds
+    // nothing open, so they re-arm unconditionally and never reach this field.
+    //
+    // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
+    // thread (`BlockingBridge` dispatches the call itself to a worker and delivers its result back on the main thread), so the store below and
+    // the read in `triggerWake` cannot interleave. `private[posix]` for the test that pins the park and the resume.
+    private[posix] var idleTask: Task = null
+
     // readFd -> handle, parallel to activeFds and maintained at the same register/deregister/clear sites. It exists so a FIN/error edge that lands
     // on a PARKED fd (no pending-read entry to carry the handle) can still reach the handle to set its `peerClosed` latch. Poll-fiber-confined.
     private val activeHandles = new IntRefMap[PosixHandle]()
@@ -363,7 +376,7 @@ final private[net] class PollerIoDriver private[posix] (
                 pendingWritables.foreach((fd, _) => discard(writes.append(fd).append(' ')))
                 val accepts = new StringBuilder
                 pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
-                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
+                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles idle=${idleTask ne null} activeFds=${activeFds.size} " +
                     s"changeQueuePending=${changeQueue.peekNonEmpty()} engineQueuePending=${!engineQueue.isEmpty()} " +
                     s"pendingClosesSize=${pendingCloses.size()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
@@ -386,7 +399,8 @@ final private[net] class PollerIoDriver private[posix] (
         val promise = Promise.Unsafe.init[Unit, Any]()
         // Arm the first poll cycle on the scheduler. The chain is self-sustaining from here: every cycle re-arms the task onto a different carrier
         // and returns, so no carrier is ever pinned in a loop. The chain ends when a cycle observes closedFlag or a cycle throws; both run the
-        // terminal exit, which is what completes this promise.
+        // terminal exit, which is what completes this promise. On JS it also pauses while there is nothing to poll for, and the submit that
+        // gives the driver work re-arms it (see idleTask).
         Scheduler.get.schedule(newPollTask(promise, kyo.net.internal.ProcessSharedTransport.isBuilding))
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed Promise.Unsafe[Unit, Any], even though both erase to the same runtime object; the alias is transparent only
@@ -536,55 +550,64 @@ final private[net] class PollerIoDriver private[posix] (
                 diagPollCycles += 1L
                 wakePending.set(false)
                 drainChanges()
-                // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
-                // with the wait. On epoll the changelist / nChanges arguments are ignored by
-                // EpollPollerBackend.poll. Read into locals rather than a tuple: this runs on every cycle, and Maybe is opaque and
-                // null-backed, so isDefined/get allocate nothing.
-                val kq    = pollScratch.kqueueData
-                val clBuf = if kq.isDefined then kq.get.changelistBuf else pollScratch.armBuf
-                val clN   = if kq.isDefined then kq.get.nChanges else 0
-                // Indefinite park; the wake event returns it early. The production epoll/kqueue backends run the @Ffi.blocking wait inline,
-                // so THIS carrier is the one parked in epoll_wait/kevent for its duration and the fiber comes back already complete. A
-                // decorating backend may instead hand back a genuinely pending fiber, which the Absent arm below carries.
-                // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
-                // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
-                // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is
-                // parked in a syscall rather than burning a time slice. That deadlocks outright when the queued task is what would
-                // produce the event this wait is about to block on. flush() re-schedules those tasks onto other workers (it excludes
-                // this one) and is a no-op off a worker thread. It cannot close the window on its own, since a task can still land
-                // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
-                // monitor flags this worker.
-                Scheduler.get.flush()
-                // On JS the poll runs on a libuv worker (default pool of 4); an indefinite park would hold that worker for the process
-                // lifetime and could starve a `@Ffi.blocking` close/connect. Bound it so the worker is released at least every
-                // `JsPollBudgetMs`; readiness is level-triggered, so a ready fd returns the poll immediately, well before the budget elapses
-                // (the timeout only caps the IDLE wait). JVM/Native park indefinitely on their own threads (the J libuv-budget design).
-                val timeoutMs = if kyo.internal.Platform.isJS then PollerIoDriver.JsPollBudgetMs else -1
-                val waitFiber = backend.poll(pollerFd, timeoutMs, clBuf, clN, pollScratch)
-                val self      = task
-                waitFiber.poll() match
-                    case Present(Result.Success(_)) =>
-                        dispatchAndContinue(self)
-                    case Present(_) =>
-                        // Wait failed: end the chain, mirroring the old loop's exit on a backend failure or panic. Unreachable through the
-                        // production backends, which fold every inline outcome into a Success carrying a ready count, but reachable through a
-                        // decorator. The crash path is the catch below, not this arm.
-                        terminal(donePromise, Result.succeed(()))
-                    case Absent =>
-                        // The wait is genuinely pending. The scratch is still owned by the in-flight wait, so NOTHING may dispatch, re-arm or
-                        // tear down here: doing so frees the scratch out from under a live poll. Continue the chain from the completion
-                        // callback instead, which is the same handoff the previous loop used for a pending wait.
-                        waitFiber.onComplete {
-                            case Result.Success(_) =>
-                                try dispatchAndContinue(self)
-                                catch
-                                    case t: Throwable =>
-                                        if !closedFlag.get() then Log.live.unsafe.error(s"$label poll cycle crashed", t)
-                                        terminal(donePromise, Result.panic(t))
-                            case _ =>
-                                terminal(donePromise, Result.succeed(()))
-                        }
-                end match
+                // A driver with nothing registered and nothing queued would poll for an event no fd can produce. On Node that poll is a
+                // `koffi.callAsync` request, which is one of the things the runtime counts when deciding whether the process may exit, so a
+                // program that finished its last connection would keep one outstanding for as long as it lives and never exit on its own.
+                // Park the chain instead of polling: every path that gives this driver work goes through `triggerWake`, which resumes the
+                // parked task, so this cannot strand one. JVM and Native poll on a thread the process already owns, which holds nothing
+                // open, so they park in the wait as before.
+                if kyo.internal.Platform.isJS && idleNow then idleTask = task
+                else
+                    // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
+                    // with the wait. On epoll the changelist / nChanges arguments are ignored by
+                    // EpollPollerBackend.poll. Read into locals rather than a tuple: this runs on every cycle, and Maybe is opaque and
+                    // null-backed, so isDefined/get allocate nothing.
+                    val kq    = pollScratch.kqueueData
+                    val clBuf = if kq.isDefined then kq.get.changelistBuf else pollScratch.armBuf
+                    val clN   = if kq.isDefined then kq.get.nChanges else 0
+                    // Indefinite park; the wake event returns it early. The production epoll/kqueue backends run the @Ffi.blocking wait inline,
+                    // so THIS carrier is the one parked in epoll_wait/kevent for its duration and the fiber comes back already complete. A
+                    // decorating backend may instead hand back a genuinely pending fiber, which the Absent arm below carries.
+                    // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
+                    // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
+                    // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is
+                    // parked in a syscall rather than burning a time slice. That deadlocks outright when the queued task is what would
+                    // produce the event this wait is about to block on. flush() re-schedules those tasks onto other workers (it excludes
+                    // this one) and is a no-op off a worker thread. It cannot close the window on its own, since a task can still land
+                    // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
+                    // monitor flags this worker.
+                    Scheduler.get.flush()
+                    // On JS the poll runs on a libuv worker (default pool of 4); an indefinite park would hold that worker for the process
+                    // lifetime and could starve a `@Ffi.blocking` close/connect. Bound it so the worker is released at least every
+                    // `JsPollBudgetMs`; readiness is level-triggered, so a ready fd returns the poll immediately, well before the budget elapses
+                    // (the timeout only caps the IDLE wait). JVM/Native park indefinitely on their own threads (the J libuv-budget design).
+                    val timeoutMs = if kyo.internal.Platform.isJS then PollerIoDriver.JsPollBudgetMs else -1
+                    val waitFiber = backend.poll(pollerFd, timeoutMs, clBuf, clN, pollScratch)
+                    val self      = task
+                    waitFiber.poll() match
+                        case Present(Result.Success(_)) =>
+                            dispatchAndContinue(self)
+                        case Present(_) =>
+                            // Wait failed: end the chain, mirroring the old loop's exit on a backend failure or panic. Unreachable through the
+                            // production backends, which fold every inline outcome into a Success carrying a ready count, but reachable through a
+                            // decorator. The crash path is the catch below, not this arm.
+                            terminal(donePromise, Result.succeed(()))
+                        case Absent =>
+                            // The wait is genuinely pending. The scratch is still owned by the in-flight wait, so NOTHING may dispatch, re-arm or
+                            // tear down here: doing so frees the scratch out from under a live poll. Continue the chain from the completion
+                            // callback instead, which is the same handoff the previous loop used for a pending wait.
+                            waitFiber.onComplete {
+                                case Result.Success(_) =>
+                                    try dispatchAndContinue(self)
+                                    catch
+                                        case t: Throwable =>
+                                            if !closedFlag.get() then Log.live.unsafe.error(s"$label poll cycle crashed", t)
+                                            terminal(donePromise, Result.panic(t))
+                                case _ =>
+                                    terminal(donePromise, Result.succeed(()))
+                            }
+                    end match
+                end if
             end if
             Task.Done
         catch
@@ -599,6 +622,19 @@ final private[net] class PollerIoDriver private[posix] (
                 Task.Done
         end try
     end runCycle
+
+    /** Whether this cycle has nothing to poll for: no fd registered, no interest change or engine op queued, and no close obligation still to
+      * discharge.
+      *
+      * Read on the poll carrier after `drainChanges()`, so a registration or command submitted before this cycle has already been applied.
+      * The four are the same state [[start]]'s diagnostics probe calls `pending`, which is what makes an idle driver indistinguishable from a
+      * finished one: nothing here can complete without a submit, and every submit wakes.
+      *
+      * `activeFds` covers a listener as well as a connection, so a driver holding an open server socket is never idle, which is what keeps a
+      * server process alive.
+      */
+    private[posix] def idleNow: Boolean =
+        activeFds.size == 0 && !changeQueue.peekNonEmpty() && engineQueue.isEmpty() && pendingCloses.isEmpty()
 
     /** Dispatch one completed wait's events, drain the FIFOs, and hand the next wait to another carrier.
       *
@@ -2341,10 +2377,19 @@ final private[net] class PollerIoDriver private[posix] (
       * and recycled. The acquire/wake/release bracket is what keeps the wake-fd close ([[closeWakeGuarded]]) from running while this wake is mid-flight.
       */
     private def triggerWake()(using AllowUnsafe, Frame): Unit =
+        // A parked chain has no wait to cut short, so the wake is a re-arm instead. Taken before the backend wake so the work just offered is
+        // never left with neither a running cycle nor a scheduled one. See idleTask for why this needs no atomic.
+        if kyo.internal.Platform.isJS then
+            val parked = idleTask
+            if parked ne null then
+                idleTask = null
+                reArm(parked)
+        end if
         if acquireWake() then
             try backend.wake(pollerFd, pollScratch)
             finally releaseWake()
             end try
+        end if
     end triggerWake
 
     /** Pack an opcode, fd, fdClosing flag, and accept discriminator into a single Long command for the change FIFO.

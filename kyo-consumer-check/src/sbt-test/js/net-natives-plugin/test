@@ -1,0 +1,11 @@
+# The delivered natives put this application on the koffi posix transport, and the process still has to end by
+# itself. It is run directly rather than through `> run` for that reason: a program that never exits would hang
+# sbt with nothing to report, and the point here is to catch exactly that.
+#
+# The bound is generous on purpose. What it separates is a process that ends from one that cannot, not a fast run
+# from a slow one, and the driver's poll cycle holds a Node work request open for as long as it is armed.
+> kyoNativesReport
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
+$ exec sh -c 'set -eu; entry=$(find target -name main.js -path "*fastopt*" | head -n1); test -n "$entry"; rm -f out.txt; node "$entry" > run.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the process was still alive after ${i}s with its transport open"; cat run.log; exit 1; fi; wait "$pid" || { cat run.log; exit 1; }; echo "exited after ${i}s"'
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER transport=PosixTransport plain=hello tls=hello" out.txt'
