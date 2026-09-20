@@ -4,16 +4,11 @@
 > nativeLink
 # The library exports its own wrappers and no BoringSSL, which is what makes a binary that ALSO links the machine's
 # OpenSSL safe rather than a crash: with no SSL_* in this export table there is nothing for the system libssl's
-# symbols to bind to here, and BoringSSL's own calls resolve inside the library. Both formats export every global by
-# default, so what this pins is that the vendored archive is built with hidden visibility, which is a property of the
-# release rather than of the linker.
-#
-# The table is chosen by the file's FORMAT, not by the host, because only one of the two is the export table this
-# argument is about. On ELF that is `.dynsym`, which `nm -D` reads; `nm -gU` there reads `.symtab`, and GNU nm
-# accepts `-U`, so picking by which invocation succeeds would silently read the wrong table. The two agree while
-# both are present, since the linker demotes a hidden-visibility global to a local in either. Only `.dynsym`
-# survives `strip`, so a stripped library read through `.symtab` would report no symbols at all and fail this on the
-# stripping rather than on a visibility change.
+# symbols to bind to, and BoringSSL's own calls resolve inside the library. Both formats export every global by
+# default, so what this pins is that the vendored archive is built with hidden visibility.
+# The table is chosen by the file's FORMAT rather than by the host, because only one of the two is the export table
+# this argument is about. On ELF that is `.dynsym`, which `nm -D` reads, and GNU nm accepts `-U`, so picking by which
+# invocation succeeds would read `.symtab` instead. Only `.dynsym` survives `strip`.
 $ exec sh -c 'set -eu; lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); test -n "$lib"; case "$lib" in *.so) nm -D --defined-only "$lib" > syms.txt ;; *) nm -gU "$lib" > syms.txt ;; esac; echo "exported globals: $(wc -l < syms.txt)"; if grep -qE " _?SSL_" syms.txt; then echo "the delivered BoringSSL exports SSL_*, so a binary linking system OpenSSL too can bind to it"; grep -E " _?SSL_" syms.txt | head; exit 1; fi; grep -qE " _?kyo_bssl_" syms.txt'
 $ exec sh -c 'set -eu; bin=$(find target -type f -perm -u+x -name consumer | head -n1); lib=$(find target/kyo-ffi/natives -name "libkyonet_boringssl.*" | head -n1); rm -rf deploy; mkdir deploy; cp "$bin" "$lib" server.pem server.key deploy/; here=$(pwd); cd deploy; ./consumer > "$here/out.txt" 2>&1 || { cat "$here/out.txt"; exit 1; }; cat "$here/out.txt"; grep -q "CONSUMER tls=hello" "$here/out.txt"'
 $ exec sh -c 'set -eu; rm -f deploy/libkyonet_boringssl.*; here=$(pwd); cd /; if "$here/deploy/consumer" > "$here/missing.txt" 2>&1; then echo "expected the program to fail without its library"; exit 1; fi; cat "$here/missing.txt"; grep -qi "libkyonet_boringssl" "$here/missing.txt"'
