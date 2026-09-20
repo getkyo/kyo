@@ -22,6 +22,9 @@ private[sbt] object Platform {
         else if (has(pluginLabels, "ScalaJSPlugin")) Js
         else Jvm
 
+    /** sbt builds a label as the plugin object's class name with the trailing `$` stripped, so a label is the
+      * fully qualified name and the simple name is what follows the last dot.
+      */
     private def has(labels: Set[String], simpleName: String): Boolean =
-        labels.exists(l => l == simpleName || l.endsWith("." + simpleName) || l.endsWith("$" + simpleName))
+        labels.exists(l => l == simpleName || l.endsWith("." + simpleName))
 }

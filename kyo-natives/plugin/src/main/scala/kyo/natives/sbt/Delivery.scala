@@ -70,10 +70,12 @@ private[sbt] object Delivery {
             log
         ) match {
             case Right(report) =>
+                // Intransitive and single-artifact, so anything but one jar means the request did not say what it
+                // meant and picking one would deliver a library nobody asked for.
                 report.allFiles.distinct.filter(_.getName.endsWith(".jar")) match {
-                    case Seq(jar)             => Right(jar)
-                    case Seq()                => Left(s"$module resolved no jar")
-                    case several: Seq[File] @unchecked => Right(several.head)
+                    case Seq(jar) => Right(jar)
+                    case Seq()    => Left(s"$module resolved no jar")
+                    case several  => Left(s"$module resolved ${several.size} jars: ${several.map(_.getName).mkString(", ")}")
                 }
             case Left(warning) => Left(s"$module did not resolve: ${warning.resolveException.getMessage}")
         }

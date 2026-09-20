@@ -1,0 +1,10 @@
+# The natives reach the runtime classpath with no classifier named in the build, and the forced transport and TLS
+# provider make a native that does not load fail the round trip. The certificate is kyo-net's self-signed localhost
+# test certificate.
+> kyoNativesReport
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER tls=hello" out.txt'
+# The natives must not reach this application's own POM: a classifier there would pin the architecture of the machine
+# that built it onto everyone who depends on it.
+> makePom
+$ exec sh -c 'set -eu; pom=$(find target -name "*.pom" | head -n1); cat "$pom"; if grep -q "classifier" "$pom"; then echo "the POM names a classifier"; exit 1; fi; grep -q "kyo-net" "$pom"'

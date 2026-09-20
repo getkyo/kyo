@@ -30,10 +30,12 @@ object NativeTargets {
             case "x86_64" | "amd64"      => "x86_64"
             case other                   => other
         }
+        // The os part carries a version on darwin (`arm64-apple-darwin23.3.0`), so these match on a prefix rather than
+        // on equality.
         val os =
-            if (parts.contains("darwin") || parts.exists(_.startsWith("macos"))) Some("darwin")
-            else if (parts.exists(_.startsWith("windows")) || parts.contains("msvc") || parts.contains("mingw32")) Some("windows")
-            else if (parts.contains("linux")) Some(if (parts.contains("musl")) "linux-musl" else "linux")
+            if (parts.exists(p => p.startsWith("darwin") || p.startsWith("macos"))) Some("darwin")
+            else if (parts.exists(p => p.startsWith("windows") || p == "msvc" || p.startsWith("mingw"))) Some("windows")
+            else if (parts.contains("linux")) Some(if (parts.exists(_.startsWith("musl"))) "linux-musl" else "linux")
             else None
         for {
             a <- arch

@@ -86,9 +86,9 @@ object KyoNativesPlugin extends AutoPlugin {
       * classpath would put a second copy of every native into the application's own artifact.
       */
     private def jvmJars: Def.Initialize[Task[Seq[Attributed[File]]]] = Def.task {
-        if (Platform.of(thisProject.value.autoPlugins.map(_.label).toSet) == Platform.Jvm)
-            kyoNativesJars.value.map(Attributed.blank)
-        else Nil
+        val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet)
+        val jars     = kyoNativesJars.value
+        if (platform == Platform.Jvm) jars.map(Attributed.blank) else Nil
     }
 
     private def fetchTask: Def.Initialize[Task[Seq[(String, Delivery.Fetched)]]] = Def.task {
@@ -97,7 +97,7 @@ object KyoNativesPlugin extends AutoPlugin {
         val targets = kyoNativesResolvedTargets.value
         val depRes  = dependencyResolution.value
         val outRoot = kyoNativesDirectory.value
-        val modules = (Compile / updateFull).value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
+        val modules = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
             report.artifacts.map { case (_, file) => report.module -> file }
         }
         if (source == NativesSource.Disabled) Nil
