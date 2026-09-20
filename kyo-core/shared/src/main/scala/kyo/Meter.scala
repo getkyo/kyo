@@ -380,14 +380,13 @@ object Meter:
 
         opaque type Snapshot = Long
 
-        private inline def pack(free: Int, waiters: Int): Long =
-            (free.toLong << 32) | (waiters.toLong & 0xffffffffL)
+        private inline def pack(free: Int, waiters: Int): Long = (free.toLong << 32) | (waiters.toLong & 0xffffffffL)
 
         def init(free: Int)(using AllowUnsafe): State =
             AtomicLong.Unsafe.init(pack(free, 0))
 
         extension (self: State)
-            def get()(using AllowUnsafe): Snapshot = AtomicLong.Unsafe.get(self)()
+            def get()(using AllowUnsafe): Snapshot                                    = AtomicLong.Unsafe.get(self)()
             def cas(expected: Snapshot, update: Snapshot)(using AllowUnsafe): Boolean =
                 AtomicLong.Unsafe.compareAndSet(self)(expected, update)
             def getAndClose()(using AllowUnsafe): Snapshot =

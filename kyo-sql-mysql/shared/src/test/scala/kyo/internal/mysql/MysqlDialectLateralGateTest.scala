@@ -32,7 +32,7 @@ class MysqlDialectLateralGateTest extends Test:
     "LATERAL on MySQL 8.0.13 raises SqlUnsupportedException" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val version = Present(Idiom.ServerVersion(8, 0, 13))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "LATERAL", s"expected feature 'LATERAL', got: ${ex.feature}")
@@ -51,7 +51,7 @@ class MysqlDialectLateralGateTest extends Test:
     "LATERAL on MySQL 5.7 raises SqlUnsupportedException" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val version = Present(Idiom.ServerVersion(5, 7, 44))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "LATERAL", s"expected feature 'LATERAL', got: ${ex.feature}")

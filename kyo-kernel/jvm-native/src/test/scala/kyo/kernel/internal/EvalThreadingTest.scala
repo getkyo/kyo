@@ -29,7 +29,7 @@ class EvalThreadingTest extends AnyFreeSpec:
     "a captured continuation resumes on another thread" in {
         var stored: Maybe[Arrow[Unit, Int, Say]] = Maybe.empty
         val inner: Int < Say                     = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-        val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+        val r: Int < Any                         = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] =>
                 (_, cont) =>
                     stored = Maybe(Region.leak(cont))
@@ -41,7 +41,7 @@ class EvalThreadingTest extends AnyFreeSpec:
         val k             = stored.get
         def resume(): Int = ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a).eval
         val results       = new ConcurrentLinkedQueue[Int]()
-        val threads = (1 to 4).map(_ =>
+        val threads       = (1 to 4).map(_ =>
             new Thread(() =>
                 results.add(resume()); ()
             )
@@ -55,7 +55,7 @@ class EvalThreadingTest extends AnyFreeSpec:
     "partial evaluation under stops" - {
 
         "a preemption stop reifies and resumes with handler state" in {
-            var clauseRuns = 0
+            var clauseRuns                   = 0
             def countdown(i: Int): Int < Ask =
                 if i == 0 then 0 else ask.map(a => countdown(i - a))
             val counted: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, countdown(100))(
@@ -85,7 +85,7 @@ class EvalThreadingTest extends AnyFreeSpec:
         "a cross-thread stop parks a running slice" in {
             @volatile var started = false
             @volatile var parked  = false
-            val t = new Thread(() =>
+            val t                 = new Thread(() =>
                 def loop(i: Int): Int < Ask =
                     ask.map { a =>
                         started = true
@@ -104,7 +104,7 @@ class EvalThreadingTest extends AnyFreeSpec:
         "a cross-thread stop parks a settled spin with no suspensions" in {
             @volatile var started = false
             @volatile var parked  = false
-            val t = new Thread(() =>
+            val t                 = new Thread(() =>
                 def loop(i: Int): Int < Any =
                     ((i + 1) & 63: Int < Any).map { v =>
                         started = true

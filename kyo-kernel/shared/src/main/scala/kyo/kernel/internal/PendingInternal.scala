@@ -78,11 +78,11 @@ object Pending:
         private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[A, C, S] =
             val kc = cont
             new Arrow.Step[A, C, S]:
-                def frame = Frame.internal
+                def frame                                                    = Frame.internal
                 override def apply[D, S3](v: A < S3, cont2: Arrow[C, D, S3]) =
                     v match
                         case p: Pending[A, S3] @unchecked => Effect.defer(p, this, cont2)
-                        case _ =>
+                        case _                            =>
                             cont2(
                                 Park(
                                     Effect.defer(v, kc, resume).asInstanceOf[Any < Any],

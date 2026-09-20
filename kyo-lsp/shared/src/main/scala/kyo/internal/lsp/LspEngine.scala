@@ -174,7 +174,6 @@ private[kyo] object LspEngine:
             ) ++ userRoutes
 
             JsonRpcHandler.initUnscoped(transport, allRoutes, jsonRpcConfig).flatMap { handler =>
-
                 val unsafe: LspServer.Unsafe = new LspServer.Unsafe:
 
                     private def notifyEffect[In: Schema](method: String, params: In)(using

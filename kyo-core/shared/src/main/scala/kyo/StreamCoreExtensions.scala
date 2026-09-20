@@ -177,7 +177,7 @@ object StreamCoreExtensions:
                         Abort.run(pull).map:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
-                            case Result.Panic(throwable) =>
+                            case Result.Panic(throwable)                =>
                                 Sync.defer:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.panic(throwable))
@@ -226,7 +226,7 @@ object StreamCoreExtensions:
                         Abort.run(pull).map:
                             case Result.Success(chunk) if chunk.isEmpty => Loop.done
                             case Result.Success(chunk)                  => Emit.valueWith(chunk)(Loop.continue)
-                            case error: Result.Error[E] @unchecked =>
+                            case error: Result.Error[E] @unchecked      =>
                                 Sync.defer:
                                     val lastElements: Chunk[V] = builder.result()
                                     Emit.valueWith(lastElements)(Abort.error(error))
@@ -552,7 +552,7 @@ object StreamCoreExtensions:
                                             channelPar.take.map: fiber =>
                                                 fiber.getResult.map:
                                                     case Result.Success(_) => ()
-                                                    case Result.Panic(ex) =>
+                                                    case Result.Panic(ex)  =>
                                                         setError(Left(ex))
                                                     case Result.Failure(closed: Closed) =>
                                                         setError(Left(closed))
@@ -785,7 +785,7 @@ object StreamCoreExtensions:
                                             channelPar.take.map: fiber =>
                                                 fiber.getResult.map:
                                                     case Result.Success(_) => ()
-                                                    case Result.Panic(ex) =>
+                                                    case Result.Panic(ex)  =>
                                                         setError(Left(ex))
                                                     case Result.Failure(closed: Closed) =>
                                                         setError(Left(closed))

@@ -12,8 +12,8 @@ class PrinterTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "compact" - {
         "folds worker counters, counts states, and skips null slots" in {
-            val w0 = worker(0, running = true, blocked = false, stalled = false, exec = 10, done = 8, stolen = 2, lost = 0, load = 3)
-            val w1 = worker(1, running = false, blocked = true, stalled = true, exec = 20, done = 15, stolen = 1, lost = 4, load = 7)
+            val w0     = worker(0, running = true, blocked = false, stalled = false, exec = 10, done = 8, stolen = 2, lost = 0, load = 3)
+            val w1     = worker(1, running = false, blocked = true, stalled = true, exec = 20, done = 15, stolen = 1, lost = 4, load = 7)
             val status = Status(
                 currentWorkers = 2,
                 allocatedWorkers = 4,

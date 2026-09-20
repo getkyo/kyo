@@ -16,12 +16,12 @@ import scala.util.control.NoStackTrace
 
 class EffectTraceTest extends AnyFreeSpec:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
-    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+    def ask: Int < Ask                                     = ArrowEffect.suspend[Any](Tag[Ask], ())
     def runAsk[A, S](v: A < (Ask & S))(answer: Int): A < S =
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(answer))
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
-    def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+    def say(s: String): Unit < Say            = ArrowEffect.suspend[Any](Tag[Say], s)
     def runSay[A, S](v: A < (Say & S)): A < S =
         ArrowEffect.handleCont(Tag[Say], v)([C] => (_, cont) => cont(()))
 
@@ -97,7 +97,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a recovery clause inspects the enriched exception" in {
         var sawCarrier = false
-        val v = ArrowEffect.handleCont(Tag[Ask], ask.map(_ => (throw Boom()): Int))(
+        val v          = ArrowEffect.handleCont(Tag[Ask], ask.map(_ => (throw Boom()): Int))(
             [C] => (_, cont) => cont(1),
             a => a,
             ex =>
@@ -116,7 +116,7 @@ class EffectTraceTest extends AnyFreeSpec:
             a => a,
             _ => throw Second()
         )
-        var enriched = Maybe.empty[Boolean]
+        var enriched           = Maybe.empty[Boolean]
         val checked: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] => (_, cont) => cont(()),
             a => a,
@@ -210,7 +210,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a throw in a cont handler's clause carries the continuation it was handed" in {
         val boom = new RuntimeException("boom")
-        val ex = intercept[RuntimeException] {
+        val ex   = intercept[RuntimeException] {
             ArrowEffect.handleCont(Tag[Ask], outerStep(ask))([C] => (_, _) => throw boom).eval
         }
         assert(ex eq boom)
@@ -223,7 +223,7 @@ class EffectTraceTest extends AnyFreeSpec:
 
     "a throw in a handler clause carries the suspension and its region" in {
         val boom = new RuntimeException("boom")
-        val ex = intercept[RuntimeException] {
+        val ex   = intercept[RuntimeException] {
             ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] => _ => throw boom, a => a).eval
         }
         assert(ex eq boom)
@@ -238,7 +238,7 @@ class EffectTraceTest extends AnyFreeSpec:
     "a throw in a continuation frame with no region standing travels on the physical trace" in {
         def deep(i: Int): Int < Any =
             if i == 0 then 0 else (0: Int < Any).map(_ => deep(i - 1))
-        var site = 0
+        var site                            = 0
         def boomAt(v: Int < Any): Int < Any =
             v.map { _ =>
                 site = summon[kyo.Frame].position.lineNumber; (throw new RuntimeException("late")): Int
@@ -265,8 +265,8 @@ class EffectTraceTest extends AnyFreeSpec:
         }
 
         "name the call site's callee and the enclosing definition" in {
-            val ex  = intercept[Boom](runAsk(outerStep(ask))(1).eval)
-            val els = carrier(ex).get.elements.toList
+            val ex    = intercept[Boom](runAsk(outerStep(ask))(1).eval)
+            val els   = carrier(ex).get.elements.toList
             val inner = els.find(_.getMethodName == "innerStep") match
                 case Some(e) => e
                 case None    => fail("no element for innerStep")
@@ -307,7 +307,7 @@ class EffectTraceTest extends AnyFreeSpec:
     }
 
     "a throw after a budget rescue with no region standing travels on the physical trace" in {
-        def boomHere: Int < Any = (0: Int < Any).map(_ => (throw new Boom): Int)
+        def boomHere: Int < Any     = (0: Int < Any).map(_ => (throw new Boom): Int)
         def deep(i: Int): Int < Any =
             if i == 0 then boomHere else (0: Int < Any).map(_ => deep(i - 1))
         val ex = intercept[Boom](deep(600).eval)

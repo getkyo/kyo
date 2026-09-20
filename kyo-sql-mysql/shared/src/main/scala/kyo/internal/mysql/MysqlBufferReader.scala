@@ -85,7 +85,14 @@ final class MysqlBufferReader(spanBytes: Span[Byte]) extends SqlBufferReader(spa
             val b6 = span(pos + 6).toLong & 0xffL
             val b7 = span(pos + 7).toLong & 0xffL
             pos += 8
-            b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+            b0 |
+                (b1 << 8) |
+                (b2 << 16) |
+                (b3 << 24) |
+                (b4 << 32) |
+                (b5 << 40) |
+                (b6 << 48) |
+                (b7 << 56)
     end readUInt64LE
 
     /** Reads a length-encoded integer.

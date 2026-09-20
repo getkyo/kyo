@@ -672,7 +672,7 @@ class LoopTest extends AnyFreeSpec:
 
         "with suspended condition" in {
             var counter = 0
-            val result = Loop.whileTrue(Effect.defer(counter < 3)) {
+            val result  = Loop.whileTrue(Effect.defer(counter < 3)) {
                 counter += 1
             }
             result.eval
@@ -681,7 +681,7 @@ class LoopTest extends AnyFreeSpec:
 
         "with suspended body" in {
             var counter = 0
-            val result = Loop.whileTrue(counter < 3) {
+            val result  = Loop.whileTrue(counter < 3) {
                 Effect.defer(counter += 1)
             }
             result.eval
@@ -700,7 +700,7 @@ class LoopTest extends AnyFreeSpec:
         "stack safety with suspended operations" in {
             var counter     = 0
             val largeNumber = 10000
-            val result = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
+            val result      = Loop.whileTrue(Effect.defer(counter < largeNumber)) {
                 Effect.defer(counter += 1)
             }
             result.eval
@@ -728,7 +728,7 @@ class LoopTest extends AnyFreeSpec:
     }
 
     "repeat suspends a bare operation each time" in {
-        var answered = 0
+        var answered      = 0
         val r: Unit < Any = ArrowEffect.handleLoop(Tag[Ask], Loop.repeat(3)(ask))(
             [C] =>
                 _ =>
@@ -742,7 +742,7 @@ class LoopTest extends AnyFreeSpec:
     }
 
     "repeat enters a context region each time" in {
-        var entered = 0
+        var entered           = 0
         val region: Int < Any =
             ContextEffect.handleInheritable(
                 Tag[Cfg],
@@ -755,8 +755,8 @@ class LoopTest extends AnyFreeSpec:
     }
 
     "repeat acquires a bracket each time" in {
-        var acquired = 0
-        var released = 0
+        var acquired        = 0
+        var released        = 0
         val body: Int < Any =
             Bracket(Effect.defer {
                 acquired += 1
@@ -771,7 +771,7 @@ class LoopTest extends AnyFreeSpec:
         sealed trait Step extends ArrowEffect[Const[Int], Const[Loop.Outcome[Int, Int]]]
         def step(i: Int): Loop.Outcome[Int, Int] < Step = ArrowEffect.suspend[Any](Tag[Step], i)
         val looped: Int < Step                          = Loop.indexed(0)((_, i) => step(i))
-        val r: Int < Any = ArrowEffect.handleLoop(Tag[Step], looped)(
+        val r: Int < Any                                = ArrowEffect.handleLoop(Tag[Step], looped)(
             [C] => i => Loop.continue((if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
             a => a
         )
@@ -802,7 +802,7 @@ class LoopTest extends AnyFreeSpec:
 
         "continue evaluates its state once, at construction" in {
             var evaluated = 0
-            val outcome =
+            val outcome   =
                 Loop.continue[Int, Unit, Any] {
                     evaluated += 1
                     evaluated
@@ -814,7 +814,7 @@ class LoopTest extends AnyFreeSpec:
         }
 
         "a done payload that is a computation held as a value stays data" in {
-            var evaluated = 0
+            var evaluated          = 0
             val payload: Int < Any = Effect.defer {
                 evaluated += 1
                 2
@@ -840,7 +840,7 @@ class LoopTest extends AnyFreeSpec:
         "stay data when the outcome computation suspends first" in {
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop(0) { _ =>
+            val looped    = Loop(0) { _ =>
                 Effect.defer(Loop.done[Int, Int < Any](payload))
             }
             val data = looped.eval
@@ -852,7 +852,7 @@ class LoopTest extends AnyFreeSpec:
         "stay data when suspended iterations precede the done" in {
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop(0) { i =>
+            val looped    = Loop(0) { i =>
                 if i < 3 then Effect.defer(Loop.continue(i + 1))
                 else Loop.done[Int, Int < Any](payload)
             }
@@ -865,7 +865,7 @@ class LoopTest extends AnyFreeSpec:
         "stay data when a suspended iteration produces the done" in {
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop(0) { i =>
+            val looped    = Loop(0) { i =>
                 Effect.defer {
                     if i < 3 then Loop.continue(i + 1)
                     else Loop.done[Int, Int < Any](payload)
@@ -880,7 +880,7 @@ class LoopTest extends AnyFreeSpec:
         "stay data through indexed when the outcome computation suspends" in {
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop.indexed { idx =>
+            val looped    = Loop.indexed { idx =>
                 Effect.defer {
                     if idx == 0 then Loop.continue
                     else Loop.done[Unit, Int < Any](payload)
@@ -895,7 +895,7 @@ class LoopTest extends AnyFreeSpec:
         "stay data through the two-state loop when the outcome computation suspends" in {
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop(0, 1) { (a, b) =>
+            val looped    = Loop(0, 1) { (a, b) =>
                 Effect.defer(Loop.done[Int, Int, Int < Any](payload))
             }
             val data = looped.eval
@@ -908,7 +908,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             var rounds    = 0
             val payload   = payloadOf(() => evaluated += 1)
-            val looped = Loop.foreach {
+            val looped    = Loop.foreach {
                 Effect.defer {
                     if rounds < 2 then
                         rounds += 1
@@ -926,7 +926,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated = 0
             val payload   = payloadOf(() => evaluated += 1)
             var first     = true
-            val looped = Loop(payload: Int < Any) { state =>
+            val looped    = Loop(payload: Int < Any) { state =>
                 if first then
                     first = false
                     Effect.defer(Loop.continue(state))
@@ -942,7 +942,7 @@ class LoopTest extends AnyFreeSpec:
             var evaluated                = 0
             val inner: Int < Any         = payloadOf(() => evaluated += 1)
             val outer: (Int < Any) < Any = Kyo.lift[Int < Any, Any](inner)
-            val looped = Loop(0) { _ =>
+            val looped                   = Loop(0) { _ =>
                 Loop.done[Int, (Int < Any) < Any](outer)
             }
             val once = looped.eval
@@ -959,7 +959,7 @@ class LoopTest extends AnyFreeSpec:
             type Out = Loop.Outcome[Int, Int]
             val hostile: Out = Loop.continue[Int, Int, Any](1).eval
             var runs         = 0
-            val looped = Loop(0) { _ =>
+            val looped       = Loop(0) { _ =>
                 runs += 1
                 if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
                 Loop.done[Int, Out](hostile)
@@ -972,7 +972,7 @@ class LoopTest extends AnyFreeSpec:
         "a done payload of type Any holding a Continue stops the loop" in {
             val hostile: Any = Loop.continue[Int, Int, Any](1).eval: Loop.Outcome[Int, Int]
             var runs         = 0
-            val looped = Loop(0) { _ =>
+            val looped       = Loop(0) { _ =>
                 runs += 1
                 if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
                 Loop.done[Int, Any](hostile)
@@ -986,7 +986,7 @@ class LoopTest extends AnyFreeSpec:
             type Out = Loop.Outcome[Int, Int]
             val hostile: Out = Loop.continue[Int, Int, Any](1).eval
             var runs         = 0
-            val looped = Loop(0) { _ =>
+            val looped       = Loop(0) { _ =>
                 runs += 1
                 if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
                 Effect.defer(Loop.done[Int, Out](hostile))

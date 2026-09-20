@@ -166,7 +166,7 @@ class BrowserSelectorEdgeCaseTest extends BrowserTest:
                     val sel = Browser.Selector.id("parent").find(Browser.Selector.css(".missing").visible)
                     Abort.run[BrowserReadException](Browser.text(sel)).map {
                         case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
-                        case other =>
+                        case other                                               =>
                             fail(s"expected BrowserElementNotFoundException for missing child, got $other")
                     }
                 }

@@ -282,7 +282,7 @@ object Span:
           *   true if this Span contains an element equal to elem, false otherwise
           */
         inline def contains(elem: A)(using CanEqual[A, A]): Boolean =
-            val size = self.length
+            val size                             = self.length
             @tailrec def loop(idx: Int): Boolean =
                 idx != size && (self(idx) == elem || loop(idx + 1))
             loop(0)
@@ -298,8 +298,8 @@ object Span:
           *   the index of the first element equal to elem, or -1 if not found
           */
         inline def indexOf(elem: A, from: Int = 0)(using CanEqual[A, A]): Maybe[Int] =
-            val size  = self.length
-            val start = math.max(0, from)
+            val size                                = self.length
+            val start                               = math.max(0, from)
             @tailrec def loop(idx: Int): Maybe[Int] =
                 if idx >= size then Absent
                 else if self(idx) == elem then Present(idx)
@@ -317,8 +317,8 @@ object Span:
           *   the index of the last element equal to elem, or -1 if not found
           */
         inline def lastIndexOf(elem: A, end: Int = -1)(using CanEqual[A, A]): Maybe[Int] =
-            val size   = self.length
-            val endIdx = if end < 0 then size - 1 else math.min(end, size - 1)
+            val size                                = self.length
+            val endIdx                              = if end < 0 then size - 1 else math.min(end, size - 1)
             @tailrec def loop(idx: Int): Maybe[Int] =
                 if idx < 0 then Absent
                 else if self(idx) == elem then Present(idx)
@@ -336,8 +336,8 @@ object Span:
           *   the index of the first element satisfying p, or -1 if none found
           */
         inline def indexWhere(inline p: A => Boolean, from: Int = 0): Maybe[Int] =
-            val size  = self.length
-            val start = math.max(0, from)
+            val size                                = self.length
+            val start                               = math.max(0, from)
             @tailrec def loop(idx: Int): Maybe[Int] =
                 if idx >= size then Absent
                 else if p(self(idx)) then Present(idx)
@@ -355,8 +355,8 @@ object Span:
           *   the index of the last element satisfying p, or -1 if none found
           */
         inline def lastIndexWhere(inline p: A => Boolean, end: Int = -1): Maybe[Int] =
-            val size   = self.length
-            val endIdx = if end < 0 then size - 1 else math.min(end, size - 1)
+            val size                                = self.length
+            val endIdx                              = if end < 0 then size - 1 else math.min(end, size - 1)
             @tailrec def loop(idx: Int): Maybe[Int] =
                 if idx < 0 then Absent
                 else if p(self(idx)) then Present(idx)
@@ -372,7 +372,7 @@ object Span:
           *   a Maybe value containing the first element satisfying p, or Absent if none found
           */
         inline def find(inline p: A => Boolean): Maybe[A] =
-            val size = self.length
+            val size                     = self.length
             def loop(idx: Int): Maybe[A] =
                 if idx >= size then Absent
                 else if p(self(idx)) then Present(self(idx))
@@ -388,7 +388,7 @@ object Span:
           *   the number of elements satisfying the predicate p
           */
         inline def count(inline p: A => Boolean): Int =
-            val size = self.length
+            val size                                   = self.length
             @tailrec def loop(idx: Int, acc: Int): Int =
                 if idx >= size then acc
                 else if p(self(idx)) then loop(idx + 1, acc + 1)
@@ -402,7 +402,7 @@ object Span:
           *   the function to apply to each element
           */
         inline def foreach(inline f: A => Any): Unit =
-            val size = self.length
+            val size                          = self.length
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
                     discard(f(self(idx)))
@@ -417,15 +417,14 @@ object Span:
           * @return
           *   true if the Spans contain the same elements in the same order, false otherwise
           */
-        inline def is(other: Span[A])(using CanEqual[A, A]): Boolean =
-            (self eq other) || {
-                val size = self.length
-                size == other.length && {
-                    @tailrec def loop(idx: Int): Boolean =
-                        idx == size || (self(idx) == other(idx) && loop(idx + 1))
-                    loop(0)
-                }
+        inline def is(other: Span[A])(using CanEqual[A, A]): Boolean = (self eq other) || {
+            val size = self.length
+            size == other.length && {
+                @tailrec def loop(idx: Int): Boolean =
+                    idx == size || (self(idx) == other(idx) && loop(idx + 1))
+                loop(0)
             }
+        }
         end is
 
         /** Checks if all elements in this Span satisfy the given predicate.
@@ -436,7 +435,7 @@ object Span:
           *   true if all elements satisfy the predicate, false otherwise
           */
         inline def forall(inline f: A => Boolean): Boolean =
-            val size = self.length
+            val size                             = self.length
             @tailrec def loop(idx: Int): Boolean =
                 idx == size || (f(self(idx)) && loop(idx + 1))
             loop(0)
@@ -450,7 +449,7 @@ object Span:
           *   true if at least one element satisfies the predicate, false otherwise
           */
         inline def exists(inline f: A => Boolean): Boolean =
-            val size = self.length
+            val size                             = self.length
             @tailrec def loop(idx: Int): Boolean =
                 idx != size && (f(self(idx)) || loop(idx + 1))
             loop(0)
@@ -464,8 +463,8 @@ object Span:
           *   a new Span containing the results of applying the function to each element
           */
         inline def map[B: ClassTag](inline f: A => B): Span[B] =
-            val size = self.length
-            val r    = new Array[B](size)
+            val size                          = self.length
+            val r                             = new Array[B](size)
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
                     r(idx) = f(self(idx))
@@ -485,8 +484,8 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Array[B]](size)
-                var totalSize = 0
+                val spans                                = new Array[Array[B]](size)
+                var totalSize                            = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = f(self(idx))
@@ -497,7 +496,7 @@ object Span:
 
                 if totalSize == 0 then Span.empty[B]
                 else
-                    val result = new Array[B](totalSize)
+                    val result                                               = new Array[B](totalSize)
                     @tailrec def populateLoop(idx: Int, writeIdx: Int): Unit =
                         if idx < size then
                             val span     = spans(idx)
@@ -522,7 +521,7 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[A]
             else
-                val temp = new Array[A](size)
+                val temp                                        = new Array[A](size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
@@ -604,7 +603,7 @@ object Span:
           *   the longest prefix of this Span whose elements all satisfy the predicate p
           */
         inline def takeWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
-            val size = self.length
+            val size                            = self.length
             @tailrec def findEnd(idx: Int): Int =
                 if idx >= size then size
                 else if !p(self(idx)) then idx
@@ -647,7 +646,7 @@ object Span:
           *   the longest suffix of this Span whose first element does not satisfy the predicate p
           */
         inline def dropWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
-            val size = self.length
+            val size                              = self.length
             @tailrec def findStart(idx: Int): Int =
                 if idx >= size then size
                 else if !p(self(idx)) then idx
@@ -669,8 +668,8 @@ object Span:
           *   a Span with elements in reverse order
           */
         inline def reverse(using ClassTag[A]): Span[A] =
-            val size = self.length
-            val r    = new Array[A](size)
+            val size                          = self.length
+            val r                             = new Array[A](size)
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
                     r(size - 1 - idx) = self(idx)
@@ -714,7 +713,7 @@ object Span:
           *   a pair consisting of the longest prefix satisfying p and the remainder
           */
         inline def span(inline p: A => Boolean)(using ClassTag[A]): (Span[A], Span[A]) =
-            val size = self.length
+            val size                              = self.length
             @tailrec def findSplit(idx: Int): Int =
                 if idx >= size then size
                 else if !p(self(idx)) then idx
@@ -743,8 +742,8 @@ object Span:
             val size = self.length
             if size == 0 then (Span.empty[A], Span.empty[A])
             else
-                val trueTemp  = new Array[A](size)
-                val falseTemp = new Array[A](size)
+                val trueTemp                                                         = new Array[A](size)
+                val falseTemp                                                        = new Array[A](size)
                 @tailrec def loop(idx: Int, trueIdx: Int, falseIdx: Int): (Int, Int) =
                     if idx < size then
                         val elem = self(idx)
@@ -757,7 +756,7 @@ object Span:
                         end if
                     else (trueIdx, falseIdx)
                 val (trueSize, falseSize) = loop(0, 0, 0)
-                val trueResult = if trueSize == 0 then Span.empty[A]
+                val trueResult            = if trueSize == 0 then Span.empty[A]
                 else if trueSize == size then Span.fromUnsafe(trueTemp)
                 else
                     val result = new Array[A](trueSize)
@@ -824,7 +823,7 @@ object Span:
           *   the result of inserting op between consecutive elements of this Span, going left to right with the start value z on the left
           */
         inline def foldLeft[B](z: B)(inline op: (B, A) => B): B =
-            val size = self.length
+            val size                               = self.length
             @tailrec def loop(idx: Int, acc: B): B =
                 if idx >= size then acc
                 else loop(idx + 1, op(acc, self(idx)))
@@ -841,7 +840,7 @@ object Span:
           *   the result of inserting op between consecutive elements of this Span, going right to left with the start value z on the right
           */
         inline def foldRight[B](z: B)(inline op: (A, B) => B): B =
-            val size = self.length
+            val size                               = self.length
             @tailrec def loop(idx: Int, acc: B): B =
                 if idx < 0 then acc
                 else loop(idx - 1, op(self(idx), acc))
@@ -876,7 +875,7 @@ object Span:
           *   a string representation of this Span
           */
         def mkString(separator: String): String =
-            val r = new java.lang.StringBuilder
+            val r                             = new java.lang.StringBuilder
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
                     r.append(self(idx).toString)
@@ -1023,7 +1022,7 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val temp = new Array[B](size)
+                val temp                                        = new Array[B](size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
@@ -1053,7 +1052,7 @@ object Span:
           *   an option value containing pf applied to the first value for which it is defined, or None if none found
           */
         inline def collectFirst[B](pf: PartialFunction[A, B]): Maybe[B] =
-            val size = self.length
+            val size                              = self.length
             @tailrec def loop(idx: Int): Maybe[B] =
                 if idx >= size then Absent
                 else
@@ -1072,8 +1071,8 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[A]
             else
-                val seen = scala.collection.mutable.Set.empty[A]
-                val temp = new Array[A](size)
+                val seen                                        = scala.collection.mutable.Set.empty[A]
+                val temp                                        = new Array[A](size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
@@ -1107,8 +1106,8 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[A]
             else
-                val seen = scala.collection.mutable.Set.empty[B]
-                val temp = new Array[A](size)
+                val seen                                        = scala.collection.mutable.Set.empty[B]
+                val temp                                        = new Array[A](size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
@@ -1148,7 +1147,7 @@ object Span:
             new Iterator[Span[A]]:
                 private var pos      = 0
                 def hasNext: Boolean = pos < self.length
-                def next(): Span[A] =
+                def next(): Span[A]  =
                     if !hasNext then throw new NoSuchElementException
                     val result = Span.slice(self)(pos, pos + offset)
                     pos += step
@@ -1228,8 +1227,8 @@ object Span:
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans     = new Array[Array[B]](size)
-                var totalSize = 0
+                val spans                                = new Array[Array[B]](size)
+                var totalSize                            = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = asSpan(self(idx))
@@ -1240,11 +1239,11 @@ object Span:
 
                 if totalSize == 0 then Span.empty[B]
                 else
-                    val result = new Array[B](totalSize)
+                    val result                                               = new Array[B](totalSize)
                     @tailrec def populateLoop(idx: Int, writeIdx: Int): Unit =
                         if idx < size then
-                            val span     = spans(idx)
-                            val spanSize = span.size
+                            val span                                                       = spans(idx)
+                            val spanSize                                                   = span.size
                             @tailrec def copySpan(elemIdx: Int, currentWriteIdx: Int): Int =
                                 if elemIdx < spanSize then
                                     result(currentWriteIdx) = span(elemIdx)
@@ -1334,7 +1333,7 @@ object Span:
     def fill[A: ClassTag](n: Int)(elem: => A): Span[A] =
         if n <= 0 then empty[A]
         else
-            val r = new Array[A](n)
+            val r                             = new Array[A](n)
             @tailrec def loop(idx: Int): Unit =
                 if idx < n then
                     r(idx) = elem
@@ -1354,7 +1353,7 @@ object Span:
     inline def tabulate[A: ClassTag](n: Int)(inline f: Int => A): Span[A] =
         if n <= 0 then empty[A]
         else
-            val r = new Array[A](n)
+            val r                             = new Array[A](n)
             @tailrec def loop(idx: Int): Unit =
                 if idx < n then
                     r(idx) = f(idx)
@@ -1390,8 +1389,8 @@ object Span:
         else if step > 0 && start >= end then empty[Int]
         else if step < 0 && start <= end then empty[Int]
         else
-            val len = math.max(0, ((end - start + step - step.sign) / step))
-            val r   = new Array[Int](len)
+            val len                                       = math.max(0, ((end - start + step - step.sign) / step))
+            val r                                         = new Array[Int](len)
             @tailrec def loop(idx: Int, value: Int): Unit =
                 if idx < len then
                     r(idx) = value
@@ -1413,7 +1412,7 @@ object Span:
     inline def iterate[A: ClassTag](start: A, len: Int)(inline f: A => A): Span[A] =
         if len <= 0 then empty[A]
         else
-            val r = new Array[A](len)
+            val r                                       = new Array[A](len)
             @tailrec def loop(idx: Int, value: A): Unit =
                 if idx < len then
                     r(idx) = value
@@ -1434,7 +1433,7 @@ object Span:
             val totalSize = spans.map(_.length).sum
             if totalSize == 0 then empty[A]
             else
-                val r = new Array[A](totalSize)
+                val r                                                 = new Array[A](totalSize)
                 @tailrec def loop(spanIdx: Int, targetIdx: Int): Unit =
                     if spanIdx < spans.length then
                         val span     = spans(spanIdx)

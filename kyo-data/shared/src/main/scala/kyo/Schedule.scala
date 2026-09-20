@@ -27,7 +27,7 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
         this match
             case Never | Done => this
             case Immediate    => that
-            case _ =>
+            case _            =>
                 that match
                     case Never | Done => that
                     case Immediate    => this
@@ -44,7 +44,7 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
         this match
             case Never            => that
             case Done | Immediate => this
-            case _ =>
+            case _                =>
                 that match
                     case Never            => this
                     case Done | Immediate => that
@@ -75,7 +75,7 @@ sealed abstract class Schedule extends Serializable derives CanEqual:
         this match
             case Never => Never
             case Done  => that
-            case _ =>
+            case _     =>
                 that match
                     case Done | Never => this
                     case _            => AndThen(this, that)
@@ -366,10 +366,10 @@ object Schedule:
         final case class Min(a: Schedule, b: Schedule) extends Schedule:
             def next(now: Instant) =
                 a.next(now) match
-                    case Absent => b.next(now)
+                    case Absent                => b.next(now)
                     case n @ Present((d1, s1)) =>
                         b.next(now) match
-                            case Absent => n
+                            case Absent            => n
                             case Present((d2, s2)) =>
                                 Maybe((d1.min(d2), s1.min(s2)))
             def show = s"(${a.show}).min(${b.show})"

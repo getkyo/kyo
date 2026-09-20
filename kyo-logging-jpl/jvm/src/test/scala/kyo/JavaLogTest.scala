@@ -90,7 +90,7 @@ class JavaLogTest extends kyo.test.Test[Any]:
 
     "log" in {
         val buffer = new StringBuilder()
-        val out = new java.io.OutputStream:
+        val out    = new java.io.OutputStream:
             def write(b: Int): Unit = buffer.append(b.toChar)
 
         // Remove root console handler as it pollutes System.err

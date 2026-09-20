@@ -16,7 +16,7 @@ class FiberTest extends CompatTest:
     }
 
     "CFiber.init runs concurrently with caller" in run {
-        val ctr = new AtomicInteger(0)
+        val ctr            = new AtomicInteger(0)
         val body: CIO[Int] = CIO.defer {
             val _ = ctr.incrementAndGet()
             7
@@ -27,7 +27,7 @@ class FiberTest extends CompatTest:
 
     "CFiber.get re-fails on typed error (round-trip)" in run {
         val src: CIO[Int] = CIO.fail(TestError("oops"))
-        val c =
+        val c             =
             CFiber.init(src).flatMap { fib =>
                 fib.get.liftToTry
             }
@@ -57,7 +57,7 @@ class FiberTest extends CompatTest:
 
     "onComplete fires with Success(value) when the fiber succeeds" in run {
         val ctr = new AtomicInteger(0)
-        val c =
+        val c   =
             CFiber.init[Int](CIO.defer { 42 }).flatMap { fib =>
                 CPromise.init[Unit].flatMap { fired =>
                     fib.onComplete {
@@ -79,7 +79,7 @@ class FiberTest extends CompatTest:
     }
 
     "onComplete fires with Failure(error) when the fiber fails" in run {
-        val ctr = new AtomicInteger(0)
+        val ctr           = new AtomicInteger(0)
         val src: CIO[Int] =
             CIO.defer { throw new RuntimeException("boom") }
         val c =
@@ -104,7 +104,7 @@ class FiberTest extends CompatTest:
     "onComplete Failure branch receives the same throwable on failure" in run {
         val observed = new AtomicReference[Throwable](null)
         val t        = new RuntimeException("x")
-        val c =
+        val c        =
             CFiber.init(CIO.fail(t)).flatMap { fib =>
                 CPromise.init[Unit].flatMap { fired =>
                     fib.onComplete {
@@ -125,7 +125,7 @@ class FiberTest extends CompatTest:
 
     "onComplete fires when the fiber dies with a java.lang.Error" in run {
         // java.lang.Error IS a Throwable, so the callback MUST fire.
-        val ctr = new AtomicInteger(0)
+        val ctr            = new AtomicInteger(0)
         val body: CIO[Int] =
             CIO.defer { throw new java.lang.Error("panic") }
         val c =
@@ -150,7 +150,7 @@ class FiberTest extends CompatTest:
         // logger). The surface only promises that the caller's program
         // isn't taken down with it.
         val ctr = new java.util.concurrent.atomic.AtomicInteger(0)
-        val c =
+        val c   =
             CFiber.init(CIO.defer { 1 }).flatMap { fib =>
                 CPromise.init[Unit].flatMap { entered =>
                     fib.onComplete { _ =>
@@ -190,7 +190,7 @@ class FiberTest extends CompatTest:
         // "Already completed" is a state, not a latency. The body increments a counter: a replayed outcome leaves it
         // at 1, a re-run at 2; a get that never resumes surfaces through testTimeout.
         val runs = new AtomicInteger(0)
-        val c = CFiber.init(CIO.defer { runs.incrementAndGet() }).flatMap { fiber =>
+        val c    = CFiber.init(CIO.defer { runs.incrementAndGet() }).flatMap { fiber =>
             fiber.get.flatMap { first =>
                 fiber.get.map(second => (first, second, runs.get))
             }

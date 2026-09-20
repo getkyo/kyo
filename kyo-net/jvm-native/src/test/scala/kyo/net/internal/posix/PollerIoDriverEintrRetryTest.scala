@@ -88,7 +88,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                     _           = driver.awaitRead(handle, readPromise)
                     // Bounded so the test fails fast rather than hanging if the read is never delivered.
                     outcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
-                    _ <- Sync.defer {
+                    _       <- Sync.defer {
                         driver.closeHandle(handle)
                         driver.close()
                         PosixTestSockets.closePeerForEof(spy, clientFd)

@@ -124,7 +124,7 @@ abstract class Regulator(
         val measurement = statsScope.histogram("measurement")
         val update      = statsScope.histogram("update")
         val jitter      = statsScope.histogram("jitter")
-        val gauges = List(
+        val gauges      = List(
             statsScope.gauge("probes_sent")(probesSent.sum().toDouble),
             statsScope.gauge("probes_completed")(probesSent.sum().toDouble),
             statsScope.gauge("adjustments")(adjustments.sum().toDouble),
@@ -171,7 +171,7 @@ abstract class Regulator(
 
             if (step != 0) {
                 // Calculate exponential adjustment size based on consecutive steps
-                val pow = Math.pow(Math.abs(step), stepExp).toInt
+                val pow   = Math.pow(Math.abs(step), stepExp).toInt
                 val delta =
                     if (step < 0) -pow
                     else pow

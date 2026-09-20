@@ -54,7 +54,7 @@ object ApiGateway extends KyoApp:
 
     def fetchWeather(city: String): WeatherInfo < (Async & Abort[HttpException]) =
         cities.get(city.toLowerCase) match
-            case None => Abort.fail(HttpConnectException("unknown", 0, new RuntimeException(s"Unknown city: $city")))
+            case None             => Abort.fail(HttpConnectException("unknown", 0, new RuntimeException(s"Unknown city: $city")))
             case Some((lat, lon)) =>
                 HttpClient.withConfig(_.timeout(5.seconds)) {
                     val url = s"https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,wind_speed_10m"

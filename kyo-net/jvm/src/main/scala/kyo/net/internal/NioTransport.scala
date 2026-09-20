@@ -487,7 +487,7 @@ final private[kyo] class NioTransport private (
                 end if
             catch
                 case _: IOException if listener.isClosed => false
-                case e: IOException =>
+                case e: IOException                      =>
                     Log.live.unsafe.error(s"Accept error", e)
                     false
         @tailrec def acceptLoop(): Unit =
@@ -1243,7 +1243,7 @@ final private[kyo] class NioTransport private (
                 end if
             catch
                 case _: IOException if listener.isClosed => false
-                case e: IOException =>
+                case e: IOException                      =>
                     Log.live.unsafe.error(s"TLS accept error", e)
                     false
         @tailrec def acceptLoop(): Unit =
@@ -1574,7 +1574,7 @@ private[kyo] object NioTransport:
         val ctx = SSLContext.getInstance("TLS")
         // The server verifies client certs against trustStorePath, falling back to caCertPath; the client verifies the server chain against
         // caCertPath.
-        val trustAnchor = if isServer then config.trustStorePath.orElse(config.caCertPath) else config.caCertPath
+        val trustAnchor                           = if isServer then config.trustStorePath.orElse(config.caCertPath) else config.caCertPath
         val tm: Array[javax.net.ssl.TrustManager] =
             if config.trustAll then Array(NioTrustAllManager)
             else
@@ -1597,7 +1597,7 @@ private[kyo] object NioTransport:
       * handshake closed rather than negotiating an unintended version.
       */
     private[net] def enabledProtocols(config: NetTlsConfig): Array[String] =
-        val all = Array("TLSv1.2", "TLSv1.3")
+        val all                               = Array("TLSv1.2", "TLSv1.3")
         def idx(v: NetTlsConfig.Version): Int = v match
             case NetTlsConfig.Version.TLS12 => 0
             case NetTlsConfig.Version.TLS13 => 1
@@ -1640,7 +1640,7 @@ private[kyo] object NioTransport:
         loadConfigured("CA certificate", caPath) {
             val cf       = CertificateFactory.getInstance("X.509")
             val caStream = new FileInputStream(caPath)
-            val caCert =
+            val caCert   =
                 try cf.generateCertificate(caStream)
                 finally caStream.close()
 
@@ -1672,7 +1672,7 @@ private[kyo] object NioTransport:
         val certArray = loadConfigured("certificate chain", certPath) {
             val certFactory = CertificateFactory.getInstance("X.509")
             val certStream  = new FileInputStream(certPath)
-            val certs =
+            val certs       =
                 try certFactory.generateCertificates(certStream)
                 finally certStream.close()
             val array = new Array[java.security.cert.Certificate](certs.size())
@@ -1682,8 +1682,8 @@ private[kyo] object NioTransport:
 
         // Load private key (PKCS#8 PEM)
         val privKey = loadConfigured("private key", keyPath) {
-            val keyBytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(keyPath))
-            val keyPem   = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8)
+            val keyBytes  = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(keyPath))
+            val keyPem    = new String(keyBytes, java.nio.charset.StandardCharsets.UTF_8)
             val keyBase64 = keyPem
                 .replace("-----BEGIN PRIVATE KEY-----", "")
                 .replace("-----END PRIVATE KEY-----", "")
@@ -1721,7 +1721,7 @@ private[kyo] object NioTransport:
         if !handle.channel.isOpen then Absent
         else
             handle.tls match
-                case Absent => Absent
+                case Absent            => Absent
                 case Present(tlsState) =>
                     try
                         val certs = tlsState.engine.getSession.getPeerCertificates

@@ -41,7 +41,7 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
         val sectionIndexSize = 4 + sectionCount * SnapshotFormat.sectionIndexEntrySize
         val headerSize       = SnapshotFormat.headerSize + sectionIndexSize
 
-        var offset = headerSize.toLong
+        var offset      = headerSize.toLong
         val sectionMeta = sections.map { (name, bytes) =>
             val entry = (name, offset, bytes.length.toLong)
             offset += bytes.length
@@ -140,9 +140,9 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
             writeVarint(tagBytes.length)
             baos.write(tagBytes)
             err match
-                case TastyError.FileNotFound(path)              => writeStr(path)
-                case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)
-                case TastyError.UnsupportedVersion(f, s)        => writeVersion(f); writeVersion(s)
+                case TastyError.FileNotFound(path)                 => writeStr(path)
+                case TastyError.CorruptedFile(path, at, reason)    => writeStr(path); writeLong(at); writeStr(reason)
+                case TastyError.UnsupportedVersion(f, s)           => writeVersion(f); writeVersion(s)
                 case TastyError.InconsistentClasspath(file, e, fd) =>
                     writeStr(file); writeUUID(e); writeUUID(fd)
                 case TastyError.FullNameCollisionError(fullName)  => writeStr(fullName)
@@ -355,7 +355,7 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
     "TastyError.UnknownType and MissingDeclaredType are reachable closed-enum variants" in {
         // Verify UnknownType is constructable and matches as TastyError
         val ut: TastyError = TastyError.UnknownType("f.tasty", 0L, "reason")
-        val utResult = ut match
+        val utResult       = ut match
             case TastyError.UnknownType(f, bo, r) =>
                 assert(f == "f.tasty")
                 assert(bo == 0L)
@@ -365,7 +365,7 @@ class TastyErrorMaybeTest extends kyo.test.Test[Any]:
         assert(utResult, "UnknownType pattern match arm must fire")
         // Verify MissingDeclaredType is constructable and matches as TastyError
         val mdt: TastyError = TastyError.MissingDeclaredType(Tasty.SymbolId(3), "g.tasty")
-        val mdtResult = mdt match
+        val mdtResult       = mdt match
             case TastyError.MissingDeclaredType(sid, f) =>
                 assert(sid == Tasty.SymbolId(3))
                 assert(f == "g.tasty")

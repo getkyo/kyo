@@ -538,7 +538,7 @@ class ChunkTest extends kyo.test.Test[Any]:
         }
 
         "with complex accumulation" in {
-            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(1).append(6)
+            val chunk  = Chunk(1, 2, 3, 4, 5).dropLeft(1).append(6)
             val result = chunk.foldLeft(Map.empty[String, Int]) { (map, n) =>
                 map + (s"key$n" -> (n * 10))
             }
@@ -614,7 +614,7 @@ class ChunkTest extends kyo.test.Test[Any]:
         }
 
         "mapping and filtering an empty chunk" in {
-            val chunk = Chunk.empty[Int]
+            val chunk  = Chunk.empty[Int]
             val result = chunk
                 .map(_ * 2)
                 .filter(_ % 2 == 0)
@@ -622,7 +622,7 @@ class ChunkTest extends kyo.test.Test[Any]:
         }
 
         "filter and map" in {
-            val chunk = Chunk(1, 2, 3, 4, 5, 6)
+            val chunk  = Chunk(1, 2, 3, 4, 5, 6)
             val result = chunk
                 .filter(_ % 2 == 0)
                 .map(_ + 1)

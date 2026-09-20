@@ -829,7 +829,7 @@ object Fiber:
                         // discards. The interrupt parent is read once and passed to each child before any is scheduled, so an
                         // interrupt arriving while they launch cannot orphan one.
                         crossing.capture { captured =>
-                            val parent = IOTask.currentTask()
+                            val parent                      = IOTask.currentTask()
                             @tailrec def loop(i: Int): Unit =
                                 if i < numWorkers then
                                     def workerLoop(): Unit < (Abort[E] & Async) =
@@ -910,7 +910,7 @@ object Fiber:
 
             final class Success[E, A, S2](size: Int, frame: Frame) extends Race[E, A, S2](frame):
                 import AllowUnsafe.embrace.danger
-                val pending = AtomicInt.Unsafe.init(size)
+                val pending                                = AtomicInt.Unsafe.init(size)
                 def apply(result: Result[E, A < S2]): Unit =
                     val last = pending.decrementAndGet() == 0
                     result.foldError(
@@ -1086,14 +1086,14 @@ object Fiber:
         private inline def foreach[A](l: Iterable[A])(inline f: (Int, A) => Unit): Unit =
             l match
                 case l: IndexedSeq[A] @unchecked =>
-                    val s = l.size
+                    val s                           = l.size
                     @tailrec def loop(i: Int): Unit =
                         if i < s then
                             f(i, l(i))
                             loop(i + 1)
                     loop(0)
                 case _ =>
-                    val it = l.iterator
+                    val it                          = l.iterator
                     @tailrec def loop(i: Int): Unit =
                         if it.hasNext then
                             f(i, it.next())

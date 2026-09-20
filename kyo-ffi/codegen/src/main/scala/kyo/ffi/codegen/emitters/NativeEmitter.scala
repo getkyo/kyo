@@ -89,7 +89,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
       * `UnsupportedOperationException` at runtime.
       */
     private[codegen] def emitVarargsStubMethod(method: MethodSpec, spec: TraitSpec): String =
-        val sig = methodSignature(method, includeVarargs = true)
+        val sig  = methodSignature(method, includeVarargs = true)
         val body =
             s"""        throw new UnsupportedOperationException("Variadic method '${method.scalaName}' is not supported on Scala Native.")"""
         sig + "\n" + body + "\n"
@@ -124,7 +124,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         val structsByName = EmitterBase.structsByName(spec)
 
         // Inspect the signature to decide whether we need a Zone (for CString allocation, Array copy, struct-alloc, or multi-value out-cells).
-        val hasString = method.params.exists(_.tpe == TypeRef.StringT)
+        val hasString        = method.params.exists(_.tpe == TypeRef.StringT)
         val hasArrayBlocking = method.blocking && method.params.exists {
             case ParamSpec(_, TypeRef.ArrayT(_)) => true
             case _                               => false
@@ -134,7 +134,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
             case _                               => false
         }
         val hasStructParam = method.params.exists(p => p.tpe.isInstanceOf[TypeRef.StructT])
-        val hasMultiValue = method.returnShape match
+        val hasMultiValue  = method.returnShape match
             case ReturnShape.MultiValue(_) => true
             case _                         => false
         val hasStructReturn = method.returnShape match
@@ -220,7 +220,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     )
                     val pN = s"${name}Ptr"
                     // Collect teardown lines for any FnPtrT fields in the struct (CallbackRegistry pops).
-                    val td = scala.collection.mutable.ListBuffer.empty[String]
+                    val td        = scala.collection.mutable.ListBuffer.empty[String]
                     val allocExpr =
                         if sSpec.packed then
                             s"val $pN = alloc[Byte](${packedSizeConst(sSpec)})"
@@ -268,7 +268,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             // tag so the trampoline can name the callback when the user function throws.
                             val ptrVal   = s"${name}Ptr"
                             val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
-                            val fromFn =
+                            val fromFn   =
                                 if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
                                 else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                             val setup = List(
@@ -284,8 +284,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             // Register the slot with the guard via `unsafeRetainRetainedSlot(shape, slot)`, which records the slot with the
                             // leak-detector token AND schedules the close-time release, a leaked guard still frees the pool slot.
                             // Claim carries the binding + method tag so the trampoline can name the callback on exception (#1 / #20).
-                            val slotVal = s"${name}Slot"
-                            val ptrVal  = s"${name}Ptr"
+                            val slotVal    = s"${name}Slot"
+                            val ptrVal     = s"${name}Ptr"
                             val guardParam = method.params.find(_.tpe == TypeRef.GuardT).getOrElse(
                                 throw new IllegalStateException(
                                     s"Retained callback method '${method.scalaName}' is missing an Ffi.Guard parameter"
@@ -348,7 +348,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         // `void f(S* out, ...args)`. Multi-value out-cells append AFTER the user args (their C signature appends one
         // out-pointer per trailing field). A method is either a struct return or a multi-value return, never both.
         val callArgs: List[String] =
-            val base = marshalled.map(_.passExpr)
+            val base         = marshalled.map(_.passExpr)
             val withOutMulti = method.returnShape match
                 case ReturnShape.MultiValue(_) => base ++ outCells.map(_.name)
                 case _                         => base
@@ -371,7 +371,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
             case ReturnShape.Primitive(_) =>
                 "retVal"
             case ReturnShape.MultiValue(sSpec) =>
-                val head = sSpec.fields.head
+                val head     = sSpec.fields.head
                 val headExpr =
                     head.tpe match
                         case TypeRef.BooleanT => "retVal != 0"
@@ -397,7 +397,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                 val sp             = safeName(sizeParam)
                 val elemScala      = scalaTypeOf(elem)
                 val checkedBorrows = spec.companion.exists(_.checkedBorrows)
-                val checkedCall =
+                val checkedCall    =
                     s"Buffer.Unsafe.wrapBorrowedChecked[$elemScala](new NativePtr(retVal), $sp.toInt, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                 val uncheckedCall =
                     s"Buffer.Unsafe.wrapBorrowed[$elemScala](new NativePtr(retVal), $sp.toInt)"
@@ -502,8 +502,9 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     case TypeRef.StringT =>
                         buf += s"!($ptrVal + $offset).asInstanceOf[Ptr[CString]] = toCString($fieldAcc)"
                     case TypeRef.BufferT(_) =>
-                        buf += (s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]] = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
-                            s"""$fieldAcc.raw.asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
+                        buf +=
+                            (s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]] = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
+                                s"""$fieldAcc.raw.asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
                     case TypeRef.StructT(n) =>
                         val child = structsByName.getOrElse(
                             n,
@@ -513,8 +514,9 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         buf += s"val $childPtr = ($ptrVal + $offset)"
                         buf ++= emitStructWrite(fieldAcc, childPtr, child, structsByName, bindingFqn, methodName, teardownCollector)
                     case TypeRef.HandleT(_) =>
-                        buf += (s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]] = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
-                            s"""Ffi.Handle.unwrap($fieldAcc).asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
+                        buf +=
+                            (s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]] = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
+                                s"""Ffi.Handle.unwrap($fieldAcc).asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
                     case TypeRef.EnumT(_) =>
                         buf += s"!($ptrVal + $offset).asInstanceOf[Ptr[CInt]] = $fieldAcc.value"
                     case TypeRef.FnPtrT(params, ret) =>
@@ -530,7 +532,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val cbType   = cFuncPtrType(params, ret)
                         val ptrVal2  = s"${localIdent(fieldAcc)}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
-                        val fromFn =
+                        val fromFn   =
                             if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
                             else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                         buf += s"val $ptrVal2: $cbType = $fromFn"
@@ -552,8 +554,9 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     case TypeRef.StringT    => buf += s"$target = toCString($fieldAcc)"
                     case TypeRef.BufferT(_) =>
                         // Checked unwrap.
-                        buf += (s"$target = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
-                            s"""$fieldAcc.raw.asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
+                        buf +=
+                            (s"$target = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
+                                s"""$fieldAcc.raw.asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
                     case TypeRef.StructT(n) =>
                         val child = structsByName.getOrElse(
                             n,
@@ -569,8 +572,9 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         buf ++= emitNativeUnionVariantMatch(fieldAcc, unionPtr, variants, structsByName, bindingFqn, methodName)
                     case TypeRef.HandleT(_) =>
                         // Handle field: unwrap via Ffi.Handle.unwrap to get the NativePtr and write it.
-                        buf += (s"$target = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
-                            s"""Ffi.Handle.unwrap($fieldAcc).asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
+                        buf +=
+                            (s"$target = kyo.ffi.internal.FfiUnsafe.expect[NativePtr](" +
+                                s"""Ffi.Handle.unwrap($fieldAcc).asInstanceOf[AnyRef], classOf[NativePtr], "NativePtr on Native", "$bindingFqn", "$methodName").ptr""")
                     case TypeRef.EnumT(_) =>
                         // Enum field: write the Int value.
                         buf += s"$target = $fieldAcc.value"
@@ -590,7 +594,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val cbType   = cFuncPtrType(params, ret)
                         val ptrVal2  = s"${localIdent(fieldAcc)}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
-                        val fromFn =
+                        val fromFn   =
                             if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
                             else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                         buf += s"val $ptrVal2: $cbType = $fromFn"
@@ -612,13 +616,13 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
       * level).
       */
     private def unionFieldCarrier(t: TypeRef, structsByName: Map[String, StructSpec]): String = t match
-        case TypeRef.BooleanT => "CInt"
-        case TypeRef.ByteT    => "CChar"
-        case TypeRef.ShortT   => "CShort"
-        case TypeRef.IntT     => "CInt"
-        case TypeRef.LongT    => "CLongLong"
-        case TypeRef.FloatT   => "CFloat"
-        case TypeRef.DoubleT  => "CDouble"
+        case TypeRef.BooleanT   => "CInt"
+        case TypeRef.ByteT      => "CChar"
+        case TypeRef.ShortT     => "CShort"
+        case TypeRef.IntT       => "CInt"
+        case TypeRef.LongT      => "CLongLong"
+        case TypeRef.FloatT     => "CFloat"
+        case TypeRef.DoubleT    => "CDouble"
         case TypeRef.StructT(n) =>
             val child = structsByName.getOrElse(
                 n,
@@ -655,7 +659,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             sizeField.tpe match
                                 case TypeRef.IntT  => s"!($ptrVal + ${sizeLayout.offset}).asInstanceOf[Ptr[CInt]]"
                                 case TypeRef.LongT => s"!($ptrVal + ${sizeLayout.offset}).asInstanceOf[Ptr[CLongLong]]"
-                                case other =>
+                                case other         =>
                                     throw new IllegalStateException(
                                         s"internal: sibling size type $other not Int/Long for struct '${sSpec.fqcn}'"
                                     )
@@ -692,8 +696,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     case TypeRef.StringT =>
                         s"fromCString(!($ptrVal + $offset).asInstanceOf[Ptr[CString]])"
                     case TypeRef.BufferT(elem) =>
-                        val rawPtr   = s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]]"
-                        val sizeExpr = bufferSizeExpr(f.name)
+                        val rawPtr      = s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]]"
+                        val sizeExpr    = bufferSizeExpr(f.name)
                         val checkedCall =
                             s"Buffer.Unsafe.wrapBorrowedChecked[${scalaTypeOf(elem)}](new NativePtr($rawPtr), $sizeExpr, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                         val uncheckedCall =
@@ -727,7 +731,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     case TypeRef.StringT =>
                         s"fromCString($src)"
                     case TypeRef.BufferT(elem) =>
-                        val sizeExpr = bufferSizeExpr(f.name)
+                        val sizeExpr    = bufferSizeExpr(f.name)
                         val checkedCall =
                             s"Buffer.Unsafe.wrapBorrowedChecked[${scalaTypeOf(elem)}](new NativePtr($src), $sizeExpr, kyo.ffi.internal.BufferFactory.currentBorrowOwner())"
                         val uncheckedCall =
@@ -769,13 +773,13 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         checkedBorrows: Boolean
     ): String =
         firstVariant match
-            case TypeRef.BooleanT => s"(!$ptrExpr.asInstanceOf[Ptr[CInt]]) != 0"
-            case TypeRef.ByteT    => s"(!$ptrExpr.asInstanceOf[Ptr[CChar]])"
-            case TypeRef.ShortT   => s"(!$ptrExpr.asInstanceOf[Ptr[CShort]])"
-            case TypeRef.IntT     => s"(!$ptrExpr.asInstanceOf[Ptr[CInt]])"
-            case TypeRef.LongT    => s"(!$ptrExpr.asInstanceOf[Ptr[CLongLong]])"
-            case TypeRef.FloatT   => s"(!$ptrExpr.asInstanceOf[Ptr[CFloat]])"
-            case TypeRef.DoubleT  => s"(!$ptrExpr.asInstanceOf[Ptr[CDouble]])"
+            case TypeRef.BooleanT   => s"(!$ptrExpr.asInstanceOf[Ptr[CInt]]) != 0"
+            case TypeRef.ByteT      => s"(!$ptrExpr.asInstanceOf[Ptr[CChar]])"
+            case TypeRef.ShortT     => s"(!$ptrExpr.asInstanceOf[Ptr[CShort]])"
+            case TypeRef.IntT       => s"(!$ptrExpr.asInstanceOf[Ptr[CInt]])"
+            case TypeRef.LongT      => s"(!$ptrExpr.asInstanceOf[Ptr[CLongLong]])"
+            case TypeRef.FloatT     => s"(!$ptrExpr.asInstanceOf[Ptr[CFloat]])"
+            case TypeRef.DoubleT    => s"(!$ptrExpr.asInstanceOf[Ptr[CDouble]])"
             case TypeRef.StructT(n) =>
                 val child = structsByName.getOrElse(n, throw new IllegalStateException(s"nested struct '$n' not found"))
                 emitStructRead(
@@ -876,7 +880,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
             sb ++= "\n"
             sb ++= methodSignature(m, includeVarargs = true)
             sb ++= "\n"
-            sb ++= s"""        throw new UnsupportedOperationException("Required header(s) [$headersList] not available on this platform.")\n"""
+            sb ++=
+                s"""        throw new UnsupportedOperationException("Required header(s) [$headersList] not available on this platform.")\n"""
         }
         sb ++= s"end ${spec.simpleName}Impl\n"
         sb.toString
@@ -1008,7 +1013,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
             case _ => Nil
 
         val allParams = structOut ++ externParams ++ extraOut
-        val ret = method.returnShape match
+        val ret       = method.returnShape match
             case ReturnShape.Void                 => "Unit"
             case ReturnShape.Primitive(t)         => cPrimitiveOf(t)
             case ReturnShape.MultiValue(sSpec)    => cPrimitiveOf(sSpec.fields.head.tpe)
@@ -1091,7 +1096,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         case TypeRef.StringT                   => "CString"
         case TypeRef.BufferT(e)                => s"Ptr[${cPrimitiveOf(e)}]"
         case prim if TypeRef.isPrimitive(prim) => cPrimitiveOf(prim)
-        case other =>
+        case other                             =>
             throw new IllegalStateException(s"cFuncPtrElem: unsupported callback-slot type $other")
 
     /** Like [[cFuncPtrElem]] but `Unit` is permitted (return position). */
@@ -1123,7 +1128,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         case TypeRef.HandleT(_)   => "Ptr[Byte]"
         case TypeRef.EnumT(_)     => "CInt"
         case TypeRef.FnPtrT(_, _) => "Ptr[Byte]"
-        case TypeRef.StructT(n) =>
+        case TypeRef.StructT(n)   =>
             val child = structsByName.getOrElse(
                 n,
                 throw new IllegalStateException(s"nested struct '$n' not found in extern type expansion")
@@ -1137,7 +1142,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
     /** Pick a Scala Native carrier type for a union field embedded in a struct. */
     private def unionFieldCarrierType(variants: List[TypeRef], structsByName: Map[String, StructSpec]): String =
         val (maxSize, maxAlign) = unionSizeAndAlignNative(variants, structsByName)
-        val carrier =
+        val carrier             =
             if maxAlign >= 8 then "CLongLong"
             else if maxAlign == 4 then "CInt"
             else if maxAlign == 2 then "CShort"

@@ -169,7 +169,7 @@ class CopyIntegrationTest extends SqlContainerTest:
                     // A stream that yields 3 good rows then raises an SqlException. The exact leaf
                     // is not part of the contract under test; the assertion is that whatever the
                     // stream raises surfaces via the CopyFail flow as the same SqlException value.
-                    val err = SqlServerException("XX000", "ERROR", "deliberate stream failure")
+                    val err  = SqlServerException("XX000", "ERROR", "deliberate stream failure")
                     val data = Stream[Byte, Abort[SqlException]] {
                         Emit.valueWith(Chunk.from(csvRow(1, "a").toArray)) {
                             Emit.valueWith(Chunk.from(csvRow(2, "b").toArray)) {

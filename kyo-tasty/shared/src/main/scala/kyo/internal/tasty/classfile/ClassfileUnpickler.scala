@@ -31,7 +31,7 @@ object ClassfileUnpickler:
       */
     private class IdCounter:
         private var _next: Int = 0
-        def nextId(): Int =
+        def nextId(): Int      =
             val id = _next
             _next += 1
             id
@@ -1191,7 +1191,7 @@ object ClassfileUnpickler:
     )(using Frame, AllowUnsafe): ClassfileResult =
         // Pickle symbols carry their own ids; assign new ids from a high-negative range to avoid
         // collision with the main idCounter for this decode session.
-        var pickleId = Int.MinValue
+        var pickleId            = Int.MinValue
         def pickleNextId(): Int =
             val id = pickleId
             pickleId += 1
@@ -1243,7 +1243,7 @@ object ClassfileUnpickler:
         // Type params from classfile signatures are converted to LoadingSymbol.Materialising for Phase C.
         // On parse failure, graceful degradation returns an empty chunk.
         signatureIdx match
-            case Absent => Result.Success(Chunk.empty)
+            case Absent       => Result.Success(Chunk.empty)
             case Present(idx) =>
                 pool.utf8Unsafe(idx).flatMap { sig =>
                     JavaSignatures.parseClassSignatureUnsafe(sig) match
@@ -1294,7 +1294,7 @@ object ClassfileUnpickler:
         innerTable: Map[String, (String, String)]
     )(using Frame, AllowUnsafe): Result[TastyError, Maybe[(String, String)]] =
         enclosingClassIdx match
-            case Absent => Result.Success(Absent)
+            case Absent            => Result.Success(Absent)
             case Present(classIdx) =>
                 pool.classRefUnsafe(classIdx).flatMap { enclosingBinaryName =>
                     val enclosingFullName = FullNameCanonicalizer.toFullName(enclosingBinaryName, innerTable)
@@ -1367,15 +1367,15 @@ object ClassfileUnpickler:
       */
     private def parseErasedDescriptorType(descriptor: String)(using AllowUnsafe): Tasty.Type =
         descriptor match
-            case "B" => primType("scala.Byte")
-            case "C" => primType("scala.Char")
-            case "D" => primType("scala.Double")
-            case "F" => primType("scala.Float")
-            case "I" => primType("scala.Int")
-            case "J" => primType("scala.Long")
-            case "S" => primType("scala.Short")
-            case "Z" => primType("scala.Boolean")
-            case "V" => primType("scala.Unit")
+            case "B"                    => primType("scala.Byte")
+            case "C"                    => primType("scala.Char")
+            case "D"                    => primType("scala.Double")
+            case "F"                    => primType("scala.Float")
+            case "I"                    => primType("scala.Int")
+            case "J"                    => primType("scala.Long")
+            case "S"                    => primType("scala.Short")
+            case "Z"                    => primType("scala.Boolean")
+            case "V"                    => primType("scala.Unit")
             case s if s.startsWith("[") =>
                 Tasty.Type.Array(parseErasedDescriptorType(s.substring(1)))
             case s if s.startsWith("L") && s.endsWith(";") =>
@@ -1396,7 +1396,7 @@ object ClassfileUnpickler:
     )(using Frame, AllowUnsafe): Result[TastyError, Chunk[Tasty.Java.Annotation]] =
         val visibleR: Result[TastyError, Chunk[Tasty.Java.Annotation]] =
             visibleBytes match
-                case Absent => Result.Success(Chunk.empty)
+                case Absent         => Result.Success(Chunk.empty)
                 case Present(bytes) =>
                     val annView = ByteView(bytes)
                     JavaAnnotationUnpickler.readAnnotations(annView, pool)
@@ -1404,7 +1404,7 @@ object ClassfileUnpickler:
         visibleR.flatMap { visible =>
             val invisibleR: Result[TastyError, Chunk[Tasty.Java.Annotation]] =
                 invisibleBytes match
-                    case Absent => Result.Success(Chunk.empty)
+                    case Absent         => Result.Success(Chunk.empty)
                     case Present(bytes) =>
                         val annView = ByteView(bytes)
                         JavaAnnotationUnpickler.readAnnotations(annView, pool)
@@ -1580,7 +1580,7 @@ object ClassfileUnpickler:
         idx: Maybe[Int]
     )(using Frame, AllowUnsafe): Result[TastyError, Maybe[String]] =
         idx match
-            case Absent => Result.Success(Absent)
+            case Absent     => Result.Success(Absent)
             case Present(i) =>
                 pool.classRefUnsafe(i).map(binaryName => Present(binaryName.replace('/', '.')))
 

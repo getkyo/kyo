@@ -117,7 +117,7 @@ private[kyo] object Scale:
             val rawStep   = (hi - lo) / (maxTicks - 1).toDouble
             val magnitude = math.pow(10.0, math.floor(math.log10(rawStep)))
             val residual  = rawStep / magnitude
-            val niceUnit =
+            val niceUnit  =
                 if residual <= 1.0 then 1.0
                 else if residual <= 2.0 then 2.0
                 else if residual <= 5.0 then 5.0
@@ -182,10 +182,10 @@ private[kyo] object Scale:
                     // the snapped range exactly (snappedHi = fitStep*ceil(hi/fitStep)). So when the
                     // maxTicks-honoring step already lands on domainMax, use it; otherwise fall back to the
                     // closest fitStep multiple, which is guaranteed to land on domainMax.
-                    val req     = niceTicks(domainMin, domainMax, maxTicks)
-                    val reqStep = if req.size >= 2 then req(1) - req(0) else fitStep
-                    val span    = domainMax - domainMin
-                    val eps     = math.abs(fitStep) * 1.0e-9
+                    val req           = niceTicks(domainMin, domainMax, maxTicks)
+                    val reqStep       = if req.size >= 2 then req(1) - req(0) else fitStep
+                    val span          = domainMax - domainMin
+                    val eps           = math.abs(fitStep) * 1.0e-9
                     val reqLandsOnMax =
                         reqStep > 0 && math.abs(math.round(span / reqStep) * reqStep - span) <= eps
                     if reqLandsOnMax then emit(reqStep)
@@ -280,17 +280,17 @@ private[kyo] object Scale:
         padding: Double = 0.1
     ) extends Scale:
 
-        val n: Int         = keys.size
-        val totalW: Double = rangeHi - rangeLo
-        val slot: Double   = if n <= 0 then totalW else totalW / n.toDouble
-        val bandW: Double  = if n <= 0 then totalW else totalW * (1.0 - padding) / n.toDouble
+        val n: Int                             = keys.size
+        val totalW: Double                     = rangeHi - rangeLo
+        val slot: Double                       = if n <= 0 then totalW else totalW / n.toDouble
+        val bandW: Double                      = if n <= 0 then totalW else totalW * (1.0 - padding) / n.toDouble
         private val keyIndex: Map[String, Int] = keys.zipWithIndex.foldLeft(Map.empty[String, Int]):
             case (m, (k, i)) => m.updated(k, i)
 
         def apply(d: Domain): Double = d match
             case Domain.Category(key) =>
                 Maybe.fromOption(keyIndex.get(key)) match
-                    case Absent => rangeLo
+                    case Absent     => rangeLo
                     case Present(i) =>
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
@@ -405,7 +405,7 @@ private[kyo] object Scale:
 
     private def fitBand(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
         val keys = extent match
-            case Extent.Categories(ks) => ks
+            case Extent.Categories(ks)     => ks
             case Extent.Continuous(mn, mx) =>
                 val lo = mn.toInt
                 val hi = mx.toInt
@@ -424,7 +424,7 @@ private[kyo] object Scale:
     // each slot's band collapses to a point.
     private def fitPoint(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
         val keys = extent match
-            case Extent.Categories(ks) => ks
+            case Extent.Categories(ks)     => ks
             case Extent.Continuous(mn, mx) =>
                 val lo = mn.toInt
                 val hi = mx.toInt

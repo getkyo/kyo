@@ -72,8 +72,8 @@ object `<` extends Implicits:
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     new Pending.DeferWith[A, C, S2 & S3]:
-                        override def frame = _frame
-                        def value          = v
+                        override def frame                                              = _frame
+                        def value                                                       = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -118,8 +118,8 @@ object `<` extends Implicits:
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     new Pending.DeferWith[A, C, S2 & S3]:
-                        override def frame = _frame
-                        def value          = v
+                        override def frame                                              = _frame
+                        def value                                                       = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -145,8 +145,8 @@ object `<` extends Implicits:
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     new Pending.DeferWith[A, C, S2 & S3]:
-                        override def frame = _frame
-                        def value          = v
+                        override def frame                                              = _frame
+                        def value                                                       = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else
@@ -170,8 +170,8 @@ object `<` extends Implicits:
                 val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
                 if shouldDefer then
                     new Pending.DeferWith[A, C, S3]:
-                        override def frame = _frame
-                        def value          = v
+                        override def frame                                              = _frame
+                        def value                                                       = v
                         override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
                             run(v2, cont.chain(cont2))
                 else

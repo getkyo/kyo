@@ -110,7 +110,7 @@ import scala.annotation.tailrec
                                 stack.handler(idx) match
                                     // a cont clause: handed the continuation, with the regions above dumped into it
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val entries      = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -122,7 +122,7 @@ import scala.annotation.tailrec
                                         else loop(result, Arrow.id, Arrow.id)
                                     // a masking clause: the same, handed the operation re-raised instead of its input
                                     case handler: Handler.MaskingHandler[EX, C, Y, S2] @unchecked =>
-                                        val entries = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val entries      = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -221,7 +221,7 @@ import scala.annotation.tailrec
                                                 loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val result =
+                                                val result  =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome[
                                                         OX[VX] < (EX & S2),
                                                         Y < S2
@@ -301,7 +301,7 @@ import scala.annotation.tailrec
                                                 loop[OutT, Y, Any, S2](answered, handler.clauseDispatch, next)
                                             case outcome =>
                                                 val entries = dumped(stack, idx, kyo)
-                                                val result =
+                                                val result  =
                                                     Nested.unnest[Y < S2](Loop.unnest(outcome.asInstanceOf[Outcome2[
                                                         VX,
                                                         OX[VX] < (EX & S2),
@@ -331,7 +331,7 @@ import scala.annotation.tailrec
                     // the value an outer region of the same tag bound, for the derive, resolved from the stack like a
                     // read: Absent when nothing binds it or a mask shadows it
                     val outerIdx = stack.find(handler.tag)
-                    val outer =
+                    val outer    =
                         if outerIdx < 0 then Absent
                         else
                             stack.handler(outerIdx) match
@@ -436,7 +436,7 @@ import scala.annotation.tailrec
             entries: Stack.Snapshot,
             resume: Arrow[T2, Y, S3]
         ): Y < (CX2 & S3) =
-            val handler = stack.handler(stack.depth - 1).asInstanceOf[Handler.MaskingHandler[CX2, Y, Any, S3]]
+            val handler      = stack.handler(stack.depth - 1).asInstanceOf[Handler.MaskingHandler[CX2, Y, Any, S3]]
             val continuation =
                 if entries.isEmpty then kyo.cont.chain(resume)
                 else kyo.crossing(entries, resume)
@@ -471,7 +471,7 @@ import scala.annotation.tailrec
             @tailrec def install(i: Int): Unit =
                 if i < entries.regions then
                     val stored = entries.continuation(i).asInstanceOf[Arrow[Any, Any, Any]]
-                    val cont =
+                    val cont   =
                         if i == 0 then stored.chain(resume)
                         else stored
                     val handler = entries.handler(i).asInstanceOf[Handler[Effect, Any, Any]]

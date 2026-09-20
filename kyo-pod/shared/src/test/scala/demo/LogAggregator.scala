@@ -38,7 +38,7 @@ object LogAggregator extends KyoApp:
 
     /** Tag a LogEntry with the worker short-name so merged output identifies the source. */
     def labeled(short: String, entry: Container.LogEntry): String =
-        val ts = entry.timestamp.fold("")(t => s"$t ")
+        val ts  = entry.timestamp.fold("")(t => s"$t ")
         val src = entry.source match
             case Container.LogEntry.Source.Stdout => "out"
             case Container.LogEntry.Source.Stderr => "err"
@@ -60,7 +60,7 @@ object LogAggregator extends KyoApp:
             }
         val merged = Stream.collectAll[String, ContainerException, Any](perWorker)
         grep match
-            case Absent => merged
+            case Absent     => merged
             case Present(p) =>
                 val re = scala.util.matching.Regex(p)
                 merged.filter(s => re.findFirstIn(s).isDefined)

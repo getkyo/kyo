@@ -14,7 +14,7 @@ class EffectThreadingTest extends AnyFreeSpec:
         @volatile var started       = false
         @volatile var released      = 0
         @volatile var sawUnreleased = false
-        val t = new Thread(() =>
+        val t                       = new Thread(() =>
             def spin(i: Int): Int < Any =
                 ((i + 1) & 63: Int < Any).map { v =>
                     started = true
@@ -37,7 +37,7 @@ class EffectThreadingTest extends AnyFreeSpec:
     "an abandonment racing a resume releases exactly once" in {
         var iterations = 0
         while iterations < 200 do
-            val released = new AtomicInteger
+            val released     = new AtomicInteger
             val v: Int < Any =
                 Bracket(Effect.defer(1))(r =>
                     Effect.defer {

@@ -42,7 +42,7 @@ object ExpandMacro:
                 val children = sym.children
                 if children.nonEmpty then
                     val tildeType = TypeRepr.of[Record.~]
-                    val variants = children.map: child =>
+                    val variants  = children.map: child =>
                         val childName = child.name
                         val nameType  = ConstantType(StringConstant(childName))
                         val childType =
@@ -74,7 +74,7 @@ object ExpandMacro:
     private def expandAsCaseClass(using Quotes)(dealiased: quotes.reflect.TypeRepr, sym: quotes.reflect.Symbol): quotes.reflect.TypeRepr =
         import quotes.reflect.*
         val tildeType = TypeRepr.of[Record.~]
-        val fields = sym.caseFields.map: field =>
+        val fields    = sym.caseFields.map: field =>
             val fieldName = field.name
             val fieldType = dealiased.memberType(field)
             val nameType  = ConstantType(StringConstant(fieldName))

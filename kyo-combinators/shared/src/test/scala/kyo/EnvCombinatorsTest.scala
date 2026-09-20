@@ -49,7 +49,7 @@ class EnvCombinatorsTest extends kyo.test.Test[Any]:
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
                 val layerBool   = Layer(false)
-                val handled =
+                val handled     =
                     effect
                         .provideLayer(layerChar)
                         .provideLayer(layerString)
@@ -65,7 +65,7 @@ class EnvCombinatorsTest extends kyo.test.Test[Any]:
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
                 val layerBool   = Layer(false)
-                val handled =
+                val handled     =
                     effect
                         .provide(
                             layerChar,

@@ -152,7 +152,7 @@ final class ConsoleDebugger extends Debugger:
     end onResult
 
     def stats: String =
-        val total = counts.values.sum
+        val total  = counts.values.sum
         val allocs =
             if total == 0 then "allocs: 0"
             else

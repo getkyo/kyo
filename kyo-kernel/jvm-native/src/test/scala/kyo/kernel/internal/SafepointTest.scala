@@ -124,7 +124,7 @@ class SafepointTest extends AnyFreeSpec:
             Bracket(Effect.defer(1))(_ => ask.map(_ + 1))((_, _) => throw new IllegalStateException("release"))
         val dropped: Int < Any =
             ArrowEffect.handleCont(Tag[Ask], inner)([C] => (_, _) => -1, a => a)
-        var built = 0
+        var built            = 0
         val outer: Int < Any =
             Effect.defer {
                 discard(dropped.eval)

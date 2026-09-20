@@ -51,7 +51,7 @@ class DeciderLiveTest extends kyo.test.Test[Any]:
                 position <- Decider.score(ticket, "How severe is the failure the ticket reports?", severity)
                 pEnglish <- Decider.noul(ticket, "The ticket is written in English")
                 // Full answers.
-                decision <- Decider.query(ticket, Query.choice("Which handler should take this ticket?", handlers))
+                decision                   <- Decider.query(ticket, Query.choice("Which handler should take this ticket?", handlers))
                 (pBilling, chosen, scored) <- Decider.batch(
                     ticket,
                     Query.noul("The ticket mentions a billing problem", "a charge or an invoice is mentioned", "nothing about money"),
@@ -108,7 +108,7 @@ class DeciderLiveTest extends kyo.test.Test[Any]:
 
     "the TypeSafe backend answers every form against the real endpoint" in {
         System.env[String]("TYPESAFE_API_KEY").map {
-            case Absent => cancel("TYPESAFE_API_KEY is not set")
+            case Absent     => cancel("TYPESAFE_API_KEY is not set")
             case Present(_) =>
                 Config.credentialed(Config.OpenAI.gpt_5_4_mini.decider(DeciderConfig.TypeSafe.default)).map(surface)
         }

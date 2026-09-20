@@ -103,8 +103,8 @@ class PosixTransportSocketOptionsTest extends Test:
         val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
         val transport = PosixTransport.init(pool)
         pool.start()
-        val smallReq = 16384
-        val largeReq = 262144
+        val smallReq                            = 16384
+        val largeReq                            = 262144
         def fdOf(conn: kyo.net.Connection): Int =
             conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
         Abort.run[NetException | Closed] {

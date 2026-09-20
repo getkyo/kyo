@@ -103,8 +103,7 @@ object Safepoint:
 
     import State.*
 
-    @static private def home(thread: Thread): Int =
-        ((thread.threadId * LineStride) & (Slots - 1)).toInt
+    @static private def home(thread: Thread): Int = ((thread.threadId * LineStride) & (Slots - 1)).toInt
 
     @static def get(): Slot =
         val thread = Thread.currentThread()
@@ -129,12 +128,11 @@ object Safepoint:
                     else
                         val idx   = i & (Slots - 1)
                         val entry = slots.get(idx)
-                        val free =
-                            (entry eq null) || {
-                                entry match
-                                    case owner: Thread => !owner.isAlive
-                                    case pending: Stop => !pending.thread.isAlive
-                            }
+                        val free  = (entry eq null) || {
+                            entry match
+                                case owner: Thread => !owner.isAlive
+                                case pending: Stop => !pending.thread.isAlive
+                        }
                         if !free then claim(i + 1, probes + 1)
                         else if slots.compareAndSet(idx, entry, thread) then
                             depths(idx) = State.init
@@ -240,8 +238,7 @@ object Safepoint:
 
     // A stop naming a slice counts only while that slice is still running, so one aimed at work that has already
     // finished does not land on whatever the slot picked up next.
-    @static private def honored(slot: Slot, s: Stop): Boolean =
-        (s.slice eq null) || (s.slice eq slices(slot))
+    @static private def honored(slot: Slot, s: Stop): Boolean = (s.slice eq null) || (s.slice eq slices(slot))
 
     @static private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef =
         val prev = slices(slot)

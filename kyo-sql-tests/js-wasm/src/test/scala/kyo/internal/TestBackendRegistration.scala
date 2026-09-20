@@ -17,4 +17,5 @@ object TestBackendRegistration:
         SqlTestBackendRegistry.register(new PostgresTestBackend())
         SqlTestBackendRegistry.register(new MysqlTestBackend())
         SqlTestBackendRegistry.register(new SqliteTestBackend())
+        SqlTestBackendRegistry.register(new DoltTestBackend())
 end TestBackendRegistration

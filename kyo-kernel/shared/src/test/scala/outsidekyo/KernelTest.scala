@@ -45,7 +45,7 @@ class KernelTest extends AnyFreeSpec:
 
         "unit" in {
             var seen = 0
-            val v = ask.map { a =>
+            val v    = ask.map { a =>
                 seen = a; a
             }.unit
             val _ = answer(v).eval
@@ -243,9 +243,7 @@ class KernelTest extends AnyFreeSpec:
         }
 
         "handleLoopState without a done clause" in {
-            val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))(
-                [C] => (state, _) => Loop.continue(state + 1, state)
-            )
+            val v = ArrowEffect.handleLoopState(Tag[Ask], 7, ask.map(_ + 1))([C] => (state, _) => Loop.continue(state + 1, state))
             assert(v.eval == 8)
         }
 
@@ -328,7 +326,7 @@ class KernelTest extends AnyFreeSpec:
         "a region nested under another effect" in {
             var said = List.empty[String]
             val body = ask.map(a => say("a" + a).map(_ => a))
-            val v = ArrowEffect.handleCont(Tag[Say], answer(body))(
+            val v    = ArrowEffect.handleCont(Tag[Say], answer(body))(
                 [C] =>
                     (input, cont) =>
                         said = said :+ input
@@ -421,7 +419,7 @@ class KernelTest extends AnyFreeSpec:
         }
 
         "forever" in {
-            var n = 0
+            var n                = 0
             val v: Nothing < Ask = Loop.forever(ask.map { a =>
                 n += a
                 if n == 3 then throw new IllegalStateException("stop")
@@ -537,7 +535,7 @@ class KernelTest extends AnyFreeSpec:
 
         "the release hook is accepted at the handle site and runs at the region's end" in {
             var completed = false
-            val r = ContextEffect.handle(
+            val r         = ContextEffect.handle(
                 Tag[Level],
                 derive = (_: Maybe[Int]) => 7,
                 fork = (l: Int) => l,

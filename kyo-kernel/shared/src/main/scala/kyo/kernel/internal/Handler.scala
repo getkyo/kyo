@@ -113,7 +113,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
             type OutT = Outcome[A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
-                def frame = Frame.internal
+                def frame                                                         = Frame.internal
                 override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
                     out match
                         case p: Pending[OutT, S3] @unchecked =>
@@ -185,7 +185,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         private[kyo] def clauseDispatch: Arrow[Outcome2[State, A < (E & S), B < S], B, S] =
             type OutT = Outcome2[State, A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
-                def frame = Frame.internal
+                def frame                                                         = Frame.internal
                 override def apply[D, S3](out: OutT < S3, cont2: Arrow[B, D, S3]) =
                     out match
                         case p: Pending[OutT, S3] @unchecked =>
@@ -266,7 +266,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         type In  = Outcome[O[X0] < (E & S), B < S]
         type Out = Outcome[A < (E & S), B < S]
         new Arrow.Step[In, Out, S]:
-            def frame = Frame.internal
+            def frame                                                         = Frame.internal
             override def apply[D, S3](out: In < S3, cont2: Arrow[Out, D, S3]) =
                 out match
                     case p: Pending[In, S3] @unchecked =>
@@ -285,7 +285,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         type In  = Outcome2[State, O[X0] < (E & S), B < S]
         type Out = Outcome2[State, A < (E & S), B < S]
         new Arrow.Step[In, Out, S]:
-            def frame = Frame.internal
+            def frame                                                         = Frame.internal
             override def apply[D, S3](out: In < S3, cont2: Arrow[Out, D, S3]) =
                 out match
                     case p: Pending[In, S3] @unchecked =>

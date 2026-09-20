@@ -114,8 +114,8 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         Scope.run {
             Abort.run[Closed] {
                 for
-                    sentCh <- Channel.initUnscoped[Int](16)
-                    respCh <- Channel.initUnscoped[Envelope](16)
+                    sentCh   <- Channel.initUnscoped[Int](16)
+                    respCh   <- Channel.initUnscoped[Envelope](16)
                     exchange <- Exchange.initUnscoped[Request, Response, Envelope, Nothing, TransportError](
                         encode = (id, req) => Envelope.Req(id, req),
                         send = (frame: Envelope) =>
@@ -271,7 +271,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                 // Capture THIS init's worker process via the onSpawn seam (fired once the interrupt-safe
                 // kill is armed, just before the readiness probe), targeting this test's own worker.
                 spawned <- Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Process]](Absent))
-                fiber <- Fiber.initUnscoped(
+                fiber   <- Fiber.initUnscoped(
                     Abort.run[CompilerException](SpawnBackend.init(spawnConfig(), driver, 7, p => spawned.set(Present(p))))
                 )
                 // The worker JVM has spawned but cannot answer the probe for seconds, so once captured the
@@ -304,7 +304,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         "SpawnBackend.init spawns the worker JVM and arms its kill only after the aeron connect and the exchange wiring, two parks later, so a stop landing on either park leaves the worker running with no owner"
     ) in {
         withDriver { driver =>
-            val rounds = 64
+            val rounds                              = 64
             def workers(token: String): Int < Async =
                 Abort.run[CommandException](Command("pgrep", "-f", token).textWithExitCode).map {
                     case Result.Success((out, _)) => out.linesIterator.count(_.trim.nonEmpty)

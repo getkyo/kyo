@@ -52,7 +52,7 @@ class BlockingCedeTest extends CompatTest:
         // with a short sleep; both must complete. We exercise cede's role as
         // a yield point — the test passes if cede does not deadlock or
         // serialize the workload.
-        val ctr = new AtomicInteger(0)
+        val ctr       = new AtomicInteger(0)
         val cededWork =
             CIO.cede.flatMap { _ =>
                 CIO.cede.flatMap { _ =>
@@ -79,8 +79,8 @@ class BlockingCedeTest extends CompatTest:
     // backends), fA would starve fB — but most backends are preemptive and the
     // test simply verifies no deadlock occurs.
     "cede actually yields — no starvation across concurrent fibers" in run {
-        val done    = new java.util.concurrent.atomic.AtomicBoolean(false)
-        val counter = new AtomicInteger(0)
+        val done            = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val counter         = new AtomicInteger(0)
         def loop: CIO[Unit] =
             if done.get() then CIO.unit
             else

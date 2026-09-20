@@ -361,7 +361,7 @@ object Connection:
     private[kyo] def parseServerVersion(reported: String)(using Frame): Idiom.ServerVersion < Abort[SqlConnectionProtocolDecodeException] =
         Idiom.ServerVersion.parse(reported) match
             case Present(version) => version
-            case Absent =>
+            case Absent           =>
                 Abort.fail(
                     SqlConnectionProtocolDecodeException(
                         "server version",

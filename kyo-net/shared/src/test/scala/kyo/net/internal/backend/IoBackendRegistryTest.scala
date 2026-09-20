@@ -277,11 +277,11 @@ class IoBackendRegistryTest extends Test:
         // Selection asks three things of the same candidates (who wins, who was skipped and why, what the report says) and the demotion
         // path used to re-run the probe for every skipped candidate. The memo makes the answer one probe per candidate per process, which
         // is what removes a real second syscall on every degraded host.
-        val probes = new java.util.concurrent.atomic.AtomicInteger(0)
+        val probes   = new java.util.concurrent.atomic.AtomicInteger(0)
         val counting = new CapabilityDescriptor:
-            def name: String              = "counting"
-            def priority: Int             = 30
-            def libraryIds: Chunk[String] = Chunk.empty
+            def name: String                                               = "counting"
+            def priority: Int                                              = 30
+            def libraryIds: Chunk[String]                                  = Chunk.empty
             private[net] def doProbe(using AllowUnsafe): CapabilityOutcome =
                 discard(probes.getAndIncrement())
                 CapabilityOutcome.Unavailable("counted")

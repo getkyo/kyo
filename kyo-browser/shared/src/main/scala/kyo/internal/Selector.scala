@@ -521,7 +521,7 @@ private[kyo] object SelectorJs:
         def loop(i: Int, sb: StringBuilder): StringBuilder =
             if i >= s.length then sb
             else
-                val c = s.charAt(i)
+                val c           = s.charAt(i)
                 val needsEscape =
                     !(c >= 'a' && c <= 'z') &&
                         !(c >= 'A' && c <= 'Z') &&
@@ -530,7 +530,7 @@ private[kyo] object SelectorJs:
                         c != '-' &&
                         c < 0x80
                 val firstCharDigit = i == 0 && c >= '0' && c <= '9'
-                val next =
+                val next           =
                     if firstCharDigit then
                         sb.append('\\').append(Integer.toHexString(c.toInt)).append(' ')
                     else if needsEscape then
@@ -568,8 +568,8 @@ private[kyo] object SelectorJs:
       * string for these well-known roles so each selector resolution is a single `Map.get`.
       */
     private val implicitRoleMappings: Dict[String, Seq[String]] = Dict(
-        "button" -> Seq("button", """input[type="button"]""", """input[type="submit"]""", """input[type="reset"]"""),
-        "link"   -> Seq("a[href]", "area[href]"),
+        "button"  -> Seq("button", """input[type="button"]""", """input[type="submit"]""", """input[type="reset"]"""),
+        "link"    -> Seq("a[href]", "area[href]"),
         "textbox" -> Seq(
             """input[type="text"]""",
             """input[type="email"]""",

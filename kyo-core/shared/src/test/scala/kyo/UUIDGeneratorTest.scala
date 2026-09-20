@@ -43,14 +43,14 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
 
     "capability API" - {
         "declares only Sync on generator operations and preserves the scoped computation effects" in {
-            val generatorV4: UUID < Sync = UUIDGenerator.live.v4
-            val generatorV7: UUID < Sync = UUIDGenerator.live.v7
-            val companionV4: UUID < Sync = UUIDGenerator.v4
-            val companionV7: UUID < Sync = UUIDGenerator.v7
+            val generatorV4: UUID < Sync                   = UUIDGenerator.live.v4
+            val generatorV7: UUID < Sync                   = UUIDGenerator.live.v7
+            val companionV4: UUID < Sync                   = UUIDGenerator.v4
+            val companionV7: UUID < Sync                   = UUIDGenerator.v7
             val companionLet: Int < (Abort[String] & Sync) =
                 UUIDGenerator.let(UUIDGenerator.live)(Abort.fail("expected"))
-            val extensionV4: UUID < Sync = UUID.v4
-            val extensionV7: UUID < Sync = UUID.v7
+            val extensionV4: UUID < Sync                   = UUID.v4
+            val extensionV7: UUID < Sync                   = UUID.v7
             val extensionLet: Int < (Abort[String] & Sync) =
                 UUID.let(UUIDGenerator.live)(Abort.fail("expected"))
 
@@ -66,8 +66,8 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
         }
 
         "scoped helpers preserve the supplied computation failure" in {
-            val generator = new FixedGenerator(v4Fixed, v7Fixed)
-            val sentinel  = "sentinel"
+            val generator                               = new FixedGenerator(v4Fixed, v7Fixed)
+            val sentinel                                = "sentinel"
             val companion: Int < (Abort[String] & Sync) =
                 UUIDGenerator.let(generator)(Abort.fail(sentinel))
             val extension: Int < (Abort[String] & Sync) =
@@ -179,8 +179,8 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
             val right   = new FixedGenerator(rightV4, v7Fixed)
 
             for
-                entered <- Latch.init(2)
-                release <- Latch.init(1)
+                entered   <- Latch.init(2)
+                release   <- Latch.init(1)
                 generated <- Scope.run {
                     for
                         leftFiber <- Fiber.init(
@@ -418,17 +418,17 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
         }
 
         "uses one atomic sequence for concurrent calls on a single generator" in {
-            val count = 64
+            val count                                = 64
             val generator: UUIDGenerator.TestControl = UUIDGenerator.testControlled(
                 clockMillis = Chunk.fill(count + 1)(1000L),
                 entropy = Chunk.from(entropyWithLast(0))
             )
 
             for
-                seed     <- generator.v7
-                entered  <- Latch.init(count)
-                release  <- Latch.init(1)
-                observed <- AtomicRef.init(Chunk.empty[UUID])
+                seed      <- generator.v7
+                entered   <- Latch.init(count)
+                release   <- Latch.init(1)
+                observed  <- AtomicRef.init(Chunk.empty[UUID])
                 generated <- Scope.run {
                     for
                         fibers <- Kyo.fill(count) {
@@ -466,7 +466,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
 
     "failure handling" - {
         "keeps version 4 entropy failures as Sync panics without a weaker fallback" in {
-            val failure = new RuntimeException("secure entropy unavailable")
+            val failure   = new RuntimeException("secure entropy unavailable")
             val generator = UUIDGenerator.init(
                 () => 1000L,
                 Sync.defer(throw failure)
@@ -479,7 +479,7 @@ class UUIDGeneratorTest extends kyo.test.Test[Any]:
         }
 
         "keeps version 7 entropy failures as Sync panics without a random timestamp or counter fallback" in {
-            val failure = new RuntimeException("secure entropy unavailable")
+            val failure   = new RuntimeException("secure entropy unavailable")
             val generator = UUIDGenerator.init(
                 () => 1000L,
                 Sync.defer(throw failure)

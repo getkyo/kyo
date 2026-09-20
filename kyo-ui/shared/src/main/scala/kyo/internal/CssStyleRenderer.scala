@@ -219,12 +219,12 @@ private[kyo] object CssStyleRenderer:
         case TransitionProperty.Custom(name)    => name
 
     private def renderProp(prop: Prop): String = prop match
-        case BgColor(c)          => s"background-color: ${color(c)};"
-        case TextColor(c)        => s"color: ${color(c)};"
-        case AccentColorProp(c)  => s"accent-color: ${color(c)};"
-        case Padding(t, r, b, l) => s"padding: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
-        case Margin(t, r, b, l)  => s"margin: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
-        case Gap(v)              => s"gap: ${size(v)};"
+        case BgColor(c)           => s"background-color: ${color(c)};"
+        case TextColor(c)         => s"color: ${color(c)};"
+        case AccentColorProp(c)   => s"accent-color: ${color(c)};"
+        case Padding(t, r, b, l)  => s"padding: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
+        case Margin(t, r, b, l)   => s"margin: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
+        case Gap(v)               => s"gap: ${size(v)};"
         case FlexDirectionProp(d) => d match
                 case FlexDirection.row           => "flex-direction: row;"
                 case FlexDirection.column        => "flex-direction: column;"
@@ -249,7 +249,7 @@ private[kyo] object CssStyleRenderer:
         case FontWeightProp(v)           => s"font-weight: ${fontWeightCss(v)};"
         case FontStyleProp(v)            => s"font-style: ${fontStyleCss(v)};"
         case FontVariantLigaturesProp(v) => s"font-variant-ligatures: ${fontVariantLigaturesCss(v)};"
-        case FontFamilyProp(v) =>
+        case FontFamilyProp(v)           =>
             val cssValue = v match
                 case FontFamily.SansSerif    => "sans-serif"
                 case FontFamily.Serif        => "serif"
@@ -265,23 +265,23 @@ private[kyo] object CssStyleRenderer:
         case LetterSpacingProp(v)  => s"letter-spacing: ${size(v)};"
         case TextTransformProp(v)  => s"text-transform: ${textTransform(v)};"
         case TextOverflowProp(v)   => s"text-overflow: ${textOverflow(v)};"
-        case TextWrapProp(v) => v match
+        case TextWrapProp(v)       => v match
                 case TextWrap.wrap     => "overflow-wrap: break-word;"
                 case TextWrap.noWrap   => "overflow-wrap: normal;"
                 case TextWrap.ellipsis => "overflow-wrap: normal; text-overflow: ellipsis;"
                 case TextWrap.balance  => "text-wrap: balance;"
                 case TextWrap.pretty   => "text-wrap: pretty;"
-        case WhiteSpaceProp(v)                => s"white-space: ${whiteSpaceCss(v)};"
-        case BorderColorProp(t, r, b, l)      => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
-        case BorderWidthProp(t, r, b, l)      => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
-        case BorderStyleProp(v)               => s"border-style: ${borderStyle(v)};"
-        case BorderRadiusProp(tl, tr, br, bl) => s"border-radius: ${size(tl)} ${size(tr)} ${size(br)} ${size(bl)};"
+        case WhiteSpaceProp(v)                 => s"white-space: ${whiteSpaceCss(v)};"
+        case BorderColorProp(t, r, b, l)       => s"border-color: ${color(t)} ${color(r)} ${color(b)} ${color(l)};"
+        case BorderWidthProp(t, r, b, l)       => s"border-width: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
+        case BorderStyleProp(v)                => s"border-style: ${borderStyle(v)};"
+        case BorderRadiusProp(tl, tr, br, bl)  => s"border-radius: ${size(tl)} ${size(tr)} ${size(br)} ${size(bl)};"
         case ShadowProp(x, y, blur, spread, c) =>
             s"box-shadow: ${size(x)} ${size(y)} ${size(blur)} ${size(spread)} ${color(c)};"
         case OpacityProp(v)      => s"opacity: ${fmt(v)};"
         case CursorProp(v)       => s"cursor: ${cursor(v)};"
         case TranslateProp(x, y) => s"transform: translate(${size(x)}, ${size(y)});"
-        case PositionProp(v) => v match
+        case PositionProp(v)     => v match
                 case Position.flow     => "position: static;"
                 case Position.overlay  => "position: fixed; top: 0; left: 0; width: 100%; height: 100%;"
                 case Position.relative => "position: relative;"
@@ -296,7 +296,7 @@ private[kyo] object CssStyleRenderer:
         case ZIndexProp(v)          => s"z-index: $v;"
         case AlignSelf(v)           => s"align-self: ${alignment(v)};"
         case ScrollMarginTopProp(v) => s"scroll-margin-top: ${size(v)};"
-        case DisplayProp(v) => v match
+        case DisplayProp(v)         => v match
                 case Display.block       => "display: block;"
                 case Display.inline      => "display: inline;"
                 case Display.inlineBlock => "display: inline-block;"

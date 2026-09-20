@@ -22,8 +22,8 @@ class TRefTest extends kyo.test.Test[Any]:
 
     "multiple operations in transaction" in {
         for
-            ref1 <- TRef.init(10)
-            ref2 <- TRef.init(20)
+            ref1   <- TRef.init(10)
+            ref2   <- TRef.init(20)
             result <- STM.run {
                 for
                     v1 <- ref1.get
@@ -61,7 +61,7 @@ class TRefTest extends kyo.test.Test[Any]:
         "nests properly in nested transactions" in {
             STM.run {
                 for
-                    ref1 <- TRef.init(1)
+                    ref1   <- TRef.init(1)
                     result <- STM.run {
                         for
                             ref2 <- TRef.init(2)
@@ -331,7 +331,7 @@ class TRefTest extends kyo.test.Test[Any]:
             for
                 sideRef <- AtomicInt.init(0)
                 ref     <- TRef.init(0)
-                _ <- STM.run {
+                _       <- STM.run {
                     ref.update(x => Sync.defer { x + 5 }.map(r => sideRef.incrementAndGet.andThen(r)))
                 }
                 sideObs <- sideRef.get
@@ -365,7 +365,7 @@ class TRefTest extends kyo.test.Test[Any]:
             for
                 counter <- AtomicInt.init(0)
                 ref     <- TRef.init(0)
-                out <- Abort.run {
+                out     <- Abort.run {
                     STM.run(Schedule.fixed(1.millis).take(n)) {
                         ref.update(v => counter.incrementAndGet.andThen(STM.retry).map(_ => v + 1))
                     }
@@ -390,7 +390,7 @@ class TRefTest extends kyo.test.Test[Any]:
         "lambda sees the current in-log value, not the live entry" in {
             for
                 ref <- TRef.init(0)
-                _ <- STM.run {
+                _   <- STM.run {
                     for
                         _ <- ref.update(_ + 1)
                         _ <- ref.update(_ + 10)
@@ -447,7 +447,7 @@ class TRefTest extends kyo.test.Test[Any]:
 
         "log-level snapshot consistency: two reads inside one transaction agree on value" in {
             for
-                ref <- TRef.init(42)
+                ref  <- TRef.init(42)
                 pair <- STM.run {
                     for
                         a <- ref.use(identity)
@@ -463,7 +463,7 @@ class TRefTest extends kyo.test.Test[Any]:
             for
                 ref      <- TRef.init(11)
                 otherRef <- TRef.init(0)
-                out <- Abort.run[Throwable](
+                out      <- Abort.run[Throwable](
                     STM.run {
                         for
                             _ <- otherRef.set(99)
@@ -492,7 +492,7 @@ class TRefTest extends kyo.test.Test[Any]:
 
         "assigning v then reading yields v in the same transaction" in {
             for
-                ref <- TRef.init("a")
+                ref  <- TRef.init("a")
                 read <- STM.run {
                     for
                         _ <- ref.set("b")
@@ -626,7 +626,7 @@ class TRefTest extends kyo.test.Test[Any]:
         "invokes f exactly once with the new ref and returns f's value" in {
             for
                 counter <- AtomicInt.init(0)
-                pair <- TRef.initWith(21) { ref =>
+                pair    <- TRef.initWith(21) { ref =>
                     counter.incrementAndGet.andThen(STM.run(ref.use(v => (ref.id, v * 2))))
                 }
                 count <- counter.get
@@ -677,7 +677,7 @@ class TRefTest extends kyo.test.Test[Any]:
 
         "inline value is evaluated exactly once per call" in {
             import kyo.AllowUnsafe.embrace.danger
-            val counter = AtomicInt.Unsafe.init(0)
+            val counter        = AtomicInt.Unsafe.init(0)
             def expensive: Int =
                 counter.incrementAndGet(); 42
             for
@@ -692,7 +692,7 @@ class TRefTest extends kyo.test.Test[Any]:
         "TRef created inside doomed outer txn is observable post-rollback, still at initial value" in {
             for
                 capture <- AtomicRef.init[Maybe[TRef[Int]]](Absent)
-                out <- Abort.run {
+                out     <- Abort.run {
                     STM.run(Schedule.done) {
                         TRef.initWith(100) { ref =>
                             capture.set(Present(ref)).andThen {
@@ -761,7 +761,7 @@ class TRefTest extends kyo.test.Test[Any]:
             val n = 5
             for
                 before <- Sync.defer(TRef.Unsafe.init(0).id)
-                out <- Abort.run {
+                out    <- Abort.run {
                     STM.run(Schedule.fixed(1.millis).take(n)) {
                         for
                             _ <- TRef.init(0)
@@ -780,7 +780,7 @@ class TRefTest extends kyo.test.Test[Any]:
             import kyo.AllowUnsafe.embrace.danger
             for
                 before <- Sync.defer(TRef.Unsafe.init(0).id)
-                out <- Abort.run {
+                out    <- Abort.run {
                     STM.run(Schedule.fixed(1.millis).take(3)) {
                         TRef.initWith(0)(_ => STM.retry)
                     }
@@ -860,7 +860,7 @@ class TRefTest extends kyo.test.Test[Any]:
         }
 
         "withReadTick — N sequential merges yield the maximum observed tick" in {
-            val ticks = Seq(10L, 5L, 50L, 50L, 3L, 100L, 99L, 100L, 1L)
+            val ticks      = Seq(10L, 5L, 50L, 50L, 3L, 100L, 99L, 100L, 1L)
             val finalState = ticks.foldLeft(State.free) { (acc, t) =>
                 if acc.readTick >= t then acc else acc.withReadTick(t)
             }

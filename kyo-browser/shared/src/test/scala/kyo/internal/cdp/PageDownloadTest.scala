@@ -79,7 +79,7 @@ class PageDownloadTest extends kyo.BrowserTest:
                 _      <- Browser.allowDownloads(tempDir)
                 done   <- Promise.init[Unit, Any]
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
-                _ <- Browser.onDownload(captureEvents(events, done, unique, completeOnWillBegin = false)) {
+                _      <- Browser.onDownload(captureEvents(events, done, unique, completeOnWillBegin = false)) {
                     Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
                 }
                 captured <- events.get

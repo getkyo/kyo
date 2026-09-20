@@ -268,9 +268,10 @@ object JsonRpcEndpointImpl:
                     val implRefUnsafe = AtomicRef.Unsafe.init[Maybe[JsonRpcEndpointImpl]](Absent)(using AllowUnsafe.embrace.danger)
                     val implRef       = implRefUnsafe.safe
 
-                    // Encode callback: runs in Sync-only context inside Exchange.apply.
-                    // Uses Kyo effect chaining (returns < Sync).
-                    val encodeCallback: (JsonRpcId, OutboundReq) => String < Sync =
+                    // Encode callback: runs inside Exchange.apply. An envelope the codec cannot encode
+                    // (extras carrying a reserved key) aborts JsonRpcError here, so the call fails naming
+                    // what actually failed instead of encoding to "" and surfacing as a wire decode error.
+                    val encodeCallback: (JsonRpcId, OutboundReq) => String < (Sync & Abort[JsonRpcError]) =
                         (id, req) =>
                             // Resolve extras with the now-known id; frame captured from initEngine
                             req.extras.resolve(id)(using frame).map { extrasVal =>
@@ -289,10 +290,9 @@ object JsonRpcEndpointImpl:
                                     // JsonRpcError for the unencodable cases; Abort.run reifies that so the
                                     // Success/non-Success branch shape is preserved.
                                     val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
-                                    Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)).map {
-                                        case Result.Success(sv) => Json.encode[Structure.Value](sv)
-                                        case _                  => ""
-                                    }
+                                    Abort.catching[JsonRpcError](
+                                        Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)
+                                    ).map(Json.encode[Structure.Value](_))
                                 }
                             }
 
@@ -396,13 +396,13 @@ object JsonRpcEndpointImpl:
                                                                             Clock.use { clock =>
                                                                                 Sync.Unsafe.defer {
                                                                                     Maybe(progressStreams.get(token)) match
-                                                                                        case Absent => ()
+                                                                                        case Absent      => ()
                                                                                         case Present(ch) =>
                                                                                             ch.unsafe.offer(paramsVal)(using
                                                                                                 AllowUnsafe.embrace.danger,
                                                                                                 frame
                                                                                             ) match
-                                                                                                case Result.Success(true) => ()
+                                                                                                case Result.Success(true)  => ()
                                                                                                 case Result.Success(false) =>
                                                                                                     bug(
                                                                                                         s"progress channel offer returned false for token=$token; buffer full or queue race ; the value was silently dropped"
@@ -442,7 +442,7 @@ object JsonRpcEndpointImpl:
                                                                             // Build the per-notification cancel signal inside the deferred boundary (ambient AllowUnsafe).
                                                                             Sync.Unsafe.defer {
                                                                                 val cancelledUnsafe = Promise.Unsafe.init[Unit, Sync]()
-                                                                                val ctx =
+                                                                                val ctx             =
                                                                                     new JsonRpcRoute.Context(
                                                                                         cancelledUnsafe.safe,
                                                                                         Absent,
@@ -793,7 +793,7 @@ object JsonRpcEndpointImpl:
                                     Kyo.foreachDiscard(chunk) { msg =>
                                         msg match
                                             case WriterMsg.SendEnvelope(env) =>
-                                                Abort.run[Closed](transport.send(env)(using frame)).unit
+                                                Abort.run[Closed | JsonRpcError](transport.send(env)(using frame)).unit
 
                                             case WriterMsg.SuppressIfCancelled(id, env) =>
                                                 val shouldDrop: Boolean =
@@ -809,7 +809,7 @@ object JsonRpcEndpointImpl:
                                                 // Unsafe: remove from pendingInbound in writer loop (outside fiber)
                                                 Sync.Unsafe.defer(pendingInbound.remove(id)).andThen {
                                                     if shouldDrop then Kyo.unit
-                                                    else Abort.run[Closed](transport.send(env)(using frame)).unit
+                                                    else Abort.run[Closed | JsonRpcError](transport.send(env)(using frame)).unit
                                                 }
                                     }
                                 }

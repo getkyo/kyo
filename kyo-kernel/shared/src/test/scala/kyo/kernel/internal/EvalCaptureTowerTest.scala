@@ -27,7 +27,7 @@ class EvalCaptureTowerTest extends AnyFreeSpec:
     "a capture across an inner region keeps the region as an entry" in {
         @tailrec def tower(v: Int < (Ask & Say), n: Int): Int < (Ask & Say) =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
-        var seen = List.empty[String]
+        var seen             = List.empty[String]
         val inner: Int < Ask = ArrowEffect.handleCont(Tag[Say], tower(ask.map(a => say("x").map(_ => a)), Reach + 8))(
             [C] =>
                 (s, cont) =>

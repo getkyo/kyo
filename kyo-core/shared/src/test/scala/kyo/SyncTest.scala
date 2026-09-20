@@ -11,7 +11,7 @@ class SyncTest extends kyo.test.Test[Any]:
     "lazyRun" - {
         "execution" in {
             var called = false
-            val v =
+            val v      =
                 Sync.defer {
                     called = true
                     1
@@ -25,7 +25,7 @@ class SyncTest extends kyo.test.Test[Any]:
         "next handled effects can execute" in {
             import AllowUnsafe.embrace.danger
             var called = false
-            val v =
+            val v      =
                 Env.get[Int].map { i =>
                     Sync.defer {
                         called = true
@@ -58,7 +58,7 @@ class SyncTest extends kyo.test.Test[Any]:
             ()
         }
         "stack-safe" in {
-            val frames = 10000
+            val frames                   = 10000
             def loop(i: Int): Int < Sync =
                 Sync.defer {
                     if i < frames then
@@ -74,7 +74,7 @@ class SyncTest extends kyo.test.Test[Any]:
         // leave a cont behind (#1739). The assertion is on the value, so a rescue that unwinds by
         // dropping accumulated conts fails too.
         "stack-safe when a map follows the recursive defer" in {
-            val depth = 1000000
+            val depth                    = 1000000
             def step(n: Int): Int < Sync =
                 if n <= 0 then 0
                 else Sync.defer(step(n - 1)).map(_ + 1)
@@ -85,7 +85,7 @@ class SyncTest extends kyo.test.Test[Any]:
     }
     "run" - {
         "execution" in {
-            var called = false
+            var called        = false
             val v: Int < Sync =
                 Sync.defer {
                     called = true
@@ -98,7 +98,7 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
         "stack-safe" in {
-            val frames = 100000
+            val frames                    = 100000
             def loop(i: Int): Unit < Sync =
                 Sync.defer {
                     if i < frames then
@@ -595,8 +595,8 @@ class SyncTest extends kyo.test.Test[Any]:
         "runs its finalizer for a fiber abandoned before its first slice" in {
             Async.foreachDiscard(1 to 20, 20) { _ =>
                 for
-                    ran <- AtomicInt.init(0)
-                    p   <- Promise.init[Int, Any]
+                    ran   <- AtomicInt.init(0)
+                    p     <- Promise.init[Int, Any]
                     fiber <- Fiber.initUnscoped {
                         import AllowUnsafe.embrace.danger
                         Sync.ensure(Sync.Unsafe.defer(discard(ran.unsafe.incrementAndGet())))(p.get)
@@ -622,7 +622,7 @@ class SyncTest extends kyo.test.Test[Any]:
                 handoff <- Promise.init[Fiber[Unit, Any], Any]
                 ended   <- AtomicBoolean.init(false)
                 owned   <- AtomicBoolean.init(false)
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     (handoff.get.map { self =>
                         Sync.ensure {
                             // Unsafe: the interrupt is requested from inside the finalizer, so the stop lands on
@@ -657,7 +657,7 @@ class SyncTest extends kyo.test.Test[Any]:
             for
                 ran     <- AtomicInt.init(0)
                 handoff <- Promise.init[Fiber[Unit, Any], Any]
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     handoff.get.map { self =>
                         Sync.ensure(ran.incrementAndGet.unit) {
                             Sync.defer {
@@ -683,7 +683,7 @@ class SyncTest extends kyo.test.Test[Any]:
             for
                 ran     <- AtomicInt.init(0)
                 handoff <- Promise.init[Fiber[Unit, Any], Any]
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     handoff.get.map { self =>
                         Abort.run[String] {
                             Sync.ensure(ran.incrementAndGet.unit) {

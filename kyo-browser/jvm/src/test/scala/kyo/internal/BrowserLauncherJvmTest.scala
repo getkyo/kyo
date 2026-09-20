@@ -41,7 +41,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
                 BrowserLauncher.createTempDir(kyoParent)
             }.map {
                 case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("temp dir"))
-                case Result.Success(p) =>
+                case Result.Success(p)                               =>
                     fail(s"Expected BrowserSetupFailedException but createTempDir returned $p")
                 case Result.Panic(ex) =>
                     fail(s"Expected Failure, got Panic: ${ex.getMessage}")
@@ -56,7 +56,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
     // count afterwards is of this round's tree alone, and whatever the sweep missed is killed here.
     "a launch stopped around its spawn leaves no Chrome behind" in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val rounds = 40
+        val rounds                            = 40
         def alive(token: String): Int < Async =
             Abort.run[CommandException](Command("pgrep", "-f", token).textWithExitCode).map {
                 case Result.Success((out, _)) => out.linesIterator.count(_.trim.nonEmpty)
@@ -102,9 +102,9 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
     // keeps re-creating a directory and survives the parent's death on its own.
     "terminateTree leaves no descendant alive to write into the directory" in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
-        val dir      = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
-        val script   = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
+        val outerTmp                = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
+        val dir                     = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
+        val script                  = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
         def removeDir: Unit < Async =
             Abort.run[FileSystemException](Path.run(Path(dir.toString).removeAll)).unit
         Scope.run {

@@ -37,7 +37,7 @@ abstract class BrowserDemo[Result](val demoName: String):
             _      <- Console.printLine(s"Launching: ${launch.executable}\n")
             _      <- log(s"launching ${launch.executable}")
             result <- Browser.run(launch)(flow)
-            _ <- validate(result) match
+            _      <- validate(result) match
                 case Absent       => log("validation: OK").andThen(Console.printLine("\n✓ validation: OK"))
                 case Present(msg) => log(s"validation: FAILED: $msg").andThen(Console.printLineErr(s"\n✗ validation FAILED: $msg"))
             _ <- log("demo complete")
@@ -87,9 +87,9 @@ abstract class BrowserDemo[Result](val demoName: String):
         for
             img      <- Browser.screenshot()
             rendered <- img.renderToConsole(charsWidth = 80)
-            _ <- rendered match
+            _        <- rendered match
                 case Present(s) => Console.printLine(s)
-                case Absent =>
+                case Absent     =>
                     Console.printLine(
                         s"    (screenshot: ${img.binary.size} bytes; iTerm2 or Kitty required to render inline)"
                     )

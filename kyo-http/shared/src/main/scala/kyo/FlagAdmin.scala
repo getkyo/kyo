@@ -51,8 +51,8 @@ object FlagAdmin:
             .request(_.queryOpt[String]("filter"))
             .response(_.bodyText)
         val listHandler = listRoute.handler { req =>
-            val filter = req.fields.filter
-            val flags  = Flag.all
+            val filter   = req.fields.filter
+            val flags    = Flag.all
             val filtered = filter match
                 case Present(glob) => flags.filter(f => matchGlob(glob, f.name))
                 case Absent        => flags

@@ -94,7 +94,7 @@ private[kyo] object RouteUtil:
                 case Absent =>
             end match
             val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
-            val url = request.url.rawQuery match
+            val url          = request.url.rawQuery match
                 case Present(rq) =>
                     if queryBuilder.nonEmpty then s"$basePath?$rq&$queryBuilder"
                     else s"$basePath?$rq"
@@ -134,7 +134,7 @@ private[kyo] object RouteUtil:
         inline onStreaming: (String, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         bodyField match
-            case Absent => onEmpty(url, headers)
+            case Absent        => onEmpty(url, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
                 if isStreamingContentType(body.contentType) then
@@ -373,7 +373,7 @@ private[kyo] object RouteUtil:
             val headerBuilder = ChunkBuilder.init[String]
             encodeResponseParams(fields, dict, headerBuilder)
             val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
-            val headers = if extraHeaders.isEmpty then response.headers
+            val headers      = if extraHeaders.isEmpty then response.headers
             else response.headers.concat(extraHeaders)
             encodeResponseBody(bodyField, dict, status, headers, boundary)(onEmpty, onBuffered, onStreaming)
         end if
@@ -391,7 +391,7 @@ private[kyo] object RouteUtil:
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
     )(using Frame): A =
         bodyField match
-            case Absent => onEmpty(status, headers)
+            case Absent        => onEmpty(status, headers)
             case Present(body) =>
                 val value = dict(body.fieldName)
                 if isStreamingContentType(body.contentType) then
@@ -483,7 +483,7 @@ private[kyo] object RouteUtil:
         url: HttpUrl
     )(using Frame): Result[HttpException, Unit] =
         path match
-            case _: HttpPath.Literal => Result.unit
+            case _: HttpPath.Literal       => Result.unit
             case c: HttpPath.Capture[?, ?] =>
                 val wireName = if c.wireName.isEmpty then c.fieldName else c.wireName
                 captures.get(wireName) match
@@ -600,8 +600,8 @@ private[kyo] object RouteUtil:
         url: HttpUrl,
         isResponse: Boolean = false
     )(using Frame): Result[HttpException, Any] =
-        val wireName  = if param.wireName.isEmpty then param.fieldName else param.wireName
-        val fieldType = param.kind.toString.toLowerCase
+        val wireName           = if param.wireName.isEmpty then param.fieldName else param.wireName
+        val fieldType          = param.kind.toString.toLowerCase
         val raw: Maybe[String] = param.kind match
             case HttpRoute.Field.Param.Location.Query =>
                 queryParam match
@@ -705,15 +705,15 @@ private[kyo] object RouteUtil:
             case HttpRoute.ContentType.ByteStream =>
                 f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async]])
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
-                val stream = value.asInstanceOf[Stream[Any, Async]]
-                val schema = ndjson.schema.asInstanceOf[Schema[Any]]
+                val stream     = value.asInstanceOf[Stream[Any, Async]]
+                val schema     = ndjson.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { v =>
                     stringToSpan(Json.encode(v)(using schema) + "\n")
                 }(using ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("application/x-ndjson", byteStream)
             case sse: HttpRoute.ContentType.Sse[?] =>
-                val stream = value.asInstanceOf[Stream[HttpSseEvent[Any], Async]]
-                val schema = sse.schema.asInstanceOf[Schema[Any]]
+                val stream     = value.asInstanceOf[Stream[HttpSseEvent[Any], Async]]
+                val schema     = sse.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
                     event.event match
@@ -730,7 +730,7 @@ private[kyo] object RouteUtil:
                 }(using sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
             case sseText: HttpRoute.ContentType.SseText =>
-                val stream = value.asInstanceOf[Stream[HttpSseEvent[String], Async]]
+                val stream     = value.asInstanceOf[Stream[HttpSseEvent[String], Async]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
                     event.event match
@@ -743,7 +743,7 @@ private[kyo] object RouteUtil:
                         case Present(r) => discard(sb.append("retry: ").append(r.toMillis).append('\n'))
                         case Absent     =>
                     // Per SSE spec, split multiline data into multiple data: lines
-                    val dataLines = event.data.split('\n')
+                    val dataLines                              = event.data.split('\n')
                     @tailrec def appendDataLines(i: Int): Unit =
                         if i < dataLines.length then
                             discard(sb.append("data: ").append(dataLines(i)).append('\n'))
@@ -756,7 +756,7 @@ private[kyo] object RouteUtil:
             case HttpRoute.ContentType.MultipartStream =>
                 val stream         = value.asInstanceOf[Stream[HttpRequest.Part, Async]]
                 val boundaryString = requireMultipartBoundary(boundary)
-                val byteStream = stream.mapPure { part =>
+                val byteStream     = stream.mapPure { part =>
                     encodeMultipartPart(part, boundaryString)
                 }(using Tag[Emit[Chunk[HttpRequest.Part]]], Tag[Emit[Chunk[Span[Byte]]]])
                 val closingBoundary = Stream.init(Seq(stringToSpan(s"--$boundaryString--\r\n")))
@@ -857,7 +857,7 @@ private[kyo] object RouteUtil:
             @tailrec def loop(index: Int): Boolean =
                 if index >= length then true
                 else
-                    val c = boundary.charAt(index)
+                    val c     = boundary.charAt(index)
                     val valid =
                         c >= '0' && c <= '9' ||
                             c >= 'A' && c <= 'Z' ||
@@ -1007,27 +1007,26 @@ private[kyo] object RouteUtil:
         val byteTag                            = Tag[Emit[Chunk[Span[Byte]]]]
         given strTag: Tag[Emit[Chunk[String]]] = Tag[Emit[Chunk[String]]]
         Stream(
-            ArrowEffect.handleLoopState(byteTag, "", stream.emit)(
-                [C] =>
-                    (leftover, input) =>
-                        val sb = new StringBuilder(leftover)
-                        input.foreach(span => discard(sb.append(spanToString(span))))
-                        val combined = sb.toString
-                        val parts    = combined.split(java.util.regex.Pattern.quote(delimiter), -1)
-                        if parts.length <= 1 then
-                            Loop.continue(combined, ())
-                        else
-                            val result = ChunkBuilder.init[String]
-                            @tailrec def loop(i: Int): Unit =
-                                if i < parts.length - 1 then
-                                    val part = parts(i).trim
-                                    if part.nonEmpty then discard(result += part)
-                                    loop(i + 1)
-                            loop(0)
-                            val out = result.result()
-                            if out.isEmpty then Loop.continue(parts.last, ())
-                            else Emit.valueWith(out)(Loop.continue(parts.last, ()))
-                        end if
+            ArrowEffect.handleLoopState(byteTag, "", stream.emit)([C] =>
+                (leftover, input) =>
+                    val sb = new StringBuilder(leftover)
+                    input.foreach(span => discard(sb.append(spanToString(span))))
+                    val combined = sb.toString
+                    val parts    = combined.split(java.util.regex.Pattern.quote(delimiter), -1)
+                    if parts.length <= 1 then
+                        Loop.continue(combined, ())
+                    else
+                        val result                      = ChunkBuilder.init[String]
+                        @tailrec def loop(i: Int): Unit =
+                            if i < parts.length - 1 then
+                                val part = parts(i).trim
+                                if part.nonEmpty then discard(result += part)
+                                loop(i + 1)
+                        loop(0)
+                        val out = result.result()
+                        if out.isEmpty then Loop.continue(parts.last, ())
+                        else Emit.valueWith(out)(Loop.continue(parts.last, ()))
+                    end if
             )
         )
     end splitLines
@@ -1097,7 +1096,7 @@ private[kyo] object RouteUtil:
         else
             val headerSection = section.substring(0, headerBodySep).trim
             val bodySection   = section.substring(headerBodySep + 4)
-            val cleanBody =
+            val cleanBody     =
                 if bodySection.endsWith("\r\n") then bodySection.substring(0, bodySection.length - 2)
                 else bodySection
             val headerLines = headerSection.split("\r\n")
@@ -1113,14 +1112,14 @@ private[kyo] object RouteUtil:
                 else
                     val line = headerLines(i)
                     if line.toLowerCase.startsWith("content-disposition:") then
-                        val disp    = line.substring(20).trim
-                        val nameIdx = disp.indexOf("name=\"")
+                        val disp       = line.substring(20).trim
+                        val nameIdx    = disp.indexOf("name=\"")
                         val parsedName =
                             if nameIdx >= 0 then
                                 val nameEnd = disp.indexOf('"', nameIdx + 6)
                                 if nameEnd >= 0 then disp.substring(nameIdx + 6, nameEnd) else name
                             else name
-                        val fnIdx = disp.indexOf("filename=\"")
+                        val fnIdx          = disp.indexOf("filename=\"")
                         val parsedFilename =
                             if fnIdx >= 0 then
                                 val fnEnd = disp.indexOf('"', fnIdx + 10)
@@ -1163,14 +1162,14 @@ private[kyo] object RouteUtil:
                 else
                     val line = headerLines(i)
                     if line.toLowerCase.startsWith("content-disposition:") then
-                        val disp    = line.substring(20).trim
-                        val nameIdx = disp.indexOf("name=\"")
+                        val disp       = line.substring(20).trim
+                        val nameIdx    = disp.indexOf("name=\"")
                         val parsedName =
                             if nameIdx >= 0 then
                                 val nameEnd = disp.indexOf('"', nameIdx + 6)
                                 if nameEnd >= 0 then disp.substring(nameIdx + 6, nameEnd) else name
                             else name
-                        val fnIdx = disp.indexOf("filename=\"")
+                        val fnIdx          = disp.indexOf("filename=\"")
                         val parsedFilename =
                             if fnIdx >= 0 then
                                 val fnEnd = disp.indexOf('"', fnIdx + 10)
@@ -1190,7 +1189,7 @@ private[kyo] object RouteUtil:
 
     /** Find needle in haystack starting at offset within length. Returns absolute index or -1. */
     private def indexOfBytes(haystack: Array[Byte], offset: Int, length: Int, needle: Array[Byte]): Int =
-        val end = offset + length - needle.length
+        val end                         = offset + length - needle.length
         @tailrec def outer(i: Int): Int =
             if i > end then -1
             else
@@ -1341,7 +1340,7 @@ private[kyo] object RouteUtil:
       */
     private def checkContentType(headers: HttpHeaders, expected: String): Boolean =
         headers.get("Content-Type") match
-            case Absent => true
+            case Absent      => true
             case Present(ct) =>
                 val lower = ct.toLowerCase
                 lower.startsWith(expected)

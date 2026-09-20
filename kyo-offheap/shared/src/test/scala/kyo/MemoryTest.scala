@@ -121,7 +121,7 @@ class MemoryTest extends kyo.test.Test[Any]:
             Arena.run {
                 for
                     mem <- Memory.init[Int](5)
-                    v <- Sync.Unsafe.defer {
+                    v   <- Sync.Unsafe.defer {
                         val unsafe: Unsafe[Int] = mem.unsafe
                         unsafe.set(0, 42)
                         unsafe.get(0)
@@ -133,7 +133,7 @@ class MemoryTest extends kyo.test.Test[Any]:
         "fill" in {
             Arena.run {
                 for
-                    mem <- Memory.init[Int](5)
+                    mem      <- Memory.init[Int](5)
                     (v0, v4) <- Sync.Unsafe.defer {
                         val unsafe = mem.unsafe
                         unsafe.fill(42)
@@ -147,7 +147,7 @@ class MemoryTest extends kyo.test.Test[Any]:
             Arena.run {
                 for
                     mem <- Memory.init[Int](3)
-                    v <- Sync.Unsafe.defer {
+                    v   <- Sync.Unsafe.defer {
                         val unsafe = mem.unsafe
                         unsafe.set(0, 1)
                         unsafe.set(1, 2)

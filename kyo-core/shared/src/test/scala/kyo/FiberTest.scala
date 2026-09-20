@@ -176,7 +176,7 @@ class FiberTest extends kyo.test.Test[Any]:
             // winner against a spinning loser that owes a finalizer; the flag lets the leaf stop a loser the race
             // failed to, so a lost stop fails the round instead of the fork.
             "interrupts a losing computation that never parks" in {
-                val rounds = 500
+                val rounds                                                             = 500
                 def spin(stop: java.util.concurrent.atomic.AtomicBoolean): Unit < Sync =
                     Sync.defer(if stop.get() then () else spin(stop))
                 Loop.indexed { i =>
@@ -185,7 +185,7 @@ class FiberTest extends kyo.test.Test[Any]:
                         val stop = new java.util.concurrent.atomic.AtomicBoolean(false)
                         for
                             done <- AtomicInt.init(0)
-                            r <- Fiber.internal.raceFirst(Seq(
+                            r    <- Fiber.internal.raceFirst(Seq(
                                 Sync.defer(1),
                                 Sync.ensure(done.incrementAndGet.unit)(spin(stop)).andThen(2)
                             )).map(_.getResult)
@@ -218,7 +218,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.raceFirst(Seq(
+                    fiber          <- Fiber.internal.raceFirst(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
@@ -278,7 +278,7 @@ class FiberTest extends kyo.test.Test[Any]:
             }
             "slow + fast" in {
                 for
-                    adder <- LongAdder.init
+                    adder  <- LongAdder.init
                     result <-
                         Fiber.internal.race(Seq(
                             Async.delay(1.second)(adder.increment.andThen(24)),
@@ -557,7 +557,7 @@ class FiberTest extends kyo.test.Test[Any]:
             run    <- Latch.init(1)
             stop   <- Latch.init(1)
             result <- AtomicInt.init(0)
-            fiber <-
+            fiber  <-
                 Fiber.initUnscoped {
                     for
                         _ <- start.release
@@ -846,15 +846,15 @@ class FiberTest extends kyo.test.Test[Any]:
 
     "boundary inference with Abort" - {
         "same failures" in {
-            val v: Int < Abort[Int]              = 1
-            val _: Fiber[Int, Abort[Int]] < Sync = Fiber.internal.race(Seq(v))
+            val v: Int < Abort[Int]                   = 1
+            val _: Fiber[Int, Abort[Int]] < Sync      = Fiber.internal.race(Seq(v))
             val _: Fiber[Seq[Int], Abort[Int]] < Sync =
                 Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed("compile-time type inference check")
         }
         "additional failure" in {
-            val v: Int < Abort[Int]                       = 1
-            val _: Fiber[Int, Abort[Int | String]] < Sync = Fiber.internal.race(Seq(v))
+            val v: Int < Abort[Int]                            = 1
+            val _: Fiber[Int, Abort[Int | String]] < Sync      = Fiber.internal.race(Seq(v))
             val _: Fiber[Seq[Int], Abort[Int | String]] < Sync =
                 Fiber.internal.foreachIndexed(Chunk.from(Seq(v)).toIndexed, Int.MaxValue)((_, v) => v)
             succeed("compile-time type inference check")
@@ -1016,7 +1016,7 @@ class FiberTest extends kyo.test.Test[Any]:
                 for
                     latch1 <- Latch.init(1)
                     latch2 <- Latch.init(1)
-                    fiber <- Fiber.internal.gather(2)(Seq(
+                    fiber  <- Fiber.internal.gather(2)(Seq(
                         latch1.release.andThen(1),
                         latch2.release.andThen(2),
                         Async.delay(50.millis)(3)
@@ -1093,7 +1093,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.gather(3)(Seq(
+                    fiber          <- Fiber.internal.gather(3)(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
@@ -1117,7 +1117,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
                     _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
-                    fiber <- Fiber.internal.gather(2)(Seq(
+                    fiber          <- Fiber.internal.gather(2)(Seq(
                         startLatch.release.andThen(promise1.get),
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
@@ -1287,7 +1287,7 @@ class FiberTest extends kyo.test.Test[Any]:
         "a fatal thrown in the body releases the fiber's finalizers before the promise settles with the panic".notJs.notWasm in {
             for
                 released <- AtomicBoolean.init(false)
-                fiber <- Fiber.initUnscoped {
+                fiber    <- Fiber.initUnscoped {
                     Sync.ensure(released.set(true))(Sync.defer((throw new StackOverflowError("thrown on purpose")): Int))
                 }
                 result <- fiber.getResult
@@ -1305,7 +1305,7 @@ class FiberTest extends kyo.test.Test[Any]:
             for
                 released <- AtomicBoolean.init(false)
                 started  <- Promise.init[Unit, Any]
-                fiber <- Fiber.initUnscoped {
+                fiber    <- Fiber.initUnscoped {
                     Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
                 }
                 _      <- started.get
@@ -1333,7 +1333,7 @@ class FiberTest extends kyo.test.Test[Any]:
             for
                 released <- AtomicBoolean.init(false)
                 started  <- Promise.init[Unit, Any]
-                fiber <- Fiber.initUnscoped {
+                fiber    <- Fiber.initUnscoped {
                     Sync.ensure(released.set(true))(started.complete(Result.succeed(())).andThen(Async.never))
                 }
                 _    <- started.get
@@ -1349,7 +1349,7 @@ class FiberTest extends kyo.test.Test[Any]:
         "a body ending with its value in the slice its interrupt landed on completes with the interrupt" in {
             for
                 handoff <- Promise.init[Fiber[Int, Any], Any]
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     handoff.get.map { self =>
                         import AllowUnsafe.embrace.danger
                         discard(self.unsafe.interrupt())
@@ -1365,7 +1365,7 @@ class FiberTest extends kyo.test.Test[Any]:
             for
                 order   <- AtomicRef.init(List.empty[String])
                 started <- Promise.init[Unit, Any]
-                _ <- Scope.run {
+                _       <- Scope.run {
                     Fiber.init {
                         Sync.ensure(order.updateAndGet("fiber" :: _).unit)(
                             Scope.ensure(order.updateAndGet("scope" :: _).unit)
@@ -1383,7 +1383,7 @@ class FiberTest extends kyo.test.Test[Any]:
         // the fiber ended rather than how the enclosing scope did.
         "a finalizer registered in a scoped fiber's body runs at the enclosing scope's close with a clean ending" in {
             for
-                seen <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
+                seen   <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
                 inside <- Scope.run {
                     Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(42)).map(_.get).andThen(seen.get)
                 }
@@ -1396,7 +1396,7 @@ class FiberTest extends kyo.test.Test[Any]:
 
         "a finalizer registered in a scoped fiber's body sees the fiber's typed failure" in {
             for
-                seen <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
+                seen   <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
                 result <- Scope.run {
                     Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(Abort.fail("boom"))).map(_.getResult)
                 }
@@ -1411,7 +1411,7 @@ class FiberTest extends kyo.test.Test[Any]:
             for
                 seen    <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])
                 started <- Latch.init(1)
-                _ <- Scope.run {
+                _       <- Scope.run {
                     Fiber.init(Scope.ensure(e => seen.set(Present(e))).andThen(started.release).andThen(Async.never))
                         .andThen(started.await)
                 }

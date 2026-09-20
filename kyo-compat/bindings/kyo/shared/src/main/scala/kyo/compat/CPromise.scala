@@ -38,7 +38,7 @@ object CPromise:
         inline def poll(using inline frame: Frame): CIO[Option[scala.util.Try[A]]] =
             CIO.lift(
                 Fiber.poll(self.lower).map {
-                    case Absent => Option.empty
+                    case Absent                                         => Option.empty
                     case Present(s: Result.Success[A < Any] @unchecked) =>
                         s.successValue.map(a => Option(scala.util.Success(a)))
                     case Present(f: Result.Failure[Throwable] @unchecked) =>

@@ -22,7 +22,7 @@ object DashboardDemo extends KyoApp:
     private val pageStyle     = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(16.px)
     private val subtitleStyle = Style.color(Color.gray).fontSize(14.px)
     private val cardsRow      = Style.row.gap(16.px)
-    private val cardStyle =
+    private val cardStyle     =
         Style.column.gap(6.px).padding(16.px).bg(Color.slate).rounded(10.px).flexGrow(1).flexBasis(0.px)
     private val cardLabel           = Style.color(Color.white).fontSize(13.px)
     private def cardValue(c: Color) = Style.color(c).fontSize(34.px).bold

@@ -52,7 +52,7 @@ object KyoFfiPlugin extends AutoPlugin {
                 "does not compile but that bindings can still reference. Defaults to common POSIX/Windows libs."
         )
         val ffiTargetPlatform = settingKey[String]("Target platform: 'JVM', 'Native', or 'JS'. Auto-detected.")
-        val ffiTargetOsArch = settingKey[Option[String]](
+        val ffiTargetOsArch   = settingKey[Option[String]](
             "Target '<os>-<arch>' for the produced natives, e.g. Some(\"darwin-x86_64\") on an arm64 Mac. " +
                 "It names the compiled artifact, the META-INF/native/<os>-<arch>/ directory it is packaged " +
                 "into, and the OS the per-OS link libs and compiler overrides are resolved for. None (the " +
@@ -111,17 +111,17 @@ object KyoFfiPlugin extends AutoPlugin {
         val FfiLibrary = kyo.ffi.sbt.FfiLibrary
 
         // Tasks
-        val ffiGenerate   = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
-        val ffiCompile    = taskKey[Seq[File]]("Compile C sources into a platform-native shared library.")
-        val ffiPackage    = taskKey[Seq[File]]("Copy the compiled library into META-INF/native/ in resources.")
-        val ffiClean      = taskKey[Unit]("Clean generated sources + compiled libs.")
-        val ffiCiWorkflow = taskKey[File]("Emit a starter .github/workflows/ffi-native.yml template.")
+        val ffiGenerate       = taskKey[Seq[File]]("Generate platform-specific impl sources from bindings.")
+        val ffiCompile        = taskKey[Seq[File]]("Compile C sources into a platform-native shared library.")
+        val ffiPackage        = taskKey[Seq[File]]("Copy the compiled library into META-INF/native/ in resources.")
+        val ffiClean          = taskKey[Unit]("Clean generated sources + compiled libs.")
+        val ffiCiWorkflow     = taskKey[File]("Emit a starter .github/workflows/ffi-native.yml template.")
         val ffiPackagingCheck = taskKey[Unit](
             "Validate the staged native resource tree: every artifact's binary format and extension match " +
                 "the platform directory it sits in, and every ffiRequiredPlatforms entry has a native for " +
                 "every bundled library."
         )
-        val ffiNpmBundleTemplate = taskKey[File]("Emit package.json pinning koffi to the supported range (Scala.js consumers).")
+        val ffiNpmBundleTemplate    = taskKey[File]("Emit package.json pinning koffi to the supported range (Scala.js consumers).")
         val ffiNativeLinkingOptions = taskKey[Seq[String]](
             "Scala Native linkingOptions for ffiLibraries: the static-folded SYSTEM link libs " +
                 "(e.g. -Wl,-Bstatic -luring -Wl,-Bdynamic on Linux). The bindings' own C is compiled " +
@@ -199,7 +199,7 @@ object KyoFfiPlugin extends AutoPlugin {
                         log.info(s"[$packageName] installing koffi@$koffiRange into $targetBase ...")
                         // npm is npm.cmd on Windows, and CreateProcess resolves only .exe from a bare name.
                         val npm = if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
-                        val rc = scala.sys.process.Process(
+                        val rc  = scala.sys.process.Process(
                             Seq(npm, "install", "--no-audit", "--no-fund", "--silent"),
                             targetBase
                         ).!
@@ -264,7 +264,7 @@ object KyoFfiPlugin extends AutoPlugin {
       */
     private def ffiPackagingFormatCheckAllCommand: Command = Command.command("ffiPackagingFormatCheckAll") { state =>
         val extracted = Project.extract(state)
-        val projects = extracted.structure.allProjectRefs.filter { ref =>
+        val projects  = extracted.structure.allProjectRefs.filter { ref =>
             (ref / ffiLibraries).get(extracted.structure.data).isDefined
         }
         val (finalState, failed) =
@@ -307,7 +307,7 @@ object KyoFfiPlugin extends AutoPlugin {
       */
     private def ffiPackagingCheckAllCommand: Command = Command.command("ffiPackagingCheckAll") { state =>
         val extracted = Project.extract(state)
-        val projects = extracted.structure.allProjectRefs.filter { ref =>
+        val projects  = extracted.structure.allProjectRefs.filter { ref =>
             (ref / ffiLibraries).get(extracted.structure.data).isDefined
         }
         val (finalState, failed) =
@@ -418,7 +418,7 @@ object KyoFfiPlugin extends AutoPlugin {
 
     override lazy val projectSettings: Seq[Setting[?]] = Seq(
         ffiLibraryId := "kyo_ffi",
-        ffiCSources := {
+        ffiCSources  := {
             val cDir = (Compile / sourceDirectory).value / "c"
             if (cDir.exists()) (cDir ** "*.c").get else Nil
         },
@@ -430,13 +430,14 @@ object KyoFfiPlugin extends AutoPlugin {
             val cDir = (Compile / sourceDirectory).value / "c"
             if (cDir.exists()) Seq(cDir) else Nil
         },
-        ffiLinkLibs := Nil,
+        ffiLinkLibs         := Nil,
         ffiReleasePlatforms := {
             val libs = ffiLibrariesResolved.value
-            // buildsOn is the same predicate ffiCompile gates on, so what a release requires cannot drift
-            // from what a producer would actually build.
+            // buildsOnTarget is the same predicate ffiCompile gates on, so what a release requires cannot
+            // drift from what a producer would actually build. Asked with the full os-arch tag, since a
+            // library can exist for one arch of an OS and not another.
             libs.filter(_.cSources.nonEmpty).flatMap { lib =>
-                CCompiler.supportedOsArchTags.filter(key => lib.buildsOn(CCompiler.parseOsArch(key)._1))
+                CCompiler.supportedOsArchTags.filter(lib.buildsOnTarget)
             }.distinct.sorted
         },
         ffiStubLibraries := Nil,
@@ -449,10 +450,10 @@ object KyoFfiPlugin extends AutoPlugin {
         // resolvers, matched to this plugin's version. The in-repo integration test overrides this
         // with the codegen project's own classpath (no resolution, no publishLocal round-trip).
         ffiCodegenClasspath := {
-            val log     = streams.value.log
-            val depRes  = dependencyResolution.value
-            val version = CodegenBridge.pluginVersion
-            val codegen = "io.getkyo" % "kyo-ffi-codegen_3" % version
+            val log        = streams.value.log
+            val depRes     = dependencyResolution.value
+            val version    = CodegenBridge.pluginVersion
+            val codegen    = "io.getkyo" % "kyo-ffi-codegen_3" % version
             val descriptor = depRes.moduleDescriptor(
                 sbt.librarymanagement.ModuleDescriptorConfiguration(
                     "io.getkyo" % "kyo-ffi-codegen-resolver" % version,
@@ -504,13 +505,13 @@ object KyoFfiPlugin extends AutoPlugin {
             val codegenCp = ffiCodegenClasspath.value.map(_.getAbsolutePath)
             val platform  = ffiTargetPlatform.value
             // Use unmanagedSources to avoid cyclic dependency with sourceGenerators.
-            val userSrcs   = (Compile / unmanagedSources).value.filter(f => f.getName.endsWith(".scala"))
-            val cacheDir   = streams.value.cacheDirectory / "kyo-ffi-generate"
-            val libraryId  = ffiLibraryId.value
-            val strictB    = ffiStrictBlocking.value
-            val strictC    = ffiStrictCallbacks.value
-            val strictDisc = ffiStrictDiscovery.value
-            val systemLibs = ffiSystemLibraries.value.toSet
+            val userSrcs                    = (Compile / unmanagedSources).value.filter(f => f.getName.endsWith(".scala"))
+            val cacheDir                    = streams.value.cacheDirectory / "kyo-ffi-generate"
+            val libraryId                   = ffiLibraryId.value
+            val strictB                     = ffiStrictBlocking.value
+            val strictC                     = ffiStrictCallbacks.value
+            val strictDisc                  = ffiStrictDiscovery.value
+            val systemLibs                  = ffiSystemLibraries.value.toSet
             val declaredLibIds: Set[String] = {
                 val multi = ffiLibraries.value
                 if (multi.nonEmpty) multi.map(_.id).toSet
@@ -556,7 +557,7 @@ object KyoFfiPlugin extends AutoPlugin {
             // `codegen=<fingerprint>` keys the cache on the bundled codegen version so a plugin or
             // codegen upgrade with unchanged binding sources still regenerates the impls instead of a
             // stale cache hit that survives until a manual `clean` (#255).
-            val codegenFp = CodegenBridge.codegenFingerprint(codegenCp)
+            val codegenFp          = CodegenBridge.codegenFingerprint(codegenCp)
             val configHash: String =
                 s"$platform|$libraryId|$strictB|$strictC|$strictDisc|${declaredLibIds.toSeq.sorted.mkString(",")}|${systemLibs.toSeq.sorted.mkString(",")}|${probeIncludeDirs.sorted.mkString(",")}|codegen=$codegenFp"
 
@@ -628,7 +629,7 @@ object KyoFfiPlugin extends AutoPlugin {
                             val declaredStr = declared.toSeq.sorted.mkString("[", ", ", "]")
                             val systemStr   = systemLibs.toSeq.sorted.mkString("[", ", ", "]")
                             val q           = "\""
-                            val lines = offenders.map { t =>
+                            val lines       = offenders.map { t =>
                                 val id = t.library
                                 s"  - ${t.fqcn} declares library = $q$id$q " +
                                     s"which is not present in ffiLibraries / ffiLibraryId (declared: $declaredStr) " +
@@ -766,14 +767,17 @@ object KyoFfiPlugin extends AutoPlugin {
                     // omitted from the macOS / Windows command, and IS included when a build targets
                     // Linux from elsewhere.
                     libs.zipWithIndex.flatMap { case (lib, idx) =>
-                        if (lib.cSources.nonEmpty && !lib.buildsOn(targetOs)) {
-                            // Declared for other OSes only. Its C compiles here (the sources are
+                        if (lib.cSources.nonEmpty && !lib.buildsOnTarget(s"$targetOs-$targetArch")) {
+                            // Declared for other targets only. Its C compiles here (the sources are
                             // `#ifdef`-guarded to same-signature stubs off their OS) but the artifact could
-                            // only ever be loaded on an OS this is not, so building it would ship a
-                            // working-looking native for a platform that can never call it.
+                            // only ever be loaded on a platform this is not, so building it would ship a
+                            // working-looking native for one that can never call it.
+                            val declared =
+                                if (lib.osArchTargets.nonEmpty) lib.osArchTargets.mkString(", ")
+                                else lib.osTargets.mkString(", ")
                             log.info(
-                                s"[kyo-ffi-plugin] ffiCompile: ${lib.id} targets ${lib.osTargets.mkString(", ")}; " +
-                                    s"skipping on $targetOs."
+                                s"[kyo-ffi-plugin] ffiCompile: ${lib.id} targets $declared; " +
+                                    s"skipping on $targetOs-$targetArch."
                             )
                             Nil
                         } else if (lib.cSources.isEmpty) {
@@ -911,9 +915,9 @@ object KyoFfiPlugin extends AutoPlugin {
             val globalIncludes  = ffiIncludes.value
             val globalStatic    = ffiStaticLink.value
             val targetDir       = target.value / "ffi"
-            val libs = {
+            val libs            = {
                 val multi = ffiLibraries.value
-                val raw = if (multi.nonEmpty) multi
+                val raw   = if (multi.nonEmpty) multi
                 else Seq(
                     FfiLibrary(
                         id = ffiLibraryId.value,
@@ -1062,7 +1066,7 @@ object KyoFfiPlugin extends AutoPlugin {
       * to make impossible.
       */
     private[sbt] def prebuiltNatives(dir: Option[File]): Seq[PrebuiltNative] = dir match {
-        case None => Nil
+        case None    => Nil
         case Some(d) =>
             if (!d.isDirectory)
                 sys.error(s"[kyo-ffi-plugin] ffiPrebuiltDir is not an existing directory: ${d.getAbsolutePath}")
@@ -1070,7 +1074,7 @@ object KyoFfiPlugin extends AutoPlugin {
             files.map { f =>
                 CCompiler.parseArtifactName(f.getName) match {
                     case Some((id, os, arch)) => PrebuiltNative(f, id, os, arch)
-                    case None =>
+                    case None                 =>
                         sys.error(
                             s"[kyo-ffi-plugin] ffiPrebuiltDir: '${f.getName}' does not follow the " +
                                 s"lib<id>-<os>-<arch>.<ext> naming ffiCompile produces, so the platform it is for " +
@@ -1195,8 +1199,8 @@ object KyoFfiPlugin extends AutoPlugin {
       * Two rules keep this honest. Requiredness comes from `declared`, not from the ids observed in
       * the staged tree: a library with no artifact anywhere contributes no observed id, so a
       * tree-derived check cannot see a native that is missing on every platform, which is the case it
-      * exists for. And `buildsOn` is consulted per required key, never against the host running the
-      * check, since the publish host is linux and would otherwise excuse every darwin-only library.
+      * exists for. And `buildsOnTarget` is consulted per required key, never against the host running
+      * the check, since the publish host is linux and would otherwise excuse every darwin-only library.
       */
     private[sbt] def missingRequiredNatives(
         declared: Seq[FfiLibrary],
@@ -1206,7 +1210,7 @@ object KyoFfiPlugin extends AutoPlugin {
         for {
             lib <- declared.filter(_.cSources.nonEmpty)
             key <- required
-            if lib.buildsOn(CCompiler.parseOsArch(key)._1)
+            if lib.buildsOnTarget(key)
             if !have.contains((lib.id, key))
         } yield s"${lib.id} has no native for $key"
 
@@ -1479,12 +1483,14 @@ object KyoFfiPlugin extends AutoPlugin {
             stagedPrebuilts(ffiPrebuiltDir.value, ffiPrebuiltPool.value, libs.map(_.id).toSet).map(_.libraryId).toSet
         val resManaged = (Compile / resourceManaged).value
         val moduleName = name.value
-        val targetOs   = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value)._1
+        val targetTag  = CCompiler.resolveTargetOsArch(ffiTargetOsArch.value) match {
+            case (os, arch) => s"$os-$arch"
+        }
         if (platform == "Native") Seq.empty[File]
         else {
             val states = libs.map { lib =>
                 val state =
-                    if (lib.cSources.nonEmpty && lib.buildsOn(targetOs)) {
+                    if (lib.cSources.nonEmpty && lib.buildsOnTarget(targetTag)) {
                         if (stubs.contains(lib.id)) "stub" else "native"
                     } else if (prebuilt.contains(lib.id)) "prebuilt"
                     else "absent"
@@ -1551,9 +1557,9 @@ object KyoFfiPlugin extends AutoPlugin {
         if (platform == "Native") Seq.empty[File]
         else {
             val targetTag = s"$targetOs-$targetArch"
-            val idBlocks = libs.sortBy(_.id).flatMap { lib =>
+            val idBlocks  = libs.sortBy(_.id).flatMap { lib =>
                 val local =
-                    if (lib.cSources.nonEmpty && lib.buildsOn(targetOs)) Set(targetTag) else Set.empty[String]
+                    if (lib.cSources.nonEmpty && lib.buildsOnTarget(targetTag)) Set(targetTag) else Set.empty[String]
                 val staged    = prebuilt.filter(_.libraryId == lib.id).map(p => s"${p.os}-${p.arch}").toSet
                 val platforms = (local ++ staged).toSeq.sorted
                 Seq(
@@ -1650,7 +1656,7 @@ object KyoFfiPlugin extends AutoPlugin {
       */
     private def ffiLibrariesResolved: Def.Initialize[Seq[FfiLibrary]] = Def.setting {
         val multi = ffiLibraries.value
-        val raw = if (multi.nonEmpty) multi
+        val raw   = if (multi.nonEmpty) multi
         else Seq(
             FfiLibrary(
                 id = ffiLibraryId.value,
@@ -1660,16 +1666,33 @@ object KyoFfiPlugin extends AutoPlugin {
                 staticLink = ffiStaticLink.value
             )
         )
-        // An osTargets typo is otherwise silent in the worst way: buildsOn answers false on every OS,
-        // so the library is skipped everywhere, recorded `absent` in every manifest, and required of
-        // nothing by the release guard. Fail here instead of shipping a jar with a hole in it.
+        // A target typo is otherwise silent in the worst way: the predicate answers false everywhere,
+        // so the library is skipped on every platform, recorded `absent` in every manifest, and required
+        // of nothing by the release guard. Fail here instead of shipping a jar with a hole in it.
         raw.foreach { lib =>
-            val unknown = lib.unknownOsTargets
-            if (unknown.nonEmpty)
+            val unknownOs = lib.unknownOsTargets
+            if (unknownOs.nonEmpty)
                 sys.error(
                     s"[kyo-ffi-plugin] FfiLibrary '${lib.id}' declares unknown osTargets: " +
-                        s"${unknown.mkString("[", ", ", "]")}. " +
+                        s"${unknownOs.mkString("[", ", ", "]")}. " +
                         s"Supported: ${CCompiler.supportedOs.mkString(", ")}."
+                )
+            val unknownOsArch = lib.unknownOsArchTargets
+            if (unknownOsArch.nonEmpty)
+                sys.error(
+                    s"[kyo-ffi-plugin] FfiLibrary '${lib.id}' declares unknown osArchTargets: " +
+                        s"${unknownOsArch.mkString("[", ", ", "]")}. " +
+                        s"Supported: ${CCompiler.supportedOsArchTags.mkString(", ")}."
+                )
+            // Declaring both, disagreeing, is a contradiction rather than a narrowing: every arch tag
+            // would be filtered out by the OS list and the library would vanish exactly as a typo makes
+            // it vanish.
+            val orphaned = lib.osArchTargets.filterNot(tag => lib.buildsOn(CCompiler.parseOsArch(tag)._1))
+            if (orphaned.nonEmpty)
+                sys.error(
+                    s"[kyo-ffi-plugin] FfiLibrary '${lib.id}' declares osArchTargets " +
+                        s"${orphaned.mkString("[", ", ", "]")} whose OS is excluded by osTargets " +
+                        s"${lib.osTargets.mkString("[", ", ", "]")}."
                 )
         }
         topoSortLibraries(raw)
@@ -1761,7 +1784,7 @@ object KyoFfiPlugin extends AutoPlugin {
         libs.map { lib =>
             val prefixPosix = s"lib${lib.id}-"
             val prefixWin   = s"${lib.id}-"
-            val matched = artifacts.filter { f =>
+            val matched     = artifacts.filter { f =>
                 val n = f.getName
                 CCompiler.parseArtifactName(n) match {
                     case Some((id, _, _)) => id == lib.id

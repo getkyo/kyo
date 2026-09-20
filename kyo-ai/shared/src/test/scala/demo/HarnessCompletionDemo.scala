@@ -36,7 +36,7 @@ object HarnessCompletionDemo extends KyoApp:
                     config <- AI.config
                     _      <- Console.printLine(s"backend:             ${config.provider.name}")
                     _      <- Console.printLine(s"model:               ${config.modelName}")
-                    _ <- ai.systemMessage(
+                    _      <- ai.systemMessage(
                         "You are validating a harness completion adapter. Return compact factual values. " +
                             s"Preserve the marker '$marker' exactly when asked."
                     )
@@ -46,7 +46,7 @@ object HarnessCompletionDemo extends KyoApp:
                         AI.Image.fromBase64(redPixelJpeg)
                     )
                     first <- ai.gen[FirstTurn]
-                    _ <- ai.userMessage(
+                    _     <- ai.userMessage(
                         "Using only the conversation so far, return the same marker and the remembered image description. " +
                             "Set historyUsed to true only if the prior assistant result was used."
                     )

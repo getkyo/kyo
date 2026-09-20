@@ -105,9 +105,9 @@ final private[kyo] class Http1ResponseParser(
                 // Extract remaining bytes after headers — these are body bytes
                 // (for both Content-Length and chunked responses)
                 val remaining = pos - (headerEnd + 4)
-                val bodySpan =
+                val bodySpan  =
                     if remaining > 0 then
-                        val cl = response.contentLength
+                        val cl      = response.contentLength
                         val bodyLen =
                             if cl > 0 then math.min(remaining, cl)
                             else remaining // chunked or unknown — take all remaining
@@ -196,10 +196,10 @@ final private[kyo] class Http1ResponseParser(
         @tailrec def scanHeaders(i: Int, contentLengthVal: Int, isChunked: Boolean, isKeepAlive: Boolean): (Int, Boolean, Boolean) =
             if i >= hdrOffsetCount then (contentLengthVal, isChunked, isKeepAlive)
             else
-                val nameOff = hdrOffsets(i)
-                val nameLen = hdrOffsets(i + 1)
-                val valOff  = hdrOffsets(i + 2)
-                val valLen  = hdrOffsets(i + 3)
+                val nameOff                       = hdrOffsets(i)
+                val nameLen                       = hdrOffsets(i + 1)
+                val valOff                        = hdrOffsets(i + 2)
+                val valLen                        = hdrOffsets(i + 3)
                 val (nextCl, nextChunked, nextKa) =
                     if HeaderTokens.nameEquals(rawBytes.array, nameOff, nameLen, "Content-Length") then
                         // A second Content-Length is refused rather than allowed to overwrite the first. RFC 9112 section 6.3

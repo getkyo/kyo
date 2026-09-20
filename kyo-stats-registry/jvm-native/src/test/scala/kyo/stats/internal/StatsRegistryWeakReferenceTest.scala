@@ -53,7 +53,7 @@ class StatsRegistryWeakReferenceTest extends AnyFreeSpec {
 
     "inherited thread-local values are copied when a child thread is constructed" in {
         val copies = new AtomicInteger
-        val local = new InheritableThreadLocal[AtomicInteger] {
+        val local  = new InheritableThreadLocal[AtomicInteger] {
             override def childValue(parent: AtomicInteger): AtomicInteger = {
                 val _ = copies.incrementAndGet()
                 new AtomicInteger(parent.get())

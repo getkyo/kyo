@@ -104,7 +104,7 @@ class PosixTransportSurfaceTest extends Test:
                     // The accepted (server-side) connection and its fd, captured from inside the handler.
                     serverConnRef <- AtomicRef.init[Maybe[Connection]](Absent)
                     accepted      <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
+                    listener      <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
                         // Echo handler: capture the accepted connection, signal readiness, then echo each chunk back.
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -155,7 +155,7 @@ class PosixTransportSurfaceTest extends Test:
                 for
                     serverConnRef <- AtomicRef.init[Maybe[Connection]](Absent)
                     accepted      <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
+                    listener      <- transport.listen("127.0.0.1", 0, 16) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -321,7 +321,7 @@ class PosixTransportSurfaceTest extends Test:
                 for
                     serverConnRef <- AtomicRef.init[Maybe[Connection]](Absent)
                     accepted      <- Channel.init[Unit](1)
-                    listener <- transport.listenUnix(path, 16) { serverConn =>
+                    listener      <- transport.listenUnix(path, 16) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {

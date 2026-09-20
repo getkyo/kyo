@@ -104,7 +104,7 @@ private[kyo] object LspContentSchemas:
             ): Result[DecodeException, LspHandler.TextDocumentContentChangeEvent] =
                 sv match
                     case Structure.Value.Record(fields) =>
-                        val m = fields.iterator.toMap
+                        val m     = fields.iterator.toMap
                         val textR = m.get("text") match
                             case Some(Structure.Value.Str(s)) => Result.Success(s)
                             case _                            => Result.Success("")
@@ -137,7 +137,7 @@ private[kyo] object LspContentSchemas:
                 catch case _: Exception => LspHandler.ProgressToken.StringToken(captured.string())
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.ProgressToken): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.ProgressToken): Maybe[Any]                          = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.ProgressToken, next: Any): LspHandler.ProgressToken =
                 next match
                     case t: LspHandler.ProgressToken => t
@@ -151,7 +151,7 @@ private[kyo] object LspContentSchemas:
                 sv match
                     case Structure.Value.Integer(n) => Result.Success(LspHandler.ProgressToken.IntToken(n.toInt))
                     case Structure.Value.Str(s)     => Result.Success(LspHandler.ProgressToken.StringToken(s))
-                    case _ =>
+                    case _                          =>
                         Result.Failure(TypeMismatchException(Seq.empty, "Integer|String", sv.toString))
 
     // MARK: -- MarkedString
@@ -162,7 +162,7 @@ private[kyo] object LspContentSchemas:
 
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.MarkedString, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.MarkedString.Plain(value) => w.string(value)
+                    case LspHandler.MarkedString.Plain(value)          => w.string(value)
                     case LspHandler.MarkedString.Code(language, value) =>
                         w.objectStart("MarkedString.Code", 2)
                         w.field("language", 1)
@@ -190,7 +190,7 @@ private[kyo] object LspContentSchemas:
                 end try
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.MarkedString): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.MarkedString): Maybe[Any]                         = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.MarkedString, next: Any): LspHandler.MarkedString =
                 next match
                     case m: LspHandler.MarkedString => m
@@ -202,7 +202,7 @@ private[kyo] object LspContentSchemas:
                 Frame
             ): Result[DecodeException, LspHandler.MarkedString] =
                 sv match
-                    case Structure.Value.Str(s) => Result.Success(LspHandler.MarkedString.Plain(s))
+                    case Structure.Value.Str(s)         => Result.Success(LspHandler.MarkedString.Plain(s))
                     case Structure.Value.Record(fields) =>
                         val m        = fields.iterator.toMap
                         val language = m.get("language").collect { case Structure.Value.Str(s) => s }.getOrElse("")
@@ -242,7 +242,7 @@ private[kyo] object LspContentSchemas:
                 end try
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.HoverContents): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.HoverContents): Maybe[Any]                          = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.HoverContents, next: Any): LspHandler.HoverContents =
                 next match
                     case h: LspHandler.HoverContents => h
@@ -424,7 +424,7 @@ private[kyo] object LspContentSchemas:
                         if elems.isEmpty then Result.Success(LspHandler.DocumentSymbolResult.Symbols(Chunk.empty))
                         else
                             // Peek first element to determine type
-                            val first = elems.head
+                            val first        = elems.head
                             val isSymbolInfo = first match
                                 case Structure.Value.Record(fields) =>
                                     val m = fields.iterator.toMap
@@ -577,7 +577,7 @@ private[kyo] object LspContentSchemas:
 
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.ParameterLabel, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.ParameterLabel.StringLabel(value) => w.string(value)
+                    case LspHandler.ParameterLabel.StringLabel(value)     => w.string(value)
                     case LspHandler.ParameterLabel.RangeLabel(start, end) =>
                         w.arrayStart(2)
                         w.int(start)
@@ -599,7 +599,7 @@ private[kyo] object LspContentSchemas:
                 end try
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.ParameterLabel): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.ParameterLabel): Maybe[Any]                           = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.ParameterLabel, next: Any): LspHandler.ParameterLabel =
                 next match
                     case l: LspHandler.ParameterLabel => l
@@ -611,7 +611,7 @@ private[kyo] object LspContentSchemas:
                 Frame
             ): Result[DecodeException, LspHandler.ParameterLabel] =
                 sv match
-                    case Structure.Value.Str(s) => Result.Success(LspHandler.ParameterLabel.StringLabel(s))
+                    case Structure.Value.Str(s)                             => Result.Success(LspHandler.ParameterLabel.StringLabel(s))
                     case Structure.Value.Sequence(elems) if elems.size == 2 =>
                         val startR = elems(0) match
                             case Structure.Value.Integer(n) => Result.Success(n.toInt)
@@ -677,7 +677,7 @@ private[kyo] object LspContentSchemas:
                         if count < 0 then
                             while reader.hasNextElement() do
                                 val cap = reader.captureValue()
-                                val v =
+                                val v   =
                                     try cap.string()
                                     catch case _: Exception => ""
                                 buf += v
@@ -685,7 +685,7 @@ private[kyo] object LspContentSchemas:
                             var j = 0;
                             while j < count do
                                 val cap = reader.captureValue()
-                                val v =
+                                val v   =
                                     try cap.string()
                                     catch case _: Exception => ""
                                 buf += v; j += 1
@@ -983,7 +983,7 @@ private[kyo] object LspContentSchemas:
                 reader.objectEnd()
                 defaultBehavior match
                     case Present(b) => LspHandler.PrepareRenameResult.DefaultBehavior(b)
-                    case Absent =>
+                    case Absent     =>
                         val range = LspHandler.Range(
                             LspHandler.Position(startLine.getOrElse(0), startChar.getOrElse(0)),
                             LspHandler.Position(endLine.getOrElse(0), endChar.getOrElse(0))
@@ -1011,17 +1011,17 @@ private[kyo] object LspContentSchemas:
                         if m.contains("defaultBehavior") then
                             m.get("defaultBehavior") match
                                 case Some(Structure.Value.Bool(b)) => Result.Success(LspHandler.PrepareRenameResult.DefaultBehavior(b))
-                                case other => Result.Failure(TypeMismatchException(
+                                case other                         => Result.Failure(TypeMismatchException(
                                         Seq("defaultBehavior"),
                                         "Boolean",
                                         other.fold("absent")(_.toString)
                                     ))
                         else if m.contains("placeholder") then
                             for
-                                range <- summon[Schema[LspHandler.Range]].fromStructureValue(sv)
+                                range       <- summon[Schema[LspHandler.Range]].fromStructureValue(sv)
                                 placeholder <- m.get("placeholder") match
                                     case Some(Structure.Value.Str(s)) => Result.Success(s)
-                                    case other => Result.Failure(TypeMismatchException(
+                                    case other                        => Result.Failure(TypeMismatchException(
                                             Seq("placeholder"),
                                             "String",
                                             other.fold("absent")(_.toString)
@@ -1180,7 +1180,7 @@ private[kyo] object LspContentSchemas:
         new Schema[LspHandler.DefinitionResult](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.DefinitionResult, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.DefinitionResult.One(l) => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
+                    case LspHandler.DefinitionResult.One(l)   => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
                     case LspHandler.DefinitionResult.Many(ls) =>
                         w.arrayStart(ls.size); ls.foreach { l => summon[Schema[LspHandler.Location]].serializeWrite(l, w) }; w.arrayEnd()
                     case LspHandler.DefinitionResult.Links(lls) =>
@@ -1216,7 +1216,7 @@ private[kyo] object LspContentSchemas:
         new Schema[LspHandler.DeclarationResult](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.DeclarationResult, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.DeclarationResult.One(l) => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
+                    case LspHandler.DeclarationResult.One(l)   => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
                     case LspHandler.DeclarationResult.Many(ls) =>
                         w.arrayStart(ls.size); ls.foreach { l => summon[Schema[LspHandler.Location]].serializeWrite(l, w) }; w.arrayEnd()
                     case LspHandler.DeclarationResult.Links(lls) =>
@@ -1252,7 +1252,7 @@ private[kyo] object LspContentSchemas:
         new Schema[LspHandler.TypeDefinitionResult](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.TypeDefinitionResult, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.TypeDefinitionResult.One(l) => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
+                    case LspHandler.TypeDefinitionResult.One(l)   => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
                     case LspHandler.TypeDefinitionResult.Many(ls) =>
                         w.arrayStart(ls.size); ls.foreach { l => summon[Schema[LspHandler.Location]].serializeWrite(l, w) }; w.arrayEnd()
                     case LspHandler.TypeDefinitionResult.Links(lls) =>
@@ -1288,7 +1288,7 @@ private[kyo] object LspContentSchemas:
         new Schema[LspHandler.ImplementationResult](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.ImplementationResult, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.ImplementationResult.One(l) => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
+                    case LspHandler.ImplementationResult.One(l)   => summon[Schema[LspHandler.Location]].serializeWrite(l, w)
                     case LspHandler.ImplementationResult.Many(ls) =>
                         w.arrayStart(ls.size); ls.foreach { l => summon[Schema[LspHandler.Location]].serializeWrite(l, w) }; w.arrayEnd()
                     case LspHandler.ImplementationResult.Links(lls) =>
@@ -1412,10 +1412,11 @@ private[kyo] object LspContentSchemas:
 
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.InlayHintLabelPart, w: Codec.Writer): Unit =
                 v match
-                    case LspHandler.InlayHintLabelPart.StringPart(value) => w.string(value)
+                    case LspHandler.InlayHintLabelPart.StringPart(value)                                 => w.string(value)
                     case LspHandler.InlayHintLabelPart.StructuredPart(value, tooltip, location, command) =>
-                        val count = 1 + (if tooltip.isDefined then 1 else 0) + (if location.isDefined then 1
-                                                                                else 0) + (if command.isDefined then 1 else 0)
+                        val count = 1 + (if tooltip.isDefined then 1 else 0) +
+                            (if location.isDefined then 1
+                             else 0) + (if command.isDefined then 1 else 0)
                         w.objectStart("InlayHintLabelPart.StructuredPart", count)
                         w.field("value", 1)
                         w.string(value)
@@ -1470,7 +1471,7 @@ private[kyo] object LspContentSchemas:
                 Frame
             ): Result[DecodeException, LspHandler.InlayHintLabelPart] =
                 sv match
-                    case Structure.Value.Str(s) => Result.Success(LspHandler.InlayHintLabelPart.StringPart(s))
+                    case Structure.Value.Str(s)         => Result.Success(LspHandler.InlayHintLabelPart.StringPart(s))
                     case Structure.Value.Record(fields) =>
                         val m        = fields.iterator.toMap
                         val value    = m.get("value").collect { case Structure.Value.Str(s) => s }.getOrElse("")
@@ -1495,7 +1496,7 @@ private[kyo] object LspContentSchemas:
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.InlayHintLabel, w: Codec.Writer): Unit =
                 v match
                     case LspHandler.InlayHintLabel.PlainString(value) => w.string(value)
-                    case LspHandler.InlayHintLabel.Parts(parts) =>
+                    case LspHandler.InlayHintLabel.Parts(parts)       =>
                         w.arrayStart(parts.size)
                         parts.foreach { p => inlayHintLabelPartSchema.serializeWrite(p, w) }
                         w.arrayEnd()
@@ -1513,7 +1514,7 @@ private[kyo] object LspContentSchemas:
                 end try
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.InlayHintLabel): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.InlayHintLabel): Maybe[Any]                           = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.InlayHintLabel, next: Any): LspHandler.InlayHintLabel =
                 next match
                     case l: LspHandler.InlayHintLabel => l
@@ -1525,7 +1526,7 @@ private[kyo] object LspContentSchemas:
                 Frame
             ): Result[DecodeException, LspHandler.InlayHintLabel] =
                 sv match
-                    case Structure.Value.Str(s) => Result.Success(LspHandler.InlayHintLabel.PlainString(s))
+                    case Structure.Value.Str(s)          => Result.Success(LspHandler.InlayHintLabel.PlainString(s))
                     case Structure.Value.Sequence(elems) =>
                         val results = elems.map(e => inlayHintLabelPartSchema.fromStructureValue(e))
                         val initAcc: Result[DecodeException, Chunk[LspHandler.InlayHintLabelPart]] = Result.Success(Chunk.empty)
@@ -1600,7 +1601,7 @@ private[kyo] object LspContentSchemas:
                 end match
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.InlineValue): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.InlineValue): Maybe[Any]                        = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.InlineValue, next: Any): LspHandler.InlineValue =
                 next match
                     case v: LspHandler.InlineValue => v
@@ -1613,7 +1614,7 @@ private[kyo] object LspContentSchemas:
             ): Result[DecodeException, LspHandler.InlineValue] =
                 sv match
                     case Structure.Value.Record(fields) =>
-                        val m = fields.iterator.toMap
+                        val m      = fields.iterator.toMap
                         val rangeR = m.get("range") match
                             case Some(rsv)  => summon[Schema[LspHandler.Range]].fromStructureValue(rsv)
                             case scala.None => Result.Success(LspHandler.Range(LspHandler.Position(0, 0), LspHandler.Position(0, 0)))
@@ -1697,7 +1698,7 @@ private[kyo] object LspContentSchemas:
                     case (Present(nt), _, _) => LspHandler.NotebookDocumentFilter.WithNotebookType(nt, scheme, pattern)
                     case (_, Present(s), _)  => LspHandler.NotebookDocumentFilter.WithScheme(notebookType, s, pattern)
                     case (_, _, Present(p))  => LspHandler.NotebookDocumentFilter.WithPattern(notebookType, scheme, p)
-                    case _ =>
+                    case _                   =>
                         throw TypeMismatchException(Seq.empty, "notebookType|scheme|pattern", "all absent")
                 end match
             end serializeRead
@@ -1718,7 +1719,7 @@ private[kyo] object LspContentSchemas:
             ): Result[DecodeException, LspHandler.NotebookDocumentFilter] =
                 sv match
                     case Structure.Value.Record(fields) =>
-                        val m = fields.iterator.toMap
+                        val m            = fields.iterator.toMap
                         val notebookType =
                             m.get("notebookType").collect { case Structure.Value.Str(s) => s }.map(Present(_)).getOrElse(Absent)
                         val scheme  = m.get("scheme").collect { case Structure.Value.Str(s) => s }.map(Present(_)).getOrElse(Absent)
@@ -1780,7 +1781,7 @@ private[kyo] object LspContentSchemas:
                 new LspHandler.Registration(id, method, rawOptions)
             end serializeRead
 
-            @publicInBinary private[kyo] def getter(value: LspHandler.Registration): Maybe[Any] = Maybe(value)
+            @publicInBinary private[kyo] def getter(value: LspHandler.Registration): Maybe[Any]                         = Maybe(value)
             @publicInBinary private[kyo] def setter(value: LspHandler.Registration, next: Any): LspHandler.Registration =
                 next match
                     case r: LspHandler.Registration => r
@@ -1793,9 +1794,9 @@ private[kyo] object LspContentSchemas:
             ): Result[DecodeException, LspHandler.Registration] =
                 sv match
                     case Structure.Value.Record(fields) =>
-                        val m      = fields.iterator.toMap
-                        val id     = m.get("id").collect { case Structure.Value.Str(s) => s }.getOrElse("")
-                        val method = m.get("method").collect { case Structure.Value.Str(s) => s }.getOrElse("")
+                        val m       = fields.iterator.toMap
+                        val id      = m.get("id").collect { case Structure.Value.Str(s) => s }.getOrElse("")
+                        val method  = m.get("method").collect { case Structure.Value.Str(s) => s }.getOrElse("")
                         val rawOpts =
                             m.get("registerOptions").collect { case Structure.Value.Str(s) => s }.map(Present(_)).getOrElse(Absent)
                         Result.Success(new LspHandler.Registration(id, method, rawOpts))

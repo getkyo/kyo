@@ -251,7 +251,7 @@ object SiteApp:
     )(using Frame): UI =
         if versions.size <= 1 then UI.fragment()
         else
-            val sorted = versions.toSeq.reverse
+            val sorted  = versions.toSeq.reverse
             val options = sorted.map { v =>
                 val prefix = if v.latest then "latest" else v.tag
                 UI.option.value(prefix).selected(prefix == currentPrefix)(v.label)
@@ -357,9 +357,9 @@ object SiteApp:
         else
             UI.div.cssClass("search-results")(
                 hits.toSeq.zipWithIndex.map { case (hit, i) =>
-                    val base          = UI.a.cssClass("search-result")
-                    val row           = if i == active then base.cssClass("search-result-active") else base
-                    val titleSpan: UI = UI.span.cssClass("search-result-title")(hit.title)
+                    val base             = UI.a.cssClass("search-result")
+                    val row              = if i == active then base.cssClass("search-result-active") else base
+                    val titleSpan: UI    = UI.span.cssClass("search-result-title")(hit.title)
                     val subSpan: Seq[UI] =
                         hit.sub.map(s => Seq[UI](UI.span.cssClass("search-result-sub")(s))).getOrElse(Seq.empty)
                     val children: Seq[UI] = titleSpan +: subSpan

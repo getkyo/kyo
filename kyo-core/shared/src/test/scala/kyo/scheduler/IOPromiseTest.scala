@@ -172,8 +172,8 @@ class IOPromiseTest extends kyo.test.Test[Any]:
 
         "the interrupt hook runs once, on the interrupt path only, and settles through settleInterrupt" in {
             class HookedPromise extends IOPromise[Nothing, Int]:
-                var fired      = 0
-                var doneAtHook = false
+                var fired                                                                                               = 0
+                var doneAtHook                                                                                          = false
                 override protected def interrupt(p: IOPromise.Pending[Nothing, Int], v: Result.Error[Nothing]): Boolean =
                     fired += 1
                     val settled = settleInterrupt(p, v)
@@ -266,8 +266,8 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "long chain of onComplete callbacks" in {
-            val p     = new IOPromise[Nothing, Int]()
-            var count = 0
+            val p                                 = new IOPromise[Nothing, Int]()
+            var count                             = 0
             def addCallback(remaining: Int): Unit =
                 if remaining > 0 then
                     p.onComplete(_ => count += 1)
@@ -1058,7 +1058,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
 
     /** A reusable promise that can be used as a Channel taker and reset between cycles. */
     class ReusableChannelPromise[A] extends IOPromise[Any, A < Abort[Closed]]:
-        def reset(): Boolean = becomeAvailable()
+        def reset(): Boolean                                 = becomeAvailable()
         def toUnsafe: Fiber.Promise.Unsafe[A, Abort[Closed]] =
             Fiber.Promise.Unsafe.fromIOPromise(this)
     end ReusableChannelPromise

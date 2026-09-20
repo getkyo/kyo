@@ -74,12 +74,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         fr: Frame
     ): Stream[V2, S] =
         Stream(
-            ArrowEffect.handleLoop(t1, emit)(
-                [C] =>
-                    input =>
-                        val c = input.map(f)
-                        if c.isEmpty then Loop.continue(())
-                        else Emit.valueWith(c)(Loop.continue(()))
+            ArrowEffect.handleLoop(t1, emit)([C] =>
+                input =>
+                    val c = input.map(f)
+                    if c.isEmpty then Loop.continue(())
+                    else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -107,18 +106,17 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S] =
         Stream(
-            ArrowEffect.handleLoop(tagV, emit)(
-                [C] =>
-                    input =>
-                        if input.isEmpty then Loop.continue(())
+            ArrowEffect.handleLoop(tagV, emit)([C] =>
+                input =>
+                    if input.isEmpty then Loop.continue(())
+                    else
+                        val s = f(input)
+                        if s.isEmpty then
+                            Loop.continue(())
                         else
-                            val s = f(input)
-                            if s.isEmpty then
-                                Loop.continue(())
-                            else
-                                Emit.valueWith(Chunk.from(s))(Loop.continue(()))
-                            end if
+                            Emit.valueWith(Chunk.from(s))(Loop.continue(()))
                         end if
+                    end if
             )
         )
 
@@ -136,13 +134,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(tagV, emit)(
-                [C] =>
-                    input =>
-                        if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
-                        else
-                            f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue(())))
+            ArrowEffect.handleLoop(tagV, emit)([C] =>
+                input =>
+                    if input.isEmpty then
+                        Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
+                    else
+                        f(input).map(c => Emit.valueWith(Chunk.from(c))(Loop.continue(())))
             )
         )
 
@@ -160,11 +157,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
         Stream(
-            ArrowEffect.handleLoop(tagV, emit)(
-                [C] =>
-                    input =>
-                        Kyo.foreachDiscard(input)(v => f(v).map(_.emit))
-                            .andThen(Loop.continue(()))
+            ArrowEffect.handleLoop(tagV, emit)([C] =>
+                input =>
+                    Kyo.foreachDiscard(input)(v => f(v).map(_.emit))
+                        .andThen(Loop.continue(()))
             )
         )
 
@@ -182,13 +178,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
         Stream(
-            ArrowEffect.handleLoop(tagV, emit)(
-                [C] =>
-                    input =>
-                        if input.isEmpty then
-                            Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
-                        else
-                            f(input).map(_.emit).andThen(Loop.continue(()))
+            ArrowEffect.handleLoop(tagV, emit)([C] =>
+                input =>
+                    if input.isEmpty then
+                        Emit.valueWith(Chunk.empty[V2])(Loop.continue(()))
+                    else
+                        f(input).map(_.emit).andThen(Loop.continue(()))
             )
         )
 
@@ -205,11 +200,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[VV, S & S1] =
         Stream:
-            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))(
-                [C] =>
-                    input =>
-                        Kyo.foreachDiscard(input)(f).andThen:
-                            Emit.valueWith(input)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))([C] =>
+                input =>
+                    Kyo.foreachDiscard(input)(f).andThen:
+                        Emit.valueWith(input)(Loop.continue(()))
             )
 
     /** Applies a side-effecting function to each chunk in the stream without altering them.
@@ -225,11 +219,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[VV, S & S1] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))(
-                [C] =>
-                    input =>
-                        f(input).andThen:
-                            Emit.valueWith(input)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit: Unit < (Emit[Chunk[VV]] & S & S1))([C] =>
+                input =>
+                    f(input).andThen:
+                        Emit.valueWith(input)(Loop.continue(()))
             )
         )
 
@@ -244,14 +237,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         if n <= 0 then Stream.empty
         else
             Stream(
-                ArrowEffect.handleLoopState(tag, n, emit)(
-                    [C] =>
-                        (state, input) =>
-                            val c   = input.take(state)
-                            val nst = state - c.size
-                            Emit.valueWith(c)(
-                                if nst <= 0 then Loop.done(())
-                                else Loop.continue(nst, ())
+                ArrowEffect.handleLoopState(tag, n, emit)([C] =>
+                    (state, input) =>
+                        val c   = input.take(state)
+                        val nst = state - c.size
+                        Emit.valueWith(c)(
+                            if nst <= 0 then Loop.done(())
+                            else Loop.continue(nst, ())
                         )
                 )
             )
@@ -269,15 +261,14 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         if n <= 0 then this
         else
             Stream(
-                ArrowEffect.handleLoopState(tag, n, emit)(
-                    [C] =>
-                        (state, input) =>
-                            if state == 0 then
-                                Emit.valueWith(input)(Loop.continue(0, ()))
-                            else
-                                val c = input.dropLeft(state)
-                                if c.isEmpty then Loop.continue(state - input.size, ())
-                                else Emit.valueWith(c)(Loop.continue(0, ()))
+                ArrowEffect.handleLoopState(tag, n, emit)([C] =>
+                    (state, input) =>
+                        if state == 0 then
+                            Emit.valueWith(input)(Loop.continue(0, ()))
+                        else
+                            val c = input.dropLeft(state)
+                            if c.isEmpty then Loop.continue(state - input.size, ())
+                            else Emit.valueWith(c)(Loop.continue(0, ()))
                 )
             )
 
@@ -293,14 +284,13 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)(
-                [C] =>
-                    (state, input) =>
-                        if !state then Loop.done(())
-                        else if input.isEmpty then Loop.continue(state, ())
-                        else
-                            val c = input.takeWhile(f)
-                            Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
+            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
+                (state, input) =>
+                    if !state then Loop.done(())
+                    else if input.isEmpty then Loop.continue(state, ())
+                    else
+                        val c = input.takeWhile(f)
+                        Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
             )
         )
     end takeWhilePure
@@ -314,13 +304,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def takeWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)(
-                [C] =>
-                    (state, input) =>
-                        if !state then Loop.done(())
-                        else
-                            Kyo.takeWhile(input)(f).map { c =>
-                                Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
+            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
+                (state, input) =>
+                    if !state then Loop.done(())
+                    else
+                        Kyo.takeWhile(input)(f).map { c =>
+                            Emit.valueWith(c)(Loop.continue(c.size == input.size, ()))
                         }
             )
         )
@@ -335,15 +324,14 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def dropWhilePure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)(
-                [C] =>
-                    (state, input) =>
-                        if state then
-                            val chunk = input.dropWhile(f)
-                            if chunk.isEmpty then Loop.continue(true, ())
-                            else Emit.valueWith(chunk)(Loop.continue(false, ()))
-                        else
-                            Emit.valueWith(input)(Loop.continue(false, ()))
+            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
+                (state, input) =>
+                    if state then
+                        val chunk = input.dropWhile(f)
+                        if chunk.isEmpty then Loop.continue(true, ())
+                        else Emit.valueWith(chunk)(Loop.continue(false, ()))
+                    else
+                        Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -356,16 +344,15 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def dropWhile[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
-            ArrowEffect.handleLoopState(tag, true, emit)(
-                [C] =>
-                    (state, input) =>
-                        if state then
-                            Kyo.dropWhile(input)(f).map { c =>
-                                if c.isEmpty then Loop.continue(true, ())
-                                else Emit.valueWith(c)(Loop.continue(false, ()))
-                            }
-                        else
-                            Emit.valueWith(input)(Loop.continue(false, ()))
+            ArrowEffect.handleLoopState(tag, true, emit)([C] =>
+                (state, input) =>
+                    if state then
+                        Kyo.dropWhile(input)(f).map { c =>
+                            if c.isEmpty then Loop.continue(true, ())
+                            else Emit.valueWith(c)(Loop.continue(false, ()))
+                        }
+                    else
+                        Emit.valueWith(input)(Loop.continue(false, ()))
             )
         )
 
@@ -378,24 +365,22 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       */
     def filter[VV >: V, S2](f: VV => Boolean < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        Kyo.filter(input)(f).map { c =>
-                            if c.isEmpty then Loop.continue(())
-                            else Emit.valueWith(c)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    Kyo.filter(input)(f).map { c =>
+                        if c.isEmpty then Loop.continue(())
+                        else Emit.valueWith(c)(Loop.continue(()))
                     }
             )
         )
 
     def filterPure[VV >: V](f: VV => Boolean)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        val c = input.filter(f)
-                        if c.isEmpty then Loop.continue(())
-                        else Emit.valueWith(c)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    val c = input.filter(f)
+                    if c.isEmpty then Loop.continue(())
+                    else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -426,11 +411,10 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        Kyo.collect(input)(f).map { c =>
-                            Emit.valueWith(c)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    Kyo.collect(input)(f).map { c =>
+                        Emit.valueWith(c)(Loop.continue(()))
                     }
             )
         )
@@ -441,12 +425,11 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        val c = input.map(f).collect({ case Present(v) => v })
-                        if c.isEmpty then Loop.continue(())
-                        else Emit.valueWith(c)(Loop.continue(()))
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    val c = input.map(f).collect({ case Present(v) => v })
+                    if c.isEmpty then Loop.continue(())
+                    else Emit.valueWith(c)(Loop.continue(()))
             )
         )
 
@@ -464,18 +447,17 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S & S2] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        Kyo.foreach(input)(f)
-                            .map(_.takeWhile(_.isDefined).collect({ case Present(v) => v }))
-                            .map { c =>
-                                if c.isEmpty && c.size != input.size then Loop.done(())
-                                else
-                                    Emit.valueWith(c) {
-                                        if c.size != input.size then Loop.done(())
-                                        else Loop.continue(())
-                                    }
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    Kyo.foreach(input)(f)
+                        .map(_.takeWhile(_.isDefined).collect({ case Present(v) => v }))
+                        .map { c =>
+                            if c.isEmpty && c.size != input.size then Loop.done(())
+                            else
+                                Emit.valueWith(c) {
+                                    if c.size != input.size then Loop.done(())
+                                    else Loop.continue(())
+                                }
                         }
             )
         )
@@ -486,16 +468,15 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
         frame: Frame
     ): Stream[V2, S] =
         Stream(
-            ArrowEffect.handleLoop(tag, emit)(
-                [C] =>
-                    input =>
-                        val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
-                        if c.isEmpty && c.size != input.size then Loop.done(())
-                        else
-                            Emit.valueWith(c):
-                                if c.size != input.size then Loop.done(())
-                                else Loop.continue(())
-                        end if
+            ArrowEffect.handleLoop(tag, emit)([C] =>
+                input =>
+                    val c = input.map(f).takeWhile(_.isDefined).collect({ case Present(v) => v })
+                    if c.isEmpty && c.size != input.size then Loop.done(())
+                    else
+                        Emit.valueWith(c):
+                            if c.size != input.size then Loop.done(())
+                            else Loop.continue(())
+                    end if
             )
         )
 
@@ -527,13 +508,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     @targetName("changesMaybe")
     def changes[VV >: V](first: Maybe[VV])(using tag: Tag[Emit[Chunk[VV]]], frame: Frame, ce: CanEqual[VV, VV]): Stream[VV, S] =
         Stream(
-            ArrowEffect.handleLoopState(tag, first, emit)(
-                [C] =>
-                    (state, input) =>
-                        val c        = input.changes(state)
-                        val newState = if c.isEmpty then state else Maybe(c.last)
-                        Emit.valueWith(c) {
-                            Loop.continue(newState, ())
+            ArrowEffect.handleLoopState(tag, first, emit)([C] =>
+                (state, input) =>
+                    val c        = input.changes(state)
+                    val newState = if c.isEmpty then state else Maybe(c.last)
+                    Emit.valueWith(c) {
+                        Loop.continue(newState, ())
                     }
             )
         )
@@ -555,25 +535,24 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
     def rechunk[VV >: V](chunkSize: Int)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Stream[VV, S] =
         Stream[VV, S]:
             val _chunkSize = chunkSize max 1
-            ArrowEffect.handleLoopState(tag, Chunk.empty[VV], emit.andThen(Emit.value(Chunk.empty[VV])))(
-                [C] =>
-                    (buffer, input) =>
-                        if input.isEmpty && buffer.nonEmpty then
-                            Emit.valueWith(buffer)(Loop.continue(Chunk.empty, ()))
+            ArrowEffect.handleLoopState(tag, Chunk.empty[VV], emit.andThen(Emit.value(Chunk.empty[VV])))([C] =>
+                (buffer, input) =>
+                    if input.isEmpty && buffer.nonEmpty then
+                        Emit.valueWith(buffer)(Loop.continue(Chunk.empty, ()))
+                    else
+                        val combined = buffer.concat(input)
+                        if combined.size < _chunkSize then
+                            Loop.continue(combined, ())
                         else
-                            val combined = buffer.concat(input)
-                            if combined.size < _chunkSize then
-                                Loop.continue(combined, ())
-                            else
-                                Loop(combined: Chunk[VV]) { current =>
-                                    if current.size < _chunkSize then
-                                        Loop.done(current)
-                                    else
-                                        Emit.valueWith(current.take(_chunkSize)) {
-                                            Loop.continue(current.dropLeft(_chunkSize))
-                                        }
-                                }.map(remainder => Loop.continue(remainder, ()))
-                            end if
+                            Loop(combined: Chunk[VV]) { current =>
+                                if current.size < _chunkSize then
+                                    Loop.done(current)
+                                else
+                                    Emit.valueWith(current.take(_chunkSize)) {
+                                        Loop.continue(current.dropLeft(_chunkSize))
+                                    }
+                            }.map(remainder => Loop.continue(remainder, ()))
+                        end if
             )
     end rechunk
 
@@ -583,9 +562,7 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   A unit effect that runs the stream without collecting results
       */
     def discard[VV >: V](using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < S =
-        ArrowEffect.handleLoop(tag, emit)(
-            [C] => _ => Loop.continue(())
-        )
+        ArrowEffect.handleLoop(tag, emit)([C] => _ => Loop.continue(()))
 
     /** Runs the stream and applies the given function to each emitted value.
       *
@@ -605,13 +582,12 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *   A unit effect that runs the stream and applies f to each chunk
       */
     def foreachChunk[VV >: V, S2](f: Chunk[VV] => Any < S2)(using tag: Tag[Emit[Chunk[VV]]], frame: Frame): Unit < (S & S2) =
-        ArrowEffect.handleLoop(tag, emit)(
-            [C] =>
-                input =>
-                    if !input.isEmpty then
-                        f(input).andThen(Loop.continue(()))
-                    else
-                        Loop.continue(())
+        ArrowEffect.handleLoop(tag, emit)([C] =>
+            input =>
+                if !input.isEmpty then
+                    f(input).andThen(Loop.continue(()))
+                else
+                    Loop.continue(())
         )
 
     /** Runs the stream and folds over its values using the given pure function and initial accumulator.

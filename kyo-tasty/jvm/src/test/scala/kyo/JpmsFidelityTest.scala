@@ -52,7 +52,7 @@ class JpmsFidelityTest extends kyo.test.Test[Any]:
             Tasty.Classpath.initWithPlatformModules(TestClasspaths.standard).map { classpath =>
                 classpath.findClassLike("kyo.Tasty") match
                     case Present(_) => succeed
-                    case Absent =>
+                    case Absent     =>
                         assert(
                             false,
                             "classpath.findClassLike(\"kyo.Tasty\") returned Absent after initWithPlatformModules with standard user roots; " +
@@ -65,7 +65,7 @@ class JpmsFidelityTest extends kyo.test.Test[Any]:
     "initWithPlatformModules on non-JVM platform fails with TastyError.UnsupportedPlatform" in {
         // Verify TastyError.UnsupportedPlatform exists and can be constructed with a JVM-only message.
         val err: TastyError = TastyError.UnsupportedPlatform("initWithPlatformModules is JVM-only")
-        val feature = err match
+        val feature         = err match
             case TastyError.UnsupportedPlatform(f) => f
             case _                                 => ""
         assert(feature.contains("JVM-only"), s"UnsupportedPlatform feature message does not mention JVM-only: $feature")

@@ -49,7 +49,7 @@ class SqlSchemaWriterTest extends Test:
 
     "extension rejects a payload another dialect owns with the type and both dialects named" in {
         val mock = SqlSchemaWriterMock.mysqlMock
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex   = intercept[SqlUnsupportedTypeOnBackendException] {
             mock.extension(SqlCodec.Writer.Payload(SqlSchemaWriterMock.postgres, "hstore", SqlCodec.Format.Binary, Span.empty))
         }
         assert(ex.dialect == SqlSchemaWriterMock.postgres)

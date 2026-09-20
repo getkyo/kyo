@@ -93,7 +93,7 @@ class VarTest extends kyo.test.Test[Any]:
     }
 
     "side effect" in {
-        var calls = 0
+        var calls  = 0
         val result =
             Var.run(1) {
                 for
@@ -135,11 +135,11 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
-                        v1 <- Var.isolate.merge[Int](_ + _).run {
+                        v1    <- Var.isolate.merge[Int](_ + _).run {
                             Var.update[Int](_ + 1).andThen(Var.get[Int])
                         }
                         middle <- Var.get[Int]
-                        v2 <- Var.isolate.merge[Int](_ + _).run {
+                        v2     <- Var.isolate.merge[Int](_ + _).run {
                             Var.update[Int](_ + 2).andThen(Var.get[Int])
                         }
                         end <- Var.get[Int]
@@ -174,7 +174,7 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(42) {
                     for
                         before <- Var.get[Int]
-                        _ <- Var.isolate.update[Int].run {
+                        _      <- Var.isolate.update[Int].run {
                             Var.set(10)
                         }
                         after <- Var.get[Int]
@@ -187,7 +187,7 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
-                        _ <- Var.isolate.update[Int].run {
+                        _     <- Var.isolate.update[Int].run {
                             Var.update[Int](_ + 1).andThen {
                                 Var.isolate.update[Int].run {
                                     Var.update[Int](_ * 2)
@@ -205,7 +205,7 @@ class VarTest extends kyo.test.Test[Any]:
                     Env.run(2) {
                         for
                             start <- Var.get[Int]
-                            _ <- Var.isolate.update[Int].run {
+                            _     <- Var.isolate.update[Int].run {
                                 Env.use[Int] { multiplier =>
                                     Var.update[Int](_ * multiplier)
                                 }
@@ -223,7 +223,7 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(42) {
                     for
                         before <- Var.get[Int]
-                        _ <- Var.isolate.discard[Int].run {
+                        _      <- Var.isolate.discard[Int].run {
                             Var.set(10)
                         }
                         after <- Var.get[Int]
@@ -236,7 +236,7 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
-                        _ <- Var.isolate.discard[Int].run {
+                        _     <- Var.isolate.discard[Int].run {
                             Var.update[Int](_ + 1).andThen {
                                 Var.isolate.discard[Int].run {
                                     Var.update[Int](_ * 2)
@@ -251,10 +251,10 @@ class VarTest extends kyo.test.Test[Any]:
 
             "effects execute but state changes discarded" in {
                 var sideEffect = 0
-                val result = Var.runTuple(5) {
+                val result     = Var.runTuple(5) {
                     for
                         start <- Var.get[Int]
-                        _ <- Var.isolate.discard[Int].run {
+                        _     <- Var.isolate.discard[Int].run {
                             Var.update[Int] { x =>
                                 sideEffect += 1
                                 x * 2
@@ -278,7 +278,7 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
-                        _ <- combined.run {
+                        _     <- combined.run {
                             Var.update[Int](_ + 1)
                         }
                         end <- Var.get[Int]
@@ -294,11 +294,11 @@ class VarTest extends kyo.test.Test[Any]:
                 val result = Var.runTuple(1) {
                     for
                         start <- Var.get[Int]
-                        _ <- i1.run {
+                        _     <- i1.run {
                             Var.set(10)
                         }
                         middle <- Var.get[Int]
-                        _ <- i2.run {
+                        _      <- i2.run {
                             Var.set(20)
                         }
                         end <- Var.get[Int]

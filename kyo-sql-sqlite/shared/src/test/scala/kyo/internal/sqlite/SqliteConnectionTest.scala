@@ -44,7 +44,7 @@ class SqliteConnectionTest extends Test:
             SqlClient.init(url, SqlConfig(maxConnections = 1)).map { client =>
                 DB.run(client) {
                     for
-                        _ <- client.executeRaw("CREATE TABLE t (id INT)")
+                        _       <- client.executeRaw("CREATE TABLE t (id INT)")
                         outcome <- Abort.run[SqlException] {
                             client.transaction(Absent, readOnly = true)(client.executeRaw("INSERT INTO t VALUES (1)"))
                         }

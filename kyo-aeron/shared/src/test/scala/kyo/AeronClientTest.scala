@@ -18,7 +18,7 @@ class AeronClientTest extends Test:
             AeronPlatform.external(aeronDir.unsafe.show).map { realRuntime =>
                 // AeronRuntime is private[kyo], accessible from package kyo tests.
                 val countingRuntime: AeronRuntime = new AeronRuntime:
-                    def transport: AeronTransport = realRuntime.transport
+                    def transport: AeronTransport        = realRuntime.transport
                     def close()(using AllowUnsafe): Unit =
                         closeCount.unsafe.incrementAndGet()
                         realRuntime.close()
@@ -77,7 +77,7 @@ class AeronClientTest extends Test:
                         Topic.run(client) {
                             for
                                 started <- Latch.init(1)
-                                fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                                fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                                     started.release.andThen(Topic.stream[Long]("aeron:ipc").take(2).run)
                                 )
                                 _        <- started.await
@@ -99,7 +99,7 @@ class AeronClientTest extends Test:
                 withExternalDriver(dir) {
                     AeronClient.connect(dir).map { client =>
                         for
-                            ready <- Latch.init(1)
+                            ready         <- Latch.init(1)
                             consumerFiber <- Fiber.initUnscoped {
                                 Topic.run(client) {
                                     ready.release.andThen(Topic.stream[Long]("aeron:ipc").take(2).run)
@@ -125,7 +125,7 @@ class AeronClientTest extends Test:
                             Topic.run(client) {
                                 for
                                     started <- Latch.init(1)
-                                    fiber <- Fiber.initUnscoped(using Topic.isolate)(
+                                    fiber   <- Fiber.initUnscoped(using Topic.isolate)(
                                         started.release.andThen(Topic.stream[Int]("aeron:ipc").take(1).run)
                                     )
                                     _ <- started.await

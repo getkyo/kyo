@@ -263,11 +263,10 @@ object TRef:
             inline def isWriteLocked: Boolean = (self & LockMask) == WriteLock
 
             // Display
-            inline def render: String =
-                (self & LockMask) match
-                    case 0                   => "free"
-                    case n if n == WriteLock => "writer"
-                    case n                   => s"$n readers"
+            inline def render: String = (self & LockMask) match
+                case 0                   => "free"
+                case n if n == WriteLock => "writer"
+                case n                   => s"$n readers"
         end extension
     end State
 end TRef

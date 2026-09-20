@@ -22,13 +22,13 @@ class ArrowTest extends AnyFreeSpec:
 
     def inc(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
-            def frame = _frame
+            def frame                                              = _frame
             def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) =
                 v.map(i => next(i + 1))
 
     def double(using _frame: Frame): Arrow.Transform[Int, Int, Any] =
         new Arrow.Transform[Int, Int, Any]:
-            def frame = _frame
+            def frame                                              = _frame
             def apply[C, S2](v: Int < S2, next: Arrow[Int, C, S2]) =
                 v.map(i => next(i * 2))
 
@@ -77,7 +77,7 @@ class ArrowTest extends AnyFreeSpec:
 
         "runs its body once per application" in {
             var runs = 0
-            val f = Arrow[Int] { i =>
+            val f    = Arrow[Int] { i =>
                 runs += 1
                 i + 1
             }

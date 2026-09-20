@@ -91,7 +91,7 @@ private[kyo] object ChartLayout:
                 // Result.Ok and getOrThrow never executes the throw branch.
                 Present(Sync.Unsafe.evalOrThrow(signal.current))
         rowsMaybe match
-            case Absent => configuredLeft
+            case Absent        => configuredLeft
             case Present(rows) =>
                 val cfg = spec.yAxisCfg
                 // Resolve the left y-domain exactly as resolveAllScales does (the pixel range is provisional:
@@ -99,8 +99,8 @@ private[kyo] object ChartLayout:
                 val yExt         = ChartScales.yLeftExtent(rows, spec.marks).getOrElse(Extent.Continuous(0.0, 1.0))
                 val yNice        = spec.yScaleOverride.map(_.nice).getOrElse(true)
                 val kindOverride = spec.yScaleOverride.flatMap(_.kind)
-                val yKind = kindOverride match
-                    case Absent => Scale.Kind.Linear
+                val yKind        = kindOverride match
+                    case Absent        => Scale.Kind.Linear
                     case Present(kind) => kind match
                             case ScaleKind.Band         => Scale.Kind.Band
                             case ScaleKind.Log          => Scale.Kind.Log
@@ -109,19 +109,19 @@ private[kyo] object ChartLayout:
                             case ScaleKind.Point        => Scale.Kind.Point
                             case ScaleKind.Symlog       => Scale.Kind.Symlog
                 val extFinal: Extent = kindOverride match
-                    case Absent => yExt
+                    case Absent        => yExt
                     case Present(kind) => kind match
                             case ScaleKind.Linear(domLo, domHi) => Extent.Continuous(domLo, domHi)
-                            case ScaleKind.Log =>
+                            case ScaleKind.Log                  =>
                                 ChartScales.yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
                             case ScaleKind.Band | ScaleKind.Time | ScaleKind.Point | ScaleKind.Symlog => yExt
                 val useNice = kindOverride match
-                    case Absent => yNice
+                    case Absent        => yNice
                     case Present(kind) => kind match
                             case ScaleKind.Linear(_, _)                                               => false
                             case ScaleKind.Log                                                        => false
                             case ScaleKind.Band | ScaleKind.Time | ScaleKind.Point | ScaleKind.Symlog => yNice
-                val scale = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
+                val scale  = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
                 val labels = scale.ticks(cfg.tickCount).map: t =>
                     cfg.tickFormat match
                         case Present(f) => f(t.value)
@@ -147,7 +147,7 @@ private[kyo] object ChartLayout:
         // The right-axis layout still needs the extra fixed reserve for dual-axis charts; otherwise use the
         // configured right margin.
         val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else m.right
-        val hasLegend = !spec.legendCfg.isHidden && spec.marks.exists:
+        val hasLegend   = !spec.legendCfg.isHidden && spec.marks.exists:
             case m: Mark.Bar[?, ?, ?]      => m.color.isDefined || m.stack.group.isDefined
             case m: Mark.Line[?, ?, ?]     => m.color.isDefined
             case m: Mark.Area[?, ?, ?]     => m.color.isDefined || m.stack.group.isDefined

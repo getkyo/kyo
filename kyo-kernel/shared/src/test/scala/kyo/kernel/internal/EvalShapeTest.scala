@@ -185,9 +185,7 @@ class EvalShapeTest extends Test:
             "Mask tunnelling past an inner handler",
             v => ArrowEffect.handleCont(Tag[Ask], Mask.run[Ask](innerAbove(Mask[Ask](v))))([C] => (_, k) => k(7)),
             v =>
-                ArrowEffect.handleCont(Tag[Ask], Mask.run[Ask](innerAbove(Mask[Ask](v))))(
-                    [C] => (_, k) => say("s").map(_ => k(7))
-                ),
+                ArrowEffect.handleCont(Tag[Ask], Mask.run[Ask](innerAbove(Mask[Ask](v))))([C] => (_, k) => say("s").map(_ => k(7))),
             law(List(7)),
             law(List(1000)),
             runs(1)

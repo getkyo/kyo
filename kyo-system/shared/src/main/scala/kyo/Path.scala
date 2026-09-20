@@ -376,8 +376,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letErased(fileSystem) {
-            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)(
-                [C] => (op, cont) => cont(dispatch(fileSystem, op))
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)([C] =>
+                (op, cont) => cont(dispatch(fileSystem, op))
             )
         }
 
@@ -391,8 +391,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letReadErased(fileSystem) {
-            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)(
-                [C] => (op, cont) => cont(dispatchRead(fileSystem, op))
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)([C] =>
+                (op, cont) => cont(dispatchRead(fileSystem, op))
             )
         }
 
@@ -403,12 +403,11 @@ object Path extends PathPlatformSpecific:
         ArrowEffect.handleCont[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
             Tag[PathWatch],
             program
-        )(
-            [C] =>
-                (op, cont) =>
-                    op match
-                        case WatchOp.Open(path, options) => cont(fileSystem.openWatcher(path, options))
-                        case WatchOp.Raise(error)        => Abort.error(error)
+        )([C] =>
+            (op, cont) =>
+                op match
+                    case WatchOp.Open(path, options) => cont(fileSystem.openWatcher(path, options))
+                    case WatchOp.Raise(error)        => Abort.error(error)
         )
 
     /** Runs `program`, discharging [[PathWatch]] against the Local-selected watch backend. */
@@ -418,13 +417,12 @@ object Path extends PathPlatformSpecific:
         ArrowEffect.handleCont[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
             Tag[PathWatch],
             program
-        )(
-            [C] =>
-                (op, cont) =>
-                    op match
-                        case WatchOp.Open(path, options) =>
-                            cont(FileSystem.useWatchErased(_.openWatcher(path, options)))
-                        case WatchOp.Raise(error) => Abort.error(error)
+        )([C] =>
+            (op, cont) =>
+                op match
+                    case WatchOp.Open(path, options) =>
+                        cont(FileSystem.useWatchErased(_.openWatcher(path, options)))
+                    case WatchOp.Raise(error) => Abort.error(error)
         )
 
     /** Stateless isolation for read operations. Each child captures the Local-selected backend and
@@ -443,7 +441,7 @@ object Path extends PathPlatformSpecific:
         def restore[A, S](value: Result[FileSystemException, A] < S)(using Frame): A < (PathRead & S) =
             value.map {
                 case Result.Success(result) => result
-                case Result.Failure(error) =>
+                case Result.Failure(error)  =>
                     ArrowEffect.suspend(Tag[PathRead], Op.Raise(Result.Failure(error)))
                 case panic: Result.Panic =>
                     ArrowEffect.suspend(Tag[PathRead], Op.Raise(panic))
@@ -464,7 +462,7 @@ object Path extends PathPlatformSpecific:
         def restore[A, S](value: Result[FileSystemException, A] < S)(using Frame): A < (PathWrite & S) =
             value.map {
                 case Result.Success(result) => result
-                case Result.Failure(error) =>
+                case Result.Failure(error)  =>
                     ArrowEffect.suspend(Tag[PathWrite], Op.Raise(Result.Failure(error)))
                 case panic: Result.Panic =>
                     ArrowEffect.suspend(Tag[PathWrite], Op.Raise(panic))
@@ -485,7 +483,7 @@ object Path extends PathPlatformSpecific:
         def restore[A, S](value: Result[FileWatchException, A] < S)(using Frame): A < (PathWatch & S) =
             value.map {
                 case Result.Success(result) => result
-                case Result.Failure(error) =>
+                case Result.Failure(error)  =>
                     ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(Result.Failure(error)))
                 case panic: Result.Panic =>
                     ArrowEffect.suspend(Tag[PathWatch], WatchOp.Raise(panic))
@@ -801,7 +799,7 @@ object Path extends PathPlatformSpecific:
           */
         def extName: Maybe[String] =
             self.parts.lastMaybe match
-                case Absent => Absent
+                case Absent        => Absent
                 case Present(name) =>
                     val dot = name.lastIndexOf('.')
                     if dot <= 0 then Absent else Present(name.substring(dot))
@@ -952,7 +950,7 @@ object Path extends PathPlatformSpecific:
                     val rawBuf      = new Array[Byte](capacity)
                     val decoder     = charset.newDecoder()
                     val maxTrailing = math.ceil(charset.newEncoder().maxBytesPerChar()).toInt
-                    val inBuf =
+                    val inBuf       =
                         java.nio.ByteBuffer.allocate(capacity + maxTrailing) // extra space for incomplete trailing multi-byte sequence
                     val outBuf = java.nio.CharBuffer.allocate(math.ceil(capacity * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
@@ -1073,13 +1071,13 @@ object Path extends PathPlatformSpecific:
                             java.lang.System.arraycopy(buf, 0, combined, leftover.length, n)
                             combined
                     // Find how many trailing bytes form an incomplete UTF-8 sequence
-                    val incomplete = incompleteUtf8Tail(allBytes, allBytes.length)
-                    val decodeLen  = allBytes.length - incomplete
+                    val incomplete  = incompleteUtf8Tail(allBytes, allBytes.length)
+                    val decodeLen   = allBytes.length - incomplete
                     val newLeftover =
                         if incomplete > 0 then java.util.Arrays.copyOfRange(allBytes, decodeLen, allBytes.length)
                         else emptyBytes
-                    val text  = pending + new String(allBytes, 0, decodeLen, StandardCharsets.UTF_8)
-                    val parts = text.split("\r?\n", -1).toList
+                    val text                 = pending + new String(allBytes, 0, decodeLen, StandardCharsets.UTF_8)
+                    val parts                = text.split("\r?\n", -1).toList
                     val (toEmit, newPending) =
                         if text.endsWith("\n") then (parts.dropRight(1), "")
                         else (parts.dropRight(1), parts.last)
@@ -1220,7 +1218,7 @@ object Path extends PathPlatformSpecific:
                         // Unsafe: bridges vended walk-handle iteration into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.next() match
-                                case Absent => Loop.done
+                                case Absent        => Loop.done
                                 case Present(path) =>
                                     if matches(path) then Emit.valueWith(Chunk(path))(Loop.continue)
                                     else Loop.continue

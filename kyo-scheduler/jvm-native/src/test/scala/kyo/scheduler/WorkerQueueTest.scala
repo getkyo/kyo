@@ -537,7 +537,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             f(new TestExecutor(TestExecutors.cached))
 
         "add and poll" in withExecutor { executor =>
-            val queue = new WorkerQueue()
+            val queue   = new WorkerQueue()
             val futures = (1 to 1000).map { i =>
                 executor(queue.add(task(i)))
             } ++ (1 to 1000).map { _ =>
@@ -548,7 +548,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "offer" in withExecutor { executor =>
-            val queue = new WorkerQueue()
+            val queue   = new WorkerQueue()
             val futures = (1 to 1000).map { i =>
                 executor {
                     while (!queue.offer(task(i))) {}
@@ -559,7 +559,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "addAndPoll" in withExecutor { executor =>
-            val queue = new WorkerQueue()
+            val queue   = new WorkerQueue()
             val futures = (1 to 1000).map { i =>
                 executor(queue.addAndPoll(task(i)))
             }
@@ -585,7 +585,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
         "drain" in withExecutor { executor =>
             val queue = new WorkerQueue()
             (1 to 1000).foreach(i => queue.add(task(i)))
-            val sum = new AtomicInteger(0)
+            val sum     = new AtomicInteger(0)
             val futures = (1 to 4).map { _ =>
                 executor {
                     queue.drain { t =>
@@ -600,9 +600,9 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "add and steal" in withExecutor { executor =>
-            val queue1 = new WorkerQueue()
-            val queue2 = new WorkerQueue()
-            val stolen = new WorkerQueue()
+            val queue1  = new WorkerQueue()
+            val queue2  = new WorkerQueue()
+            val stolen  = new WorkerQueue()
             val futures = (1 to 1000).map { i =>
                 executor {
                     queue1.add(task(i))
@@ -612,7 +612,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
                 }
             }
             futures.foreach(_.get())
-            val sum = new AtomicInteger(0)
+            val sum                = new AtomicInteger(0)
             def add(t: Task): Unit = {
                 sum.addAndGet(t.runtime())
                 ()
@@ -629,7 +629,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             val polls         = new WorkerQueue()
             val rejected      = new WorkerQueue()
             val numOperations = 1000
-            val futures = (1 to numOperations).map { i =>
+            val futures       = (1 to numOperations).map { i =>
                 executor {
                     val operation = i % 4
                     operation match {

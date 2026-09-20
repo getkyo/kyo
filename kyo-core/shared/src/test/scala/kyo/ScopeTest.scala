@@ -10,7 +10,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     case class TestResource(id: Int, var closes: Int = 0) extends Closeable derives CanEqual:
         var acquires = 0
-        def apply() =
+        def apply()  =
             acquires += 1
             this
         def close() = closes += 1
@@ -168,7 +168,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "acquire aborts" in {
             for
                 released <- AtomicInt.init(0)
-                result <- Abort.run[String] {
+                result   <- Abort.run[String] {
                     Scope.run(Scope.acquireRelease(Abort.fail("acquisition failure"))(_ => released.incrementAndGet.unit))
                 }
                 count <- released.get
@@ -181,7 +181,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "release fails" in {
             var acquired = false
             var released = false
-            val io = Scope.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
+            val io       = Scope.acquireRelease(Sync.defer { acquired = true; "resource" }) { _ =>
                 Sync.defer {
                     released = true
                     throw TestException
@@ -205,7 +205,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         "fiber escapes the scope of Scope.run" in {
             var called = false
-            val io =
+            val io     =
                 for
                     l <- Latch.init(1)
                     f <- Fiber.initUnscoped(l.await.andThen(Scope.ensure { called = true }))
@@ -224,7 +224,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
                 gate     <- Latch.init(1)
-                fiber <- Scope.run {
+                fiber    <- Scope.run {
                     Fiber.initUnscoped(
                         gate.await.andThen(
                             Scope.acquireRelease(acquired.incrementAndGet)(_ => released.incrementAndGet.unit)
@@ -262,7 +262,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 entered  <- Latch.init(1)
                 finished <- Latch.init(1)
                 released <- AtomicInt.init(0)
-                fiber <- Scope.run {
+                fiber    <- Scope.run {
                     Fiber.initUnscoped {
                         start.await.andThen {
                             Scope.acquireRelease("token") { _ =>
@@ -299,7 +299,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 attempted <- AtomicInt.init(0)
                 accepted  <- AtomicInt.init(0)
                 ran       <- AtomicInt.init(0)
-                fibers <- Scope.run {
+                fibers    <- Scope.run {
                     val register =
                         attempted.incrementAndGet.andThen(Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit))).map {
                             case Result.Success(_) => accepted.incrementAndGet.andThen(true)
@@ -308,7 +308,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                     for
                         _       <- Loop.repeat(8192)(register)
                         started <- Latch.init(8)
-                        fibers <- Kyo.fill(8) {
+                        fibers  <- Kyo.fill(8) {
                             Fiber.initUnscoped(
                                 started.release.andThen(
                                     Loop.indexed { i =>
@@ -394,7 +394,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         "computation failure" in {
             var finalizerCalled = false
-            val io = Scope.ensure {
+            val io              = Scope.ensure {
                 Async.sleep(50.millis).andThen { finalizerCalled = true }
             }.map(_ => Abort.fail("Test failure"))
 
@@ -410,7 +410,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "finalizer failure" in {
             var mainActionExecuted = false
             var finalizerStarted   = false
-            val io = Scope.ensure {
+            val io                 = Scope.ensure {
                 finalizerStarted = true
                 Async.sleep(50.millis)
             }.map { _ =>
@@ -650,7 +650,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                     handoff  <- Promise.init[Fiber[Unit, Any], Any]
                     claimed  <- AtomicBoolean.init(false)
                     released <- AtomicBoolean.init(false)
-                    fiber <- Fiber.initUnscoped {
+                    fiber    <- Fiber.initUnscoped {
                         handoff.get.map { self =>
                             Scope.run {
                                 Scope.acquireRelease {
@@ -709,7 +709,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         "ensure on closed scope panics with Closed" in {
             var called = false
-            val io =
+            val io     =
                 for
                     l <- Latch.init(1)
                     f <- Fiber.initUnscoped(l.await.andThen(Scope.ensure { called = true }))
@@ -747,7 +747,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 interrupted <- AtomicBoolean.init(false)
                 promise     <- Promise.init[Int, Any]
-                _ <- Scope.run {
+                _           <- Scope.run {
                     for
                         _ <- promise.onInterrupt(_ => interrupted.set(true))
                         f <- Fiber.init(promise.get)
@@ -767,7 +767,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 ran     <- AtomicInt.init(0)
                 started <- Latch.init(1)
                 p       <- Promise.init[Int, Any]
-                fiber <- Fiber.initUnscoped(
+                fiber   <- Fiber.initUnscoped(
                     Sync.ensure(ran.incrementAndGet.unit)(started.release.andThen(p.get))
                 )
                 _ <- started.await
@@ -783,7 +783,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 counter  <- AtomicInt.init(0)
                 promises <- Kyo.fill(5)(Promise.init[Int, Any])
-                _ <- Scope.run {
+                _        <- Scope.run {
                     for
                         _      <- Kyo.foreach(promises)(p => p.onInterrupt(_ => counter.incrementAndGet.unit))
                         fibers <- Kyo.foreach(promises)(p => Fiber.init(p.get))
@@ -802,7 +802,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 for
                     counter  <- AtomicInt.init(0)
                     promises <- Kyo.fill(5)(Promise.init[Int, Any])
-                    _ <- Scope.run {
+                    _        <- Scope.run {
                         for
                             _ <- Kyo.foreach(promises)(p => p.onInterrupt(_ => counter.incrementAndGet.unit))
                             _ <- Kyo.foreach(promises)(p => Fiber.init(p.get))
@@ -985,7 +985,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a finalizer that aborts does not stop the ones registered before it" in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
-                _ <- Scope.run {
+                _   <- Scope.run {
                     Scope.ensure(ran.updateAndGet(_.append("first")).unit)
                         .andThen(Scope.ensure(Abort.fail(new RuntimeException("boom"))))
                         .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
@@ -999,7 +999,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a finalizer that throws does not stop the ones registered before it" in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
-                _ <- Scope.run {
+                _   <- Scope.run {
                     Scope.ensure(ran.updateAndGet(_.append("first")).unit)
                         .andThen(Scope.ensure(Sync.defer[Unit, Any](throw new RuntimeException("boom"))))
                         .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
@@ -1014,7 +1014,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "every finalizer runs when the close is parallel and one of them fails" in {
             for
                 ran <- AtomicInt.init(0)
-                _ <- Scope.run(3) {
+                _   <- Scope.run(3) {
                     Kyo.foreachDiscard(1 to 6) { i =>
                         if i == 4 then Scope.ensure(Abort.fail(new RuntimeException("boom")))
                         else Scope.ensure(ran.incrementAndGet.unit)
@@ -1032,7 +1032,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 entered  <- Promise.init[Unit, Any]
                 gate     <- Latch.init(1)
                 released <- AtomicInt.init(0)
-                closer <- Fiber.initUnscoped {
+                closer   <- Fiber.initUnscoped {
                     Scope.run {
                         Scope.ensure(
                             entered.complete(Result.succeed(()))
@@ -1057,7 +1057,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 outer <- AtomicInt.init(0)
                 inner <- AtomicInt.init(0)
-                _ <- Scope.run {
+                _     <- Scope.run {
                     Scope.ensure {
                         Scope.run {
                             Scope.acquireRelease(Sync.defer("nested"))(_ => inner.incrementAndGet.unit)
@@ -1077,7 +1077,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a finalizer that throws a fatal error does not stop the ones registered before it".onlyJvm in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
-                _ <- Abort.run[Any] {
+                _   <- Abort.run[Any] {
                     Scope.run {
                         Scope.ensure(ran.updateAndGet(_.append("first")).unit)
                             .andThen(Scope.ensure(Sync.defer[Unit, Any](throw new LinkageError("fatal"))))
@@ -1095,7 +1095,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a finalizer runs exactly once when the body aborts" in {
             for
                 ran <- AtomicInt.init(0)
-                _ <- Abort.run[String] {
+                _   <- Abort.run[String] {
                     Scope.run {
                         Scope.ensure(ran.incrementAndGet.unit).andThen(Abort.fail("boom"))
                     }
@@ -1117,7 +1117,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 registered <- AtomicInt.init(0)
                 released   <- AtomicInt.init(0)
-                _ <- Loop.indexed { i =>
+                _          <- Loop.indexed { i =>
                     if i >= rounds then Loop.done
                     else
                         Promise.init[Unit, Any].map { ready =>
@@ -1153,7 +1153,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
-                _ <- Loop.indexed { i =>
+                _        <- Loop.indexed { i =>
                     if i >= rounds then Loop.done
                     else
                         Promise.init[Fiber[Unit, Any], Any].map { handoff =>
@@ -1193,7 +1193,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
-                _ <- Loop.indexed { i =>
+                _        <- Loop.indexed { i =>
                     if i >= rounds then Loop.done
                     else
                         Promise.init[Fiber[Unit, Any], Any].map { handoff =>
@@ -1225,7 +1225,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 released <- AtomicInt.init(0)
                 handoff  <- Promise.init[Fiber[Unit, Any], Any]
-                fiber <- Fiber.initUnscoped {
+                fiber    <- Fiber.initUnscoped {
                     handoff.get.map { self =>
                         Scope.run {
                             Scope.acquireRelease {
@@ -1266,7 +1266,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 caller <- AtomicInt.init(0)
                 inner  <- AtomicInt.init(0)
-                seen <- Scope.run {
+                seen   <- Scope.run {
                     Scope.ensure(caller.incrementAndGet.unit).andThen {
                         Mask.run[Scope](generic(Mask[Scope](Scope.ensure(inner.incrementAndGet.unit).andThen(42)))).map { r =>
                             // read inside the outer scope: the callee's own finalizer has run, the caller's has not
@@ -1383,7 +1383,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 else
                     for
                         released <- AtomicBoolean.init(false)
-                        _ <- Abort.run {
+                        _        <- Abort.run {
                             Check.runAbort {
                                 Scope.run {
                                     Scope.ensure(Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(released.set(true)))
@@ -1404,7 +1404,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a scope short-circuited by an outer handler releases before the enclosing scope's own finalizers" in {
             for
                 order <- AtomicRef.init(Chunk.empty[String])
-                _ <- Scope.run {
+                _     <- Scope.run {
                     Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
                         Abort.run {
                             Check.runAbort {
@@ -1432,7 +1432,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 released <- AtomicInt.init(0)
                 started  <- Latch.init(1)
-                _ <- Scope.run {
+                _        <- Scope.run {
                     Fiber.init {
                         Scope.run {
                             Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)
@@ -1454,7 +1454,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 order <- AtomicRef.init(Chunk.empty[String])
                 ready <- Promise.init[Unit, Any]
-                _ <- Scope.run {
+                _     <- Scope.run {
                     Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
                         Fiber.init {
                             Scope.run {
@@ -1480,7 +1480,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                 released <- AtomicInt.init(0)
                 started  <- Latch.init(1)
                 gate     <- Latch.init(1)
-                service <- Scope.run {
+                service  <- Scope.run {
                     Fiber.initUnscoped {
                         Scope.run {
                             Scope.acquireRelease(Sync.defer("service"))(_ => released.incrementAndGet.unit)
@@ -1506,7 +1506,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a nested run releases before the enclosing scope's own finalizers when the enclosing run is aborted" in {
             for
                 order <- AtomicRef.init(Chunk.empty[String])
-                _ <- Abort.run[String] {
+                _     <- Abort.run[String] {
                     Scope.run {
                         Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
                             Scope.run {
@@ -1526,7 +1526,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         "a scoped fiber's nested run releases at its own exit while the enclosing scope is still open" in {
             for
                 released <- AtomicInt.init(0)
-                seen <- Scope.run {
+                seen     <- Scope.run {
                     Fiber.init {
                         Scope.run {
                             Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit).unit
@@ -1578,7 +1578,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 released <- AtomicRef.init(Chunk.empty[Int])
                 seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
-                res <- Abort.run[Closed] {
+                res      <- Abort.run[Closed] {
                     Choice.run {
                         Scope.run {
                             Choice.eval(1, 2).map { n =>
@@ -1635,7 +1635,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             // abandoned without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated
             // until a regression is a reliable failure.
             val rounds = 25
-            val round = Scope.run {
+            val round  = Scope.run {
                 for
                     chan     <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
                     taken    <- AtomicInt.init(0)

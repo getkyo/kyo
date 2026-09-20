@@ -113,7 +113,7 @@ object HttpHandler:
         else
             handler match
                 case _: WebSocketHttpHandler => handler
-                case h =>
+                case h                       =>
                     new HttpHandler[In, Out, E](h.route):
                         def apply(request: HttpRequest[In])(using Frame) =
                             filter(request, h.apply)

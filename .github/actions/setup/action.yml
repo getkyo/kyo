@@ -17,7 +17,7 @@ runs:
   steps:
     # Every target runs the pinned Coursier setup bundle under Node 24. JVM also needs Node for
     # the kyo-test-sbt-publish scripted suite's real Scala.js test binary.
-    - uses: actions/setup-node@v6.4.0
+    - uses: actions/setup-node@v7.0.0
       with:
         node-version: '24'
 
@@ -30,7 +30,7 @@ runs:
       shell: bash
       run: npm install --no-save --no-fund --no-audit jsdom@^30
 
-    - uses: actions/cache@v5
+    - uses: actions/cache@v6
       env:
         FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       with:
@@ -43,7 +43,7 @@ runs:
         key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
         restore-keys: deps-${{ inputs.os }}-
 
-    - uses: actions/cache@v5
+    - uses: actions/cache@v6
       with:
         path: |
           ~/.cache/kyo-browser
@@ -304,7 +304,7 @@ runs:
     # elsewhere: Amazon ships no Corretto for Windows on ARM.
     - name: Set up JDK (Windows arm64)
       if: ${{ inputs.os == 'windows-arm64' }}
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@v6
       with:
         distribution: microsoft
         java-version: '25'
@@ -418,3 +418,11 @@ runs:
       # hard error for the same reason BoringSSL's is: the alternative is a build that cannot find the
       # engine and reports it as something else entirely.
       run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+    # DoltLite stages a compiled library rather than source, so unlike SQLite above it is per os-arch,
+    # and upstream publishes no build for Windows on ARM. kyo-sql-doltlite declares itself absent there
+    # (kyoSqlDoltLiteOsArchTargets), so this skips that one leg rather than failing it.
+    - name: Prepare DoltLite
+      if: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && !startsWith(inputs.os, 'windows') }}
+      shell: bash
+      run: bash kyo-sql-doltlite/scripts/build-doltlite.sh

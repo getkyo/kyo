@@ -106,7 +106,7 @@ class SlackWebApiLiveTest extends kyo.test.Test[Any]:
             }
             HttpServer.init(0, "127.0.0.1")(route).map { server =>
                 val hookUrl = s"http://127.0.0.1:${server.port}/hook"
-                val msg = SlackMessage(
+                val msg     = SlackMessage(
                     SlackId.ChannelId("C1"),
                     "updated",
                     threadTs = Present(SlackTs("1.55")),

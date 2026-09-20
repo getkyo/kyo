@@ -419,11 +419,18 @@ object Kyo:
       * @return
       *   A tuple `(lefts, rights)` of the `Left` and `Right` results, each in order
       */
-    def partitionMap[CC[+X] <: Iterable[X] & IterableOps[
-        X,
-        CC,
-        CC[X]
-    ], A, A1, A2, S](source: CC[A])(f: A => Either[A1, A2] < S)(using Frame): (CC[A1], CC[A2]) < S =
+    def partitionMap[
+        CC[+X] <: Iterable[X] &
+            IterableOps[
+                X,
+                CC,
+                CC[X]
+            ],
+        A,
+        A1,
+        A2,
+        S
+    ](source: CC[A])(f: A => Either[A1, A2] < S)(using Frame): (CC[A1], CC[A2]) < S =
         Kyo.partitionMap(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end partitionMap
@@ -471,11 +478,18 @@ object Kyo:
       * @return
       *   A `Map` from key to the transformed elements that produced it, each group keeping the source's relative order
       */
-    def groupMap[CC[+X] <: Iterable[X] & IterableOps[
-        X,
-        CC,
-        CC[X]
-    ], A, K, B, S](source: CC[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, CC[B]] < S =
+    def groupMap[
+        CC[+X] <: Iterable[X] &
+            IterableOps[
+                X,
+                CC,
+                CC[X]
+            ],
+        A,
+        K,
+        B,
+        S
+    ](source: CC[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, CC[B]] < S =
         Kyo.groupMap(Chunk.from(source))(key)(f).map: resultChunk =>
             Map.from(resultChunk.view.mapValues(source.iterableFactory.from(_)))
     end groupMap
@@ -522,7 +536,7 @@ object Kyo:
         source match
             case Nil         => Nil
             case head :: Nil => f(head).map(_ :: Nil)
-            case list =>
+            case list        =>
                 Loop(list, Nil) { (curList, accList) =>
                     curList match
                         case head :: tail => f(head).map { u => Loop.continue(tail, u :: accList) }
@@ -547,7 +561,7 @@ object Kyo:
         source match
             case Nil         => Nil
             case head :: Nil => f(head).map(List.from(_))
-            case list =>
+            case list        =>
                 Loop(list, Nil) { (curList, accList) =>
                     curList match
                         case head :: tail => f(head).map { u => Loop.continue(tail, u :: accList) }
@@ -568,7 +582,7 @@ object Kyo:
         source match
             case Nil         => Nil
             case head :: Nil => f(0, head).map(_ :: Nil)
-            case list =>
+            case list        =>
                 Loop.indexed(list, Nil): (idx, curList, acc) =>
                     curList match
                         case head :: tail => f(idx, head).map { u => Loop.continue(tail, u :: acc) }
@@ -588,7 +602,7 @@ object Kyo:
         source match
             case Nil         => ()
             case head :: Nil => f(head).unit
-            case list =>
+            case list        =>
                 Loop(list): curList =>
                     curList match
                         case head :: tail => f(head).andThen(Loop.continue(tail))
@@ -607,7 +621,7 @@ object Kyo:
       */
     def filter[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
-            case Nil => Nil
+            case Nil         => Nil
             case head :: Nil =>
                 f(head).map:
                     case true  => head :: Nil
@@ -636,7 +650,7 @@ object Kyo:
         source match
             case Nil         => acc
             case head :: Nil => f(acc, head)
-            case list =>
+            case list        =>
                 Loop(list, acc): (curList, acc) =>
                     curList match
                         case head :: tail => f(acc, head).map(Loop.continue(tail, _))
@@ -657,7 +671,7 @@ object Kyo:
       */
     def collect[A, B, S](source: List[A])(f: A => Maybe[B] < S)(using Frame): List[B] < S =
         source match
-            case Nil => Nil
+            case Nil         => Nil
             case head :: Nil =>
                 f(head).map:
                     case Absent     => Nil
@@ -682,7 +696,7 @@ object Kyo:
         source match
             case Nil         => Nil
             case head :: Nil => head.map(_ :: Nil)
-            case list =>
+            case list        =>
                 Loop(list, Nil): (curList, accList) =>
                     curList match
                         case head :: tail => head.map(u => Loop.continue(tail, u :: accList))
@@ -701,7 +715,7 @@ object Kyo:
         source match
             case Nil         => ()
             case head :: Nil => head.unit
-            case list =>
+            case list        =>
                 Loop(list): curList =>
                     curList match
                         case head :: tail => head.andThen(Loop.continue(tail))
@@ -721,7 +735,7 @@ object Kyo:
         source match
             case Nil         => Absent
             case head :: Nil => f(head)
-            case list =>
+            case list        =>
                 Loop(list): curList =>
                     curList match
                         case head :: tail =>
@@ -742,7 +756,7 @@ object Kyo:
       */
     def takeWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
-            case Nil => Nil
+            case Nil  => Nil
             case list =>
                 Loop(list, Nil): (curList, acc) =>
                     curList match
@@ -764,7 +778,7 @@ object Kyo:
       */
     def span[A, S](source: List[A])(f: A => Boolean < S)(using Frame): (List[A], List[A]) < S =
         source match
-            case Nil => (Nil, Nil)
+            case Nil         => (Nil, Nil)
             case head :: Nil =>
                 f(head).map:
                     case true  => (head :: Nil, Nil)
@@ -790,7 +804,7 @@ object Kyo:
       */
     def dropWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
-            case Nil => Nil
+            case Nil  => Nil
             case list =>
                 Loop(list): curList =>
                     curList match
@@ -816,7 +830,7 @@ object Kyo:
         Frame
     ): (List[A], List[A]) < S =
         source match
-            case Nil => (Nil, Nil)
+            case Nil         => (Nil, Nil)
             case head :: Nil =>
                 f(head).map:
                     case true  => (head :: Nil, Nil)
@@ -846,7 +860,7 @@ object Kyo:
         Frame
     ): (List[A1], List[A2]) < S =
         source match
-            case Nil => (Nil, Nil)
+            case Nil         => (Nil, Nil)
             case head :: Nil =>
                 f(head).map:
                     case Left(a1)  => (a1 :: Nil, Nil)
@@ -874,7 +888,7 @@ object Kyo:
         Frame
     ): List[B] < S =
         source match
-            case Nil => z :: Nil
+            case Nil         => z :: Nil
             case head :: Nil =>
                 op(z, head).map(z :: _ :: Nil)
             case list =>
@@ -901,7 +915,7 @@ object Kyo:
         source match
             case Nil         => Map.empty[K, List[A]]
             case head :: Nil => f(head).map(k => Map(k -> (head :: Nil)))
-            case list =>
+            case list        =>
                 Loop(list, Map.empty[K, List[A]]): (curList, acc) =>
                     curList match
                         case head :: tail =>
@@ -931,7 +945,7 @@ object Kyo:
         Frame
     ): Map[K, List[B]] < S =
         source match
-            case Nil => Map.empty[K, List[B]]
+            case Nil         => Map.empty[K, List[B]]
             case head :: Nil =>
                 for
                     k <- key(head)
@@ -981,7 +995,7 @@ object Kyo:
         epilog: B => C
     )(using Frame): C < S =
         source match
-            case Nil => epilog(prolog)
+            case Nil         => epilog(prolog)
             case head :: Nil => f(head).map: b =>
                     epilog(acc(prolog, b, head))
             case list =>

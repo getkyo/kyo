@@ -40,7 +40,7 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
     "apply(f) lifts a Sync-effectful body through .resolve" in {
         // Unsafe: AtomicLong.Unsafe.init for in-test counter outside effect context
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
-        val enc = JsonRpcExtrasEncoder { _ =>
+        val enc     = JsonRpcExtrasEncoder { _ =>
             Sync.Unsafe.defer(Present(Structure.Value.Integer(counter.incrementAndGet())))
         }
         for

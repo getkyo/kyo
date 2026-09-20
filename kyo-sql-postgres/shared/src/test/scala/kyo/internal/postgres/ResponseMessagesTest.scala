@@ -76,7 +76,7 @@ class ResponseMessagesTest extends Test:
     "ParameterStatusUnmarshaller decodes key and value" in {
         val name  = "client_encoding"
         val value = "UTF8"
-        val body = name.getBytes(java.nio.charset.StandardCharsets.UTF_8) ++
+        val body  = name.getBytes(java.nio.charset.StandardCharsets.UTF_8) ++
             Array[Byte](0) ++
             value.getBytes(java.nio.charset.StandardCharsets.UTF_8) ++
             Array[Byte](0)

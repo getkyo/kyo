@@ -199,7 +199,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle with no mix: SUPER(157=0x9D) length(2=0x82) TERMREFdirect(62=0x3E) address(1=0x81).
     "Super: SUPER tag decodes to Tree.Super" in {
         val (names, addrMap) = sym1("Outer")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.SUPER.toByte,
             (2 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -220,7 +220,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s1      = LoadingSymbol.Materialising(id = 49, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("This"))
         val s2      = LoadingSymbol.Materialising(id = 20, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Super"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.SUPERtype.toByte,
             (4 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -243,7 +243,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: REFINEDtype(159) length(4=0x84) nameRef(0=0x80) TERMREFdirect(62) address(1=0x81) UNITconst(2).
     "RefinedType: REFINEDtype tag decodes to Tree.RefinedType" in {
         val (names, addrMap) = sym1("Base")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.REFINEDtype.toByte,
             (4 | 0x80).toByte,
             (0 | 0x80).toByte,
@@ -266,7 +266,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.ANDtype.toByte,
             (4 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -289,7 +289,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.ORtype.toByte,
             (4 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -357,7 +357,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: IDENTtpt(111=0x6F) nameRef(0=0x80) TERMREFdirect(62) address(1=0x81).
     "IdentTpt: IDENTtpt tag decodes to Tree.IdentTpt" in {
         val (names, addrMap) = sym1("Int")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.IDENTtpt.toByte,
             (0 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -378,7 +378,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: SELECTtpt(113=0x71) nameRef(0=0x80) TERMREFdirect(62) address(1=0x81).
     "SelectTpt: SELECTtpt tag decodes to Tree.SelectTpt" in {
         val (names, addrMap) = sym1("pkg")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.SELECTtpt.toByte,
             (0 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -399,7 +399,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: SINGLETONtpt(101=0x65) TERMREFdirect(62) address(1=0x81).
     "SingletonTpt: SINGLETONtpt tag decodes to Tree.SingletonTpt" in {
         val (names, addrMap) = sym1("obj")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.SINGLETONtpt.toByte,
             TastyFormat.TERMREFdirect.toByte,
             (1 | 0x80).toByte
@@ -420,7 +420,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: BYNAMEtpt(94=0x5E) TERMREFdirect(62) address(1=0x81).
     "ByNameTpt: BYNAMEtpt tag decodes to Tree.ByNameTpt" in {
         val (names, addrMap) = sym1("Int")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.BYNAMEtpt.toByte,
             TastyFormat.TERMREFdirect.toByte,
             (1 | 0x80).toByte
@@ -439,7 +439,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: BYNAMEtype(93=0x5D) TERMREFdirect(62) address(1=0x81).
     "ByNameType: BYNAMEtype tag decodes to Tree.ByNameType" in {
         val (names, addrMap) = sym1("Int")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.BYNAMEtype.toByte,
             TastyFormat.TERMREFdirect.toByte,
             (1 | 0x80).toByte
@@ -489,7 +489,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s1      = LoadingSymbol.Materialising(id = 66, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("A"))
         val s2      = LoadingSymbol.Materialising(id = 55, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("B"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.TYPEREFsymbol.toByte,
             (1 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -512,7 +512,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s1      = LoadingSymbol.Materialising(id = 52, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("x"))
         val s2      = LoadingSymbol.Materialising(id = 37, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Owner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.TERMREFsymbol.toByte,
             (1 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -560,7 +560,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Pickle: EXPLICITtpt(103=0x67) TERMREFdirect(62) address(1=0x81).
     "ExplicitTpt: EXPLICITtpt tag decodes to Tree.ExplicitTpt" in {
         val (names, addrMap) = sym1("Int")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.EXPLICITtpt.toByte,
             TastyFormat.TERMREFdirect.toByte,
             (1 | 0x80).toByte
@@ -595,7 +595,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
         val s2      = LoadingSymbol.Materialising(id = 7, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Inner"))
         val addrMap = scala.collection.immutable.IntMap(1 -> s1, 2 -> s2)
         val names   = Array(Tasty.Name("outerVal"))
-        val pickle = Array[Byte](
+        val pickle  = Array[Byte](
             TastyFormat.SELECTouter.toByte,
             (6 | 0x80).toByte,
             (1 | 0x80).toByte,
@@ -620,7 +620,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Emitted only with -Yexplicit-nulls; not produced by standard user Scala sources.
     "FlexibleType: FLEXIBLEtype tag decodes to Tree.FlexibleType" in {
         val (names, addrMap) = sym1("String")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.FLEXIBLEtype.toByte,
             (2 | 0x80).toByte,
             TastyFormat.TERMREFdirect.toByte,
@@ -640,7 +640,7 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
     // Appears in top-level symbol declarations (inferred type positions) but not in body slices.
     "Elided: ELIDED tag decodes to Tree.Elided" in {
         val (names, addrMap) = sym1("Int")
-        val pickle = Array[Byte](
+        val pickle           = Array[Byte](
             TastyFormat.ELIDED.toByte,
             TastyFormat.TERMREFdirect.toByte,
             (1 | 0x80).toByte

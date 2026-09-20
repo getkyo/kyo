@@ -68,7 +68,7 @@ class NioEngineOwnershipTest extends Test:
     private def driveConnection(conn: Connection, connId: Int, rounds: Int, window: Int)(using
         Frame
     ): Boolean < (Async & Abort[Closed] & Scope) =
-        val sizes = Array(1, 64, 200, 1500)
+        val sizes                             = Array(1, 64, 200, 1500)
         def reqBytes(round: Int): Array[Byte] =
             val len = sizes(round % sizes.length)
             Array.tabulate[Byte](len)(i => ((connId * 31 + round * 7 + i) & 0xff).toByte)

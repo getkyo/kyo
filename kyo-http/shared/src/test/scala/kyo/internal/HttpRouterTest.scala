@@ -249,7 +249,7 @@ class HttpRouterTest extends kyo.BaseHttpTest:
         }
         "rejects Rest in non-terminal position" in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix")
-            val ex = intercept[IllegalArgumentException] {
+            val ex    = intercept[IllegalArgumentException] {
                 HttpRouter(Seq(mkEndpoint(route)), Absent)
             }
             assert(ex.getMessage.contains("Rest capture must be the last segment"))

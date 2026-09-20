@@ -196,7 +196,7 @@ final private[kernel] class Stack:
       * extents to an end there.
       */
     def takeAll(): Stack.Snapshot =
-        val out = new Array[AnyRef](size * 4)
+        val out                         = new Array[AnyRef](size * 4)
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 out(i * 4) = handlers(i)
@@ -294,7 +294,7 @@ final private[kernel] class Stack:
         val out                              = new Array[AnyRef](count * 4)
         var moved: Stack.Releases            = Stack.Releases.empty
         var movedOwed: Chunk[Stack.Snapshot] = Chunk.empty
-        @tailrec def loop(i: Int): Unit =
+        @tailrec def loop(i: Int): Unit      =
             if i < count then
                 val j = from + i
                 out(i * 4) = handlers(j)

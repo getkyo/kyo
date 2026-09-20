@@ -234,7 +234,7 @@ class CdpBackendIntegrationTest extends BrowserTest:
                         afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
                     yield afterClose match
                         case Result.Failure(_: BrowserConnectionLostException) => succeed
-                        case Result.Success(_) =>
+                        case Result.Success(_)                                 =>
                             fail("expected the connection to be closed after close(1.second) but a send succeeded")
                         case other => fail(s"expected BrowserConnectionLostException after close, got $other")
                 }
@@ -253,7 +253,7 @@ class CdpBackendIntegrationTest extends BrowserTest:
                         afterClose <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
                     yield afterClose match
                         case Result.Failure(_: BrowserConnectionLostException) => succeed
-                        case Result.Success(_) =>
+                        case Result.Success(_)                                 =>
                             fail("expected the connection to be closed after closeNow but a send succeeded")
                         case other => fail(s"expected BrowserConnectionLostException after closeNow, got $other")
                 }

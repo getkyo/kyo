@@ -494,9 +494,9 @@ class BrowserReadTest extends BrowserTest:
                     val heading = tree.find(n => n.role == "heading" && n.properties.get("level").contains("3"))
                     assert(
                         heading.isDefined,
-                        s"expected a heading AX node with properties('level')='3' (integer discriminator), got headings=${tree.filter(_.role == "heading").map(
-                                n =>
-                                    (n.name, n.properties.get("level"))
+                        s"expected a heading AX node with properties('level')='3' (integer discriminator), got headings=${tree.filter(_.role ==
+                                "heading").map(n =>
+                                (n.name, n.properties.get("level"))
                             )}"
                     )
 
@@ -506,9 +506,9 @@ class BrowserReadTest extends BrowserTest:
                     val grid = tree.find(n => n.role == "grid" && n.properties.get("readonly").contains("false"))
                     assert(
                         grid.isDefined,
-                        s"expected a grid AX node with properties('readonly')='false' (boolean discriminator), got grids=${tree.filter(_.role == "grid").map(
-                                n =>
-                                    (n.name, n.properties.get("readonly"), n.properties.get("multiselectable"))
+                        s"expected a grid AX node with properties('readonly')='false' (boolean discriminator), got grids=${tree.filter(_.role ==
+                                "grid").map(n =>
+                                (n.name, n.properties.get("readonly"), n.properties.get("multiselectable"))
                             )}"
                     )
 
@@ -1394,8 +1394,7 @@ class BrowserReadTest extends BrowserTest:
                         assert(bytes(2) == 'N'.toByte, "Expected PNG signature byte 2")
                         assert(bytes(3) == 'G'.toByte, "Expected PNG signature byte 3")
                         // Width and height are at offsets 16 and 20 in the IHDR chunk (big-endian 4-byte ints)
-                        val width =
-                            ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
+                        val width = ((bytes(16) & 0xff) << 24) | ((bytes(17) & 0xff) << 16) | ((bytes(18) & 0xff) << 8) | (bytes(19) & 0xff)
                         val height =
                             ((bytes(20) & 0xff) << 24) | ((bytes(21) & 0xff) << 16) | ((bytes(22) & 0xff) << 8) | (bytes(23) & 0xff)
                         assert(width == 1024, s"Expected live-viewport screenshot width 1024 but got $width")

@@ -72,10 +72,10 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
       * reader requires (RFC 6455 section 5.1). Handles 7-bit, 16-bit, and 64-bit length encodings.
       */
     private def makeMaskedFrame(opcode: Int, fin: Boolean, payload: Array[Byte]): Array[Byte] =
-        val finBit  = if fin then 0x80 else 0
-        val b0      = ((finBit | opcode) & 0xff).toByte
-        val len     = payload.length
-        val maskKey = Array[Byte](0x12, 0x34, 0x56, 0x78)
+        val finBit    = if fin then 0x80 else 0
+        val b0        = ((finBit | opcode) & 0xff).toByte
+        val len       = payload.length
+        val maskKey   = Array[Byte](0x12, 0x34, 0x56, 0x78)
         val lenHeader =
             if len < 126 then
                 Array[Byte](b0, (0x80 | len).toByte)
@@ -457,7 +457,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         // direction, and again the failure mode is a plausible SUCCESS rather than an error.
         "rejects a 64-bit frame length that truncates to a valid Int (GHSA-3j86-pj9g-jchr)" in {
             val payload = new Array[Byte](100)
-            val frame = Array[Byte](
+            val frame   = Array[Byte](
                 (0x80 | 0x01).toByte,
                 127.toByte,
                 0x00.toByte,

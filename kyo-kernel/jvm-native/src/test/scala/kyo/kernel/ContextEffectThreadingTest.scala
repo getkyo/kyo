@@ -38,7 +38,7 @@ class ContextEffectThreadingTest extends AnyFreeSpec:
         assert(parked("first").eval == 11)
         @volatile var enclosed = 0
         val p1                 = parked("second")
-        val t = new Thread(() =>
+        val t                  = new Thread(() =>
             enclosed = ContextEffect.handleInheritable(Tag[Count], 100)(p1: Int < Count).eval
         )
         t.start()

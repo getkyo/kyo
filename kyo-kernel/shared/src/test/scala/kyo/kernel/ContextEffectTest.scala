@@ -81,8 +81,9 @@ class ContextEffectTest extends AnyFreeSpec:
             val result =
                 ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 42, _ + 1) {
                     ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "default", _.toUpperCase) {
-                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect3], false, !_)(effect): String < (TestRuntimeEffect1 &
-                            TestRuntimeEffect2)
+                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect3], false, !_)(effect): String <
+                            (TestRuntimeEffect1 &
+                                TestRuntimeEffect2)
                     }
                 }
 
@@ -144,8 +145,9 @@ class ContextEffectTest extends AnyFreeSpec:
             val result =
                 ContextEffect.handleInheritable(Tag[TestRuntimeEffect3], true, !_) {
                     ContextEffect.handleInheritable(Tag[TestRuntimeEffect2], "middle", _.toUpperCase) {
-                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 10, _ * 2)(effect): String < (TestRuntimeEffect2 &
-                            TestRuntimeEffect3)
+                        ContextEffect.handleInheritable(Tag[TestRuntimeEffect1], 10, _ * 2)(effect): String <
+                            (TestRuntimeEffect2 &
+                                TestRuntimeEffect3)
                     }
                 }
 
@@ -187,7 +189,7 @@ class ContextEffectTest extends AnyFreeSpec:
 
         "a merging binding keeps what an enclosing one holds" in {
             val v: Map[String, Int] < MapCtx = ContextEffect.suspend(Tag[MapCtx])
-            val r =
+            val r                            =
                 ContextEffect.handleInheritable(Tag[MapCtx], Map("a" -> 1), _.updated("a", 1)) {
                     ContextEffect.handleInheritable(Tag[MapCtx], Map("b" -> 2), _.updated("b", 2))(v)
                 }
@@ -236,7 +238,7 @@ class ContextEffectTest extends AnyFreeSpec:
 
         "a clause of a region under a binding reads it" in {
             val v: Int < (Count & Ask) = ask.map(_ + 1)
-            val bound: Int < Any =
+            val bound: Int < Any       =
                 ContextEffect.handleInheritable(Tag[Count], 41) {
                     ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => count.map(c => cont(c)), a => a)
                 }
@@ -246,7 +248,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "a continuation captured under a binding carries it" in {
             val v: Int < (Count & Ask & Say) = say("x").map(_ => ask.map(a => count.map(c => a + c)))
             val bound: Int < (Ask & Say)     = ContextEffect.handleInheritable(Tag[Count], 2)(v)
-            val sayHandled: Int < Ask =
+            val sayHandled: Int < Ask        =
                 ArrowEffect.handleCont(Tag[Say], bound)([C] => (_, cont) => cont(()), a => a)
             val r = ArrowEffect.handleCont(Tag[Ask], sayHandled)([C] => (_, cont) => cont(40), a => a)
             assert(r.eval == 42)
@@ -264,7 +266,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "a captured binding resolves against the scope it resumes in" in {
             val v: Int < (Count & Ask) = ask.map(a => count.map(c => a + c))
             val bound: Int < Ask       = ContextEffect.handleInheritable(Tag[Count], 1, _ + 1)(v)
-            val r =
+            val r                      =
                 ContextEffect.handleInheritable(Tag[Count], 10) {
                     ArrowEffect.handleCont(Tag[Ask], bound)([C] => (_, cont) => cont(0), a => a)
                 }
@@ -292,7 +294,7 @@ class ContextEffectTest extends AnyFreeSpec:
 
         "runs before what follows the extent" in {
             var order = List.empty[String]
-            val v = held(1, _ => order = order :+ "release")(count.map(_ => order = order :+ "body"))
+            val v     = held(1, _ => order = order :+ "release")(count.map(_ => order = order :+ "body"))
                 .map(_ => order = order :+ "after")
             v.eval
             assert(order == List("body", "release", "after"))
@@ -351,7 +353,7 @@ class ContextEffectTest extends AnyFreeSpec:
         }
 
         "a settled body still derives from the binding around it" in {
-            var seen = Maybe.empty[Maybe[Int]]
+            var seen         = Maybe.empty[Maybe[Int]]
             val v: Int < Any =
                 ContextEffect.handleInheritable(Tag[Count], 5)(
                     Effect.defer(
@@ -424,11 +426,11 @@ class ContextEffectTest extends AnyFreeSpec:
             )(v)
 
         "each shot of a crossing drains the debts it re-installs" in {
-            val log = ListBuffer[String]()
+            val log                     = ListBuffer[String]()
             val body: Int < (Ask & Say) =
                 hooked(log, "outer", 1)(hooked(log, "inner", 2)(say("s").map(_ => 0)).map(a => ask.map(_ + a)))
             val handledSay: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)([C] => (_, cont) => cont(()), a => a)
-            val twice: Int < Any = ArrowEffect.handleCont(Tag[Ask], handledSay)(
+            val twice: Int < Any      = ArrowEffect.handleCont(Tag[Ask], handledSay)(
                 [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                 a => a
             )
@@ -439,8 +441,8 @@ class ContextEffectTest extends AnyFreeSpec:
         }
 
         "a throwing done is followed by one release carrying the failure" in {
-            val log  = ListBuffer[String]()
-            val boom = new RuntimeException("boom")
+            val log          = ListBuffer[String]()
+            val boom         = new RuntimeException("boom")
             val r: Int < Any = ContextEffect.handle(
                 Tag[Count],
                 derive = (_: Maybe[Int]) => 7,
@@ -460,7 +462,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "a crossing resumed in a nested eval inside the clause is released once, where the owner ends" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )
@@ -470,11 +472,11 @@ class ContextEffectTest extends AnyFreeSpec:
         }
 
         "a binding below the answering handler is the resume site's, one above it is the captured one" in {
-            var stash = Maybe.empty[Arrow[Int, (Int, Int), Ask & Count]]
+            var stash                                  = Maybe.empty[Arrow[Int, (Int, Int), Ask & Count]]
             val body: (Int, Int) < (Ask & Count & Cfg) =
                 ask.map(a => count.map(c => ContextEffect.suspend(Tag[Cfg]).map(c2 => (c + a, c2))))
             val inside: (Int, Int) < (Ask & Count) = ContextEffect.handleInheritable(Tag[Cfg], 2)(body)
-            val handled: (Int, Int) < Count = ArrowEffect.handleCont(Tag[Ask], inside)(
+            val handled: (Int, Int) < Count        = ArrowEffect.handleCont(Tag[Ask], inside)(
                 [C] =>
                     (_, cont) =>
                         stash = Maybe(Region.leak(cont))
@@ -493,7 +495,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "each shot re-establishes a hooked region and completes it before the clause continues" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
                         cont(1).map { a =>
@@ -502,7 +504,7 @@ class ContextEffectTest extends AnyFreeSpec:
                                 log += s"shot $b"
                                 a + b
                             }
-                    },
+                        },
                 a =>
                     log += "handler done"
                     a
@@ -515,8 +517,8 @@ class ContextEffectTest extends AnyFreeSpec:
         "a handleFirst remainder re-enters the raw region it was handed, which ends once, with done" in {
             // the region's end does not release what its remainder still carries: the raw region is owed
             // to the scope below, re-installed when the remainder resumes, and completes with the value
-            val log             = ListBuffer[String]()
-            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
+            val log              = ListBuffer[String]()
+            val body: Int < Ask  = hooked(log, "cfg", 1)(ask.map(_ + 1))
             val first: Int < Ask = ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Int, Any, Ask](Tag[Ask], body)(
                 handle = [C] =>
                     (_, cont) =>
@@ -602,7 +604,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "a crossing resumed in a nested eval inside the clause completes its binding there" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )

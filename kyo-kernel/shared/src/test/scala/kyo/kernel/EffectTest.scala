@@ -24,7 +24,7 @@ class EffectTest extends AnyFreeSpec:
 
         "simple" in {
             var executed = false
-            val effect = Effect.defer {
+            val effect   = Effect.defer {
                 executed = true
                 42
             }
@@ -34,7 +34,7 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "nested defer calls" in {
-            var order = List.empty[Int]
+            var order  = List.empty[Int]
             val effect = Effect.defer {
                 order = 1 :: order
                 Effect.defer {
@@ -50,7 +50,7 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "defer composes with maps without running early" in {
-            var ran = false
+            var ran          = false
             val d: Int < Any = Effect.defer {
                 ran = true
                 1
@@ -62,7 +62,7 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "defer suspends effects performed by its body" in {
-            var ran = false
+            var ran          = false
             val d: Int < Ask = Effect.defer {
                 ran = true
                 ask.map(_ + 1)
@@ -73,7 +73,7 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "deferInline delays evaluation until the eval" in {
-            var ran = false
+            var ran          = false
             val d: Int < Any = Effect.deferInline {
                 ran = true
                 7
@@ -84,7 +84,7 @@ class EffectTest extends AnyFreeSpec:
         }
 
         "defer evaluates once per eval of a fresh value" in {
-            var runs = 0
+            var runs         = 0
             def d: Int < Any = Effect.defer {
                 runs += 1
                 runs

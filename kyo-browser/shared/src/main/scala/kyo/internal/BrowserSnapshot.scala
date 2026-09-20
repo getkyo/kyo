@@ -217,8 +217,8 @@ private[kyo] object BrowserSnapshot:
     private[kyo] def restoreStorage(tab: BrowserTab, localStorage: Dict[String, String], sessionStorage: Dict[String, String])(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
-        val localJs   = Json.encode(localStorage)
-        val sessionJs = Json.encode(sessionStorage)
+        val localJs                                             = Json.encode(localStorage)
+        val sessionJs                                           = Json.encode(sessionStorage)
         def restoreOne(slot: String, payloadJs: String): String =
             s"""(() => {
                 const d = $payloadJs;

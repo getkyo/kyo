@@ -220,8 +220,8 @@ class SqlClientCloseAllTest extends SqlContainerTest:
                     idleTimeout = 10.minutes
                 )
                 Abort.run[SqlConnectionException](SqlClient.initUnscoped(url, config)).flatMap {
-                    case Result.Failure(e) => fail(s"SqlClient.initUnscoped failed: $e")
-                    case Result.Panic(t)   => fail(s"Unexpected panic: ${t.getMessage}")
+                    case Result.Failure(e)      => fail(s"SqlClient.initUnscoped failed: $e")
+                    case Result.Panic(t)        => fail(s"Unexpected panic: ${t.getMessage}")
                     case Result.Success(client) =>
                         Scope.ensure(Abort.run(client.close).unit).andThen {
                             Fiber.initUnscoped(Abort.run[SqlException](client.query("SELECT 1")).unit).flatMap { queryFiber =>

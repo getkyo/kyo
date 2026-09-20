@@ -260,8 +260,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
                     Scheduler.get.flush()
                     object state extends (Result[E, A] => Unit):
                         @volatile
-                        private var result = null.asInstanceOf[Result[E, A]]
-                        private val waiter = Thread.currentThread()
+                        private var result         = null.asInstanceOf[Result[E, A]]
+                        private val waiter         = Thread.currentThread()
                         def apply(v: Result[E, A]) =
                             result = v
                             LockSupport.unpark(waiter)
@@ -331,7 +331,7 @@ private[kyo] object IOPromise:
 
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
-                def waiters: Int = self.waiters + 1
+                def waiters: Int               = self.waiters + 1
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
@@ -356,7 +356,7 @@ private[kyo] object IOPromise:
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     if p eq other then self
                     else self.removeInterrupt(other).interrupts(p)
-                def waiters: Int = self.waiters + 1
+                def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
 
@@ -367,7 +367,7 @@ private[kyo] object IOPromise:
                     self
                 def removeInterrupt(other: IOPromise[?, ?]) =
                     self.removeInterrupt(other).onInterrupt(f)
-                def waiters: Int = self.waiters + 1
+                def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
 
@@ -400,7 +400,7 @@ private[kyo] object IOPromise:
             @tailrec def flushInterruptLoop(p: Pending[E, A]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
-                    case p: Pending[E, A] =>
+                    case p: Pending[E, A]          =>
                         flushInterruptLoop(p.interrupt(error))
             flushInterruptLoop(this)
         end flushInterrupt
@@ -409,7 +409,7 @@ private[kyo] object IOPromise:
             @tailrec def flushLoop(p: Pending[E, A]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
-                    case p =>
+                    case p                         =>
                         flushLoop(p.run(v))
             flushLoop(this)
         end flush

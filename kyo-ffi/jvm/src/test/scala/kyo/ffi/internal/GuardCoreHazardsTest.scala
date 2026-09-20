@@ -51,7 +51,7 @@ class GuardCoreHazardsTest extends Test:
 
             val latch                               = new CountDownLatch(1)
             @volatile var closeResult: CloseOutcome = CloseOutcome.AlreadyClosed
-            val t = new Thread(
+            val t                                   = new Thread(
                 () =>
                     closeResult = core.close()
                     latch.countDown()
@@ -106,7 +106,7 @@ class GuardCoreHazardsTest extends Test:
             // Close on another thread, drain will timeout and proceed (but NOT tear the arena down).
             val latch                               = new CountDownLatch(1)
             @volatile var closeResult: CloseOutcome = CloseOutcome.AlreadyClosed
-            val t = new Thread(
+            val t                                   = new Thread(
                 () =>
                     closeResult = guard.close()
                     latch.countDown()
@@ -173,7 +173,7 @@ class GuardCoreHazardsTest extends Test:
 
             val platformCloserCount = new AtomicInteger(0)
             val postCloseCount      = new AtomicInteger(0)
-            val core = new GuardCore(
+            val core                = new GuardCore(
                 () => discard(platformCloserCount.incrementAndGet()),
                 () => discard(postCloseCount.incrementAndGet())
             )
@@ -184,7 +184,7 @@ class GuardCoreHazardsTest extends Test:
             // Close on another thread, drain times out.
             val latch                               = new CountDownLatch(1)
             @volatile var closeResult: CloseOutcome = CloseOutcome.AlreadyClosed
-            val t = new Thread(
+            val t                                   = new Thread(
                 () =>
                     closeResult = core.close()
                     latch.countDown()
@@ -215,7 +215,7 @@ class GuardCoreHazardsTest extends Test:
     "normal drain: closeAwait returns Clean and platformCloser ran before return" in {
         val platformCloserCount = new AtomicInteger(0)
         val postCloseCount      = new AtomicInteger(0)
-        val core = new GuardCore(
+        val core                = new GuardCore(
             () => discard(platformCloserCount.incrementAndGet()),
             () => discard(postCloseCount.incrementAndGet())
         )
@@ -234,7 +234,7 @@ class GuardCoreHazardsTest extends Test:
     "close() on never-opened callbacks: returns Clean, platformCloser runs immediately" in {
         val platformCloserCount = new AtomicInteger(0)
         val postCloseCount      = new AtomicInteger(0)
-        val core = new GuardCore(
+        val core                = new GuardCore(
             () => discard(platformCloserCount.incrementAndGet()),
             () => discard(postCloseCount.incrementAndGet())
         )
@@ -248,7 +248,7 @@ class GuardCoreHazardsTest extends Test:
     "close() twice: first Clean, second AlreadyClosed, platformCloser runs exactly once" in {
         val platformCloserCount = new AtomicInteger(0)
         val postCloseCount      = new AtomicInteger(0)
-        val core = new GuardCore(
+        val core                = new GuardCore(
             () => discard(platformCloserCount.incrementAndGet()),
             () => discard(postCloseCount.incrementAndGet())
         )

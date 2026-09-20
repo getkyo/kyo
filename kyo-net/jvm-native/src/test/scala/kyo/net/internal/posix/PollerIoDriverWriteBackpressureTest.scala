@@ -72,7 +72,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             val client = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             // Small SO_SNDBUF on the client so its send buffer fills fast too.
             setIntSockOpt(client, PosixConstants.SO_SNDBUF, sndBuf)
-            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
             connected.andThen {
@@ -138,7 +138,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
     private def drainAndDecrypt(driver: PollerIoDriver, handle: PosixHandle, serverEngine: TlsEngine, want: Int)(
         using Frame
     ): Array[Byte] < (Abort[Closed] & Async) =
-        val recovered = scala.collection.mutable.ArrayBuffer.empty[Byte]
+        val recovered                                               = scala.collection.mutable.ArrayBuffer.empty[Byte]
         def loop(steps: Int): Array[Byte] < (Abort[Closed] & Async) =
             if recovered.size >= want then recovered.toArray
             else if steps > want + 256 then recovered.toArray // safety bound; the conservation assertion catches a shortfall

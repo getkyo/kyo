@@ -100,7 +100,7 @@ object Dict:
         else
             map match
                 case hm: HashMap[K, V] @unchecked => hm
-                case _ =>
+                case _                            =>
                     val b = DictBuilder.initTransform[K, V, K, V]((b, k, v) => discard(b.add(k, v)))
                     map.foreachEntry(b)
                     b.result()
@@ -140,7 +140,7 @@ object Dict:
         def apply(key: K): V =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                        = Span.size(span) / 2
                     @tailrec def loop(i: Int): V =
                         if i >= n then throw new NoSuchElementException(key.toString)
                         else
@@ -165,8 +165,8 @@ object Dict:
         def get(key: K): Maybe[V] =
             reduce(
                 span =>
-                    val n  = Span.size(span) / 2
-                    val kr = key.asInstanceOf[AnyRef]
+                    val n                               = Span.size(span) / 2
+                    val kr                              = key.asInstanceOf[AnyRef]
                     @tailrec def loop(i: Int): Maybe[V] =
                         if i >= n then Maybe.empty
                         else
@@ -195,9 +195,9 @@ object Dict:
         def update(key: K, value: V): Dict[K, V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val src = Span.toArrayUnsafe(span)
-                    val kr  = key.asInstanceOf[AnyRef]
+                    val n                             = Span.size(span) / 2
+                    val src                           = Span.toArrayUnsafe(span)
+                    val kr                            = key.asInstanceOf[AnyRef]
                     @tailrec def indexOf(i: Int): Int =
                         if i >= n then -1
                         else
@@ -211,7 +211,7 @@ object Dict:
                         arr(n + idx) = value
                         Span.fromUnsafe(arr)
                     else
-                        val b = DictBuilder.init[K, V]
+                        val b                           = DictBuilder.init[K, V]
                         @tailrec def loop(i: Int): Unit =
                             if i < n then
                                 discard(b.add(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -228,8 +228,8 @@ object Dict:
         def remove(key: K): Dict[K, V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val src = Span.toArrayUnsafe(span)
+                    val n                             = Span.size(span) / 2
+                    val src                           = Span.toArrayUnsafe(span)
                     @tailrec def indexOf(i: Int): Int =
                         if i >= n then -1
                         else
@@ -271,7 +271,7 @@ object Dict:
         def foreach(fn: (K, V) => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V])
@@ -285,7 +285,7 @@ object Dict:
         inline def foreachKey(inline fn: K => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(i).asInstanceOf[K])
@@ -299,7 +299,7 @@ object Dict:
         inline def foreachValue(inline fn: V => Unit): Unit =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                           = Span.size(span) / 2
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             fn(Span.apply(span)(n + i).asInstanceOf[V])
@@ -400,7 +400,7 @@ object Dict:
         def foldLeft[B](z: B)(fn: (B, K, V) => B): B =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                                = Span.size(span) / 2
                     @tailrec def loop(i: Int, acc: B): B =
                         if i >= n then acc
                         else loop(i + 1, fn(acc, Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -505,8 +505,8 @@ object Dict:
         def keys(using ClassTag[K]): Span[K] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val arr = new Array[K](n)
+                    val n                           = Span.size(span) / 2
+                    val arr                         = new Array[K](n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(i).asInstanceOf[K]
@@ -527,8 +527,8 @@ object Dict:
         def values(using ClassTag[V]): Span[V] =
             reduce(
                 span =>
-                    val n   = Span.size(span) / 2
-                    val arr = new Array[V](n)
+                    val n                           = Span.size(span) / 2
+                    val arr                         = new Array[V](n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
@@ -552,7 +552,7 @@ object Dict:
                     val n = Span.size(span) / 2
                     if n == 0 then Chunk.empty
                     else
-                        val b = Chunk.newBuilder[(K, V)]
+                        val b                           = Chunk.newBuilder[(K, V)]
                         @tailrec def loop(i: Int): Unit =
                             if i < n then
                                 b += ((Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -571,7 +571,7 @@ object Dict:
         def toMap: Map[K, V] =
             reduce(
                 span =>
-                    val n = Span.size(span) / 2
+                    val n                                                        = Span.size(span) / 2
                     @tailrec def loop(i: Int, map: HashMap[K, V]): HashMap[K, V] =
                         if i >= n then map
                         else loop(i + 1, map.updated(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -664,7 +664,7 @@ object Dict:
                         error = new IllegalArgumentException(s"Invalid Dict entry (missing '='): $trimmed")
                     else
                         rk(trimmed.substring(0, eqIdx).trim) match
-                            case Left(e) => error = e
+                            case Left(e)    => error = e
                             case Right(key) =>
                                 rv(trimmed.substring(eqIdx + 1).trim) match
                                     case Left(e)      => error = e

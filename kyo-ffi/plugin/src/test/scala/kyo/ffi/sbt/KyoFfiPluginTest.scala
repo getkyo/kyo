@@ -227,8 +227,13 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
   */
 class MissingRequiredNativesTest extends AnyFunSuite with Matchers {
 
-    private def lib(id: String, osTargets: Seq[String] = Nil) =
-        FfiLibrary(id = id, cSources = Seq(new File(s"$id.c")), osTargets = osTargets)
+    private def lib(id: String, osTargets: Seq[String] = Nil, osArchTargets: Seq[String] = Nil) =
+        FfiLibrary(
+            id = id,
+            cSources = Seq(new File(s"$id.c")),
+            osTargets = osTargets,
+            osArchTargets = osArchTargets
+        )
 
     private val allKeys = Seq("linux-x86_64", "darwin-aarch64", "windows-x86_64")
 
@@ -258,6 +263,25 @@ class MissingRequiredNativesTest extends AnyFunSuite with Matchers {
         // A darwin-only library owes nothing on linux or windows, even though its siblings do.
         val have = Set("mac_only" -> "darwin-aarch64")
         KyoFfiPlugin.missingRequiredNatives(Seq(lib("mac_only", Seq("darwin"))), allKeys, have) shouldBe empty
+    }
+
+    test("osArchTargets narrows within one OS, per key") {
+        // kyo_doltlite's shape: an engine published for one arch of an OS and not the other. osTargets
+        // could only have excluded windows entirely, taking the working x64 native with it.
+        val declared = Seq(lib("engine", osArchTargets = Seq("linux-x86_64", "darwin-aarch64", "windows-x86_64")))
+        val have     = Set("engine" -> "linux-x86_64", "engine" -> "darwin-aarch64", "engine" -> "windows-x86_64")
+        val keys     = allKeys :+ "windows-aarch64"
+        KyoFfiPlugin.missingRequiredNatives(declared, keys, have) shouldBe empty
+    }
+
+    test("a library is still reported for an arch its osArchTargets DOES name") {
+        // The narrowing must not become a blanket excuse: the platforms it claims are still owed.
+        val declared = Seq(lib("engine", osArchTargets = Seq("linux-x86_64", "windows-x86_64")))
+        KyoFfiPlugin.missingRequiredNatives(declared, allKeys :+ "windows-aarch64", Set.empty) should
+            contain theSameElementsAs Seq(
+                "engine has no native for linux-x86_64",
+                "engine has no native for windows-x86_64"
+            )
     }
 
     test("a darwin-only library missing its own platform is still reported") {

@@ -85,12 +85,12 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
 
         "poller: a channel-offer failure during detachForUpgrade must not deliver the coalesced flight to the engine twice" in {
             PosixTestSockets.assumePoller()
-            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real     = PollerBackend.default()
-            val pollerFd = real.create()
-            val backend  = RecordingPollerBackend(real)
-            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-            val engine   = new RecordingFeedEngine
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val engine    = new RecordingFeedEngine
             val transport =
                 TestTransports.forTesting(
                     driver,
@@ -155,8 +155,8 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val driver = TestDrivers.forBindings(uring, ring)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
-                val sockets = Ffi.load[SocketBindings]
-                val engine  = new RecordingFeedEngine
+                val sockets   = Ffi.load[SocketBindings]
+                val engine    = new RecordingFeedEngine
                 val transport = TestTransports.forTesting(
                     driver,
                     sockets,

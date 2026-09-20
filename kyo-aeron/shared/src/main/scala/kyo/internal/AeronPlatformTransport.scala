@@ -34,7 +34,7 @@ private[kyo] object AeronPlatformTransport:
                 driver <- Sync.Unsafe.defer(
                     bindings.driverStart(dir, clientLivenessNs, publicationUnblockNs)
                 ).flatMap(_.safe.get)
-                client <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
+                client  <- Sync.Unsafe.defer(bindings.clientConnect(dir)).flatMap(_.safe.get)
                 runtime <- Sync.Unsafe.defer {
                     val ffiTransport = new FfiAeronTransport(bindings, client)
                     // Winning this CAS grants the right to close the driver, the same way FfiAeronTransport's own flag
@@ -53,7 +53,7 @@ private[kyo] object AeronPlatformTransport:
                         "AeronRuntime@" + java.lang.System.identityHashCode(ffiTransport)
                     )(dump = () => s"dir=$dir driverClosed=${driverClosed.get()}")
                     new AeronRuntime:
-                        val transport: AeronTransport = ffiTransport
+                        val transport: AeronTransport        = ffiTransport
                         def close()(using AllowUnsafe): Unit =
                             // Close order is load-bearing: the client holds an open connection to the
                             // conductor, so closing the driver first leaves it in an invalid state. These

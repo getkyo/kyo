@@ -11,6 +11,19 @@ class KyoAppTest extends kyo.test.Test[Any]:
     // timeout under CI load (consistent with ClockTest/ChannelTest).
     override def config = super.config.sequential
 
+    "activates the classpath-present stats providers before running the app's own code" in {
+        // The application entrypoint is where kyo-core reaches kyo.Stat, and the only place it does: an app
+        // whose own code never mentions a metric still gets a classpath-present host sampler collecting from
+        // the start. Any hook broad enough to cover a non-KyoApp process would have to sit on the
+        // fiber-creation path, which is not somewhere a stats concern belongs; such a host calls
+        // Stat.activate() itself.
+        val before = Stat.activationCount
+        val app    = new KyoApp:
+            run(Sync.defer("done"))
+        app.main(Array.empty)
+        assert(Stat.activationCount > before)
+    }
+
     "main" in {
         val app = new KyoApp:
             run {
@@ -47,7 +60,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
         assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val x       = new ListBuffer[Int]
         val promise = scala.concurrent.Promise[Unit]()
-        val app = new KyoApp:
+        val app     = new KyoApp:
             run { Async.delay(10.millis)(Sync.defer(x += 1)) }
             run { Async.delay(10.millis)(Sync.defer(x += 2)) }
             run { Async.delay(10.millis)(Sync.defer(x += 3)) }
@@ -73,7 +86,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
 
     "effects in JS".notJs in {
         val promise = scala.concurrent.Promise[Unit]()
-        val app = new KyoApp:
+        val app     = new KyoApp:
             run {
                 for
                     _ <- Clock.repeatAtInterval(1.second, 1.second)(())
@@ -89,7 +102,7 @@ class KyoAppTest extends kyo.test.Test[Any]:
     }
 
     "exit on error".notJs in {
-        var exitCode = -1
+        var exitCode                   = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
             override def exit(code: Int)(using AllowUnsafe): Unit = exitCode = code
             run(Abort.when(fail)(new IllegalArgumentException("Aborts!")))
@@ -197,11 +210,11 @@ class KyoAppTest extends kyo.test.Test[Any]:
             gate     <- Promise.init[Unit, Any]
             started  <- Latch.init(1)
             released <- AtomicBoolean.init(false)
-            result <- Abort.run[Timeout](KyoApp.runAndBlock(10.millis)(
+            result   <- Abort.run[Timeout](KyoApp.runAndBlock(10.millis)(
                 Sync.ensure(released.set(true))(started.release.andThen(gate.get))
             ))
             _ = assert(result.failure.exists(_.isInstanceOf[Timeout]), s"the block must report the timeout, got $result")
-            ran <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
+            ran   <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
             freed <-
                 if ran.isSuccess then Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
                 else Kyo.lift(true)

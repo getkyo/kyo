@@ -254,7 +254,7 @@ object Record:
     // inline expansion in certain patterns.
     private[kyo] inline def stageLoop[T <: Tuple, G[_]](fn: [v] => Field[?, v] => G[v]): Dict[String, Any] =
         inline erasedValue[T] match
-            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: EmptyTuple                                                 => Dict.empty[String, Any]
             case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
                 val name1 = constValue[n1 & String]
                 val name2 = constValue[n2 & String]
@@ -272,7 +272,7 @@ object Record:
 
     private[kyo] inline def stageLoopWith[T <: Tuple, TC[_], G[_]](fn: [v] => (Field[?, v], TC[v]) => G[v]): Dict[String, Any] =
         inline erasedValue[T] match
-            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: EmptyTuple                                                 => Dict.empty[String, Any]
             case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
                 val name1 = constValue[n1 & String]
                 val name2 = constValue[n2 & String]
@@ -292,7 +292,7 @@ object Record:
         fn: [n <: String & Singleton, v] => Field[n, v] => G[n, v]
     ): Dict[String, Any] =
         inline erasedValue[T] match
-            case _: EmptyTuple => Dict.empty[String, Any]
+            case _: EmptyTuple        => Dict.empty[String, Any]
             case _: ((n ~ v) *: rest) =>
                 val name  = constValue[n & String]
                 val value = fn[n & String & Singleton, v](Field(name, summonInline[Tag[v]]))
@@ -307,7 +307,7 @@ object Record:
 
     private[kyo] inline def collectValues[T <: Tuple](dict: Dict[String, Any]): Tuple =
         inline erasedValue[T] match
-            case _: EmptyTuple => EmptyTuple
+            case _: EmptyTuple                                                 => EmptyTuple
             case _: ((n1 ~ v1) *: (n2 ~ v2) *: (n3 ~ v3) *: (n4 ~ v4) *: rest) =>
                 dict(constValue[n1 & String]) *: dict(constValue[n2 & String]) *:
                     dict(constValue[n3 & String]) *: dict(constValue[n4 & String]) *:

@@ -42,8 +42,8 @@ object Svg:
     def path(using Frame): Path         = Path()
 
     // ---- factories: text ----
-    def text(using Frame): Text   = Text()
-    def tspan(using Frame): TSpan = TSpan()
+    def text(using Frame): Text                       = Text()
+    def tspan(using Frame): TSpan                     = TSpan()
     def textPath(target: Path)(using Frame): TextPath =
         TextPath(SvgAttrs(href = Present(s"#${target.svgAttrs.defId.getOrElse(genId(target.frame))}")))
 
@@ -548,7 +548,7 @@ object Svg:
 
     type SvgChild       = SvgElement | Reactive[? <: SvgElement] | Foreach[?, ? <: SvgElement] | Fragment[? <: SvgElement]
     type ShapeChildLeaf = Title | Desc | Metadata | Animate | AnimateTransform | AnimateMotion | SetAnim
-    type ShapeChild =
+    type ShapeChild     =
         Title | Desc | Metadata | Animate | AnimateTransform | AnimateMotion | SetAnim |
             Reactive[? <: ShapeChildLeaf] | Foreach[?, ? <: ShapeChildLeaf] | Fragment[? <: ShapeChildLeaf]
     // filter content models: `filter` accepts filter primitives; `feMerge` accepts only `feMergeNode`.
@@ -556,7 +556,7 @@ object Svg:
         FilterPrimitive | Reactive[? <: FilterPrimitive] | Foreach[?, ? <: FilterPrimitive] | Fragment[? <: FilterPrimitive]
     type MergeNodeChild =
         FeMergeNode | Reactive[? <: FeMergeNode] | Foreach[?, ? <: FeMergeNode] | Fragment[? <: FeMergeNode]
-    type TextLeaf = TSpan | TextPath | SvgAnchor
+    type TextLeaf  = TSpan | TextPath | SvgAnchor
     type TextChild = String | TSpan | TextPath | SvgAnchor |
         Reactive[? <: TextLeaf] | Foreach[?, ? <: TextLeaf] | Fragment[? <: TextLeaf]
     type StopChild = Stop | Reactive[? <: Stop] | Foreach[?, ? <: Stop] | Fragment[? <: Stop]
@@ -635,7 +635,7 @@ object Svg:
         def withAttrs(a: Attrs): SvgAnchor  = copy(attrs = a)
         def withSvg(s: SvgAttrs): SvgAnchor = copy(svgAttrs = s)
         def apply(cs: SvgChild*): SvgAnchor = copy(children = children ++ liftSvg(cs))
-        def href(v: UI.Href): SvgAnchor =
+        def href(v: UI.Href): SvgAnchor     =
             val s = v match
                 case UI.Href.Absolute(u)       => u.full
                 case UI.Href.Path(p)           => p

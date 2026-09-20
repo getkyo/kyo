@@ -120,7 +120,7 @@ class ObserveTest extends kyo.test.Test[Any]:
     "an observer whose S aborts is a guardrail: its failure fails the generation, typed at the boundary" in {
         case class BudgetExceeded(spent: Long)
         TestCompletionServer.run { server =>
-            val config = serverConfig(server.baseUrl)
+            val config                                 = serverConfig(server.baseUrl)
             val budget: Observe[Abort[BudgetExceeded]] =
                 new Observe[Abort[BudgetExceeded]]:
                     def apply(ai: AI, reply: Completion.Reply)(using Frame): Unit < (LLM & Sync & Abort[BudgetExceeded]) =
@@ -373,7 +373,7 @@ class ObserveTest extends kyo.test.Test[Any]:
         // "leaky-model" override and the leaked guard fired again.
         case class Tripped()
         TestCompletionServer.runStreaming { server =>
-            val config = serverConfig(server.baseUrl)
+            val config                         = serverConfig(server.baseUrl)
             val guard: Observe[Abort[Tripped]] =
                 new Observe[Abort[Tripped]]:
                     def apply(ai: AI, reply: Completion.Reply)(using Frame): Unit < (LLM & Sync & Abort[Tripped]) =

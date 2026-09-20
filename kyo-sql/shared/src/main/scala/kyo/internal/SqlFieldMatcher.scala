@@ -50,7 +50,7 @@ private[kyo] object SqlFieldMatcher:
         fieldMatch match
             case SqlRow.FieldMatch.Positional => byPosition(fieldNames)
             case SqlRow.FieldMatch.ByName     => byName(columnNames, resolve)
-            case SqlRow.FieldMatch.Verbatim =>
+            case SqlRow.FieldMatch.Verbatim   =>
                 val resolved = fieldNames.map(resolve)
                 if resolved.forall(columnNames.contains) then byName(columnNames, resolve)
                 else byPosition(fieldNames)

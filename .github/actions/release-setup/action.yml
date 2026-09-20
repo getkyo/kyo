@@ -58,7 +58,14 @@ runs:
       shell: bash
       run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
 
-    - uses: coursier/setup-action@v3.0.0
+    # DoltLite stages a compiled library rather than source, so it is per os-arch and takes the tag
+    # the step above resolved. Upstream publishes one for this probe's architecture; the platforms it
+    # does not publish for build the same pinned tag from source.
+    - name: Prepare DoltLite
+      shell: bash
+      run: bash kyo-sql-doltlite/scripts/build-doltlite.sh "${{ steps.osarch.outputs.value }}"
+
+    - uses: coursier/setup-action@v3.0.3
       with:
         jvm: corretto:25
         apps: sbt

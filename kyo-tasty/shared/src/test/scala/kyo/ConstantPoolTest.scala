@@ -19,7 +19,7 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
             0L,
             data.length.toLong
         ):
-        def peekByte(at: Long): Byte = data(at.toInt)
+        def peekByte(at: Long): Byte            = data(at.toInt)
         def readByte()(using AllowUnsafe): Byte =
             val b = data(cursor.toInt)
             cursor += 1
@@ -144,8 +144,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.utf8(1)).map {
                     case Result.Success(s) =>
@@ -165,8 +165,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.classRef(1)).map {
                     case Result.Success(name) =>
@@ -181,8 +181,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         val bytes = buildClassRefThenUtf8Bytes("scala/Int")
         val view  = ByteView(bytes)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.classRef(2)).map {
                     case Result.Success(name) =>
@@ -219,8 +219,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         }
         val view = ByteView(buffer)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.utf8(99)).map {
                     case Result.Success(s) =>
@@ -277,8 +277,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
             i += 1
         val view = ByteView(buffer)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.classRef(5)).map {
                     case Result.Success(name) =>
@@ -293,8 +293,8 @@ class ConstantPoolTest extends kyo.test.Test[Any]:
         val bytes = buildLongPoolBytes(42L)
         val view  = ByteView(bytes)
         ConstantPool.read(view, "<test>") match
-            case Result.Failure(err) => fail(s"Read failed: $err")
-            case Result.Panic(ex)    => fail(s"Read panicked: $ex")
+            case Result.Failure(err)  => fail(s"Read failed: $err")
+            case Result.Panic(ex)     => fail(s"Read panicked: $ex")
             case Result.Success(pool) =>
                 Abort.run(pool.utf8(2)).map {
                     case Result.Success(s) =>

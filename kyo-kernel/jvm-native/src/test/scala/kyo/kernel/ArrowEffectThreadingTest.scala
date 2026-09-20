@@ -16,7 +16,7 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
 
     "a capture across the fast path replays on another thread" in {
         var kref: Arrow[Unit, Int, Any] = null
-        val body: Int < (Ask & Say) =
+        val body: Int < (Ask & Say)     =
             ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
         val region: Int < Say =
             ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
@@ -41,7 +41,7 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
 
     "a hoarded fast-path continuation replays on another thread after the region finished" in {
         var kref: Arrow[Int, Int, Any] = null
-        def loop(i: Int): Int < Ask =
+        def loop(i: Int): Int < Ask    =
             if i > 3 then i else ask.map(a => loop(i + a))
         val r0 = ArrowEffect.handleCont(Tag[Ask], loop(0))(
             [C] =>
@@ -60,7 +60,7 @@ class ArrowEffectThreadingTest extends AnyFreeSpec:
     }
 
     "deep state transitions under a suspending clause fit a small stack" in {
-        @volatile var result = -1
+        @volatile var result        = -1
         def loop(i: Int): Int < Ask =
             if i == 0 then 0 else ask.map(a => loop(i - a))
         val t = new Thread(

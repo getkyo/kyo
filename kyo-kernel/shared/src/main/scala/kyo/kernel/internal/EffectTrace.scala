@@ -105,7 +105,7 @@ private[kernel] object EffectTrace:
                         val physical =
                             carrier.physical match
                                 case Maybe.Present(p) => p
-                                case Maybe.Absent =>
+                                case Maybe.Absent     =>
                                     val p = ex.getStackTrace.filterNot(isPlumbing)
                                     carrier.physical = Maybe(p)
                                     p
@@ -119,7 +119,7 @@ private[kernel] object EffectTrace:
         e.getClassName.startsWith("kyo.")
 
     private def find(ex: Throwable): Maybe[EffectTrace] =
-        val suppressed = ex.getSuppressed
+        val suppressed                                = ex.getSuppressed
         @tailrec def loop(i: Int): Maybe[EffectTrace] =
             if i == suppressed.length then Maybe.Absent
             else
@@ -134,7 +134,7 @@ private[kernel] object EffectTrace:
         ex.synchronized {
             find(ex) match
                 case Maybe.Present(carrier) => carrier
-                case Maybe.Absent =>
+                case Maybe.Absent           =>
                     val carrier = new EffectTrace
                     ex.addSuppressed(carrier)
                     carrier
@@ -206,7 +206,7 @@ private[kernel] object EffectTrace:
             drain()
 
         def regions(stack: Stack): Unit =
-            val n = stack.depth
+            val n                           = stack.depth
             @tailrec def loop(i: Int): Unit =
                 if i >= 0 then
                     if full then dropped += i + 1
@@ -226,7 +226,7 @@ private[kernel] object EffectTrace:
             else
                 work.removeHead() match
                     case r: Region[?] => region(r.tag)
-                    case n: Node =>
+                    case n: Node      =>
                         n.kyo match
                             case s: Pending.Suspend[?, ?, ?, ?] =>
 
@@ -249,7 +249,7 @@ private[kernel] object EffectTrace:
                                 pushValue(d.value)
                             case p: Pending.Park[?, ?] =>
 
-                                val entries = p.entries
+                                val entries                       = p.entries
                                 @tailrec def parked(i: Int): Unit =
                                     if i < entries.regions then
                                         push(entries.continuation(i))

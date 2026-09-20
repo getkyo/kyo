@@ -34,7 +34,7 @@ class MysqlDialectSetOpRenderTest extends Test:
     "INTERSECT on MySQL 8.0.30 raises Unsupported" in {
         val q       = left.intersect(right)
         val version = Present(Idiom.ServerVersion(8, 0, 30))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
@@ -53,7 +53,7 @@ class MysqlDialectSetOpRenderTest extends Test:
     "EXCEPT on MySQL 5.7 raises Unsupported" in {
         val q       = left.except(right)
         val version = Present(Idiom.ServerVersion(5, 7, 44))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
@@ -72,7 +72,7 @@ class MysqlDialectSetOpRenderTest extends Test:
     "INTERSECT ALL on MySQL 5.7 raises Unsupported" in {
         val q       = left.intersectAll(right)
         val version = Present(Idiom.ServerVersion(5, 7, 44))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
@@ -87,7 +87,7 @@ class MysqlDialectSetOpRenderTest extends Test:
     "EXCEPT ALL on MySQL 8.0.30 raises Unsupported" in {
         val q       = left.exceptAll(right)
         val version = Present(Idiom.ServerVersion(8, 0, 30))
-        val ex = intercept[SqlUnsupportedDialectFeatureException] {
+        val ex      = intercept[SqlUnsupportedDialectFeatureException] {
             q.render(MysqlDialect, version)
         }
         assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")

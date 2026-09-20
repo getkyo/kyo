@@ -297,7 +297,7 @@ object Isolate:
                         override def apply[C, S2](cur: Stack < S2, cont2: Arrow[A, C, S2]) =
                             cur match
                                 case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
-                                case _ =>
+                                case _                                =>
                                     val av: A < Any = a
                                     join(forked, finals, Nested.unnest[Stack](cur))
                                     cont2(av, Arrow.id)

@@ -58,7 +58,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         val slot                             = Safepoint.get()
         @volatile var forked: Safepoint.Slot = slot
         @volatile var result                 = 0
-        val t = new Thread(() =>
+        val t                                = new Thread(() =>
             forked = Safepoint.get()
             result = (1: Int < Any).map(_ + 1).map(_ + 2).eval
         )
@@ -72,7 +72,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
     "no new Safepoint for nested eval calls" in {
         val outer                 = Safepoint.get()
         var inner: Safepoint.Slot = outer
-        val result =
+        val result                =
             (0: Int < Any).map { _ =>
                 val nested =
                     (21: Int < Any).map { v =>
@@ -90,7 +90,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         @volatile var stopDelivered = false
         @volatile var first         = false
         @volatile var second        = true
-        val t = new Thread(() =>
+        val t                       = new Thread(() =>
             val slot = Safepoint.get()
             ready = true
             while !stopDelivered do Thread.onSpinWait()
@@ -111,7 +111,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         val requests          = new AtomicInteger
         @volatile var ready   = false
         @volatile var running = true
-        val target = new Thread(() =>
+        val target            = new Thread(() =>
             val slot = Safepoint.get()
             ready = true
             while running do
@@ -121,15 +121,14 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         )
         target.start()
         assert(spinUntil()(ready))
-        val stoppers =
-            (1 to 8).map { _ =>
-                new Thread(() =>
-                    var i = 0
-                    while i < 1000 do
-                        if Safepoint.stop(target) then discard(requests.incrementAndGet())
-                        i += 1
-                )
-            }
+        val stoppers = (1 to 8).map { _ =>
+            new Thread(() =>
+                var i = 0
+                while i < 1000 do
+                    if Safepoint.stop(target) then discard(requests.incrementAndGet())
+                    i += 1
+            )
+        }
         stoppers.foreach(_.start())
         stoppers.foreach(_.join(10000))
         running = false
@@ -146,7 +145,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         @volatile var ready   = false
         @volatile var yielded = false
         @volatile var done    = false
-        val target = new Thread(() =>
+        val target            = new Thread(() =>
             discard(Safepoint.get())
             ready = true
             var attempts = 0
@@ -175,7 +174,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         while run < 50 do
             @volatile var started = false
             @volatile var pending = false
-            val target = new Thread(() =>
+            val target            = new Thread(() =>
                 val region: Int < Any =
                     ArrowEffect.handleLoop(Tag[Ask], countdown(5_000_000))(
                         [C] =>
@@ -202,7 +201,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         discard(Safepoint.get())
         @volatile var running = true
         @volatile var started = false
-        val t = new Thread(() =>
+        val t                 = new Thread(() =>
             started = true
             while running do Thread.onSpinWait()
         )
@@ -228,14 +227,13 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         val holderCount = Homes * 3
         val ready       = new CountDownLatch(holderCount)
         val release     = new CountDownLatch(1)
-        val holders =
-            (1 to holderCount).map { _ =>
-                Thread.ofVirtual().start(() =>
-                    discard(Safepoint.get())
-                    ready.countDown()
-                    discard(release.await(60, TimeUnit.SECONDS))
-                )
-            }
+        val holders     = (1 to holderCount).map { _ =>
+            Thread.ofVirtual().start(() =>
+                discard(Safepoint.get())
+                ready.countDown()
+                discard(release.await(60, TimeUnit.SECONDS))
+            )
+        }
         try
             assert(ready.await(60, TimeUnit.SECONDS))
             val probeCount  = 8
@@ -243,21 +241,20 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             val holdersDead = new CountDownLatch(1)
             val remaining   = new Array[Int](probeCount)
             val consumed    = new Array[Boolean](probeCount)
-            val probes =
-                (0 until probeCount).map { i =>
-                    Thread.ofVirtual().start(() =>
-                        val slot = Safepoint.get()
-                        discard(Safepoint.enter(slot))
-                        discard(Safepoint.enter(slot))
-                        discard(Safepoint.enter(slot))
-                        probesReady.countDown()
-                        discard(holdersDead.await(60, TimeUnit.SECONDS))
-                        consumed(i) = Safepoint.consumeStopped(Safepoint.get())
-                        var extra = 0
-                        while Safepoint.enter(Safepoint.get()) do extra += 1
-                        remaining(i) = extra
-                    )
-                }
+            val probes      = (0 until probeCount).map { i =>
+                Thread.ofVirtual().start(() =>
+                    val slot = Safepoint.get()
+                    discard(Safepoint.enter(slot))
+                    discard(Safepoint.enter(slot))
+                    discard(Safepoint.enter(slot))
+                    probesReady.countDown()
+                    discard(holdersDead.await(60, TimeUnit.SECONDS))
+                    consumed(i) = Safepoint.consumeStopped(Safepoint.get())
+                    var extra = 0
+                    while Safepoint.enter(Safepoint.get()) do extra += 1
+                    remaining(i) = extra
+                )
+            }
             assert(probesReady.await(60, TimeUnit.SECONDS))
             probes.foreach(p => assert(Safepoint.stop(p)))
             release.countDown()
@@ -283,7 +280,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
         @volatile var entered = false
         val ready             = new CountDownLatch(1)
         val done              = new CountDownLatch(1)
-        val v = Thread.ofVirtual().start(() =>
+        val v                 = Thread.ofVirtual().start(() =>
             entered = Safepoint.enter(Safepoint.get())
             ready.countDown()
             discard(done.await(30, TimeUnit.SECONDS))
@@ -301,14 +298,13 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
     "the overflowed slot ignores budget operations and misses preemption" in {
         val ready   = new CountDownLatch(Slots)
         val release = new CountDownLatch(1)
-        val holders =
-            (1 to Slots).map { _ =>
-                Thread.ofVirtual().start(() =>
-                    discard(Safepoint.get())
-                    ready.countDown()
-                    discard(release.await(60, TimeUnit.SECONDS))
-                )
-            }
+        val holders = (1 to Slots).map { _ =>
+            Thread.ofVirtual().start(() =>
+                discard(Safepoint.get())
+                ready.countDown()
+                discard(release.await(60, TimeUnit.SECONDS))
+            )
+        }
         try
             assert(ready.await(60, TimeUnit.SECONDS))
             @volatile var enterFirst    = false
@@ -317,7 +313,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
             @volatile var evalResult    = -1
             val probeReady              = new CountDownLatch(1)
             val checked                 = new CountDownLatch(1)
-            val probe = Thread.ofVirtual().start(() =>
+            val probe                   = Thread.ofVirtual().start(() =>
                 def burn(n: Int): Int < Any =
                     if n == 0 then 0 else (0: Int < Any).map(_ => burn(n - 1))
                 val slot = Safepoint.get()
@@ -347,22 +343,21 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
 
     "threads claim stable slots under concurrent lookups" in {
         val failures = new AtomicInteger
-        val threads =
-            (1 to 32).map { _ =>
-                new Thread(() =>
-                    val slot = Safepoint.get()
-                    var i    = 0
-                    while i < 1000 do
-                        if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
-                        Safepoint.exit(slot)
-                        i += 1
-                    end while
-                    val saved = Safepoint.save(Safepoint.get())
-                    Safepoint.restore(slot, saved)
+        val threads  = (1 to 32).map { _ =>
+            new Thread(() =>
+                val slot = Safepoint.get()
+                var i    = 0
+                while i < 1000 do
                     if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
                     Safepoint.exit(slot)
-                )
-            }
+                    i += 1
+                end while
+                val saved = Safepoint.save(Safepoint.get())
+                Safepoint.restore(slot, saved)
+                if !Safepoint.enter(slot) then discard(failures.incrementAndGet())
+                Safepoint.exit(slot)
+            )
+        }
         threads.foreach(_.start())
         threads.foreach(_.join(10000))
         assert(failures.get == 0)

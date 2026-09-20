@@ -8,7 +8,7 @@ private[kyo] object YamlCstRenderer:
     def document(document: Yaml.Cst.Document)(using config: Yaml.WriterConfig): String =
         document.originalSource match
             case Present(source) => source
-            case Absent =>
+            case Absent          =>
                 if hasTrivia(document) then renderWithTrivia(document)
                 else renderFromEvents(document)
         end match
@@ -17,8 +17,8 @@ private[kyo] object YamlCstRenderer:
     def stream(stream: Yaml.Cst.Stream)(using config: Yaml.WriterConfig): String =
         stream.originalSource match
             case Present(source) => source
-            case Absent =>
-                val builder = StringBuilder()
+            case Absent          =>
+                val builder     = StringBuilder()
                 val childConfig =
                     if stream.documents.size > 1 then config.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.None)
                     else config
@@ -371,11 +371,11 @@ private[kyo] object YamlCstRenderer:
             val builder = StringBuilder()
             builder.append('"')
             value.foreach {
-                case '"'  => builder.append("\\\"")
-                case '\\' => builder.append("\\\\")
-                case '\n' => builder.append("\\n")
-                case '\r' => builder.append("\\r")
-                case '\t' => builder.append("\\t")
+                case '"'            => builder.append("\\\"")
+                case '\\'           => builder.append("\\\\")
+                case '\n'           => builder.append("\\n")
+                case '\r'           => builder.append("\\r")
+                case '\t'           => builder.append("\\t")
                 case ch if ch < ' ' =>
                     builder.append("\\u")
                     appendHex4(builder, ch)

@@ -329,7 +329,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
         "lets parser events render empty collections without a node tree" in {
             val renderer = YamlEvents.Renderer(Yaml.WriterConfig.Default)
-            val yaml =
+            val yaml     =
                 """items: []
                   |labels: {}
                   |""".stripMargin
@@ -346,7 +346,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "lets parser events be transformed before rendering without a node tree" in {
-            val renderer = YamlEvents.Renderer(Yaml.WriterConfig.Default)
+            val renderer         = YamlEvents.Renderer(Yaml.WriterConfig.Default)
             val uppercaseScalars =
                 Yaml.Events.Processor.mapScalars[DecodeException]((value, meta) => Result.succeed((value.toUpperCase, meta)))
             val yaml =
@@ -368,7 +368,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "renders synthetic events as YAML without a node tree" in {
             val nameAnchor = Yaml.Anchor("name")
             val renderer   = YamlEvents.Renderer(Yaml.WriterConfig.Default)
-            val events = Chunk(
+            val events     = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
@@ -399,7 +399,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
         "renders properties on explicit empty collection events" in {
             val renderer = YamlEvents.Renderer(Yaml.WriterConfig.Default)
-            val events = Chunk(
+            val events   = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
@@ -421,7 +421,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
 
         "renders properties on non-empty collection events" in {
             val renderer = YamlEvents.Renderer(Yaml.WriterConfig.Default)
-            val events = Chunk(
+            val events   = Chunk(
                 Yaml.Events.Event.StreamStart(mark),
                 Yaml.Events.Event.DocumentStart(mark),
                 Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
@@ -685,7 +685,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "writes double-quoted strings for control chars through events writer" in {
-            val fastCfg = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
+            val fastCfg    = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
             val obtained11 = (
                 controlChar = write("", fastCfg),
                 newline = write("line1\nline2", fastCfg),
@@ -699,7 +699,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "writes single-quoted strings that need quoting when single-quote style is configured" in {
             val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
             // "true" is ambiguous and needs quoting; single-quote style applies
-            val yaml = write("true", singleStyle)
+            val yaml       = write("true", singleStyle)
             val obtained12 = (
                 encoded = yaml,
                 decoded = Yaml.decode[String](yaml)
@@ -711,7 +711,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "writes single-quoted strings with embedded single quotes using doubled-quote escaping" in {
             val singleStyle = Yaml.WriterConfig.Readable.copy(quoteStyle = Yaml.WriterConfig.QuoteStyle.Single)
             // "#" in the body forces quoting; single-quote style applies
-            val yaml = write("it #1", singleStyle)
+            val yaml       = write("it #1", singleStyle)
             val obtained13 = (
                 encoded = yaml,
                 decoded = Yaml.decode[String](yaml)
@@ -767,8 +767,8 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         }
 
         "writes QuoteAllStrings through events writer" in {
-            val config = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.QuoteAllStrings)
-            val yaml   = write("hello", config)
+            val config     = Yaml.WriterConfig.Readable.copy(scalarQuoting = Yaml.WriterConfig.ScalarQuoting.QuoteAllStrings)
+            val yaml       = write("hello", config)
             val obtained15 = (
                 encoded = yaml,
                 decoded = Yaml.decode[String](yaml)

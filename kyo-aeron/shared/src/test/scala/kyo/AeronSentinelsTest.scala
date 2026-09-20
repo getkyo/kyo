@@ -31,8 +31,8 @@ class AeronSentinelsTest extends Test:
         val uri      = "aeron:ipc"
         val streamId = 7
         // Representative messageSize/maxLen for the -6 arm assertion.
-        val msgSize = 8200
-        val maxLen  = 8192
+        val msgSize                                                             = 8200
+        val maxLen                                                              = 8192
         val transientSignal: Unit < (Async & Abort[TopicBackpressureException]) =
             Abort.fail(TopicBackpressureExhaustedException(uri, streamId))
 

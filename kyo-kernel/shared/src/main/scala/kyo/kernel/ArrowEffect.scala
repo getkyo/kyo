@@ -70,10 +70,10 @@ object ArrowEffect:
         inline f: O[A] => B < S
     ): B < (S & E) =
         new Pending.SuspendArrowWith[I, O, E, A, B, E & S]:
-            override def frame = _frame
-            def tag            = effectTag
-            def input          = functionInput
-            def cont           = this
+            override def frame                                              = _frame
+            def tag                                                         = effectTag
+            def input                                                       = functionInput
+            def cont                                                        = this
             override def apply[D, S2](v: O[A] < S2, cont2: Arrow[B, D, S2]) =
                 v match
                     case kyo: Pending[O[A], S2] @unchecked => Effect.defer(kyo, this, cont2)
@@ -108,7 +108,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.ContHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                                                   = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             Region.discharge(handle[X](input, next))
                         def onDone(state: Unit, v0: A) = done(v0)
@@ -143,7 +143,7 @@ object ArrowEffect:
                 case _: Pending[?, ?] =>
                     val h =
                         new Handler.ContHandler[I, O, E, A, B, S & S2]:
-                            def tag = effectTag
+                            def tag                                                   = effectTag
                             def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                                 Region.discharge(handle[X](input, next))
                             def onDone(state: Unit, v0: A)                     = done(v0)
@@ -195,7 +195,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.LoopHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                 = effectTag
                         def run[X](input: I[X]) =
                             handle[X](input)
                         override def answers[X](
@@ -246,7 +246,7 @@ object ArrowEffect:
                 case _: Pending[?, ?] =>
                     val h =
                         new Handler.LoopHandler[I, O, E, A, B, S & S2]:
-                            def tag = effectTag
+                            def tag                 = effectTag
                             def run[X](input: I[X]) =
                                 handle[X](input)
                             override def answers[X](
@@ -313,7 +313,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                            = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
                         override def answers[X](
@@ -369,7 +369,7 @@ object ArrowEffect:
                 case _: Pending[?, ?] =>
                     val h =
                         new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
-                            def tag = effectTag
+                            def tag                            = effectTag
                             def run[X](st: State, input: I[X]) =
                                 handle[X](st, input)
                             override def answers[X](
@@ -430,17 +430,17 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.ContHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                                                   = effectTag
                         def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
                             Region.discharge(handle[X](input, next))
                         def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = this
+                    override def frame                                           = _frame
+                    def value                                                    = v
+                    def handler                                                  = h
+                    def state                                                    = ()
+                    def cont                                                     = this
                     override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
                         b match
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
@@ -468,7 +468,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.LoopHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                 = effectTag
                         def run[X](input: I[X]) =
                             handle[X](input)
                         override def answers[X](
@@ -490,11 +490,11 @@ object ArrowEffect:
                         def onDone(state: Unit, v0: A) = done(v0)
 
                 new Pending.HandleArrowWith[Unit, E, A, B, C, S & S2 & S3]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = ()
-                    def cont           = this
+                    override def frame                                           = _frame
+                    def value                                                    = v
+                    def handler                                                  = h
+                    def state                                                    = ()
+                    def cont                                                     = this
                     override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
                         b match
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
@@ -523,7 +523,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.LoopStateHandler[State, I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                            = effectTag
                         def run[X](st: State, input: I[X]) =
                             handle[X](st, input)
                         override def answers[X](
@@ -547,11 +547,11 @@ object ArrowEffect:
                         def onDone(st: State, v0: A) = done(st, v0)
 
                 new Pending.HandleArrowWith[State, E, A, B, C, S & S2 & S3]:
-                    override def frame = _frame
-                    def value          = v
-                    def handler        = h
-                    def state          = state0
-                    def cont           = this
+                    override def frame                                           = _frame
+                    def value                                                    = v
+                    def handler                                                  = h
+                    def state                                                    = state0
+                    def cont                                                     = this
                     override def apply[D, S4](b: B < S4, cont2: Arrow[C, D, S4]) =
                         b match
                             case kyo: Pending[B, S4] @unchecked => Effect.defer(kyo, this, cont2)
@@ -624,7 +624,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.FirstHandler[I, O, E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                                                   = effectTag
                         def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, cont.asInstanceOf[Arrow[O[X], A, E & S]])
                         def onDone(state: Unit, a: A) = done(a)
@@ -653,8 +653,8 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.FirstHandler[I, O, E, A, B, S & S2]:
-                        def tag               = effectTag
-                        override def repeated = true
+                        def tag                                                   = effectTag
+                        override def repeated                                     = true
                         def run[X](input: I[X], cont: Arrow[O[X], A, E & S & S2]) =
                             handle[X](input, cont.asInstanceOf[Arrow[O[X], A, E & S]])
                         def onDone(state: Unit, a: A) = done(a)
@@ -696,7 +696,7 @@ object ArrowEffect:
             case _: Pending[?, ?] =>
                 val h =
                     new Handler.MaskingHandler[E, A, B, S & S2]:
-                        def tag = effectTag
+                        def tag                                                     = effectTag
                         def run[X](operation: X < E, next: Arrow[X, A, E & S & S2]) =
                             Region.discharge(handle[X](operation, next))
                         def onDone(state: Unit, v0: A) = done(v0)

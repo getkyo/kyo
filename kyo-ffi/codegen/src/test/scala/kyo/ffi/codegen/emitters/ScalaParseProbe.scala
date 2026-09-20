@@ -15,8 +15,8 @@ private object ScalaParseProbe:
         import dotty.tools.dotc.reporting.StoreReporter
         import dotty.tools.dotc.util.*
 
-        val reporter = new StoreReporter(null, fromTyperState = false)
-        val base     = new ContextBase
+        val reporter  = new StoreReporter(null, fromTyperState = false)
+        val base      = new ContextBase
         given Context = base.initialCtx.fresh
             .setSetting(base.settings.color, "never")
             .setReporter(reporter)

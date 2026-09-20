@@ -79,7 +79,7 @@ class PostgresTransactionIntegrationTest extends SqlContainerTest:
                         _ <- client.executeRaw(
                             """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                         )
-                        _ <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30)")
+                        _    <- client.executeRaw("INSERT INTO person VALUES (1, 'alice', 30)")
                         rows <- client.transaction(Maybe.Absent, readOnly = true) {
                             Sql.from[Person]("p").run
                         }

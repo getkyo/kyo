@@ -105,7 +105,7 @@ object System:
                     Maybe(SystemPlatformSpecific.property(name))
                 def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
                 def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
-                def operatingSystem()(using AllowUnsafe): OS =
+                def operatingSystem()(using AllowUnsafe): OS   =
                     // Delegate raw `os.name` lookup to the platform-specific shim: on JVM/Native this goes through
                     // `java.lang.System`; on Scala.js (which returns null for that property) it falls back to Node's
                     // `process.platform`. The classification below stays shared.
@@ -133,7 +133,10 @@ object System:
                     end if
                 end architecture
 
-                def availableProcessors()(using AllowUnsafe): Int = Runtime.getRuntime.availableProcessors()
+                // Delegated to the platform shim for the same reason `osName` is: Scala.js's
+                // `Runtime.getRuntime.availableProcessors()` is a stub that answers 1 on every host, so the
+                // JS shim reads the count Node (or the browser) actually reports.
+                def availableProcessors()(using AllowUnsafe): Int = SystemPlatformSpecific.availableProcessors()
         )
 
     /** Executes a computation with a custom System implementation.

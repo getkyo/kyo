@@ -31,9 +31,9 @@ class NumericBinaryIntegrationTest extends SqlContainerTest:
                     client.executeRaw("CREATE TABLE numeric_rt (id INT PRIMARY KEY, val NUMERIC(150, 100))").andThen {
                         Scope.ensure(Abort.run(client.executeRaw("DROP TABLE IF EXISTS numeric_rt")).unit).andThen {
                             // Generate 1000 deterministic BigDecimal values using a fixed seed.
-                            val rng = new scala.util.Random(0xdeadbeefL)
+                            val rng    = new scala.util.Random(0xdeadbeefL)
                             val values = (0 until 1000).map { _ =>
-                                val scale = rng.nextInt(10) // 0..9 decimal places
+                                val scale    = rng.nextInt(10) // 0..9 decimal places
                                 val unscaled = BigInt(rng.nextLong().abs % 1_000_000_000_000_000L) *
                                     (if rng.nextBoolean() then 1 else -1)
                                 BigDecimal(unscaled, scale)

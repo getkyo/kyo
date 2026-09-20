@@ -41,7 +41,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
 
         "computedString / token / role / internalRole / tokenList lift string-typed values into their own variant" in {
-            given Frame = Frame.internal
+            given Frame                       = Frame.internal
             val cases: Seq[(String, AxValue)] = Seq(
                 "computedString" -> AxValue.`computedString`("X"),
                 "token"          -> AxValue.`token`("X"),

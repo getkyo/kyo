@@ -166,10 +166,10 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             b.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                case _ =>
+                case _                     =>
                     b.onlyIf match
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
-                        case _ =>
+                        case _                              =>
                             regCtx.visitGroupWithBuilder[S](b.name, b, body)
         end -
 
@@ -179,7 +179,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             b.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                case _ =>
+                case _                     =>
                     b.onlyIf match
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
                         case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
@@ -267,7 +267,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                 val b = pb.builder
                 b.ignore match
                     case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                    case _ =>
+                    case _                     =>
                         b.onlyIf match
                             case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
                             case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
@@ -282,7 +282,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                 val b = pb.builder
                 b.ignore match
                     case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
-                    case _ =>
+                    case _                     =>
                         b.onlyIf match
                             case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(b.name, "condition false")
                             case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
@@ -299,13 +299,13 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def ignore: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(ignore = Maybe("")))
         def ignore(reason: String): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(ignore = Maybe(reason)))
 
-        def pendingUntilFixed: PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe("")))
+        def pendingUntilFixed: PlatformTestBuilder[P]                 = PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe("")))
         def pendingUntilFixed(reason: String): PlatformTestBuilder[P] =
             PlatformTestBuilder(pb.builder.copy(pendingUntilFixed = Maybe(reason)))
 
         def tagged(tags: String*): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(tags = pb.builder.tags ++ tags.toSet))
         def timeout(d: Duration): PlatformTestBuilder[P]  = PlatformTestBuilder(pb.builder.copy(timeout = Maybe(d)))
-        def retry(n: Int): PlatformTestBuilder[P] =
+        def retry(n: Int): PlatformTestBuilder[P]         =
             PlatformTestBuilder(pb.builder.copy(retrySchedule = Maybe(kyo.Schedule.fixed(Duration.Zero).take(n))))
         def retry(s: kyo.Schedule): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(retrySchedule = Maybe(s)))
 
@@ -562,7 +562,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope)): Unit =
             builder.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
-                case _ =>
+                case _                     =>
                     builder.onlyIf match
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
                         case _                              =>
@@ -577,7 +577,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         inline infix def in(inline body: kyo.test.AssertScope ?=> Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
             builder.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
-                case _ =>
+                case _                     =>
                     builder.onlyIf match
                         case Maybe.Present(cond) if !cond() => regCtx.registerSkipped(builder.name, "condition false")
                         case _                              =>

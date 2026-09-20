@@ -10,7 +10,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
         "construct" - {
             "should generate Async effect from async" in {
                 var state: Int = 0
-                val effect = Kyo.async[Int, Nothing]((continuation) =>
+                val effect     = Kyo.async[Int, Nothing]((continuation) =>
                     val cont = Sync.defer { state = state + 1; state }
                     continuation(cont)
                 )
@@ -21,7 +21,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
             "should generate failing Async effect from async" in {
                 var state: Int = 0
-                val effect = Kyo.async[Int, String]((continuation) =>
+                val effect     = Kyo.async[Int, String]((continuation) =>
                     continuation(Abort.fail("failed"))
                 )
                 Abort.run(effect).map:
@@ -127,7 +127,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
                     gate     <- Latch.init(1)
                     entered  <- Latch.init(1)
                     released <- AtomicBoolean.init(false)
-                    fiber <- Fiber.initUnscoped {
+                    fiber    <- Fiber.initUnscoped {
                         Kyo.async[Int, Nothing] { register =>
                             Sync.defer(register(Sync.ensure(released.set(true))(entered.release.andThen(gate.await).andThen(1))))
                         }
@@ -143,7 +143,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
         }
         "fork" - {
             "should fork a fiber and manage its lifecycle" in {
-                var state = 0
+                var state  = 0
                 val effect = Kyo.async[Int, Nothing]((continuation) =>
                     state = state + 1
                     continuation(state)
@@ -162,7 +162,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
             "should clean up resources when scope is closed" in {
                 var cleanedUp = false
-                val effect = Kyo.async[Int, Nothing]((continuation) =>
+                val effect    = Kyo.async[Int, Nothing]((continuation) =>
                     continuation(42)
                 )
 
@@ -183,7 +183,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
             "should wait for fiber completion" in {
                 var completed = false
-                val effect = Kyo.async[Int, Nothing](continuation =>
+                val effect    = Kyo.async[Int, Nothing](continuation =>
                     completed = true
                     continuation(42)
                 )

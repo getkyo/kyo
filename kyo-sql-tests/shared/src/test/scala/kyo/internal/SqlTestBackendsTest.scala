@@ -22,7 +22,7 @@ class SqlTestBackendsTest extends Test:
     "every shipped backend descriptor is discovered" in {
         val found = SqlTestBackends.registered.map(_.id).toSet
         assert(
-            found == Set("postgres", "mysql", "sqlite"),
+            found == Set("postgres", "mysql", "sqlite", "dolt"),
             s"the conformance battery compares only what it discovers, and it discovered $found. " +
                 "A missing descriptor does not fail any leaf, it makes every cross-engine leaf agree with itself."
         )

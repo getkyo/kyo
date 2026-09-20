@@ -24,7 +24,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"kyo-doctest-orch-test-$id"
-            _ <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
+            _   <- Abort.run[FileSystemException](Path.run(dir.mkDir)).unit
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap { dir =>
                 val file = dir / name
                 Abort.run[FileSystemException](Path.run(file.write(content))).flatMap { _ => f(file) }
@@ -203,7 +203,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                     )
                     // First run: cold
                     r1Result <- Abort.run(Scope.run(Doctest.check(config)))
-                    result <- r1Result match
+                    result   <- r1Result match
                         case Result.Success(r1) =>
                             assert(r1.compiled == 1, s"first run: expected 1 compiled, got ${r1.compiled}")
                             // Second run: warm
@@ -231,7 +231,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
             for
                 id <- Random.uuid
                 editDir = Path.basePaths.tmp / s"kyo-doctest-edit-test-$id"
-                _ <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
+                _   <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
                 res <-
                     Scope.acquireRelease(Sync.defer(editDir))(_ =>
                         Abort.run[FileSystemException](Path.run(editDir.removeAll)).unit
@@ -239,7 +239,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                         dir =>
                             val file    = dir / "README.md"
                             val kyoFile = file
-                            val md1 = """|# Test
+                            val md1     = """|# Test
                                  |
                                  |```scala
                                  |val a = 1
@@ -271,7 +271,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                                 )
                                 _        <- Abort.run[FileSystemException](Path.run(file.write(md1)))
                                 r1Result <- Abort.run(Scope.run(Doctest.check(config)))
-                                result <- r1Result match
+                                result   <- r1Result match
                                     case Result.Success(r1) =>
                                         assert(r1.compiled == 2, s"first run: expected 2 compiled, got ${r1.compiled}")
                                         // Edit one block
@@ -304,14 +304,14 @@ class OrchestratorTest extends kyo.test.Test[Any]:
             for
                 id <- Random.uuid
                 editDir = Path.basePaths.tmp / s"kyo-doctest-env-cache-test-$id"
-                _ <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
+                _   <- Abort.run[FileSystemException](Path.run(editDir.mkDir)).unit
                 res <-
                     Scope.acquireRelease(Sync.defer(editDir))(_ =>
                         Abort.run[FileSystemException](Path.run(editDir.removeAll)).unit
                     ).flatMap {
                         dir =>
                             val file = dir / "README.md"
-                            val md1 = """|# Test
+                            val md1  = """|# Test
                                  |
                                  |```scala doctest:scope=env:demo
                                  |val a = 1
@@ -345,7 +345,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                                 )
                                 _        <- Abort.run[FileSystemException](Path.run(file.write(md1)))
                                 r1Result <- Abort.run(Scope.run(Doctest.check(config)))
-                                result <- r1Result match
+                                result   <- r1Result match
                                     case Result.Success(r1) =>
                                         assert(r1.compiled == 2, s"first run: expected 2 compiled, got ${r1.compiled}")
                                         assert(r1.cacheHits == 0, s"first run: expected 0 cache hits, got ${r1.cacheHits}")
@@ -902,8 +902,8 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                     case Result.Panic(t) =>
                         // Dotty may panic on a missing stdlib. Only accept if the message references the bogus path
                         // or a classpath/IO-related failure, not arbitrary panics.
-                        val msg   = Option(t.getMessage).getOrElse("")
-                        val cause = Option(t.getCause)
+                        val msg                = Option(t.getMessage).getOrElse("")
+                        val cause              = Option(t.getCause)
                         val isClasspathRelated =
                             msg.contains("nonexistent") ||
                                 msg.contains("bogus") ||
@@ -982,7 +982,7 @@ class OrchestratorTest extends kyo.test.Test[Any]:
                             parallel = nCpus.max(2)
                         )
                         seqResult <- Abort.run(Scope.run(Doctest.check(configSeq)))
-                        result <- seqResult match
+                        result    <- seqResult match
                             case Result.Success(rSeq) =>
                                 Abort.run(Scope.run(Doctest.check(configPar))).map {
                                     case Result.Success(rPar) =>

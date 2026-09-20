@@ -285,7 +285,7 @@ class StreamTest extends kyo.test.Test[Any]:
 
         "with effects" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
-            val taken = stream.takeWhile { v =>
+            val taken  = stream.takeWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 4)
             }.run
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
@@ -365,7 +365,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
 
         "with effects" in {
-            val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+            val stream  = Stream.init(Seq(1, 2, 3, 4, 5))
             val dropped = stream.dropWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 3)
             }.run
@@ -590,7 +590,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
 
         "with effects" in {
-            val stream = Stream.init(Seq(1, 2, 3, 4, 5))
+            val stream    = Stream.init(Seq(1, 2, 3, 4, 5))
             val collected = stream.collectWhile { v =>
                 Var.update[Boolean](!_).map(if _ then Present(v * 2) else Absent)
             }.run
@@ -719,7 +719,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
         "produce until" in {
             var counter = 0
-            val result =
+            val result  =
                 Stream
                     .init(0 until 100)
                     .map(_ => counter += 1)
@@ -753,7 +753,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
         "produce until" in {
             var counter = 0
-            val result =
+            val result  =
                 Stream
                     .init(0 until 100)
                     .mapPure(_ => counter += 1)
@@ -799,7 +799,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
         "produce until" in {
             var counter = 0
-            val result =
+            val result  =
                 Stream
                     .init(0 until 100)
                     .mapChunk(_.map(_ => counter += 1))
@@ -833,7 +833,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
         "produce until" in {
             var counter = 0
-            val result =
+            val result  =
                 Stream
                     .init(0 until 100)
                     .mapChunkPure(_.map(_ => counter += 1))
@@ -922,7 +922,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
 
         "combining multiple chunks" in {
-            val input = Stream.init(Chunk(1, 2, 3))
+            val input  = Stream.init(Chunk(1, 2, 3))
             val result = input.flatMapChunk(c1 =>
                 Stream.init(Chunk(4, 5, 6)).flatMapChunk(c2 =>
                     Stream.init(c1.concat(c2))
@@ -1104,7 +1104,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
 
         "short-circuits on abort" in {
-            var sum = 0
+            var sum    = 0
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3, 4, 5)).foreach { i =>
                     sum += i
@@ -1273,7 +1273,7 @@ class StreamTest extends kyo.test.Test[Any]:
 
         "flatMapChunk with alternating aborts" in {
             var abortCounter = 0
-            val result = Abort.run[String] {
+            val result       = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3, 4, 5))
                     .flatMapChunk(c =>
                         if abortCounter % 2 == 0 then
@@ -1307,7 +1307,7 @@ class StreamTest extends kyo.test.Test[Any]:
         }
 
         "flatMap with interleaved effects" in {
-            var sum = 0
+            var sum    = 0
             val result = Env.run(10) {
                 Stream.init(Seq(1, 2, 3))
                     .flatMap(i =>
@@ -1324,7 +1324,7 @@ class StreamTest extends kyo.test.Test[Any]:
         "nested flatMap with alternating effects" in {
             var counter = 0
             val stream  = Stream.init(Seq(1, 2, 3, 4, 5))
-            val result = Abort.run[String] {
+            val result  = Abort.run[String] {
                 stream.flatMap { n =>
                     counter += 1
                     if counter % 2 == 0 then

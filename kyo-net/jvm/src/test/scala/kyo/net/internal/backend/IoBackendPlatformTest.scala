@@ -69,7 +69,7 @@ class IoBackendPlatformTest extends Test:
         // The whole point of the structured outcome: on a host without the bundle the registry falls to the jdk floor AND says which native
         // was missing, rather than reporting a bare false the way the Boolean channel did.
         BoringSslProvider.probe match
-            case CapabilityOutcome.Available => succeed
+            case CapabilityOutcome.Available                => succeed
             case CapabilityOutcome.NotBundled(id, platform) =>
                 assert(id == "kyonet_boringssl", s"the missing library must be named, got $id")
                 assert(platform.nonEmpty, "the platform the library was missing for must be named")

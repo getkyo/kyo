@@ -142,8 +142,7 @@ class NativeArtifactArchTest extends AnyFunSuite with Matchers {
         f
     }
 
-    private def pad(b: Array[Int], to: Int): Array[Byte] =
-        (b.map(_.toByte) ++ Array.fill[Byte](math.max(0, to - b.length))(0))
+    private def pad(b: Array[Int], to: Int): Array[Byte] = (b.map(_.toByte) ++ Array.fill[Byte](math.max(0, to - b.length))(0))
 
     /** ELF64: magic, EI_CLASS=2, EI_DATA (1 little / 2 big), then e_machine at offset 18. */
     private def elf(machine: Int, littleEndian: Boolean = true): Array[Byte] = {

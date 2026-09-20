@@ -50,10 +50,10 @@ object ContextEffect:
         inline f: A => B < S
     )(using inline _frame: Frame): B < (E & S) =
         new Pending.SuspendContextWith[A, E, B, E & S]:
-            override def frame = _frame
-            def tag            = effectTag
-            def default        = Maybe.empty
-            def cont           = this
+            override def frame                                           = _frame
+            def tag                                                      = effectTag
+            def default                                                  = Maybe.empty
+            def cont                                                     = this
             override def apply[C, S2](v: A < S2, cont2: Arrow[B, C, S2]) =
                 v match
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
@@ -86,10 +86,10 @@ object ContextEffect:
         inline f: A => B < S
     )(using inline _frame: Frame): B < S =
         new Pending.SuspendContextWith[A, E, B, S]:
-            override def frame = _frame
-            def tag            = effectTag
-            def default        = Maybe(defaultValue)
-            def cont           = this
+            override def frame                                           = _frame
+            def tag                                                      = effectTag
+            def default                                                  = Maybe(defaultValue)
+            def cont                                                     = this
             override def apply[C, S2](v: A < S2, cont2: Arrow[B, C, S2]) =
                 v match
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
@@ -219,7 +219,7 @@ object ContextEffect:
         def forked(parent: A): A                                = fork(parent)
         def joined(parent: A, fk: A, child: A): A               = join(parent, fk, child)
         def released(state: A, failure: Maybe[Throwable]): Unit = release(state, failure)
-        val h =
+        val h                                                   =
             new Handler.ContextHandler[A, E, B, S]:
                 def tag                                          = effectTag
                 def derive(outer: Maybe[A])                      = derived(outer)

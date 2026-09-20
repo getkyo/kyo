@@ -46,7 +46,7 @@ class ArrowEffectTest extends Test:
     // The Batch shape: a source effect answering with a computation, whose call is peeled and resumed from outside
     // the region later, and a stateful effect whose region can sit between the peel and the call.
     sealed trait Cnt extends ArrowEffect[Const[Int], Const[Int]]
-    def bump(d: Int): Int < Cnt = ArrowEffect.suspend[Any](Tag[Cnt], d)
+    def bump(d: Int): Int < Cnt                                   = ArrowEffect.suspend[Any](Tag[Cnt], d)
     def counting[A, S](init: Int)(v: A < (Cnt & S)): (Int, A) < S =
         ArrowEffect.handleLoopState(Tag[Cnt], init, v)(
             [C] => (st, d) => Loop.continue(st + d, st + d),
@@ -97,9 +97,7 @@ class ArrowEffectTest extends Test:
     "handle" - {
         "single effect" in {
             val effect = testEffect1(42)
-            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString)
-            )
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
             assert(result.eval == "42")
         }
 
@@ -144,16 +142,16 @@ class ArrowEffectTest extends Test:
                     s2 <- testEffect1(43)
                 yield (s1, s2)
 
-            val result = ArrowEffect.handleLoopState(Tag[TestEffect1], 0, effect)(
-                [C] => (state, input) => Loop.continue(state + 1, (input + state).toString)
+            val result = ArrowEffect.handleLoopState(Tag[TestEffect1], 0, effect)([C] =>
+                (state, input) => Loop.continue(state + 1, (input + state).toString)
             )
 
             assert(result.eval == ("42", "44"))
         }
 
         "execution is tail-recursive" in {
-            var minDepth = Int.MaxValue
-            var maxDepth = 0
+            var minDepth                        = Int.MaxValue
+            var maxDepth                        = 0
             def loop(i: Int): Int < TestEffect1 =
                 val depth = (new Exception).getStackTrace().size
                 if depth < minDepth then minDepth = depth
@@ -164,9 +162,7 @@ class ArrowEffectTest extends Test:
 
             val effect = loop(10000)
 
-            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString)
-            )
+            val result = ArrowEffect.handleCont(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
 
             assert(result.eval == 42)
             // The evaluator's frames between the test body and the loop body add a constant 12.
@@ -218,7 +214,7 @@ class ArrowEffectTest extends Test:
         }
 
         "handles pure values correctly" in {
-            val effect: String < Any = "pure"
+            val effect: String < Any         = "pure"
             val result: String < TestEffect1 = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont("handled"),
                 s => s + "-done"
@@ -236,7 +232,7 @@ class ArrowEffectTest extends Test:
                 if n == 0 then 42
                 else testEffect1(n).map(_ => nested(n - 1))
 
-            val effect = nested(10000)
+            val effect                    = nested(10000)
             val result: Int < TestEffect1 = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont("42"),
                 identity
@@ -250,7 +246,7 @@ class ArrowEffectTest extends Test:
         }
 
         "answers the first operation and hands the raw remainder" in {
-            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val v            = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleFirst(Tag[Ask], v)(
                 [C] => (_, cont) => ArrowEffect.handleCont(Tag[Ask], cont(4))([C2] => (_, k) => k(2), a => a),
                 a => a
@@ -265,7 +261,7 @@ class ArrowEffectTest extends Test:
 
         "the clause may end the computation without resuming" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a
             }
@@ -354,9 +350,7 @@ class ArrowEffectTest extends Test:
 
         "suspend and handle" in {
             val effect = customEffect(List(1, 2, 3))
-            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption)
-            )
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)([C] => (input, cont) => cont(input.headOption))
             assert(result.eval == Some(1))
         }
 
@@ -367,9 +361,7 @@ class ArrowEffectTest extends Test:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)(
-                [C] => (input, cont) => cont(input.headOption)
-            )
+            val result = ArrowEffect.handleCont(Tag[CustomEffect], effect)([C] => (input, cont) => cont(input.headOption))
             assert(result.eval == (Some(1), Some(4)))
         }
 
@@ -380,8 +372,8 @@ class ArrowEffectTest extends Test:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)(
-                [C] => (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]))
+            val result = ArrowEffect.handleLoopState(Tag[CustomEffect], 0, effect)([C] =>
+                (state, input) => Loop.continue(state + 1, (Some(input(state)): Option[C]))
             )
             assert(result.eval == (Some(1), Some(5)))
         }
@@ -396,10 +388,8 @@ class ArrowEffectTest extends Test:
 
         "suspends at effects" in {
             val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-            val result = Eval.partial(
-                ArrowEffect.handleCont(Tag[TestEffect1], x)(
-                    [C] => (input, cont) => cont(input.toString)
-                )
+            val result               = Eval.partial(
+                ArrowEffect.handleCont(Tag[TestEffect1], x)([C] => (input, cont) => cont(input.toString))
             )
             assert(result.evalNow == Maybe(6))
         }
@@ -409,11 +399,10 @@ class ArrowEffectTest extends Test:
             val x: Int < Any = Effect.defer(5)
             requestStop()
             val result = Eval.partial(
-                ArrowEffect.handleCont(Tag[TestEffect1], x)(
-                    [C] =>
-                        (input, cont) =>
-                            called = true
-                            cont(input.toString)
+                ArrowEffect.handleCont(Tag[TestEffect1], x)([C] =>
+                    (input, cont) =>
+                        called = true
+                        cont(input.toString)
                 )
             )
             assert(!called)
@@ -621,14 +610,13 @@ class ArrowEffectTest extends Test:
                     ArrowEffect.suspend[A](tag, Op.Shift(f))
 
                 def run[R: Tag, S](v: R < (Delim[R, S] & S))(using tag: Tag[Delim[R, S]]): R < S =
-                    ArrowEffect.handleCont(tag, v)(
-                        [A] =>
-                            (input, cont) =>
-                                input match
-                                    case Op.Shift(f) =>
-                                        // the compiler currently can't prove that the shift effect set
-                                        // is the same as the one being handled as restricted by the method signature
-                                        f(cont(_).asInstanceOf)
+                    ArrowEffect.handleCont(tag, v)([A] =>
+                        (input, cont) =>
+                            input match
+                                case Op.Shift(f) =>
+                                    // the compiler currently can't prove that the shift effect set
+                                    // is the same as the one being handled as restricted by the method signature
+                                    f(cont(_).asInstanceOf)
                     )
 
             end Delim
@@ -764,7 +752,7 @@ class ArrowEffectTest extends Test:
                     val a =
                         Loop(0) { acc =>
                             Kyo.zip(Flow.poll[Int], Flow.poll[String]).map(_.zip(_)).map {
-                                case Absent => Loop.done(acc)
+                                case Absent          => Loop.done(acc)
                                 case Present((i, s)) =>
                                     Flow.emit(i + 1).andThen(Flow.emit(s + "a")).andThen(Loop.continue(acc + i + s.size))
                             }
@@ -792,7 +780,7 @@ class ArrowEffectTest extends Test:
 
         "Loop.done stops the region" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -803,8 +791,8 @@ class ArrowEffectTest extends Test:
 
         "a done payload that is itself a Continue2 still stops the region" in {
             type Out = Loop.Outcome2[Unit, Int < Any, Int < Any]
-            val hostile: Out = Loop.continue((), 7: Int < Any).eval
-            var reached      = false
+            val hostile: Out    = Loop.continue((), 7: Int < Any).eval
+            var reached         = false
             val body: Out < Ask = ask.map { _ =>
                 reached = true
                 hostile
@@ -816,8 +804,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a done payload of type Any holding a Continue2 still stops the region" in {
-            val hostile: Any = Loop.continue((), 0: Int < Any).eval: Loop.Outcome2[Unit, Int < Any, Any]
-            var reached      = false
+            val hostile: Any    = Loop.continue((), 0: Int < Any).eval: Loop.Outcome2[Unit, Int < Any, Any]
+            var reached         = false
             val body: Any < Ask = ask.map { _ =>
                 reached = true
                 "resumed"
@@ -829,8 +817,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a done payload that is a pending computation is delivered as data" in {
-            val payload: Int < Say = say("p").map(_ => 7)
-            var reached            = false
+            val payload: Int < Say      = say("p").map(_ => 7)
+            var reached                 = false
             val body: (Int < Say) < Ask = ask.map { _ =>
                 reached = true
                 Kyo.lift(payload)
@@ -845,8 +833,8 @@ class ArrowEffectTest extends Test:
 
         "an effectful clause ending with a pending payload delivers it as data" in {
             sealed trait Tick extends ArrowEffect[Const[Unit], Const[Unit]]
-            val payload: Int < Say = say("p").map(_ => 7)
-            var reached            = false
+            val payload: Int < Say      = say("p").map(_ => 7)
+            var reached                 = false
             val body: (Int < Say) < Ask = ask.map { _ =>
                 reached = true
                 Kyo.lift(payload)
@@ -877,7 +865,7 @@ class ArrowEffectTest extends Test:
         "a crossing clause ending with a computation result runs it" in {
             var evaluated          = 0
             val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
-            val body: Int < Ask =
+            val body: Int < Ask    =
                 ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask))([C] => (_, cont) => cont(()), a => a)
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.done(payload), a => a)
             assert(r.eval == 2)
@@ -885,8 +873,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a crossing clause ending with a boxed payload keeps it as data" in {
-            var evaluated          = 0
-            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            var evaluated               = 0
+            val payload: Int < Any      = Effect.defer { evaluated += 1; 2 }
             val body: (Int < Any) < Ask =
                 ArrowEffect.handleCont(Tag[Say], say("s").map(_ => ask.map(_ => Kyo.lift(payload))))(
                     [C] => (_, cont) => cont(()),
@@ -906,7 +894,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a settled input applies done strictly" in {
-            var ran = false
+            var ran          = false
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], 41: Int < Ask)(
                 [C] => _ => Loop.continue(0),
                 a =>
@@ -931,7 +919,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause answers effectfully" in {
-            var seen = List.empty[String]
+            var seen               = List.empty[String]
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] => _ => say("consult").map(_ => Loop.continue(41)),
                 a => a
@@ -952,7 +940,7 @@ class ArrowEffectTest extends Test:
             var reached   = false
             var completed = false
             var seen      = List.empty[String]
-            val body = ask.map { a =>
+            val body      = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -977,8 +965,8 @@ class ArrowEffectTest extends Test:
         }
 
         "every clause suspension re-arms the region" in {
-            var seen = List.empty[String]
-            val v    = ask.map(a => ask.map(b => a * 10 + b))
+            var seen               = List.empty[String]
+            val v                  = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], v)(
                 [C] => _ => say("x").map(_ => Loop.continue(1)),
                 a => a
@@ -996,8 +984,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause suspension resolves outside the region" in {
-            var interiorSeen = List.empty[String]
-            var outerSeen    = List.empty[String]
+            var interiorSeen    = List.empty[String]
+            var outerSeen       = List.empty[String]
             val body: Int < Ask =
                 ArrowEffect.handleLoop(Tag[Say], ask.map(_ + 1))(
                     [C] =>
@@ -1035,8 +1023,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause suspends on its own effect per operation" in {
-            var answered        = 0
-            val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+            var answered           = 0
+            val body: Int < Ask    = ask.map(a => ask.map(b => a * 10 + b))
             val doubled: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], body)(
                 [C] => _ => ask.map(v => Loop.continue(v * 2)),
                 a => a
@@ -1054,7 +1042,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a suspended clause dispatch is multi-shot" in {
-            val body: Int < Ask = ask.map(_ + 1)
+            val body: Int < Ask    = ask.map(_ + 1)
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], body)(
                 [C] => _ => say("s").map(_ => Loop.continue(10)),
                 a => a
@@ -1070,7 +1058,7 @@ class ArrowEffectTest extends Test:
             var order                   = List.empty[String]
             val body: Int < (Ask & Say) = say("a").map(_ => ask).map(i => i + 1)
             val inner: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(41), a => a)
-            val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)(
+            val r: Int < Any            = ArrowEffect.handleLoop(Tag[Say], inner)(
                 [C] =>
                     s =>
                         order = s :: order
@@ -1083,7 +1071,7 @@ class ArrowEffectTest extends Test:
         }
 
         "an effectful answer resolves through an outer handler" in {
-            val v: Int < Ask = ask.map(_ + 1)
+            val v: Int < Ask      = ask.map(_ + 1)
             val looped: Int < Say =
                 ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(say("fetch").map(_ => 41)), a => a)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], looped)([C] => (_, cont) => cont(()), a => a)
@@ -1091,14 +1079,14 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause may suspend before producing its outcome" in {
-            var logged = 0
+            var logged            = 0
             val looped: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     _ =>
                         say("pre").map { _ =>
                             logged += 1
                             Loop.continue(41)
-                    },
+                        },
                 a => a
             )
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], looped)([C] => (_, cont) => cont(()), a => a)
@@ -1107,8 +1095,8 @@ class ArrowEffectTest extends Test:
         }
 
         "done climbs past an inner handler without running its remainder" in {
-            var innerExit = false
-            var reached   = false
+            var innerExit                  = false
+            var reached                    = false
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map { a =>
                 reached = true
                 a + 1
@@ -1169,7 +1157,7 @@ class ArrowEffectTest extends Test:
         }
 
         "the captured continuation is multi-shot" in {
-            val body = ask.map(_ * 2)
+            val body         = ask.map(_ * 2)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
                 a => a
@@ -1179,7 +1167,7 @@ class ArrowEffectTest extends Test:
 
         "can end the computation without resuming" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -1189,7 +1177,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a settled input applies done strictly" in {
-            var ran = false
+            var ran          = false
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], 41: Int < Ask)(
                 [C] => (_, cont) => cont(0),
                 a =>
@@ -1220,7 +1208,7 @@ class ArrowEffectTest extends Test:
 
         "lazy: the handled computation is a value and answers at eval" in {
             var ran = false
-            val v = ask.map { a =>
+            val v   = ask.map { a =>
                 ran = true
                 a + 1
             }
@@ -1240,7 +1228,7 @@ class ArrowEffectTest extends Test:
 
         "stays in force across a foreign crossing with a trailing transform" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask).map(_ + 1)
-            val r: Int < Any = ArrowEffect.handleCont(
+            val r: Int < Any         = ArrowEffect.handleCont(
                 Tag[Say],
                 ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
             )([C] => (_, cont) => cont(()), a => a)
@@ -1257,8 +1245,8 @@ class ArrowEffectTest extends Test:
         }
 
         "handler state threads through resumptions" in {
-            var count = 0
-            val v     = ask.map(a => ask.map(b => a + b))
+            var count        = 0
+            val v            = ask.map(a => ask.map(b => a + b))
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], v)(
                 [C] =>
                     (_, cont) =>
@@ -1335,7 +1323,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a map chained after a settled pass-through applies strictly" in {
-            var ran = false
+            var ran          = false
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], 42: Int < Ask)([C] => (_, cont) => cont(0), a => a).map { a =>
                 ran = true
                 a + 1
@@ -1347,7 +1335,7 @@ class ArrowEffectTest extends Test:
 
     "handleLoopState" - {
         "threads state through operations" in {
-            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val v            = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
@@ -1356,7 +1344,7 @@ class ArrowEffectTest extends Test:
         }
 
         "done observes the final state" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v                   = ask.map(a => ask.map(b => a + b))
             val r: (Int, Int) < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (s, a) => (s, a)
@@ -1365,7 +1353,7 @@ class ArrowEffectTest extends Test:
         }
 
         "Loop.done bypasses done" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v               = ask.map(a => ask.map(b => a + b))
             val r: String < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
                 [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1),
                 (s, a) => s"done $a"
@@ -1374,8 +1362,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a stateful clause answers effectfully" in {
-            var seen = List.empty[String]
-            val v    = ask.map(a => ask.map(b => a * 10 + b))
+            var seen               = List.empty[String]
+            val v                  = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s)),
                 (_, a) => a
@@ -1394,7 +1382,7 @@ class ArrowEffectTest extends Test:
 
         "state survives a foreign crossing" in {
             val body: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
-            val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
+            val inner: Int < Say        = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
             )
@@ -1424,7 +1412,7 @@ class ArrowEffectTest extends Test:
             val program: Int < (Ask & Say) = ask.map(a => say("x").map(_ => a))
             val sayHandled: Int < Ask      = ArrowEffect.handleCont(Tag[Say], program)([C] => (_, cont) => cont(()), a => a)
             val v: Int < Ask               = sayHandled.map(a => ask.map(b => a * 10 + b))
-            val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
+            val r: Int < Any               = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (state, _) => Loop.continue(state + 1, state),
                 (_, a) => a
             )
@@ -1432,7 +1420,7 @@ class ArrowEffectTest extends Test:
         }
 
         "done sees the final answer" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v            = ask.map(a => ask.map(b => a + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a * 2
@@ -1469,7 +1457,7 @@ class ArrowEffectTest extends Test:
         }
 
         "the continuation can suspend on an outer effect" in {
-            var seen = ""
+            var seen             = ""
             val inner: Int < Say =
                 ArrowEffect.handleContWith(Tag[Ask], ask)([C] => (_, cont) => cont(1), a => a)(b => say("s").map(_ => b + 1))
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], inner)(
@@ -1520,7 +1508,7 @@ class ArrowEffectTest extends Test:
 
     "handleLoopStateWith" - {
         "applies the continuation with the final state observed" in {
-            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val v            = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopStateWith[Const[Unit], Const[Int], Ask, Int, Int, Any, Any, Int](Tag[Ask], 1, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (s, a) => s * 100 + a
@@ -1584,7 +1572,7 @@ class ArrowEffectTest extends Test:
     }
 
     "a crossed region resumes without re-running its body" in {
-        var runs = 0
+        var runs             = 0
         val inner: Int < Say = ArrowEffect.handleLoop(
             Tag[Ask],
             ask.map { a =>
@@ -1645,7 +1633,7 @@ class ArrowEffectTest extends Test:
     "state survives dumping above a live region" in {
         def tower(v: Int < Ask, n: Int): Int < Ask =
             if n == 0 then v else tower(v.map(_ + 1), n - 1)
-        val body = ask.map(a => tower(ask.map(b => a + b), 64))
+        val body         = ask.map(a => tower(ask.map(b => a + b), 64))
         val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, body)(
             [C] => (st, _) => Loop.continue(st + 1, st),
             (st, a) => a * 1000 + st
@@ -1656,9 +1644,9 @@ class ArrowEffectTest extends Test:
     "park" - {
 
         "a clause parks by returning and resumes by rewrapping the continuation" in {
-            var ready: Maybe[Int]              = Maybe.Absent
-            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
-            var polls                          = 0
+            var ready: Maybe[Int]                 = Maybe.Absent
+            var stash: Maybe[Int => Int < Ask]    = Maybe.Absent
+            var polls                             = 0
             def boundary(v: Int < Ask): Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
@@ -1689,8 +1677,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a park preserves standing sibling regions" in {
-            var seen                           = List.empty[String]
-            var stash: Maybe[Int => Int < Ask] = Maybe.Absent
+            var seen                              = List.empty[String]
+            var stash: Maybe[Int => Int < Ask]    = Maybe.Absent
             def boundary(v: Int < Ask): Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], v)(
                     [C] =>
@@ -1701,7 +1689,7 @@ class ArrowEffectTest extends Test:
                     a => a
                 )
             val body: Int < (Ask & Say) = say("before").map(_ => ask.map(a => say("after").map(_ => a + 1)))
-            val inner: Int < Ask = ArrowEffect.handleLoop(Tag[Say], body)(
+            val inner: Int < Ask        = ArrowEffect.handleLoop(Tag[Say], body)(
                 [C] =>
                     s =>
                         seen = s :: seen
@@ -1735,7 +1723,7 @@ class ArrowEffectTest extends Test:
 
         "a stateful region's recovery clause receives the live state, not the install-time state" in {
             val body: Int < Ask = ask.map(_ => ask.map(_ => (throw Boom): Int))
-            val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
+            val r: Int < Any    = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
                 [C] => (s, _) => Loop.continue(s + 1, 1),
                 (_, a) => a,
                 (s, _) => Maybe(-100 - s)
@@ -1747,7 +1735,7 @@ class ArrowEffectTest extends Test:
         "Absent declines and the failure unwinds to the enclosing region" in {
             val body: Int < (Ask & Say) = ask.map(_ => (throw Boom): Int)
             val inner: Int < Say        = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), a => a)
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+            val r: Int < Any            = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] => (_, cont) => cont(()),
                 a => a,
                 _ => Maybe(-7)
@@ -1794,7 +1782,7 @@ class ArrowEffectTest extends Test:
 
     "contracts" - {
         "a clause raising a foreign effect is answered by the outer handler across the region" in {
-            val v: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
+            val v: Int < (Ask & Say)  = ask.map(a => say("x").map(_ => ask.map(b => a + b)))
             val sayHandled: Int < Ask =
                 ArrowEffect.handleCont(Tag[Say], v)([C] => (_, cont) => ask.map(extra => cont(()).map(_ + extra)), a => a)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], sayHandled)([C] => (_, cont) => cont(10), a => a)
@@ -1803,7 +1791,7 @@ class ArrowEffectTest extends Test:
 
         "a continuation is a value: invoking it twice runs the rest twice" in {
             var runs = 0
-            val v = ask.map { a =>
+            val v    = ask.map { a =>
                 runs += 1
                 a * 10
             }
@@ -1817,7 +1805,7 @@ class ArrowEffectTest extends Test:
 
         "a handler may run another handle inside its answer" in {
             val inner: Int < Say = say("s").map(_ => 5)
-            val r: Int < Say = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
+            val r: Int < Say     = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     (_, cont) =>
                         val answered: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)([D] => (_, c) => c(()), a => a)
@@ -1866,7 +1854,7 @@ class ArrowEffectTest extends Test:
         "mapping over a double-boxed computation sees the once-boxed value" in {
             val inner: Int < Say                 = say("x").map(_ => 1)
             val twice: ((Int < Say) < Any) < Any = Kyo.lift(Kyo.lift(inner))
-            val unbox = (once: (Int < Say) < Any) =>
+            val unbox                            = (once: (Int < Say) < Any) =>
                 ArrowEffect.handleCont(Tag[Say], once.eval)([C] => (_, cont) => cont(()), a => a).eval
             val r: Int < Any = twice.map(once => unbox(once))
             assert(r.eval == 1)
@@ -1927,15 +1915,13 @@ class ArrowEffectTest extends Test:
             assert(state.evalNow == Maybe(42))
             assert(ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(0)).evalNow == Maybe(42))
             assert(ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0)).evalNow == Maybe(42))
-            assert(ArrowEffect.handleLoopState(Tag[Ask], 7, v)(
-                [C] => (s, _) => Loop.continue(s, 0)
-            ).evalNow == Maybe(42))
+            assert(ArrowEffect.handleLoopState(Tag[Ask], 7, v)([C] => (s, _) => Loop.continue(s, 0)).evalNow == Maybe(42))
         }
 
         "a map chained after a parked handler runs after the handler completes" in {
             var order                = List.empty[String]
             val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val handled: Int < Say = ArrowEffect.handleCont(Tag[Ask], v)(
+            val handled: Int < Say   = ArrowEffect.handleCont(Tag[Ask], v)(
                 [C] =>
                     (_, cont) =>
                         order :+= "answer"
@@ -1995,7 +1981,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a parked stateful region resumes with its state and done" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v                  = ask.map(a => ask.map(b => a + b))
             val handled: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
                 [C] =>
                     (s, _) =>
@@ -2034,7 +2020,7 @@ class ArrowEffectTest extends Test:
 
         "the clause may end the computation without resuming" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -2045,7 +2031,7 @@ class ArrowEffectTest extends Test:
 
         "the continuation is resumable more than once" in {
             var runs = 0
-            val v = ask.map { a =>
+            val v    = ask.map { a =>
                 runs += 1
                 a * 10
             }
@@ -2061,7 +2047,7 @@ class ArrowEffectTest extends Test:
         }
 
         "an operation the clause raises re-enters the same region" in {
-            var clauseRuns = 0
+            var clauseRuns     = 0
             val r: First < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(a => First.Done(a): First))(
                 [C] =>
                     (_, cont) =>
@@ -2076,7 +2062,7 @@ class ArrowEffectTest extends Test:
         }
 
         "an operation raised after the region reaches the outer handler" in {
-            var outer = 0
+            var outer                 = 0
             val captured: First < Ask =
                 firstOf(ask.map(_ + 1)).map:
                     case First.Standing(_) => ask.map(extra => First.Done(extra * 10): First)
@@ -2136,7 +2122,7 @@ class ArrowEffectTest extends Test:
         "the continuation re-enters the regions the operation was raised under" in {
             var exits                    = 0
             val inner: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val region = ArrowEffect.handleCont(Tag[Say], inner)([X] => (_, cont) => cont(()), a => a).map { a =>
+            val region                   = ArrowEffect.handleCont(Tag[Say], inner)([X] => (_, cont) => cont(()), a => a).map { a =>
                 exits += 1
                 a
             }
@@ -2147,7 +2133,7 @@ class ArrowEffectTest extends Test:
 
         "the remainder is handed out as a value and re-handled after a foreign crossing" in {
             val v: Int < (Ask & Say) = say("x").map(_ => ask.map(_ + 1))
-            val first =
+            val first                =
                 ArrowEffect.handleFirst[Const[Unit], Const[Int], Ask, Int, Either[Int, Arrow[Int, Int, Ask & Say]], Say, Any](
                     Tag[Ask],
                     v
@@ -2212,7 +2198,7 @@ class ArrowEffectTest extends Test:
 
         "the continuation is multi-shot" in {
             var runs = 0
-            val v = ask.map { a =>
+            val v    = ask.map { a =>
                 runs += 1
                 a * 10
             }
@@ -2226,7 +2212,7 @@ class ArrowEffectTest extends Test:
 
         "an operation raised by the clause reaches the outer handler" in {
             var outerAnswered = 0
-            val first = handleFirst(Tag[Ask], ask.map(_ + 1))(
+            val first         = handleFirst(Tag[Ask], ask.map(_ + 1))(
                 [X] => (_, cont) => ask.map(extra => cont(extra * 10)),
                 identity
             )
@@ -2267,7 +2253,7 @@ class ArrowEffectTest extends Test:
         "the innermost handleFirst wins under nested same-tag handlers" in {
             var outerAnswered = 0
             val inner         = handleFirst(Tag[Ask], ask.map(_ + 1))([X] => (_, cont) => cont(10), identity)
-            val outer = handleFirst(Tag[Ask], inner: Int < Ask)(
+            val outer         = handleFirst(Tag[Ask], inner: Int < Ask)(
                 [X] =>
                     (_, cont) =>
                         outerAnswered += 1
@@ -2283,7 +2269,7 @@ class ArrowEffectTest extends Test:
             val payload: Int < Say           = say("p").map(_ => 7)
             val v: (Int < Say) < (Ask & Say) = say("x").map(_ => Kyo.lift(payload))
             var seen: AnyRef                 = null
-            val first = handleFirst(Tag[Ask], v)(
+            val first                        = handleFirst(Tag[Ask], v)(
                 [X] => (_, _) => Kyo.lift(payload),
                 a =>
                     seen = a.asInstanceOf[AnyRef]
@@ -2349,8 +2335,8 @@ class ArrowEffectTest extends Test:
         }
 
         "a throw inside a region nested in the computation is recovered" in {
-            val region = ArrowEffect.handleLoop(Tag[Say], say("x").map(_ => (throw new RuntimeException("boom")): Int))(
-                [X] => _ => Loop.continue(())
+            val region = ArrowEffect.handleLoop(Tag[Say], say("x").map(_ => (throw new RuntimeException("boom")): Int))([X] =>
+                _ => Loop.continue(())
             )
             val v: Int < Ask = ask.map(_ => region)
             val r            = ArrowEffect.handleCont(Tag[Ask], v)([X] => (_, cont) => cont(0), a => a, _ => Maybe(-1))
@@ -2407,7 +2393,7 @@ class ArrowEffectTest extends Test:
         "the recovery answers at the region's row, so the done clause is not reached" in {
             var doneRan = false
             val v       = ask.map(_ => (throw new RuntimeException("boom")): Int)
-            val r = ArrowEffect.handleCont(Tag[Ask], v)(
+            val r       = ArrowEffect.handleCont(Tag[Ask], v)(
                 [X] => (_, cont) => cont(41),
                 a =>
                     doneRan = true
@@ -2440,7 +2426,7 @@ class ArrowEffectTest extends Test:
     "the answer fast path" - {
         "a capture across the fast path is multi-shot, including across threads" in {
             var kref: Arrow[Unit, Int, Any] = null
-            val body: Int < (Ask & Say) =
+            val body: Int < (Ask & Say)     =
                 ask.map(a => ask.map(b => say("x").andThen(ask.map(c => a + b + c))))
             val region: Int < Say =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
@@ -2461,7 +2447,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause keeps only the values it was given" in {
-            val seen = ListBuffer[(Int, Unit)]()
+            val seen       = ListBuffer[(Int, Unit)]()
             def run(): Int =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(a => ask.map(b => ask.map(c => a + b + c))))(
                     [C] =>
@@ -2540,7 +2526,7 @@ class ArrowEffectTest extends Test:
             def loop(i: Int): Int < Ask =
                 if i > 3 then i else ask.map(a => loop(i + a))
             var count = 0
-            val r = ArrowEffect.handleCont(Tag[Ask], loop(0))(
+            val r     = ArrowEffect.handleCont(Tag[Ask], loop(0))(
                 [C] =>
                     (_, cont) =>
                         count += 1
@@ -2555,7 +2541,7 @@ class ArrowEffectTest extends Test:
 
         "a hoarded fast-path continuation replays after the region finished" in {
             var kref: Arrow[Int, Int, Any] = null
-            def loop(i: Int): Int < Ask =
+            def loop(i: Int): Int < Ask    =
                 if i > 3 then i else ask.map(a => loop(i + a))
             val r0 = ArrowEffect.handleCont(Tag[Ask], loop(0))(
                 [C] =>
@@ -2609,7 +2595,7 @@ class ArrowEffectTest extends Test:
         "a park taken mid answer loop resumes in a fresh full eval" in {
             def countdown(i: Int): Int < Ask =
                 if i == 0 then 0 else ask.map(a => countdown(i - a))
-            var n = 0
+            var n                 = 0
             val region: Int < Any =
                 ArrowEffect.handleCont(Tag[Ask], countdown(100))(
                     [C] =>
@@ -2629,8 +2615,8 @@ class ArrowEffectTest extends Test:
 
     "safety audit pins" - {
         "a clause that suspends on the outer effect keeps its state lane across the shared cell" in {
-            var outerSaw        = List.empty[String]
-            val body: Int < Ask = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
+            var outerSaw             = List.empty[String]
+            val body: Int < Ask      = ask.map(a => ask.map(b => ask.map(c => a * 100 + b * 10 + c)))
             val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s", body)(
                 [C] => (s, _) => say(s).map(_ => Loop.continue(s + "+", s.length)),
                 (s, a) => if s == "s+++" then a else -1000
@@ -2658,7 +2644,7 @@ class ArrowEffectTest extends Test:
 
         "a clause throw releases the interior brackets it escapes" in {
             def probe(handle: (Int < Ask) => Int < Any): (Int, Boolean) =
-                var sawPanic = false
+                var sawPanic        = false
                 val body: Int < Ask =
                     Bracket(Effect.defer(1))(_ => ask.map(_ + 1))((_, r) =>
                         sawPanic = r.exists(_.getMessage == "clause-boom")
@@ -2677,7 +2663,7 @@ class ArrowEffectTest extends Test:
 
         "a throwing deferred payload after an answer does not re-run the consumed continuation" in {
             case class Boom() extends RuntimeException
-            var contRuns = 0
+            var contRuns        = 0
             val body: Int < Ask =
                 ask.map { a =>
                     contRuns += 1
@@ -2695,7 +2681,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a stop arriving during eager construction inside a slice reifies and parks the chain" in {
-            var built = 0
+            var built        = 0
             val v: Int < Any =
                 Effect.defer(0).map { z =>
                     var acc: Int < Any = z
@@ -2718,7 +2704,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a boxed answer crosses the answers loop unopened" in {
-            val payload: Int < Say = say("p").map(_ => 7)
+            val payload: Int < Say        = say("p").map(_ => 7)
             val region: (Int < Say) < Any =
                 ArrowEffect.handleLoop(Tag[AskBoxed], askBoxed.map(v => Kyo.lift(v)))(
                     [C] => _ => Loop.continue(Kyo.lift(payload): (Int < Say) < Any),
@@ -2787,7 +2773,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a recovery catches past the budget inside a stateful region" in {
-            val body = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
+            val body                 = testEffect1(1).map(a => burn(Period * 2).map(_ => testEffect1(2).map(b => a + b)))
             val region: String < Any =
                 ArrowEffect.handleLoopState(Tag[TestEffect1], 7, body)(
                     [C] => (state, input) => Loop.continue(state + 1, (input * state).toString),
@@ -2798,7 +2784,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a recovery does not reach into a boxed computation" in {
-            val fallback: String < TestEffect1 = "caught"
+            val fallback: String < TestEffect1      = "caught"
             val boxed: (String < TestEffect1) < Any =
                 recovering(Kyo.lift(testEffect1(1).map(_ => (throw new RuntimeException("Test exception")): String)))(_ => fallback)
             val inner: String < TestEffect1 = boxed.eval
@@ -2827,7 +2813,7 @@ class ArrowEffectTest extends Test:
             val body: Int < (Ask & Say) =
                 say("s").map(_ => ask.map(a => Effect.defer((throw Boom()): Int).map(_ + a)))
             val recovered: Int < (Ask & Say) = recovering(body)(_ => -1)
-            val askRegion: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], "s0", recovered)(
+            val askRegion: Int < Say         = ArrowEffect.handleLoopState(Tag[Ask], "s0", recovered)(
                 [C] => (s, _) => Loop.continue(s + "+", 1),
                 (s, a) => if s == "s0+" then a else -100
             )
@@ -2840,7 +2826,7 @@ class ArrowEffectTest extends Test:
 
         "a clause throw passes over a recovery standing inside the region on every dispatch path" in {
             case class Boom() extends RuntimeException
-            val body: Int < Ask = recovering(ask.map(_ + 1))(_ => -1)
+            val body: Int < Ask    = recovering(ask.map(_ + 1))(_ => -1)
             def viaLoop: Int < Any =
                 ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => throw Boom(), a => a)
             def viaCont: Int < Any =
@@ -2873,8 +2859,8 @@ class ArrowEffectTest extends Test:
 
         "a boxed answer parked mid loop is still data after the resume" in {
             sealed trait Give extends ArrowEffect[Const[Unit], Const[Int < Say]]
-            val give: (Int < Say) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
-            val payload: Int < Say       = say("p").map(_ => 7)
+            val give: (Int < Say) < Give  = ArrowEffect.suspend[Any](Tag[Give], ())
+            val payload: Int < Say        = say("p").map(_ => 7)
             val region: (Int < Say) < Any =
                 ArrowEffect.handleLoop(Tag[Give], give.map(v => Kyo.lift[Int < Say, Any](v)))(
                     [C] =>
@@ -2892,7 +2878,7 @@ class ArrowEffectTest extends Test:
         "a recovery after a foreign in-place answer sees the advanced state" in {
             val boom                    = new RuntimeException("boom")
             val body: Int < (Ask & Say) = say("x").map(_ => ask.map(_ => (throw boom): Int))
-            val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
+            val inner: Int < Say        = ArrowEffect.handleLoopState(Tag[Ask], 0, body)(
                 [C] => (s, _) => Loop.continue(s + 1, 1),
                 (_, a) => a,
                 (s, _) => Maybe(-100 - s)
@@ -2910,7 +2896,7 @@ class ArrowEffectTest extends Test:
             ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
         "a local handler around the operation does not see the effect its interpreter's clause raises" in {
-            var localAnswered = 0
+            var localAnswered    = 0
             val local: Int < Ask =
                 ArrowEffect.handleCont(Tag[Say], ask: Int < (Ask & Say))(
                     [C] =>
@@ -2928,7 +2914,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a computation answered as a value runs under the local handler the clause could not see" in {
-            var localAnswered = 0
+            var localAnswered         = 0
             val local: Int < AskBoxed =
                 ArrowEffect.handleCont(Tag[Say], askBoxed.map(v => v): Int < (AskBoxed & Say))(
                     [C] =>
@@ -2938,7 +2924,7 @@ class ArrowEffectTest extends Test:
                     ,
                     a => a
                 )
-            val payload: Int < Say = say("not caught").map(_ => 7)
+            val payload: Int < Say     = say("not caught").map(_ => 7)
             val interpreted: Int < Say =
                 ArrowEffect.handleCont(Tag[AskBoxed], local)([C] => (_, cont) => cont(payload), a => a)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Say], interpreted)([C] => (_, _) => -99, a => a)
@@ -2947,10 +2933,10 @@ class ArrowEffectTest extends Test:
         }
 
         "a computation answered as a value that yields inward escapes the answering region, and the resume site's handler answers the remainder" in {
-            var stash                      = Maybe.empty[Arrow[Unit, Int, AskBoxed & Say]]
-            var oldAnswered                = 0
-            var newAnswered                = 0
-            val op: Int < (AskBoxed & Say) = askBoxed.map(v => v)
+            var stash                        = Maybe.empty[Arrow[Unit, Int, AskBoxed & Say]]
+            var oldAnswered                  = 0
+            var newAnswered                  = 0
+            val op: Int < (AskBoxed & Say)   = askBoxed.map(v => v)
             val body: Int < (AskBoxed & Say) =
                 op.map(a => op.map(b => a * 10 + b))
             val coroutine: Int < AskBoxed = ArrowEffect.handleCont(Tag[Say], body)(
@@ -2986,7 +2972,7 @@ class ArrowEffectTest extends Test:
         }
 
         "each shot of a computation answered as a value runs under the re-established local handler" in {
-            var localAnswered = 0
+            var localAnswered         = 0
             val local: Int < AskBoxed =
                 ArrowEffect.handleCont(Tag[Say], askBoxed.map(v => v): Int < (AskBoxed & Say))(
                     [C] =>
@@ -2996,7 +2982,7 @@ class ArrowEffectTest extends Test:
                     ,
                     a => a
                 )
-            val payload: Int < Say = say("m").map(_ => 1)
+            val payload: Int < Say     = say("m").map(_ => 1)
             val interpreted: Int < Say = ArrowEffect.handleCont(Tag[AskBoxed], local)(
                 [C] => (_, cont) => cont(payload).map(a => cont(payload).map(b => a + b)),
                 a => a
@@ -3010,7 +2996,7 @@ class ArrowEffectTest extends Test:
             var stash                   = Maybe.empty[Arrow[Unit, Int, Ask & Say]]
             val log                     = ListBuffer[String]()
             val body: Int < (Ask & Say) = ask.map(a => say("yield").map(_ => a + 1))
-            val coroutine: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)(
+            val coroutine: Int < Ask    = ArrowEffect.handleCont(Tag[Say], body)(
                 [C] =>
                     (_, cont) =>
                         stash = Maybe(Region.leak(cont))
@@ -3024,7 +3010,7 @@ class ArrowEffectTest extends Test:
                         cont(1).map { x =>
                             log += s"post $x"
                             x * 10
-                    },
+                        },
                 a => a
             )
             assert(r.eval == -10)
@@ -3038,10 +3024,10 @@ class ArrowEffectTest extends Test:
         }
 
         "a handler whose clause suspends outward travels with the continuation and answers ahead of the handler at the resume site" in {
-            var stash           = Maybe.empty[Arrow[Unit, Int, Say]]
-            val yields          = ListBuffer[String]()
-            var atResumeSite    = 0
-            val body: Int < Ask = ask.map(a => ask.map(b => a * 10 + b))
+            var stash               = Maybe.empty[Arrow[Unit, Int, Say]]
+            val yields              = ListBuffer[String]()
+            var atResumeSite        = 0
+            val body: Int < Ask     = ask.map(a => ask.map(b => a * 10 + b))
             val captured: Int < Say =
                 ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => say("yield").map(_ => cont(1)), a => a)
             val first: Int < Any = ArrowEffect.handleCont(Tag[Say], captured)(
@@ -3076,7 +3062,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a clause's code after the resume runs where the continuation is resumed, under the bindings there" in {
-            var stash = Maybe.empty[Arrow[Unit, Int, Say & Cfg]]
+            var stash                       = Maybe.empty[Arrow[Unit, Int, Say & Cfg]]
             val captured: Int < (Say & Cfg) =
                 ArrowEffect.handleCont(Tag[Ask], ask.map(a => a))(
                     [C] => (_, cont) => say("yield").map(_ => cont(1)).map(x => read.map(c => x + c)),
@@ -3105,7 +3091,7 @@ class ArrowEffectTest extends Test:
             val boom                     = new RuntimeException("boom")
             var stash                    = Maybe.empty[Arrow[Int, Int, Ask & Wrap]]
             val body: Int < (Ask & Wrap) = recovering(ask.map(a => if a < 0 then (throw boom): Int else a))(_ => -1)
-            val first: Int < Any = recovering(
+            val first: Int < Any         = recovering(
                 ArrowEffect.handleCont(Tag[Ask], body)(
                     [C] =>
                         (_, cont) =>
@@ -3121,7 +3107,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a loop region's recovery does not guard its clause after the clause suspends" in {
-            val boom = new RuntimeException("boom")
+            val boom               = new RuntimeException("boom")
             val viaLoop: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] => _ => say("c").map(_ => (throw boom): Loop.Outcome[Int < (Ask & Say), Int < Say]),
                 a => a,
@@ -3132,7 +3118,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a cont region's recovery guards its clause after the clause suspends" in {
-            val boom = new RuntimeException("boom")
+            val boom               = new RuntimeException("boom")
             val viaCont: Int < Say = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                 [C] => (_, _) => say("c").map(_ => (throw boom): Int),
                 a => a,
@@ -3247,7 +3233,7 @@ class ArrowEffectTest extends Test:
 
         "a censor around the operation does not censor the tell its interpreter's clause raises" in {
             val body: Int < (Tell & Ask) = censor(_.map(_ * 100))(ask.map(a => tell(List(a)).map(_ => a)))
-            val interpreted: Int < Tell =
+            val interpreted: Int < Tell  =
                 ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => tell(List(7)).map(_ => cont(1)), a => a)
             assert(runWriter(interpreted).eval == ((1, List(7, 100))))
         }
@@ -3291,7 +3277,7 @@ class ArrowEffectTest extends Test:
             case Local[X](f: Int => Int, m: X < (Reader & Say)) extends ReaderOp[X]
         sealed trait Reader extends ArrowEffect[ReaderOp, [X] =>> X]
 
-        def askR: Int < Reader = ArrowEffect.suspend[Int](Tag[Reader], ReaderOp.Ask)
+        def askR: Int < Reader                                                 = ArrowEffect.suspend[Int](Tag[Reader], ReaderOp.Ask)
         def local[A](f: Int => Int)(m: A < (Reader & Say)): A < (Reader & Say) =
             ArrowEffect.suspend[A](Tag[Reader], ReaderOp.Local(f, m))
 
@@ -3331,7 +3317,7 @@ class ArrowEffectTest extends Test:
             case Catch[X](m: X < Err, h: String => X < Err) extends ErrOp[X]
         sealed trait Err extends ArrowEffect[ErrOp, [X] =>> X]
 
-        def fail(msg: String): Nothing < Err = ArrowEffect.suspend[Nothing](Tag[Err], ErrOp.Fail(msg))
+        def fail(msg: String): Nothing < Err                       = ArrowEffect.suspend[Nothing](Tag[Err], ErrOp.Fail(msg))
         def catching[A](m: A < Err)(h: String => A < Err): A < Err =
             ArrowEffect.suspend[A](Tag[Err], ErrOp.Catch(m, h))
 
@@ -3340,16 +3326,16 @@ class ArrowEffectTest extends Test:
                 [C] =>
                     (op, cont) =>
                         op match
-                            case ErrOp.Fail(msg) => (Left(msg): Either[String, A])
+                            case ErrOp.Fail(msg)   => (Left(msg): Either[String, A])
                             case ErrOp.Catch(m, h) =>
                                 runErr(m).map {
                                     case Right(c) => cont(c)
-                                    case Left(e) =>
+                                    case Left(e)  =>
                                         runErr(h(e)).map {
                                             case Right(c) => cont(c)
                                             case Left(e2) => (Left(e2): Either[String, A])
                                         }
-                            }
+                                }
                 ,
                 a => a
             )
@@ -3450,7 +3436,7 @@ class ArrowEffectTest extends Test:
 
         "a continuation from an enclosing clause can be resumed inside a nested clause on the same fiber" in {
             val body: Int < (Ask & Say) = say("s").map(_ => ask)
-            val r: Int < Ask =
+            val r: Int < Ask            =
                 ArrowEffect.handleCont(Tag[Say], body)(
                     [C] => (_, outer) => ArrowEffect.handleCont(Tag[Ask], outer(()))([C2] => (_, inner) => inner(5), a => a),
                     a => a
@@ -3468,25 +3454,23 @@ class ArrowEffectTest extends Test:
         // entered on, and the answer has to reach that operation's own cont.
 
         def runMixedState[A, S](state: Int)(v: A < (TestEffect4 & S))(using Frame): A < S =
-            ArrowEffect.handleLoopState(Tag[TestEffect4], state, v)(
-                [C] =>
-                    (st: Int, input: MixedOp[C]) =>
-                        input match
-                            case _: MixedMint.type => Loop.continue(st + 1, "m" * (st + 1))
-                            case w: MixedWrap =>
-                                runMixedState(st)(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
-                                    .map(b => Loop.continue(st + 1, b))
+            ArrowEffect.handleLoopState(Tag[TestEffect4], state, v)([C] =>
+                (st: Int, input: MixedOp[C]) =>
+                    input match
+                        case _: MixedMint.type => Loop.continue(st + 1, "m" * (st + 1))
+                        case w: MixedWrap      =>
+                            runMixedState(st)(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
+                                .map(b => Loop.continue(st + 1, b))
             )
 
         def runMixed[A, S](v: A < (TestEffect4 & S))(using Frame): A < S =
-            ArrowEffect.handleLoop(Tag[TestEffect4], v)(
-                [C] =>
-                    (input: MixedOp[C]) =>
-                        input match
-                            case _: MixedMint.type => Loop.continue("mm")
-                            case w: MixedWrap =>
-                                runMixed(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
-                                    .map(b => Loop.continue(b))
+            ArrowEffect.handleLoop(Tag[TestEffect4], v)([C] =>
+                (input: MixedOp[C]) =>
+                    input match
+                        case _: MixedMint.type => Loop.continue("mm")
+                        case w: MixedWrap      =>
+                            runMixed(mixedMint.map(id => Wrapped(id.length * 100 + w.n)))
+                                .map(b => Loop.continue(b))
             )
 
         "keeps an earlier operation's answer with its own cont, under state" in {

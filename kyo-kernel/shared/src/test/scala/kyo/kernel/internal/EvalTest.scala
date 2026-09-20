@@ -60,7 +60,7 @@ class EvalTest extends AnyFreeSpec:
 
         "map runs strictly on a settled value" in {
             var ran = false
-            val v = (1: Int < Any).map { n =>
+            val v   = (1: Int < Any).map { n =>
                 ran = true
                 n + 1
             }
@@ -108,7 +108,7 @@ class EvalTest extends AnyFreeSpec:
         "map receives a computation held as a value unopened" in {
             val inner: Int < Ask    = ask
             var received: Int < Ask = 0
-            val r: Int < Any = Kyo.lift(inner).map { c =>
+            val r: Int < Any        = Kyo.lift(inner).map { c =>
                 received = c
                 7
             }
@@ -125,7 +125,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "the captured continuation is multi-shot" in {
-            val body = ask.map(_ * 2)
+            val body         = ask.map(_ * 2)
             val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
                 a => a
@@ -135,7 +135,7 @@ class EvalTest extends AnyFreeSpec:
 
         "can end the computation without resuming" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -162,7 +162,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a capture crossing an inner region resumes it without re-running its body" in {
-            var runs = 0
+            var runs             = 0
             val inner: Int < Say = answerAsk(1)(ask.map { a =>
                 runs += 1
                 say("x").map(_ => a + 1)
@@ -195,7 +195,7 @@ class EvalTest extends AnyFreeSpec:
 
         "Loop.done stops the region and bypasses done" in {
             var reached = false
-            val v = ask.map { a =>
+            val v       = ask.map { a =>
                 reached = true
                 a + 1
             }
@@ -241,7 +241,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => say("c").map(_ => Loop.continue(41)),
                 a => a
             )
@@ -253,7 +253,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue(say("c").map(_ => 41)),
                 a => a
             )
@@ -262,7 +262,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's own-tag re-raise is answered by the successor state" in {
-            var clauseRuns = 0
+            var clauseRuns   = 0
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, ask.map(_ + 1))(
                 [C] =>
                     (phase, _) =>
@@ -279,7 +279,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => say("pre").map(_ => Loop.continue(say("c").map(_ => 41))),
                 a => a
             )
@@ -288,7 +288,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "an effectful answer's own-tag re-raise is answered by this handler" in {
-            var clauseRuns = 0
+            var clauseRuns   = 0
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     _ =>
@@ -302,8 +302,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause suspending and then answering with an own-tag re-raise is answered by this handler" in {
-            var clauseRuns = 0
-            val log        = ListBuffer[String]()
+            var clauseRuns         = 0
+            val log                = ListBuffer[String]()
             val handled: Int < Say = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     _ =>
@@ -322,7 +322,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue(say("c").map(_ => 41)),
                 a => a
             )
@@ -336,7 +336,7 @@ class EvalTest extends AnyFreeSpec:
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
 
             val pendingAnswer: Int < Any = answerAsk(0)(ask.map(_ => 41))
-            val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Any      = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue(pendingAnswer),
                 a => a
             )
@@ -348,7 +348,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => say("pre").map(_ => Loop.continue(say("c").map(_ => 41))),
                 a => a
             )
@@ -360,7 +360,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue(say("c").map(_ => 41)),
                 a => a
             )
@@ -373,7 +373,7 @@ class EvalTest extends AnyFreeSpec:
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
             val pendingAnswer: Int < Any   = answerAsk(0)(ask.map(_ => 41))
-            val askScope: Int < Any = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Any        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => Loop.continue(pendingAnswer),
                 a => a
             )
@@ -385,7 +385,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoop(Tag[Ask], sayInner)(
                 [C] => _ => say("pre").map(_ => Loop.continue(say("c").map(_ => 41))),
                 a => a
             )
@@ -394,11 +394,11 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a computation held as a value crosses a handler as a value" in {
-            val payload: Int < Say   = say("p").map(_ => 7)
-            val v: (Int < Say) < Ask = ask.map(_ => Kyo.lift(payload))
+            val payload: Int < Say         = say("p").map(_ => 7)
+            val v: (Int < Say) < Ask       = ask.map(_ => Kyo.lift(payload))
             val handled: (Int < Say) < Any =
                 ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(0), a => Kyo.lift(a))
-            var seen = ""
+            var seen         = ""
             val r: Int < Any = ArrowEffect.handleLoop(Tag[Say], handled.eval)(
                 [C] =>
                     s =>
@@ -416,7 +416,7 @@ class EvalTest extends AnyFreeSpec:
             val give: (Int < Ask) < Give = ArrowEffect.suspend[Any](Tag[Give], ())
             val inner: Int < Ask         = ask.map(_ + 1)
             val body: Int < (Give & Ask) = give.map(c => c)
-            val r: Int < Any = answerAsk(41)(
+            val r: Int < Any             = answerAsk(41)(
                 ArrowEffect.handleLoop(Tag[Give], body)([C] => _ => Loop.continue(Kyo.lift(inner)), a => a)
             )
             assert(r.eval == 42)
@@ -425,7 +425,7 @@ class EvalTest extends AnyFreeSpec:
 
     "handleLoopState" - {
         "threads state through operations" in {
-            val v = ask.map(a => ask.map(b => a * 10 + b))
+            val v            = ask.map(a => ask.map(b => a * 10 + b))
             val r: Int < Any = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
@@ -434,7 +434,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "done observes the final state" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v                   = ask.map(a => ask.map(b => a + b))
             val r: (Int, Int) < Any = ArrowEffect.handleLoopState(Tag[Ask], 10, v)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (s, a) => (s, a)
@@ -443,7 +443,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "Loop.done bypasses done" in {
-            val v = ask.map(a => ask.map(b => a + b))
+            val v               = ask.map(a => ask.map(b => a + b))
             val r: String < Any = ArrowEffect.handleLoopState(Tag[Ask], 0, v)(
                 [C] => (s, _) => if s == 1 then Loop.done("stopped") else Loop.continue(s + 1, 1),
                 (s, a) => s"done $a"
@@ -453,7 +453,7 @@ class EvalTest extends AnyFreeSpec:
 
         "state survives a foreign crossing" in {
             val body: Int < (Ask & Say) = ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b)))
-            val inner: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
+            val inner: Int < Say        = ArrowEffect.handleLoopState(Tag[Ask], 1, body)(
                 [C] => (s, _) => Loop.continue(s + 1, s),
                 (_, a) => a
             )
@@ -462,8 +462,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stateful clause that suspends threads its state through the park" in {
-            val log = ListBuffer[String]()
-            val v   = ask.map(a => ask.map(b => a * 10 + b))
+            val log                = ListBuffer[String]()
+            val v                  = ask.map(a => ask.map(b => a * 10 + b))
             val handled: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 1, v)(
                 [C] => (s, _) => say(s"state $s").map(_ => Loop.continue(s + 1, s)),
                 (_, a) => a
@@ -476,7 +476,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = ask.map(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
                 [C] => (s, _) => Loop.continue(s + 1, say("c").map(_ => s + 1)),
                 (_, a) => a
             )
@@ -488,7 +488,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             val program: Int < (Ask & Say) = askWith(a => say("after").map(_ => a + 1))
             val sayInner: Int < Ask        = recordSay("inner", log)(program)
-            val askScope: Int < Say = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
+            val askScope: Int < Say        = ArrowEffect.handleLoopState(Tag[Ask], 40, sayInner)(
                 [C] => (s, _) => Loop.continue(s + 1, say("c").map(_ => s + 1)),
                 (_, a) => a
             )
@@ -504,7 +504,7 @@ class EvalTest extends AnyFreeSpec:
         "resumes after its region completed, in a fresh evaluation, each shot from capture-time state" in {
             var stored: Maybe[Unit => Int < Say] = Maybe.empty
             val inner: Int < Say                 = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+            val r: Int < Any                     = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
                         stored = Maybe(Region.leak(cont)(_))
@@ -522,7 +522,7 @@ class EvalTest extends AnyFreeSpec:
         "resumes under a later region of the same tag, which answers the remainder" in {
             var stored: Maybe[Int => Int < Ask] = Maybe.empty
             val body: Int < Ask                 = ask.map(a => ask.map(b => a * 10 + b))
-            val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val first: Int < Any                = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
                         stored = Maybe(Region.leak(cont)(_))
@@ -538,7 +538,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a shot evaluated inside the clause leaves the region intact for the next" in {
             val inner: Int < Say = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+            val r: Int < Any     = ArrowEffect.handleCont(Tag[Say], inner)(
                 [C] =>
                     (_, cont) =>
                         val now = Region.discharge(ArrowEffect.handleCont(Tag[Say], cont(()))([C] => (_, c2) => c2(()), a => a)).eval
@@ -558,7 +558,7 @@ class EvalTest extends AnyFreeSpec:
 
     "partial evaluation and parking" - {
         "parks on a pending stop and the parked value resumes to the same answer" in {
-            var afterRan = false
+            var afterRan        = false
             val body: Int < Ask =
                 ask.map { a =>
                     requestStop()
@@ -578,7 +578,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause that requests a stop and re-raises its operation parks in front of the re-raise" in {
-            var clauseRuns = 0
+            var clauseRuns         = 0
             val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     (input, cont) =>
@@ -602,7 +602,7 @@ class EvalTest extends AnyFreeSpec:
         "a stop alone, with no slice deadline, parks in front of a re-raise" in {
             // the scheduler's join clause requests a stop and nothing else, so the stop has to be
             // honored by itself on every platform, not only where a slice deadline backs it
-            var clauseRuns = 0
+            var clauseRuns         = 0
             val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
                     (input, cont) =>
@@ -625,7 +625,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stop already pending returns the input before the slice starts" in {
-            var ran = false
+            var ran              = false
             val input: Int < Any = Effect.defer {
                 ran = true
                 42
@@ -659,7 +659,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a resumed region restores its parked binding" in {
             sealed trait Cfg extends ContextEffect[Int]
-            def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
+            def read: Int < Cfg        = ContextEffect.suspend(Tag[Cfg])
             val body: (Int, Int) < Cfg =
                 read.map { r1 =>
                     requestStop()
@@ -675,7 +675,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a nested eval inside a slice runs unarmed and completes despite the pending stop" in {
-            var nested = 0
+            var nested          = 0
             val body: Int < Any =
                 Effect.defer {
                     requestStop()
@@ -701,7 +701,7 @@ class EvalTest extends AnyFreeSpec:
             val ex = intercept[RuntimeException](parked.eval)
             assert(ex eq Boom)
 
-            var ran = false
+            var ran             = false
             val next: Int < Any = Effect.defer {
                 ran = true
                 3
@@ -714,7 +714,7 @@ class EvalTest extends AnyFreeSpec:
             val log = ListBuffer[String]()
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
-            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
+            def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
@@ -749,7 +749,7 @@ class EvalTest extends AnyFreeSpec:
             sealed trait CfgB extends ContextEffect[Int]
             def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) = readA.map(a => readA.map(_ + a))
-            val inner: Int < CfgB =
+            val inner: Int < CfgB         =
                 ContextEffect.handle(
                     Tag[CfgA],
                     _.getOrElse(1),
@@ -837,7 +837,7 @@ class EvalTest extends AnyFreeSpec:
         // taken in that step carries the entered cell, and the second walk finds it already run. This is the
         // exactly-once shape the raw-hook leaf above shows is not shared by a plain context region.
         "a double abandonment reaches an ensuring region stopped in its first step once" in {
-            val seen = ListBuffer[Maybe[Throwable]]()
+            val seen         = ListBuffer[Maybe[Throwable]]()
             val v: Int < Any =
                 Bracket.ensuring(o => discard(seen += o)) {
                     Effect.defer {
@@ -854,7 +854,7 @@ class EvalTest extends AnyFreeSpec:
 
         "release of a settled value or an obligation-free computation owes nothing" in {
             Eval.release(42: Int < Any, Boom)
-            var ran = false
+            var ran          = false
             val v: Int < Ask = ask.map { a =>
                 ran = true; a
             }
@@ -888,7 +888,7 @@ class EvalTest extends AnyFreeSpec:
         "a failure unwinding past a context binding runs its release" in {
             val log = ListBuffer[Int]()
             sealed trait Cfg extends ContextEffect[Int]
-            val body: Int < Cfg = ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
+            val body: Int < Cfg    = ContextEffect.suspend(Tag[Cfg]).map(_ => (throw Boom): Int)
             val handled: Int < Any =
                 ContextEffect.handle(
                     Tag[Cfg],
@@ -906,7 +906,7 @@ class EvalTest extends AnyFreeSpec:
             val log = ListBuffer[Int]()
             sealed trait Cfg extends ContextEffect[Int]
             val body: Int < (Ask & Cfg) = ask.map(_ => (throw Boom): Int)
-            val inner: Int < Cfg = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Cfg, Any](Tag[Ask], body)(
+            val inner: Int < Cfg        = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Cfg, Any](Tag[Ask], body)(
                 [C] => (_, cont) => cont(0),
                 a => a,
                 _ => Maybe(9)
@@ -930,7 +930,7 @@ class EvalTest extends AnyFreeSpec:
             object Bad        extends RuntimeException("bad", null, false, false)
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
-            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
+            def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
@@ -964,7 +964,7 @@ class EvalTest extends AnyFreeSpec:
             val cause = new RuntimeException("cause")
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
-            def readA: Int < CfgA = ContextEffect.suspend(Tag[CfgA])
+            def readA: Int < CfgA         = ContextEffect.suspend(Tag[CfgA])
             val body: Int < (CfgA & CfgB) =
                 readA.map { c =>
                     requestStop()
@@ -1028,8 +1028,8 @@ class EvalTest extends AnyFreeSpec:
         // into. A stop pending as the answer arrives parks in front of the step receiving it, and what those regions
         // own travels with the park: an abandonment releases it, a resumption runs the step under them.
         "a stop pending as a crossing answer arrives parks in front of the step receiving it, the crossed regions still owning what they hold" in {
-            var registered = Maybe.empty[Int]
-            var outcome    = Maybe.empty[Maybe[Throwable]]
+            var registered      = Maybe.empty[Int]
+            var outcome         = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
                 Bracket(Effect.defer(1)) { _ =>
                     ask.map { a =>
@@ -1056,8 +1056,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a park in front of the step receiving a crossing answer resumes under the crossed regions" in {
-            var registered = Maybe.empty[Int]
-            var outcome    = Maybe.empty[Maybe[Throwable]]
+            var registered      = Maybe.empty[Int]
+            var outcome         = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
                 Bracket(Effect.defer(1)) { _ =>
                     ask.map { a =>
@@ -1083,7 +1083,7 @@ class EvalTest extends AnyFreeSpec:
         // The computation an answer carries is produced under the regions the operation was issued under: a context
         // read in it sees the crossed region's binding, not the default it would take where the clause is.
         "an answer carrying a computation is produced under the crossed regions" in {
-            var registered = Maybe.empty[Int]
+            var registered        = Maybe.empty[Int]
             val body: Int < Fetch =
                 ContextEffect.handleInheritable(Tag[Env], 7) {
                     fetch.map(_.value).map { a =>
@@ -1103,8 +1103,8 @@ class EvalTest extends AnyFreeSpec:
         // A throw in the step receiving a crossing answer unwinds through the crossed regions, which is why the step
         // runs once the regions are reinstalled rather than where the clause is.
         "a throw in the step receiving a crossing answer unwinds through the crossed regions" in {
-            val boom = new RuntimeException("boom")
-            var seen = Maybe.empty[Maybe[Throwable]]
+            val boom            = new RuntimeException("boom")
+            var seen            = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
                 Bracket(Effect.defer(1))(_ => ask.map[Int, Any](_ => throw boom))((_, outcome) => seen = Maybe(outcome))
             val program: Int < Any =
@@ -1117,8 +1117,8 @@ class EvalTest extends AnyFreeSpec:
         // A step is where a stop can be requested without splitting anything: what it did stands, and the first
         // poll after it parks.
         "a stop requested inside a step parks at the next poll, after it" in {
-            var registered = Maybe.empty[Int]
-            var later      = false
+            var registered      = Maybe.empty[Int]
+            var later           = false
             val body: Int < Ask =
                 Bracket(Effect.defer(1)) { _ =>
                     ask.map { a =>
@@ -1142,7 +1142,7 @@ class EvalTest extends AnyFreeSpec:
         // after the step defers and the evaluator parks there: the map does not run under the stop on any
         // platform, whether or not a deferral happens to stand between the step and it.
         "a stop alone requested inside a step defers the bind that follows it" in {
-            var later = false
+            var later           = false
             val body: Int < Any =
                 Effect.defer {
                     discard(Safepoint.get())
@@ -1162,8 +1162,8 @@ class EvalTest extends AnyFreeSpec:
         // acquire's last step and the region owning what it produced: a stop landing on that step parks after the
         // value is owned, and an abandonment then releases it.
         "a stop landing on the acquire's last step hands the value to the bracket before parking" in {
-            var released = Maybe.empty[Int]
-            var used     = false
+            var released     = Maybe.empty[Int]
+            var used         = false
             val v: Int < Any =
                 Bracket(Effect.defer {
                     requestStop()
@@ -1183,7 +1183,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stop landing on the acquire's last step, resumed instead, runs the use under the bracket" in {
-            var released = Maybe.empty[Maybe[Throwable]]
+            var released     = Maybe.empty[Maybe[Throwable]]
             val v: Int < Any =
                 Bracket(Effect.defer {
                     requestStop()
@@ -1198,9 +1198,9 @@ class EvalTest extends AnyFreeSpec:
         // The acquire's last step under a region of the acquire's own: the region ends in place as the value flows
         // to the bracket, its release told a clean end, so the value is owned before the park all the same.
         "a stop landing on the acquire's last step under the acquire's own region hands the value to the bracket before parking" in {
-            var inner    = Maybe.empty[Maybe[Throwable]]
-            var released = Maybe.empty[Int]
-            var used     = false
+            var inner              = Maybe.empty[Maybe[Throwable]]
+            var released           = Maybe.empty[Int]
+            var used               = false
             val acquire: Int < Any =
                 Bracket.ensuring(outcome => inner = Maybe(outcome)) {
                     Effect.defer {
@@ -1228,8 +1228,8 @@ class EvalTest extends AnyFreeSpec:
         // does not run it to learn what it would have produced: a step of the caller's code after the interrupt
         // acquires what nothing will release, and a resource that was never acquired owes no release.
         "an acquire the park stopped in front of is neither run nor released on abandonment" in {
-            var acquired = false
-            var released = Maybe.empty[Int]
+            var acquired     = false
+            var released     = Maybe.empty[Int]
             val v: Int < Any =
                 Bracket(Effect.defer {
                     requestStop()
@@ -1248,7 +1248,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a parked value releases its regions innermost first" in {
-            val log = ListBuffer[String]()
+            val log             = ListBuffer[String]()
             val body: Int < Any =
                 Effect.defer {
                     requestStop()
@@ -1264,8 +1264,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a double abandonment reaches each bracket once" in {
-            val log     = ListBuffer[String]()
-            var bracket = 0
+            val log          = ListBuffer[String]()
+            var bracket      = 0
             val v: Int < Any =
                 Bracket(Effect.defer(1)) { a =>
                     Bracket.ensuring(_ => discard(log += s"release $a"))(Effect.defer {
@@ -1282,7 +1282,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a bracket owes its release through the public surface" in {
-            val log = ListBuffer[Int]()
+            val log             = ListBuffer[Int]()
             val body: Int < Any =
                 Effect.defer {
                     requestStop()
@@ -1305,8 +1305,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a bracket is told a clean end when an inner region recovers the failure" in {
-            val log             = ListBuffer[Boolean]()
-            val body: Int < Ask = ask.map(_ => (throw Boom): Int)
+            val log              = ListBuffer[Boolean]()
+            val body: Int < Ask  = ask.map(_ => (throw Boom): Int)
             val inner: Int < Any = ArrowEffect.handleCont[Const[Unit], Const[Int], Ask, Int, Int, Any, Any](Tag[Ask], body)(
                 [C] => (_, cont) => cont(0),
                 a => a,
@@ -1362,7 +1362,7 @@ class EvalTest extends AnyFreeSpec:
     "an unanswered default is taken exactly once" in {
         sealed trait Count extends ContextEffect[Int]
 
-        var evals = 0
+        var evals        = 0
         val r: Int < Any = ContextEffect.suspend(
             Tag[Count], {
                 evals += 1
@@ -1384,7 +1384,7 @@ class EvalTest extends AnyFreeSpec:
     }
 
     "a region recovering across a foreign crossing leaves the budget where it found it" in {
-        val samples = ListBuffer.empty[Safepoint.State]
+        val samples        = ListBuffer.empty[Safepoint.State]
         def sample(): Unit =
             val slot = Safepoint.get()
 
@@ -1420,7 +1420,7 @@ class EvalTest extends AnyFreeSpec:
         var seen = Maybe.empty[Throwable]
 
         val body: Int < (Say & Ask) = Effect.defer((throw Boom): Int < (Say & Ask))
-        val inner: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
+        val inner: Int < Ask        = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
             [C] => (_, cont) => cont(()),
             a => a,
             _ => throw Inner
@@ -1450,7 +1450,7 @@ class EvalTest extends AnyFreeSpec:
                     release = (_: Int, _: Maybe[Throwable]) => discard(log += "released")
                 )(ask.map(x => x))
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
-            val after: Int < Any = dropped.map { r =>
+            val after: Int < Any   = dropped.map { r =>
                 discard(log += s"after $r")
                 r
             }
@@ -1470,8 +1470,8 @@ class EvalTest extends AnyFreeSpec:
                     join = (parent: Int, _: Int, _: Int) => parent,
                     release = (_: Int, _: Maybe[Throwable]) => discard(log += name)
                 )(v)
-            val body: Int < Ask = scoped(Tag[CfgA], "a")(ask.map(x => x))
-            var first           = true
+            val body: Int < Ask    = scoped(Tag[CfgA], "a")(ask.map(x => x))
+            var first              = true
             val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, _) =>
@@ -1519,7 +1519,7 @@ class EvalTest extends AnyFreeSpec:
         "a pooled stack reused by a later eval carries no stale obligations" in {
             sealed trait CfgA extends ContextEffect[Int]
             sealed trait CfgB extends ContextEffect[Int]
-            var drops = 0
+            var drops           = 0
             val body: Int < Ask =
                 ContextEffect.handle(
                     Tag[CfgA],
@@ -1531,8 +1531,8 @@ class EvalTest extends AnyFreeSpec:
             val dropped: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, _) => -1, b => b)
             assert(dropped.eval == -1)
             assert(drops == 1)
-            var completions = 0
-            var releases    = 0
+            var completions      = 0
+            var releases         = 0
             val clean: Int < Any =
                 ContextEffect.handle(
                     Tag[CfgB],
@@ -1549,7 +1549,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a clause reads the outer binding, not a dumped one" in {
             sealed trait Cfg extends ContextEffect[Int]
-            def read: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
+            def read: Int < Cfg         = ContextEffect.suspend(Tag[Cfg])
             val body: Int < (Ask & Cfg) =
                 (ContextEffect.handleInheritable(Tag[Cfg], 1)(ask.map(x => x)): Int < Ask)
             val handled: Int < Cfg = ArrowEffect.handleCont(Tag[Ask], body)(
@@ -1561,11 +1561,11 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "releases moved from sibling dumps run newest first at the handler's exit" in {
-            val log = ListBuffer[String]()
+            val log                                           = ListBuffer[String]()
             def scoped(name: String)(v: Int < Ask): Int < Ask =
                 Bracket.ensuring(_ => discard(log += name))(v)
-            val body: Int < Ask = scoped("a")(ask.map(x => x))
-            var first           = true
+            val body: Int < Ask    = scoped("a")(ask.map(x => x))
+            var first              = true
             val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] =>
                     (_, _) =>
@@ -1580,7 +1580,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a bracket resumed from a dump and then unwound releases once, told the failure" in {
-            val log = ListBuffer[Boolean]()
+            val log             = ListBuffer[Boolean]()
             val body: Int < Ask =
                 Bracket.ensuring(outcome => discard(log += outcome.exists(_ eq Boom)))(ask.map(_ => (throw Boom): Int))
             val outer: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
@@ -1660,8 +1660,8 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause that suspends before a done runs outside its region" in {
-            var reached = false
-            val log     = ListBuffer[String]()
+            var reached            = false
+            val log                = ListBuffer[String]()
             val program: Int < Ask = ask.map { a =>
                 reached = true
                 a + 1
@@ -1677,7 +1677,7 @@ class EvalTest extends AnyFreeSpec:
             val log                        = ListBuffer[String]()
             var innerExit                  = false
             val program: Int < (Ask & Say) = say("m").map(_ => ask).map(_ + 1)
-            val mapped = recordSay("s", log)(program).map { v =>
+            val mapped                     = recordSay("s", log)(program).map { v =>
                 innerExit = true
                 v
             }
@@ -1688,7 +1688,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a done fired while a clause outcome settles climbs to its own region" in {
-            var reached = false
+            var reached            = false
             val program: Int < Ask = ask.map { a =>
                 reached = true
                 a + 1
@@ -1727,15 +1727,13 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a done fired while a stateful clause outcome settles climbs to its own region" in {
-            var reached = false
+            var reached            = false
             val program: Int < Ask = ask.map { a =>
                 reached = true
                 a + 1
             }
-            val askScope = ArrowEffect.handleLoopState(Tag[Ask], 0, program)(
-                [C] => (n, _) => say("pre").map(_ => Loop.continue(n + 1, n))
-            )
-            val r = ArrowEffect.handleLoop(Tag[Say], askScope)([C] => _ => Loop.done(-9))
+            val askScope = ArrowEffect.handleLoopState(Tag[Ask], 0, program)([C] => (n, _) => say("pre").map(_ => Loop.continue(n + 1, n)))
+            val r        = ArrowEffect.handleLoop(Tag[Say], askScope)([C] => _ => Loop.done(-9))
             assert(r.eval == -9)
             assert(!reached)
         }
@@ -1747,9 +1745,7 @@ class EvalTest extends AnyFreeSpec:
         "a stateful clause's suspension is answered outside its scope" in {
             val log      = ListBuffer[String]()
             val sayInner = recordSay("inner", log)(innerProgram)
-            val askScope = ArrowEffect.handleLoopState(Tag[Ask], 0, sayInner)(
-                [C] => (n, _) => say("c").map(_ => Loop.continue(n + 1, 41))
-            )
+            val askScope = ArrowEffect.handleLoopState(Tag[Ask], 0, sayInner)([C] => (n, _) => say("c").map(_ => Loop.continue(n + 1, 41)))
             val sayOuter = recordSay("outer", log)(askScope)
             assert(sayOuter.eval == 42)
             assert(log.toList == List("inner", "outer"))
@@ -1758,7 +1754,7 @@ class EvalTest extends AnyFreeSpec:
         "a handleCont clause's suspension is answered outside its scope" in {
             val log                         = ListBuffer[String]()
             val sayInner: Int < (Ask & Say) = recordSay("inner", log)(innerProgram)
-            val askScope = ArrowEffect.handleCont(Tag[Ask], sayInner)(
+            val askScope                    = ArrowEffect.handleCont(Tag[Ask], sayInner)(
                 [C] => (_, cont) => say("c").map(_ => cont(41)),
                 a => a
             )
@@ -1778,13 +1774,12 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a clause's own-tag suspension before its outcome is answered by the successor" in {
-            var clauseRuns = 0
-            val askScope: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))(
-                [C] =>
-                    _ =>
-                        clauseRuns += 1
-                        if clauseRuns > 3 then throw new IllegalStateException("clause answered its own suspension")
-                        ask.map(x => Loop.continue(x + 100))
+            var clauseRuns          = 0
+            val askScope: Int < Ask = ArrowEffect.handleLoop(Tag[Ask], ask.map(_ + 1))([C] =>
+                _ =>
+                    clauseRuns += 1
+                    if clauseRuns > 3 then throw new IllegalStateException("clause answered its own suspension")
+                    ask.map(x => Loop.continue(x + 100))
             )
             val outerAsk = ArrowEffect.handleLoop(Tag[Ask], askScope)([C] => _ => Loop.continue(5))
             assert(outerAsk.eval == 106)
@@ -1804,7 +1799,7 @@ class EvalTest extends AnyFreeSpec:
         "a leaked clause effect cannot observe the region's inner state" in {
             val program: Int < (Ask & VarE) = varOp(_ => 7).map(_ => ask)
             val varInner                    = runVar(0)(program)
-            val askScope = ArrowEffect.handleLoop(Tag[Ask], varInner)(
+            val askScope                    = ArrowEffect.handleLoop(Tag[Ask], varInner)(
                 [C] => _ => varOp(identity).map(v => Loop.continue(v)),
                 a => a
             )
@@ -1816,7 +1811,7 @@ class EvalTest extends AnyFreeSpec:
     "a captured continuation is a value" - {
         "a continuation folded from the eval stack runs every pending map exactly once" in {
             for depth <- List(8, 64) do
-                val runs = new Array[Int](depth)
+                val runs         = new Array[Int](depth)
                 val r: Int < Any =
                     ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))([C] => (_, cont) => cont(0), a => a)
                 assert(r.eval == depth)
@@ -1825,7 +1820,7 @@ class EvalTest extends AnyFreeSpec:
 
         "a continuation applied twice replays trailing maps twice at any depth" in {
             for depth <- List(8, 64) do
-                val runs = new Array[Int](depth)
+                val runs         = new Array[Int](depth)
                 val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
                     [C] => (_, cont) => cont(0).map(a => cont(10).map(b => a + b)),
                     a => a
@@ -1838,7 +1833,7 @@ class EvalTest extends AnyFreeSpec:
             for depth <- List(8, 64) do
                 val runs                                = new Array[Int](depth)
                 var stored: Maybe[Arrow[Int, Int, Ask]] = Maybe.empty
-                val first: Int < Any = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
+                val first: Int < Any                    = ArrowEffect.handleCont(Tag[Ask], trailing(depth, runs))(
                     [C] =>
                         (_, cont) =>
                             stored = Maybe(Region.leak(cont))
@@ -1877,7 +1872,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a throw escaping a root eval leaves the safepoint depth unchanged" in {
-            val slot = Safepoint.get()
+            val slot    = Safepoint.get()
             def depth() =
                 val d = Safepoint.save(slot)
                 Safepoint.restore(slot, d)
@@ -1908,7 +1903,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a computation held as a value passes through a parked slice intact" in {
-            val payload: Int < Any = (3: Int < Any).map(_ + 4)
+            val payload: Int < Any   = (3: Int < Any).map(_ + 4)
             val v: (Int < Any) < Any =
                 Effect.defer {
                     requestStop()
@@ -2002,7 +1997,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "peels a stateless and a stateful region node" in {
-            var seen = ""
+            var seen                     = ""
             val inner: Int < (Ask & Say) =
                 ArrowEffect.handleLoopState(Tag[Ask], 0, say("deep").map(_ => ask))(
                     [X] => (state, _) => Loop.continue(state + 1, state),
@@ -2019,7 +2014,7 @@ class EvalTest extends AnyFreeSpec:
         "does not run a deferral to reach the operation behind it" in {
             var seen  = ""
             var built = false
-            val v = Effect.defer {
+            val v     = Effect.defer {
                 built = true
                 say("hidden").map(_ => 1)
             }

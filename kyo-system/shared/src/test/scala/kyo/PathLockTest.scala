@@ -1,8 +1,8 @@
 package kyo
 
-class HostPathLockTest extends FileSystemLockTest:
+class HostPathLockTest extends FileSystemLockTest[Sync]:
     protected def withFileSystem(
-        use: (FileSystem.Read[Sync], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
+        use: (FileSystem.Read[Sync], Path) => Unit < (Sync & Async & Scope & Abort[FileSystemException])
     )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-path-lock"))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
             use(FileSystem.host, handle.path / "target.bin")
@@ -41,7 +41,7 @@ class HostPathLockTest extends FileSystemLockTest:
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-window"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
             val target = handle.path / "windowed.bin"
             Scope.ensure(Sync.defer(HostFileSystem.afterClaimHook = () => ())).andThen {
-                Fiber.Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                Fiber.Promise.init[Fiber[Unit, Sync], Any].map { handoff =>
                     Fiber.initUnscoped {
                         handoff.get.map { self =>
                             Sync.defer {
@@ -187,8 +187,8 @@ class HostPathLockTest extends FileSystemLockTest:
     "failed raw release remains retryable" in {
         AtomicInt.init(0).map { releases =>
             val raw = new Path.RawLock:
-                def isExclusive: Boolean                                               = true
-                def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit] = Result.unit
+                def isExclusive: Boolean                                                 = true
+                def check()(using AllowUnsafe, Frame): Result[FileLockException, Unit]   = Result.unit
                 def release()(using AllowUnsafe, Frame): Result[FileLockException, Unit] =
                     if releases.unsafe.incrementAndGet() == 1 then Result.fail(FileLockOwnershipLostException(Path("retry-lock")))
                     else Result.unit

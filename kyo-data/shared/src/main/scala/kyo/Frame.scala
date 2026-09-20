@@ -172,7 +172,7 @@ object Frame:
     private def contentAndLines(sourceFile: AnyRef, fetchContent: => String): (String, Array[String]) =
         fileCache match
             case Present((sf, content, lines)) if sf eq sourceFile => (content, lines)
-            case _ =>
+            case _                                                 =>
                 val content = fetchContent
                 val lines   = content.linesIterator.toArray
                 fileCache = Present((sourceFile, content, lines))

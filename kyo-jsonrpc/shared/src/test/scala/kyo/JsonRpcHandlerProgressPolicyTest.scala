@@ -81,7 +81,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     )
 
     private val workDoneTokenConfig = JsonRpcHandler.Config(progress = Present(progressWithWorkDoneToken))
-    private val metaTokenConfig = JsonRpcHandler.Config(
+    private val metaTokenConfig     = JsonRpcHandler.Config(
         progress = Present(progressWithMetaToken),
         cancellation = Present(cancellationWithoutReply)
     )
@@ -105,7 +105,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         // Unsafe: AtomicRef.Unsafe.init for thread-safe envelope accumulation outside effect context
         val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
 
-        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
             Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
 
         def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
@@ -146,7 +146,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     "callWithProgress with workDoneToken policy: stampOutboundToken attaches workDoneToken to params, handler reads token" in {
         // Unsafe: AtomicRef.Unsafe.init for token capture across fibers
         val capturedToken = AtomicRef.Unsafe.init[Maybe[String]](Absent)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute.request[TaskReqWithToken, TaskResp]("task") {
+        val taskMethod    = JsonRpcRoute.request[TaskReqWithToken, TaskResp]("task") {
             (params, _) =>
                 Sync.defer(capturedToken.set(params.workDoneToken)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
@@ -191,7 +191,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
     "callWithProgress with metaToken policy: outbound params carry _meta.progressToken, handler receives it" in {
         // Unsafe: AtomicRef.Unsafe.init for meta capture across fibers
         val capturedMeta = AtomicRef.Unsafe.init[Maybe[ProgressMeta]](Absent)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute.request[TaskReqWithMeta, TaskResp]("run") {
+        val taskMethod   = JsonRpcRoute.request[TaskReqWithMeta, TaskResp]("run") {
             (params, _) =>
                 Sync.defer(capturedMeta.set(params.`_meta`)(using AllowUnsafe.embrace.danger)).andThen(TaskResp(true))
         }
@@ -361,7 +361,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
             AtomicRef.Unsafe.init[Maybe[Structure.Value => Unit < (Async & Abort[Closed])]](Absent)(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicBoolean.Unsafe.init for handler-done flag across fibers
         val handlerDone = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-        val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
+        val taskMethod  = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Sync.defer(sinkRef.set(ctx.progressSink)(using AllowUnsafe.embrace.danger)).andThen {
                     Sync.defer(handlerDone.set(true)(using AllowUnsafe.embrace.danger)).andThen {

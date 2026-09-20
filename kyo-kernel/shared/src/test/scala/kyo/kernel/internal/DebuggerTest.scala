@@ -26,7 +26,7 @@ class DebuggerTest extends AnyFreeSpec:
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(41), a => a)
 
     class Recording extends Debugger:
-        val events = ListBuffer.empty[String]
+        val events                             = ListBuffer.empty[String]
         private def record(kind: String): Unit =
             this.synchronized(discard(events += kind))
         override def onLoop(value: Any < Nothing, contA: Arrow[?, ?, ?], contB: Arrow[?, ?, ?]): Unit            = record("loop")

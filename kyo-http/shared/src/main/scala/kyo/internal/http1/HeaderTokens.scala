@@ -32,7 +32,7 @@ private[kyo] object HeaderTokens:
       * `no-upgrade` does not contain the element `upgrade` while `keep-alive, Upgrade` does.
       */
     def listContainsToken(src: Array[Byte], off: Int, len: Int, target: String): Boolean =
-        val end = off + len
+        val end                                    = off + len
         @tailrec def loop(elemStart: Int): Boolean =
             if elemStart > end then false
             else
@@ -53,7 +53,7 @@ private[kyo] object HeaderTokens:
     def isSoleChunkedCoding(src: Array[Byte], off: Int, len: Int): Boolean =
         // RFC 9110 section 5.6.1 permits empty list elements, so "chunked," and ", chunked" name exactly one coding and must be accepted.
         // What must not be accepted is a second NON-empty coding, which is what makes the length undeterminable.
-        val end = off + len
+        val end                                                         = off + len
         @tailrec def loop(elemStart: Int, sawChunked: Boolean): Boolean =
             if elemStart > end then sawChunked
             else
@@ -81,7 +81,7 @@ private[kyo] object HeaderTokens:
       * RFC 9112 section 6.3 item 8 makes a legal response length.
       */
     def finalCodingIsChunked(src: Array[Byte], off: Int, len: Int): Boolean =
-        val end = off + len
+        val end                                         = off + len
         @tailrec def lastComma(i: Int, found: Int): Int =
             if i >= end then found
             else lastComma(i + 1, if src(i) == ','.toByte then i else found)

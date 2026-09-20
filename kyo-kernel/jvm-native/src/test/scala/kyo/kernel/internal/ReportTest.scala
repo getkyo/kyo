@@ -29,7 +29,7 @@ class ReportTest extends AnyFreeSpec:
     }
 
     "a held release that throws on the discard drain is reported" in {
-        val log = ListBuffer[String]()
+        val log             = ListBuffer[String]()
         val body: Int < Ask =
             Bracket(Effect.defer(1)) { _ =>
                 Bracket(Effect.defer(2)) { _ =>

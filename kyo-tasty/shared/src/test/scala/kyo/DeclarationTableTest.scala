@@ -57,7 +57,7 @@ class DeclarationTableTest extends kyo.test.Test[Any]:
         val table   = DeclarationTable.init()
         val members = (1 to 4).map(i => Tasty.Name(s"m$i") -> makeSymbol(s"m$i"))
         for
-            latch <- Latch.init(1)
+            latch       <- Latch.init(1)
             readerFiber <- Fiber.initUnscoped(
                 latch.await.andThen {
                     Sync.defer {

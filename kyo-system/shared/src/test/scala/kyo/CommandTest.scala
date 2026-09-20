@@ -290,9 +290,9 @@ class CommandTest extends kyo.test.Test[Any]:
     "an interrupt landing during spawn does not orphan the process".pendingUntilFixed(
         "Command.spawn forks the process in one step and registers its release in the next, so a stop delivered during the fork parks the registration and the process outlives the scope that spawned it"
     ).notJs.notWasm in {
-        val seconds = 300 + scala.util.Random.nextInt(1000)
-        val cmd     = Command("sleep", seconds.toString)
-        val rounds  = 80
+        val seconds                                                  = 300 + scala.util.Random.nextInt(1000)
+        val cmd                                                      = Command("sleep", seconds.toString)
+        val rounds                                                   = 80
         def alive: Chunk[String] < (Async & Abort[CommandException]) =
             Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
                 Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)

@@ -235,7 +235,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
 
         "FieldId mode is more compact than StringName for long field names" in {
-            val v = MPLongFields(1, 2)
+            val v       = MPLongFields(1, 2)
             val strBits =
                 MsgPack.encode(v)(using summon[Schema[MPLongFields]], MsgPack(Config(keyEncoding = KeyEncoding.StringName)), summon[Frame])
             val idBits =
@@ -252,7 +252,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
 
         "reader decodes StringName bytes regardless of its own config" in {
-            val v = MPPerson("Alice", 30)
+            val v        = MPPerson("Alice", 30)
             val strBytes =
                 MsgPack.encode(v)(using summon[Schema[MPPerson]], MsgPack(Config(keyEncoding = KeyEncoding.StringName)), summon[Frame])
             val decoded = MsgPack.decode[MPPerson](strBytes)(using
@@ -290,7 +290,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
 
         "Instant Extension bytes decode through a Primitive-config reader" in {
-            val v = MPTime(instant, duration)
+            val v       = MPTime(instant, duration)
             val extBits = MsgPack.encode(v)(using
                 summon[Schema[MPTime]],
                 MsgPack(Config(instantEncoding = InstantEncoding.Extension)),
@@ -318,7 +318,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
 
         "Duration Compat string bytes decode through a Lossless-config reader (reader auto-detects)" in {
-            val d = java.time.Duration.ofSeconds(86_400L, 250_000_000L)
+            val d          = java.time.Duration.ofSeconds(86_400L, 250_000_000L)
             val compatBits = MsgPack.encode(MPDuration(d))(using
                 summon[Schema[MPDuration]],
                 MsgPack(Config(durationEncoding = DurationEncoding.Compat)),

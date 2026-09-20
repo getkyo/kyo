@@ -23,7 +23,7 @@ class EvalConcurrencyTest extends AnyFreeSpec:
     "a captured continuation resumes on other threads, each shot independent" in {
         var stored: Maybe[Unit => Int < Say] = Maybe.empty
         val inner: Int < Say                 = stateful(ask.map(a => say("x").map(_ => ask.map(b => a * 10 + b))))
-        val r: Int < Any = ArrowEffect.handleCont(Tag[Say], inner)(
+        val r: Int < Any                     = ArrowEffect.handleCont(Tag[Say], inner)(
             [C] =>
                 (_, cont) =>
                     stored = Maybe(Region.leak(cont)(_))
@@ -35,7 +35,7 @@ class EvalConcurrencyTest extends AnyFreeSpec:
         val k             = stored.get
         def resume(): Int = ArrowEffect.handleCont(Tag[Say], k(()))([C] => (_, cont) => cont(()), a => a).eval
         val results       = new ConcurrentLinkedQueue[Int]()
-        val threads = (1 to 4).map(_ =>
+        val threads       = (1 to 4).map(_ =>
             new Thread(() =>
                 results.add(resume()); ()
             )

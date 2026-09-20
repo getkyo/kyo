@@ -109,8 +109,8 @@ object Arrow:
       * type, and [[Arrow.chain]] recognizes it by identity to collapse the composition instead of building a node.
       */
     class Id[A] private[Arrow] () extends Step[A, A, Any]:
-        def frame                         = Frame.internal
-        override def apply(v: A): A < Any = v
+        def frame                                          = Frame.internal
+        override def apply(v: A): A < Any                  = v
         def apply[C, S2](v: A < S2, cont: Arrow[A, C, S2]) =
             if cont.isInstanceOf[Arrow.Id[?]] then
                 v.asInstanceOf[C < S2]
@@ -135,8 +135,8 @@ object Arrow:
     @nowarn("msg=anonymous")
     inline def apply[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
         new Step[A, B, S]:
-            def frame                = _frame
-            override def apply(v: A) = f(v)
+            def frame                                          = _frame
+            override def apply(v: A)                           = f(v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match
                     case v: Pending[A, S2] @unchecked =>
@@ -176,8 +176,8 @@ object Arrow:
     @nowarn("msg=anonymous")
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
         new Step[A, B, S]:
-            def frame                = _frame
-            override def apply(v: A) = f(this, v)
+            def frame                                          = _frame
+            override def apply(v: A)                           = f(this, v)
             def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]) =
                 v match
                     case v: Pending[A, S2] @unchecked =>
@@ -235,15 +235,15 @@ object Arrow:
         val b: Arrow[B, C, S]
     ) extends Arrow[A, C, S]:
         Debugger.onAlloc(this)
-        def frame = Frame.internal
+        def frame                                          = Frame.internal
         def apply[D, S2](v: A < S2, cont: Arrow[C, D, S2]) =
             Effect.defer(v, this, cont)
 
         type X = B
-        def head = a
-        def tail = b
+        def head                      = a
+        def tail                      = b
         override def toString: String =
-            val out = new StringBuilder
+            val out                                                                      = new StringBuilder
             @tailrec def render(pending: List[Arrow[?, ?, ?] | String], fuel: Int): Unit =
                 pending match
                     case (s: String) :: rest =>

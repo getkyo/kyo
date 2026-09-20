@@ -14,7 +14,7 @@ extension (address: SqlConfig.Address)
     def network: SqlConfig.Address.Network =
         address match
             case n: SqlConfig.Address.Network => n
-            case other =>
+            case other                        =>
                 throw new AssertionError(
                     s"this test reads a host and a port, so it needs a network address, and it was given $other"
                 )

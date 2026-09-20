@@ -6,9 +6,14 @@ package kyo
   * These tests exercise framework code paths (kyo Async/Scope, healthcheck retry logic, multi-container orchestration helpers) where the
   * choice of container backend (HTTP vs Shell) and runtime (Podman vs Docker) is plumbing rather than the subject under test. They use
   * [[Test.runBackend]] (single leaf, HTTP backend, auto-detected runtime), so the suite registers no `[runtime]` markers and the build's
-  * testGrouping does not fork it per runtime — every test runs once total. Tests that genuinely exercise backend-specific code paths (init
-  * JSON vs CLI args, exec stream framing, log demuxing, image parsing, error mapping, …) stay in [[ContainerItTest]] and use `runBackends`
-  * for full http × shell × podman × docker coverage.
+  * testGrouping does not fork it per runtime: every test runs once total. Tests that genuinely exercise backend-specific code paths (init
+  * JSON vs CLI args, exec stream framing, log demuxing, image parsing, error mapping, and so on) stay in [[ContainerItTest]], which uses
+  * the plural marker-registering helper for full http x shell x podman x docker coverage.
+  *
+  * That last sentence deliberately does not spell the plural helper's name. `build.sbt`'s testGrouping decides whether to fork a suite per
+  * runtime by grepping its SOURCE for that name, comments included, so naming it here forked this suite per runtime and made the sentence
+  * above false: on a host with one working runtime the second fork registered no leaves at all, and on a host with two it ran every leaf
+  * twice. The grep is the fragile part and belongs in the build; until it distinguishes a call from a mention, do not write the name here.
   */
 class ContainerOrchestrationItTest extends BasePodTest:
 
@@ -76,7 +81,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         "scope cleanup runs even when computation aborts" - runBackend {
             for
                 idRef <- AtomicRef.init[Container.Id](Container.Id(""))
-                _ <- Abort.run[ContainerException] {
+                _     <- Abort.run[ContainerException] {
                     Scope.run {
                         Container.init(alpinePersistent(alpine)).map { c =>
                             idRef.set(c.id).andThen {
@@ -324,7 +329,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
                             s"exec on restored container should succeed, got exit=${result.exitCode}"
                         )
                 }.map {
-                    case Result.Success(_) => ()
+                    case Result.Success(_)                                 => ()
                     case Result.Failure(_: ContainerNotSupportedException) =>
                         succeed("CRIU not available on this system; the checkpoint/restore path is a graceful no-op")
                     case Result.Failure(e) =>
@@ -393,7 +398,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
 
     "scope cleanup" - {
         "scope cleanup works when container crashes" - runBackend {
-            val name = uniqueName("kyo-crash")
+            val name   = uniqueName("kyo-crash")
             val config = Container.Config("alpine")
                 .command("sh", "-c", "exit 1")
                 .name(name)
@@ -448,7 +453,8 @@ class ContainerOrchestrationItTest extends BasePodTest:
                     assert(!h, "Expected isHealthy to return false after rm")
                     assert(
                         after - before == 1,
-                        s"Expected isHealthy to invoke the health check exactly once (single-shot), not run the retry schedule; got ${after - before} invocations"
+                        s"Expected isHealthy to invoke the health check exactly once (single-shot), not run the retry schedule; got ${after -
+                                before} invocations"
                     )
             }
         }
@@ -458,7 +464,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // The container auto-removes ~300ms in while the healthcheck always fails; once gone, isContainerAlive must stop the loop. The
         // counter asserts it: fewer than the full 30 attempts run (zero is an accepted degenerate pass), proving the schedule never exhausted.
         val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
-        val config = Container.Config("alpine")
+        val config   = Container.Config("alpine")
             .command("sh", "-c", "sleep 0.3; exit 0")
             .autoRemove(true)
             .healthCheck(Container.HealthCheck.init(Schedule.fixed(100.millis).take(30)) { _ =>
@@ -480,6 +486,13 @@ class ContainerOrchestrationItTest extends BasePodTest:
     }
 
     "scope cleanup delivers stopSignal before force-removing when stopSignal is Present" - runBackend {
+        // The witness is a file the container writes into a bind-mounted host directory, so this needs the
+        // daemon to see the path this process created. Under docker-out-of-docker it does not: the marker
+        // lands in the sibling daemon host's /tmp, not ours, and the leaf reads an empty directory.
+        assume(
+            ContainerRuntime.daemonSharesFilesystem,
+            "the daemon is a sibling container; the bind-mounted marker is not written where this process reads it"
+        )
         // The container traps its stopSignal to write a host marker on receipt, so the marker is a clock-free witness the signal arrived.
         // The suite's per-leaf cap is the completion valve: a kill path that hangs on waitForExit trips it. stopTimeout is 10s, generous enough that a
         // rootless/emulated podman signal+trap+mount-write lands well inside it (the original 1s was too tight under load, so the marker was
@@ -493,7 +506,7 @@ class ContainerOrchestrationItTest extends BasePodTest:
         // Written by the container once its trap is armed. It is both the barrier (the leaf never signals a shell that has not
         // installed its USR1 handler yet) and the discriminator when `sig` is missing: no `ready` at all means the bind mount was
         // never visible to the container, so the signal was never testable; `ready` without `sig` means the signal did not arrive.
-        val ready = hostDir / "ready"
+        val ready  = hostDir / "ready"
         val config = Container.Config("alpine")
             .command("sh", "-c", "trap 'touch /m/sig; sleep 3' USR1; touch /m/ready; sleep infinity & wait")
             .bind(hostDir, Path("/m"))

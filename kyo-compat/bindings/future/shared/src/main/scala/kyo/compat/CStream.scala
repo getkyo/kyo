@@ -141,7 +141,7 @@ object CStream:
             ctx =>
                 self(ctx).flatMap {
                     case _: Empty.type => emptyFuture
-                    case Cons(h, t) =>
+                    case Cons(h, t)    =>
                         p(h).lower(using ctx).flatMap { keep =>
                             if keep then Future.successful(Cons(h, t.filter(p)))
                             else t.filter(p)(ctx)
@@ -153,7 +153,7 @@ object CStream:
             ctx =>
                 self(ctx).flatMap {
                     case _: Empty.type => emptyFuture
-                    case Cons(h, t) =>
+                    case Cons(h, t)    =>
                         f(h) match
                             case Some(b) => Future.successful(Cons(b, t.collectPure(f)))
                             case None    => t.collectPure(f)(ctx)
@@ -161,11 +161,11 @@ object CStream:
 
         /** Runs the stream and collects all emitted elements into a `CChunk`. */
         def run: CIO[CChunk[A]] = CIO.deferLift {
-            val ctx = summon[LocalCtx]
+            val ctx                                                           = summon[LocalCtx]
             @tailrec def loop(repr: Repr[A], acc: List[A]): Future[CChunk[A]] =
                 repr match
                     case _: Empty.type => Future.successful(CChunk.lift(acc.reverse.toVector))
-                    case Cons(h, t) =>
+                    case Cons(h, t)    =>
                         val newAcc = h :: acc
                         val next   = t(ctx)
                         next.value match
@@ -179,11 +179,11 @@ object CStream:
 
         /** Folds the stream with a pure accumulator. */
         def foldPure[B](acc: B)(f: (B, A) => B): CIO[B] = CIO.deferLift {
-            val ctx = summon[LocalCtx]
+            val ctx                                            = summon[LocalCtx]
             @tailrec def loop(repr: Repr[A], st: B): Future[B] =
                 repr match
                     case _: Empty.type => Future.successful(st)
-                    case Cons(h, t) =>
+                    case Cons(h, t)    =>
                         val newSt = f(st, h)
                         val next  = t(ctx)
                         next.value match
@@ -197,11 +197,11 @@ object CStream:
 
         /** Runs `f` for its effect on each element, discarding results. */
         def foreach(f: A => CIO[Unit]): CIO[Unit] = CIO.deferLift {
-            val ctx = summon[LocalCtx]
+            val ctx                                        = summon[LocalCtx]
             @tailrec def loop(repr: Repr[A]): Future[Unit] =
                 repr match
                     case _: Empty.type => Future.unit
-                    case Cons(h, t) =>
+                    case Cons(h, t)    =>
                         val effFut = f(h).lower(using ctx)
                         effFut.value match
                             case Some(Success(_)) =>
@@ -220,11 +220,11 @@ object CStream:
 
         /** Runs the stream and discards all emitted elements. */
         def discard: CIO[Unit] = CIO.deferLift {
-            val ctx = summon[LocalCtx]
+            val ctx                                        = summon[LocalCtx]
             @tailrec def loop(repr: Repr[A]): Future[Unit] =
                 repr match
                     case _: Empty.type => Future.unit
-                    case Cons(_, t) =>
+                    case Cons(_, t)    =>
                         val next = t(ctx)
                         next.value match
                             case Some(Success(r)) => loop(r)

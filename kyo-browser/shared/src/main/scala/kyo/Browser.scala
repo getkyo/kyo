@@ -609,15 +609,15 @@ object Browser:
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
         Env.use[BrowserTab] { tab =>
-            val info = KeyInfo.mapKey(key)
-            val s    = tab.session
+            val info       = KeyInfo.mapKey(key)
+            val s          = tab.session
             val callerMods =
                 (if modifiers.shift then 8 else 0) |
                     (if modifiers.ctrl then 2 else 0) |
                     (if modifiers.alt then 1 else 0) |
                     (if modifiers.meta then 4 else 0)
-            val totalMods = info.modifierBit | callerMods
-            val mods      = if totalMods > 0 then Present(totalMods) else Absent
+            val totalMods                                                 = info.modifierBit | callerMods
+            val mods                                                      = if totalMods > 0 then Present(totalMods) else Absent
             val markIfTab: Unit < (Browser & Abort[BrowserReadException]) =
                 if info.keyName == "Tab" then ProbesJs.markActiveElementForTabAdvance else ()
             val inner = markIfTab.andThen(
@@ -707,15 +707,15 @@ object Browser:
             Actionability.withActionable(selector, requireFillable = false, requireEnabled = false) { _ =>
                 val inner = ProbesJs.focusElementIfNotFocused(selector).andThen {
                     Env.use[BrowserTab] { tab =>
-                        val info = KeyInfo.mapKey(key)
-                        val s    = tab.session
+                        val info       = KeyInfo.mapKey(key)
+                        val s          = tab.session
                         val callerMods =
                             (if modifiers.shift then 8 else 0) |
                                 (if modifiers.ctrl then 2 else 0) |
                                 (if modifiers.alt then 1 else 0) |
                                 (if modifiers.meta then 4 else 0)
-                        val totalMods = info.modifierBit | callerMods
-                        val mods      = if totalMods > 0 then Present(totalMods) else Absent
+                        val totalMods                                                 = info.modifierBit | callerMods
+                        val mods                                                      = if totalMods > 0 then Present(totalMods) else Absent
                         val markIfTab: Unit < (Browser & Abort[BrowserReadException]) =
                             if info.keyName == "Tab" then ProbesJs.markActiveElementForTabAdvance else ()
                         markIfTab.andThen(
@@ -1503,7 +1503,7 @@ object Browser:
                     )
                 )
             case raw if raw.startsWith("V:") => raw.substring(2)
-            case other =>
+            case other                       =>
                 Abort.fail(BrowserAssertionTimedOutException("value", "string", other))
         }
     end value
@@ -1621,15 +1621,15 @@ object Browser:
       * Uses `SettleRead.settle` to wait for layout stability before the CDP box-model read.
       */
     def boundingRect(selector: Selector)(using Frame): Maybe[Browser.Bounds] < (Browser & Abort[BrowserReadException]) =
-        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val jsExpr    = SelectorJs.resolveElementJs(Selector.toNode(selector))
         val valueExpr =
             s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); return JSON.stringify({present:true, x:r.x, y:r.y, w:r.width, h:r.height}); })()"""
         SettleRead.settle("boundingRect", valueExpr) { raw =>
             Json.decode[PresentFlagWire](raw) match
                 case Result.Success(w) if !w.present => Maybe.empty[Browser.Bounds]
-                case Result.Success(_) =>
+                case Result.Success(_)               =>
                     Resolver.resolveOne(selector).map {
-                        case Absent => Maybe.empty[Browser.Bounds]
+                        case Absent       => Maybe.empty[Browser.Bounds]
                         case Present(ref) =>
                             Env.use[BrowserTab] { tab =>
                                 Abort.recover[BrowserProtocolErrorException] { _ => Maybe.empty[Browser.Bounds] } {
@@ -1681,7 +1681,7 @@ object Browser:
       * stabilizes. Aborts `BrowserElementNotFoundException` when no element matches (twin: `isVisible`).
       */
     def inViewport(selector: Selector)(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
-        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val jsExpr    = SelectorJs.resolveElementJs(Selector.toNode(selector))
         val valueExpr =
             s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); const iv = r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight; return JSON.stringify({present:true, value:iv}); })()"""
         SettleRead.settle("inViewport", valueExpr) { raw =>
@@ -1732,7 +1732,7 @@ object Browser:
       */
     def element(selector: Selector)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
         installDiscover.andThen {
-            val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+            val jsExpr    = SelectorJs.resolveElementJs(Selector.toNode(selector))
             val valueExpr =
                 s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
             SettleRead.settle("element", valueExpr)(decodeElementInfoMaybe("element"))
@@ -1789,7 +1789,7 @@ object Browser:
     )(raw: String)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
         Json.decode[ElementInfoEnvelope](raw) match
             case Result.Success(env) if !env.present => Maybe.empty[Browser.ElementInfo]
-            case Result.Success(env) =>
+            case Result.Success(env)                 =>
                 env.info match
                     case Present(w) => Present(toElementInfo(w))
                     case Absent     => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
@@ -1824,7 +1824,7 @@ object Browser:
 
     private def findAxNode(selector: Selector)(using Frame): Maybe[Browser.AxNode] < (Browser & Abort[BrowserReadException]) =
         Resolver.resolveOne(selector).map {
-            case Absent => Maybe.empty[Browser.AxNode]
+            case Absent       => Maybe.empty[Browser.AxNode]
             case Present(ref) =>
                 Env.use[BrowserTab] { tab =>
                     activeIFrameLocal.use { active =>
@@ -2130,7 +2130,7 @@ object Browser:
     )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
         if marks.size > maxMarks then Abort.fail(BrowserCaptureLimitExceededException("screenshotMarks", maxMarks, marks.size))
         else
-            val badges = marks.zipWithIndex.map((m, i) => s"""{x:${m.bounds.x},y:${m.bounds.y},n:${i + 1}}""").mkString("[", ",", "]")
+            val badges   = marks.zipWithIndex.map((m, i) => s"""{x:${m.bounds.x},y:${m.bounds.y},n:${i + 1}}""").mkString("[", ",", "]")
             val injectJs = s"""(() => {
                 const root = document.createElement('div');
                 const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
@@ -2551,7 +2551,7 @@ object Browser:
     ): A < (Browser & Abort[BrowserReadException]) =
         BrowserEval.evalJsChecked(s"JSON.stringify(($js))").map { json =>
             Json.decode[A](json) match
-                case Result.Success(a) => a
+                case Result.Success(a)   => a
                 case Result.Failure(err) =>
                     Abort.fail(BrowserDecodingException("evalJson", err.toString))
         }
@@ -2617,7 +2617,7 @@ object Browser:
             case "warn"  => Browser.ConsoleLevel.Warn
             case "error" => Browser.ConsoleLevel.Error
             case "debug" => Browser.ConsoleLevel.Debug
-            case other =>
+            case other   =>
                 Abort.fail(BrowserProtocolErrorException.decodeFailure(
                     "consoleLogs",
                     s"unknown level '$other' (expected log|info|warn|error|debug)"
@@ -2656,7 +2656,7 @@ object Browser:
             case other =>
                 Abort.fail(BrowserProtocolErrorException.decodeFailure("recordConsole", s"unknown console type '$other'"))
         levelE.map { lv =>
-            val text = wire.args.flatMap(a => a.value.orElse(a.description).toChunk).mkString(" ")
+            val text     = wire.args.flatMap(a => a.value.orElse(a.description).toChunk).mkString(" ")
             val location = wire.stackTrace.flatMap(st =>
                 Maybe.fromOption(st.callFrames.headOption).flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0)))
             )
@@ -2888,7 +2888,7 @@ object Browser:
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
         ensureInterceptEnabled.andThen {
-            val escapedUrl = JsStringUtil.escapeJsString(url)
+            val escapedUrl  = JsStringUtil.escapeJsString(url)
             val wireHeaders =
                 Chunk.from(headers).map((n, v) => MockHeader(n, v))
             val envelopeJson = JsStringUtil.escapeJsString(Json.encode(MockResponseEnvelope(status, body, wireHeaders)))
@@ -3326,8 +3326,8 @@ object Browser:
         Isolate[S, Sync, S]
     ): (Chunk[Browser.ScreenshotFrame], A) < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val session = tab.session
-            val sidKey  = tab.sessionId.value
+            val session    = tab.session
+            val sidKey     = tab.sessionId.value
             val wireFormat = format match
                 case Browser.ScreenshotFormat.Png  => "png"
                 case Browser.ScreenshotFormat.Jpeg => "jpeg"
@@ -3683,11 +3683,11 @@ object Browser:
             Scope.run {
                 for
                     created <- CdpBackend.createTarget(parent.session, CreateTargetParams("about:blank", parentCtx))
-                    _ <- Scope.ensure(
+                    _       <- Scope.ensure(
                         CdpBackend.closeTarget(parent.session, CloseTargetParams(created.targetId))
                     )
                     attached <- CdpBackend.attachToTarget(parent.session, AttachParams(created.targetId, flatten = true))
-                    tab <- BrowserTabSetup.mkBrowserTab(
+                    tab      <- BrowserTabSetup.mkBrowserTab(
                         TargetId(created.targetId),
                         SessionId(attached.sessionId),
                         parent.session,
@@ -4445,7 +4445,7 @@ object Browser:
             case SelectorNode.Aria(role, "")        => role
             case SelectorNode.Aria(role, name)      => s"""$role("$name")"""
             case SelectorNode.Within(parent, child) => s"${selectorNodeDescription(parent)}.find(${selectorNodeDescription(child)})"
-            case SelectorNode.FirstOf(selectors) =>
+            case SelectorNode.FirstOf(selectors)    =>
                 val parts = selectors.toSeq.map(selectorNodeDescription)
                 if parts.isEmpty then "or()"
                 else parts.tail.foldLeft(parts.head)((acc, p) => s"$acc.or($p)")

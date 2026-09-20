@@ -17,26 +17,26 @@ private object FileSystemConformanceFixtures:
 
 end FileSystemConformanceFixtures
 
-class HostFileSystemReadConformanceTest extends FileSystemReadTest:
+class HostFileSystemReadConformanceTest extends FileSystemReadTest[Sync]:
     override protected def realPathRequiresExistence: Boolean = true
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
-        FileSystemConformanceFixtures.hostRead
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.hostRead.map(use.tupled)
 end HostFileSystemReadConformanceTest
 
-class HostFileSystemWriteConformanceTest extends FileSystemWriteTest:
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
-        FileSystemConformanceFixtures.host("kyo-host-write-suite")
+class HostFileSystemWriteConformanceTest extends FileSystemWriteTest[Sync]:
+    protected def withFileSystem[A](
+        use: (FileSystem.Write[Sync], Path) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-write-suite").map(use.tupled)
 end HostFileSystemWriteConformanceTest
 
-class HostFileSystemChannelConformanceTest extends FileSystemChannelTest:
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Write[Sync], Path) < (Sync & Scope & Abort[FileSystemException]) =
-        FileSystemConformanceFixtures.host("kyo-host-channel-suite")
+class HostFileSystemChannelConformanceTest extends FileSystemChannelTest[Sync]:
+    protected def withFileSystem[A](
+        use: (FileSystem.Write[Sync], Path) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        FileSystemConformanceFixtures.host("kyo-host-channel-suite").map(use.tupled)
 end HostFileSystemChannelConformanceTest
 
 /** Minimal user-defined backend fixture that deliberately exposes only the read tier. */
@@ -66,12 +66,12 @@ final class UserReadOnlyFileSystemFixture(delegate: FileSystem.Read[Sync]) exten
     export delegate.tryLock
 end UserReadOnlyFileSystemFixture
 
-class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTest:
+class UserReadOnlyFileSystemConformanceTest extends FileSystemReadTest[Sync]:
     override protected def realPathRequiresExistence: Boolean = true
-    protected def createFileSystem(using
-        Frame
-    ): (FileSystem.Read[Sync], Path, String) < (Sync & Scope & Abort[FileSystemException]) =
+    protected def withFileSystem[A](
+        use: (FileSystem.Read[Sync], Path, String) => A < (Sync & Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
         FileSystemConformanceFixtures.hostRead.map { (fileSystem, path, expected) =>
-            (UserReadOnlyFileSystemFixture(fileSystem), path, expected)
+            use(UserReadOnlyFileSystemFixture(fileSystem), path, expected)
         }
 end UserReadOnlyFileSystemConformanceTest

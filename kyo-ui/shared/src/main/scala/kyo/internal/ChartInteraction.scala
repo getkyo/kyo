@@ -51,7 +51,7 @@ private[kyo] object ChartInteraction:
             // Hover action: set user ref + internal tooltip ref (if present), combined sequentially.
             val hoverAction: Maybe[Any < Async] =
                 if hasHover || hasTooltip then
-                    val base: Any < Async = (): Any < Async
+                    val base: Any < Async      = (): Any < Async
                     val withHover: Any < Async =
                         spec.onHover.fold(base)(ref => base.andThen(ref.set(Present(row))))
                     val combined: Any < Async =
@@ -61,7 +61,7 @@ private[kyo] object ChartInteraction:
             // Unhover action: clear user ref + internal tooltip ref, combined sequentially.
             val unhoverAction: Maybe[Any < Async] =
                 if hasHover || hasTooltip then
-                    val base: Any < Async = (): Any < Async
+                    val base: Any < Async      = (): Any < Async
                     val withHover: Any < Async =
                         spec.onHover.fold(base)(ref => base.andThen(ref.set(Absent)))
                     val combined: Any < Async =
@@ -87,7 +87,7 @@ private[kyo] object ChartInteraction:
       */
     private[kyo] def resolveHighlight[A](spec: Maybe[Chart[A]]): Maybe[Highlight[A]] =
         spec match
-            case Absent => Absent
+            case Absent     => Absent
             case Present(s) =>
                 val cfg = s.interactionCfg
                 if cfg.selectHighlight then
@@ -107,7 +107,7 @@ private[kyo] object ChartInteraction:
       * the active mark reads as emphasized without depending on a caller-supplied color.
       */
     private[kyo] def applyHighlightStyle(el: Svg.SvgElement, style: Maybe[Style]): Svg.SvgElement =
-        val base = el.svgAttrs
+        val base                 = el.svgAttrs
         val styled: Svg.SvgAttrs = style match
             case Absent =>
                 // Default highlight: a visible dark stroke outline (does not overwrite the fill).
@@ -151,8 +151,8 @@ private[kyo] object ChartInteraction:
         highlight match
             case Absent                       => tagged.map(_._2)
             case Present(_) if tagged.isEmpty => Chunk.empty
-            case Present(h) =>
-                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+            case Present(h)                   =>
+                given CanEqual[Maybe[A], Maybe[A]]   = CanEqual.derived
                 val reactive: UI.Ast.Reactive[Svg.G] =
                     h.ref.render: active =>
                         val children: Chunk[Svg.SvgElement] = tagged.map: (row, el) =>

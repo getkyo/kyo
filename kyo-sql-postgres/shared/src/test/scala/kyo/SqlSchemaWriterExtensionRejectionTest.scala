@@ -41,7 +41,7 @@ class SqlSchemaWriterExtensionRejectionTest extends Test:
 
     "a PostgreSQL-owned payload is rejected by a writer for another dialect, naming the type and both dialects" in {
         val writer = SqlSchemaWriterMock.mysqlMock
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex     = intercept[SqlUnsupportedTypeOnBackendException] {
             writer.extension(payload(Span.from(Array[Byte](1))))
         }
         assert(ex.dialect == postgres)
@@ -55,7 +55,7 @@ class SqlSchemaWriterExtensionRejectionTest extends Test:
         // The two coordinates are independent: the format says how to read the bytes, the dialect says whether this
         // writer may emit them at all, and only the second one decides acceptance.
         val writer = SqlSchemaWriterMock.mysqlMock
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex     = intercept[SqlUnsupportedTypeOnBackendException] {
             writer.extension(SqlCodec.Writer.Payload(postgres, "hstore", SqlCodec.Format.Text, Span.empty))
         }
         assert(ex.typeName == "hstore")
@@ -97,7 +97,7 @@ class SqlSchemaWriterExtensionRejectionTest extends Test:
 
     "a reader for the wrong dialect rejects the read too" in {
         val reader = SqlSchemaReaderMock.mysqlMock(Chunk.empty)
-        val ex = intercept[SqlUnsupportedTypeOnBackendException] {
+        val ex     = intercept[SqlUnsupportedTypeOnBackendException] {
             val _ = reader.nextExtension(postgres, "hstore")
         }
         assert(ex.dialect == postgres)

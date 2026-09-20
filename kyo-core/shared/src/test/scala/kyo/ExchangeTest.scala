@@ -32,7 +32,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
             sendCh    <- Channel.initUnscoped[Wire](16)
             receiveCh <- Channel.initUnscoped[Wire](16)
             counter   <- AtomicInt.init(0)
-            ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+            ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                 nextId = counter.getAndIncrement,
                 encode = (id, req) => Sync.defer((id, req)),
                 send = sendVia(sendCh),
@@ -59,7 +59,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Scope.run {
+                ex        <- Scope.run {
                     Exchange.init[Int, String, String, Wire, Nothing, TestError](
                         nextId = counter.getAndIncrement,
                         encode = (id, req) => Sync.defer((id, req)),
@@ -95,7 +95,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 for
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
-                    ex <- Exchange.initUnscoped[String, String, Wire, Nothing, TestError](
+                    ex        <- Exchange.initUnscoped[String, String, Wire, Nothing, TestError](
                         encode = (id, req) => Sync.defer((id, req)),
                         send = sendVia(sendCh),
                         receive = receiveCh.streamUntilClosed(),
@@ -129,7 +129,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 for
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
-                    ex <- Scope.run {
+                    ex        <- Scope.run {
                         Exchange.init[String, String, Wire, Nothing, TestError](
                             encode = (id, req) => Sync.defer((id, req)),
                             send = sendVia(sendCh),
@@ -150,7 +150,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
                     counter   <- AtomicInt.init(0)
-                    ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                    ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                         nextId = counter.getAndIncrement,
                         encode = (id, req) => Sync.defer((id, req)),
                         send = sendVia(sendCh),
@@ -170,7 +170,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                     sendCh    <- Channel.initUnscoped[(String, String)](16)
                     receiveCh <- Channel.initUnscoped[(String, String)](16)
                     counter   <- AtomicInt.init(0)
-                    ex <- Exchange.initUnscoped[String, String, String, (String, String), Nothing, TestError](
+                    ex        <- Exchange.initUnscoped[String, String, String, (String, String), Nothing, TestError](
                         nextId = counter.getAndIncrement.map(n => s"req-$n"),
                         encode = (id, req) => Sync.defer((id, req)),
                         send = wire => Abort.run[Closed](sendCh.put(wire)).unit,
@@ -225,7 +225,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
         "multiple sequential requests" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
-                results <- Kyo.foreach(1 to 5) { i =>
+                results                 <- Kyo.foreach(1 to 5) { i =>
                     for
                         fiber  <- Fiber.initUnscoped(ex(s"req-$i"))
                         wire   <- sendCh.take
@@ -261,7 +261,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 callCount <- AtomicInt.init(0)
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = callCount.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = sendVia(sendCh),
@@ -295,7 +295,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh      <- Channel.initUnscoped[Wire](16)
                 receiveCh   <- Channel.initUnscoped[Wire](16)
                 counter     <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex          <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) =>
                         capturedId.set(id).andThen(
@@ -324,7 +324,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sentWires <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, s"encoded:$req")),
                     send = sendVia(sentWires),
@@ -349,7 +349,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = sendVia(sendCh),
@@ -464,7 +464,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = sendVia(sendCh),
@@ -580,7 +580,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 counter   <- AtomicInt.init(0)
                 // First call: normal send; subsequent calls: fail
                 callCount <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire =>
@@ -649,7 +649,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
                 counter    <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex         <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](outgoingCh.put(wire)).unit,
@@ -670,7 +670,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
                 counter    <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex         <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](outgoingCh.put(wire)).unit,
@@ -690,7 +690,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
                 counter    <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex         <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](outgoingCh.put(wire)).unit,
@@ -758,7 +758,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[(Int, String)](64)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, (Int, String), String, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, (Int, String), String, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](sendCh.put(wire)).unit,
@@ -894,7 +894,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
                 counter    <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
+                ex         <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](outgoingCh.put(wire)).unit,
@@ -933,7 +933,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, String, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = _ => Abort.fail(TestError("send-error")),
@@ -987,7 +987,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = _ => Abort.fail(TestError("send-error")),
@@ -1006,7 +1006,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
                 counter    <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex         <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = wire => Abort.run[Closed](outgoingCh.put(wire)).unit,
@@ -1069,7 +1069,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 idCounter <- AtomicInt.init(0)
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex        <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = idCounter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = sendVia(sendCh),
@@ -1103,7 +1103,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh      <- Channel.initUnscoped[Wire](16)
                 receiveCh   <- Channel.initUnscoped[Wire](16)
                 counter     <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex          <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) =>
                         encodeCount.getAndIncrement.andThen(Sync.defer((id, req))),
@@ -1134,7 +1134,7 @@ class ExchangeTest extends kyo.test.Test[Any]:
                 sendCh      <- Channel.initUnscoped[Wire](16)
                 receiveCh   <- Channel.initUnscoped[Wire](16)
                 counter     <- AtomicInt.init(0)
-                ex <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
+                ex          <- Exchange.initUnscoped[Int, String, String, Wire, Nothing, TestError](
                     nextId = counter.getAndIncrement,
                     encode = (id, req) => Sync.defer((id, req)),
                     send = sendVia(sendCh),

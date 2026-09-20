@@ -342,7 +342,7 @@ class NioIoDriverTest extends Test:
         // A background writer floods more than the staging cap and then closes (FIN). The probe stages up to the cap and stops consuming, so the
         // FIN sits behind the cap and is never observed: isPeerClosed stays false. This is the deliberate trade that stops a live chatty peer
         // turning the descriptor fix into a heap leak (a FIN behind more than the cap keeps the pre-fix behavior).
-        val cap = NioIoDriver.GraceProbeStagingCap
+        val cap    = NioIoDriver.GraceProbeStagingCap
         val writer = new Thread(() =>
             try
                 val buf = ByteBuffer.wrap(Array.fill[Byte](cap + (256 * 1024))(1))
@@ -437,7 +437,7 @@ class NioIoDriverTest extends Test:
             Abort.run[Closed | Timeout](Async.timeout(bound)(p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get)).map {
                 case Result.Success(ReadOutcome.Bytes(span)) => Present(span.toArray)
                 case Result.Failure(_: Timeout)              => Absent
-                case other =>
+                case other                                   =>
                     assert(false, s"iteration $iter: unexpected read outcome $other")
                     Absent
             }
@@ -479,7 +479,7 @@ class NioIoDriverTest extends Test:
                             else
                                 readBytes(iter, 2.seconds).map {
                                     case Present(bytes) => Loop.continue(received ++ bytes)
-                                    case Absent =>
+                                    case Absent         =>
                                         assert(
                                             false,
                                             s"iteration $iter: read never completed with stagedBytes=${driver.stagedBytes(handle)}; " +
@@ -612,7 +612,7 @@ class NioIoDriverTest extends Test:
             driver.armUpgradeProducerRead(handle)
             awaitOutcome(p, 10.seconds).map {
                 case Present(Result.Failure(_)) => succeed
-                case Absent =>
+                case Absent                     =>
                     assert(
                         false,
                         "read armed after detachForUpgrade was stranded: nothing completed it " +

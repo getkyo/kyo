@@ -21,7 +21,7 @@ class NetPlatformBackendIsolationTest extends Test:
 
     "IoBackendPlatform.selected honors KYO_NET_ONLY, not just the parameterized eachBackend/eachBackendTls leaves" in {
         sys.env.get("KYO_NET_ONLY") match
-            case None => cancel("KYO_NET_ONLY is not set on this run; nothing to isolate")
+            case None       => cancel("KYO_NET_ONLY is not set on this run; nothing to isolate")
             case Some(only) =>
                 val selected = IoBackendPlatform.selected
                 assert(

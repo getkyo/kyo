@@ -8,7 +8,7 @@ class StackThreadingTest extends AnyFreeSpec:
         val a = Stack.borrow()
         Stack.release(a)
         @volatile var other: AnyRef = null
-        val t = new Thread(() =>
+        val t                       = new Thread(() =>
             val b = Stack.borrow()
             other = b
             Stack.release(b)

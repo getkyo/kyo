@@ -137,7 +137,7 @@ private[kyo] object LLMDecider:
                         else
                             val ps = raw.map(_ / sum)
                             Result.succeed(question match
-                                case _: Question.Noul => Answer.Noul(ps(0))
+                                case _: Question.Noul   => Answer.Noul(ps(0))
                                 case _: Question.Choice =>
                                     val best = ps.indexOf(ps.max)
                                     Answer.Choice(keys(best), confidence(ps), keys.zip(ps))

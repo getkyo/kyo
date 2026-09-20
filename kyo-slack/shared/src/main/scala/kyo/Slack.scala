@@ -186,7 +186,7 @@ object Slack:
                 SlackWire.decodeConnectionsOpen(response.fields.body) match
                     case Result.Success(url) => SlackTransport.transport.use(t => SlackSocketEngine.initUnscoped(t, url, config))
                     case Result.Failure(ex)  => Abort.fail(ex)
-                    case Result.Panic(ex) => Abort.fail(new SlackHandshakeException(
+                    case Result.Panic(ex)    => Abort.fail(new SlackHandshakeException(
                             s"apps.connections.open decode panicked: ${ex.getMessage}",
                             ex
                         ))

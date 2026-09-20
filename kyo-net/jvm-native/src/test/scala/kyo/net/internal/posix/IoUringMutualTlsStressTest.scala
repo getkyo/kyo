@@ -98,8 +98,8 @@ class IoUringMutualTlsStressTest extends Test:
                 // (the very race this leaf reproduces), would abandon conn/tlsConn with no closer ever reached.
                 val attempt: Array[Byte] < (Async & Abort[NetException | Closed]) =
                     for
-                        _    <- Sync.defer(stage.set("connect"))
-                        conn <- transport.connect("127.0.0.1", port).safe.get
+                        _      <- Sync.defer(stage.set("connect"))
+                        conn   <- transport.connect("127.0.0.1", port).safe.get
                         echoed <- Sync.ensure(Sync.defer(conn.close())) {
                             for
                                 _       <- Sync.defer(stage.set("put-signal"))
@@ -108,7 +108,7 @@ class IoUringMutualTlsStressTest extends Test:
                                 _       <- conn.inbound.safe.take
                                 _       <- Sync.defer(stage.set("upgrade"))
                                 tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                                echoed <- Sync.ensure(Sync.defer(tlsConn.close())) {
+                                echoed  <- Sync.ensure(Sync.defer(tlsConn.close())) {
                                     for
                                         _      <- Sync.defer(stage.set("put-payload"))
                                         _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))

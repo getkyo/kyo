@@ -1,7 +1,7 @@
 package kyo
 
 final class Json extends Codec:
-    def newWriter(): Codec.Writer = kyo.internal.JsonWriter()
+    def newWriter(): Codec.Writer                               = kyo.internal.JsonWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.JsonReader(input)
 end Json
@@ -239,7 +239,7 @@ object Json:
                     writeJsonSchema(value, writer)
                 @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): JsonSchema =
                     readJsonSchema(reader)
-                @publicInBinary private[kyo] def getter(value: JsonSchema): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def getter(value: JsonSchema): Maybe[Any]            = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: JsonSchema, next: Any): JsonSchema =
                     next match
                         case sv: JsonSchema => sv
@@ -406,7 +406,7 @@ object Json:
             // state across the variant-specific branches.
             val sv = reader match
                 case ir: Codec.IntrospectingReader => ir.readStructure()
-                case other =>
+                case other                         =>
                     throw SchemaNotSerializableException(
                         s"Schema[Json.JsonSchema] requires a self-describing reader (such as JSON or YAML); got ${other.getClass.getSimpleName}"
                     )(using reader.frame)
@@ -425,7 +425,7 @@ object Json:
                         case Some(Structure.Value.Str("integer")) => fromInteger(byName)
                         case Some(Structure.Value.Str("boolean")) => fromBool(byName)
                         case Some(Structure.Value.Str("null"))    => fromNull(byName)
-                        case _ =>
+                        case _                                    =>
                             byName.get("oneOf") match
                                 case Some(Structure.Value.Sequence(elems)) => fromOneOf(elems)
                                 case _                                     =>
@@ -661,7 +661,7 @@ object Json:
                 case Structure.Type.Product(name, _, _, fields, _) =>
                     if seen.contains(name) then Obj(List.empty, List.empty)
                     else
-                        val newSeen = seen + name
+                        val newSeen    = seen + name
                         val properties = fields.toList.map { f =>
                             (f.name, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
                         }
@@ -673,7 +673,7 @@ object Json:
                 case Structure.Type.Sum(name, _, _, variants, _, _) =>
                     if seen.contains(name) then Obj(List.empty, List.empty)
                     else
-                        val newSeen = seen + name
+                        val newSeen     = seen + name
                         val variantList = variants.toList.map { v =>
                             (v.name, fromStructure(v.variantType, newSeen))
                         }

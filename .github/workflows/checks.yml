@@ -17,10 +17,11 @@ on:
     branches:
       - main
 
-# Without this, rapid pushes each hold a slot to completion while validating a commit that
-# is already stale, which is expensive when the job runs ~50 minutes.
+# A pull request keys on the PR number, so a new commit supersedes the run validating the previous
+# one. A push to main keys on the commit, so every main commit is validated rather than only the
+# newest.
 concurrency:
-  group: checks-${{ github.event.pull_request.number || github.ref }}
+  group: checks-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -78,7 +79,7 @@ jobs:
 
       # --- then formatting (~3m) ---
       - uses: coursier/cache-action@v8.1.1
-      - uses: coursier/setup-action@v3.0.2
+      - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
@@ -117,6 +118,13 @@ jobs:
       - name: Prepare SQLite
         shell: bash
         run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+      # DoltLite, for the same reason: `sbt doctest` compiles its shim against the staged library.
+      # Per os-arch, unlike SQLite, because it stages a compiled library rather than source, and this
+      # runner is pinned to ubuntu-24.04-arm.
+      - name: Prepare DoltLite
+        shell: bash
+        run: bash kyo-sql-doltlite/scripts/build-doltlite.sh linux-aarch64
 
       # Doctest result cache. Entries are keyed by SHA-256 over the block body, the scope closure
       # (preceding blocks and the predef), the classpath fingerprint, the Scala version and the

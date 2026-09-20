@@ -281,7 +281,7 @@ class KqueueTest extends ItTestBase:
             val ts        = msTimeout(1000)
             for
                 regRc <- b.kevent(kq, changeBuf, 2, Buffer.alloc[Byte](KEVENT_SIZE), 0, zeroTimeout()).safe.get
-                _ <-
+                _     <-
                     wb.set(0, 1.toByte)
                     b.write(w1, wb, 1).safe.get.map(written => assert(written == 1L))
                 _ <-

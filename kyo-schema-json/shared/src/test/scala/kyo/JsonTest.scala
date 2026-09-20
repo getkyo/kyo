@@ -292,7 +292,7 @@ class JsonTest extends kyo.test.Test[Any]:
             result match
                 case Result.Success(_)                       => fail("Should not decode null to String")
                 case Result.Failure(_: NullPointerException) => fail("Should not throw NPE")
-                case Result.Failure(_) =>
+                case Result.Failure(_)                       =>
                     succeed("null String field rejected with a non-NPE failure; reaching this branch is the verification")
             end match
         }
@@ -1799,7 +1799,7 @@ class JsonTest extends kyo.test.Test[Any]:
             // Concatenating N copies produces 2^N distinct strings that ALL collide.
             // Original report (json4s #553): 100K colliding keys took >110 seconds without limits.
             // With maxCollectionSize=10000, the decoder rejects before quadratic blowup.
-            val base = Array("Aa", "BB")
+            val base                           = Array("Aa", "BB")
             def gen(depth: Int): Array[String] =
                 if depth == 0 then Array("")
                 else for prefix <- gen(depth - 1); b <- base yield prefix + b
@@ -2068,7 +2068,8 @@ class JsonTest extends kyo.test.Test[Any]:
                 MTOrderedDictLevels(OrderedDict(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
             val encoded = Json.encode(holder)
             assert(
-                encoded == """{"byLevel":[{"key":30,"value":"gold"},{"key":10,"value":"bronze"},{"key":20,"value":"silver"},{"key":50,"value":"copper"},{"key":40,"value":"tin"},{"key":60,"value":"iron"}]}"""
+                encoded ==
+                    """{"byLevel":[{"key":30,"value":"gold"},{"key":10,"value":"bronze"},{"key":20,"value":"silver"},{"key":50,"value":"copper"},{"key":40,"value":"tin"},{"key":60,"value":"iron"}]}"""
             )
             val decoded = Json.decode[MTOrderedDictLevels](encoded).getOrThrow
             assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))

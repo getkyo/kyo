@@ -208,7 +208,7 @@ class SqlConfigTlsModeTest extends Test:
                         // where `isFailure` would have been satisfied by any stumble at all.
                         secured match
                             case Result.Failure(_: SqlConnectionSslRequestFailedException) => succeed
-                            case Result.Success(rows) =>
+                            case Result.Success(rows)                                      =>
                                 fail(
                                     "a require-TLS statement completed against a server that speaks no TLS, so the " +
                                         s"pool handed it the plaintext session it had idle: $rows"

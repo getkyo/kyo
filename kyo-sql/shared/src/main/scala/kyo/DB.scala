@@ -74,7 +74,7 @@ object DB:
     def clientAs[C <: SqlClient](using tag: ConcreteTag[C], frame: Frame): C < (DB & Abort[SqlConnectionBackendMismatchException]) =
         client.map {
             case tag(narrowed) => narrowed
-            case other =>
+            case other         =>
                 Abort.fail(
                     SqlConnectionBackendMismatchException(tag.showType, other.dialect.id, "DB.clientAs")
                 )

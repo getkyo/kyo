@@ -180,7 +180,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                 for
                     c        <- Channel.init[Int](1)
                     producer <- Fiber.initUnscoped(Kyo.foreachDiscard(1 to items)(c.put))
-                    _ <- Loop.foreach {
+                    _        <- Loop.foreach {
                         producer.done.map { done =>
                             if done then Loop.done
                             else
@@ -700,9 +700,9 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "offer and close" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                latch   <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                channel    <- Channel.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
@@ -730,9 +730,9 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "offer and poll" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                latch   <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                channel    <- Channel.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
@@ -750,9 +750,9 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "put and take" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                latch   <- Latch.init(1)
+                size     <- Choice.eval(0, 1, 2, 10, 100)
+                channel  <- Channel.init[Int](size)
+                latch    <- Latch.init(1)
                 putFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.put(i))))
                 )
@@ -769,10 +769,10 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "offer to full channel during close" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                _       <- Kyo.foreach(1 to size)(i => channel.offer(i))
-                latch   <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                channel    <- Channel.init[Int](size)
+                _          <- Kyo.foreach(1 to size)(i => channel.offer(i))
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
@@ -803,9 +803,9 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "concurrent close attempts" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                latch   <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                channel    <- Channel.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 100, 100)(i => Abort.run(channel.offer(i))))
                 )
@@ -831,9 +831,9 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "offer, poll, put, take, and close" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                latch   <- Latch.init(1)
+                size       <- Choice.eval(0, 1, 2, 10, 100)
+                channel    <- Channel.init[Int](size)
+                latch      <- Latch.init(1)
                 offerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(Async.foreach(1 to 50, 50)(i => Abort.run(channel.offer(i))))
                 )
@@ -1545,8 +1545,8 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "should deliver all items when wrapped in Abort.run with closeAwaitEmpty" in {
             (for
-                size <- Choice.eval(1, 2, 4, 32)
-                c    <- Channel.initUnscoped[Int](size)
+                size          <- Choice.eval(1, 2, 4, 32)
+                c             <- Channel.initUnscoped[Int](size)
                 producerFiber <- Fiber.initUnscoped {
                     Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
                 }
@@ -1672,8 +1672,8 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "should deliver all items with closeAwaitEmpty" in {
             (for
-                size <- Choice.eval(1, 2, 4, 32)
-                c    <- Channel.initUnscoped[Int](size)
+                size          <- Choice.eval(1, 2, 4, 32)
+                c             <- Channel.initUnscoped[Int](size)
                 producerFiber <- Fiber.initUnscoped {
                     Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
                 }
@@ -1686,8 +1686,8 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "should deliver all items with closeAwaitEmpty and maxChunkSize" in {
             (for
-                size <- Choice.eval(1, 2, 4, 32)
-                c    <- Channel.initUnscoped[Int](size)
+                size          <- Choice.eval(1, 2, 4, 32)
+                c             <- Channel.initUnscoped[Int](size)
                 producerFiber <- Fiber.initUnscoped {
                     Kyo.foreach(1 to 5)(c.put(_)).andThen(c.closeAwaitEmpty)
                 }
@@ -1957,10 +1957,10 @@ class ChannelTest extends kyo.test.Test[Any]:
 
         "race between closeAwaitEmpty and close" in {
             (for
-                size    <- Choice.eval(0, 1, 2, 10, 100)
-                channel <- Channel.init[Int](size)
-                _       <- Kyo.foreach(1 to (size min 5))(i => channel.put(i))
-                latch   <- Latch.init(1)
+                size                 <- Choice.eval(0, 1, 2, 10, 100)
+                channel              <- Channel.init[Int](size)
+                _                    <- Kyo.foreach(1 to (size min 5))(i => channel.put(i))
+                latch                <- Latch.init(1)
                 closeAwaitEmptyFiber <- Fiber.initUnscoped(
                     latch.await.andThen(channel.closeAwaitEmpty)
                 )
@@ -2171,7 +2171,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                     for
                         c        <- Channel.init[Int](1)
                         released <- AtomicInt.init(0)
-                        taker <- Fiber.initUnscoped {
+                        taker    <- Fiber.initUnscoped {
                             Scope.run {
                                 c.take.map(v => Scope.acquireRelease(v)(_ => released.incrementAndGet.unit)).andThen(Async.never)
                             }
@@ -2201,15 +2201,15 @@ class ChannelTest extends kyo.test.Test[Any]:
                     for
                         c        <- Channel.init[Int](1)
                         released <- AtomicInt.init(0)
-                        taker <- Fiber.initUnscoped {
+                        taker    <- Fiber.initUnscoped {
                             Scope.run {
                                 c.takeWith(v => Scope.acquireRelease(v)(_ => released.incrementAndGet.unit)).andThen(Async.never)
                             }
                         }
-                        _ <- assertEventually(c.pendingTakes.map(_ == 1))
-                        _ <- c.put(i)
-                        _ <- taker.interrupt
-                        _ <- taker.getResult
+                        _       <- assertEventually(c.pendingTakes.map(_ == 1))
+                        _       <- c.put(i)
+                        _       <- taker.interrupt
+                        _       <- taker.getResult
                         settled <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(
                             released.get.map(r => c.size.map(s => r == 1 || s == 1))
                         )))

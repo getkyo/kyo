@@ -41,7 +41,7 @@ class EffectTracePhysicalTest extends AnyFreeSpec:
     }
 
     "a suspension boundary the physical stack cannot cross" in {
-        var raw: Array[StackTraceElement] = Array.empty
+        var raw: Array[StackTraceElement]    = Array.empty
         def thrower(v: Int < Ask): Int < Ask =
             v.map { _ =>
                 val ex = new Boom

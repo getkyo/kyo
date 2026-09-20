@@ -299,7 +299,7 @@ class BrowserConfigTest extends BrowserTest:
         }.map {
             case Result.Success(_)                               => fail("expected setup failure for missing executable")
             case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("/no/such/binary"))
-            case Result.Failure(other) =>
+            case Result.Failure(other)                           =>
                 fail(s"expected BrowserSetupFailedException but got ${other.getClass.getName}: $other")
             case Result.Panic(ex) => fail(s"expected Failure, got Panic: ${ex.getMessage}")
         }

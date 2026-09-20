@@ -22,6 +22,7 @@ class SqlBackendRegistryTest extends Test:
         val classes = registry.factories.map(_.getClass.getName).toSeq.sorted
         assert(
             classes == Seq(
+                "kyo.internal.dolt.DoltBackendFactory",
                 "kyo.internal.mysql.MysqlBackendFactory",
                 "kyo.internal.postgres.PostgresBackendFactory",
                 "kyo.internal.sqlite.SqliteBackendFactory"
@@ -33,7 +34,7 @@ class SqlBackendRegistryTest extends Test:
     "schemesListsCanonicalNamesAndAliases" in {
         // The register-only stub shares this test program and, once any leaf registers it, joins the runtime-discovery
         // half of `schemes`, so it is filtered out here; this suite is about the shipping backends' schemes.
-        assert(registry.schemes.toSeq.filterNot(_ == "stub").sorted == Seq("mysql", "postgres", "postgresql", "sqlite", "sqlite3"))
+        assert(registry.schemes.toSeq.filterNot(_ == "stub").sorted == Seq("dolt", "mysql", "postgres", "postgresql", "sqlite", "sqlite3"))
     }
 
     "forSchemeResolvesACanonicalScheme" in {

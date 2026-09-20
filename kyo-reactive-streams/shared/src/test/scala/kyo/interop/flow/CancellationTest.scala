@@ -61,9 +61,9 @@ final class CancellationTest extends kyo.test.Test[Any]:
         val onNextCount   = new java.util.concurrent.atomic.AtomicInteger(0)
         val completedFlag = new java.util.concurrent.atomic.AtomicBoolean(false)
         val capturedSub   = new java.util.concurrent.atomic.AtomicReference[Subscription]()
-        val subscriber = new Subscriber[Int]:
+        val subscriber    = new Subscriber[Int]:
             def onSubscribe(s: Subscription): Unit = capturedSub.set(s)
-            def onNext(t: Int): Unit =
+            def onNext(t: Int): Unit               =
                 discard(onNextCount.incrementAndGet())
                 // The first delivered element cancels mid-drain, while demand is still outstanding.
                 val s = capturedSub.get()

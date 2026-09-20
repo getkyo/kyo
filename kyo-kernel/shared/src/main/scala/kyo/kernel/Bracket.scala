@@ -47,8 +47,8 @@ object Bracket:
         // `state` is the per-run value handed to the release: the acquired resource for a bracket, the slot `ensuringWith` makes on
         // entry, so a value run twice shares nothing.
         final class Live[R](val state: R, fin: (R, Maybe[Throwable]) => Unit, frame: Frame) extends Cell:
-            @volatile private var ended              = false
-            private[kyo] def endedItsExtent: Boolean = ended
+            @volatile private var ended                           = false
+            private[kyo] def endedItsExtent: Boolean              = ended
             private[kyo] def run(failure: Maybe[Throwable]): Unit =
                 if compareAndSet(false, true) then
                     fin(
@@ -79,7 +79,7 @@ object Bracket:
         release: (A, Maybe[Throwable]) => Unit
     )(using _frame: Frame): B < (S1 & S2) =
         val ensure = new Arrow.Ensure[A, B, S1 & S2]:
-            def frame = _frame
+            def frame                = _frame
             override def apply(a: A) =
                 val cell = new Cell.Live(a, release, _frame)
                 val body =

@@ -361,7 +361,7 @@ object SnapshotWriter:
         val headerSize       = SnapshotFormat.headerSize + sectionIndexSize
 
         // Calculate section offsets
-        var offset = headerSize.toLong
+        var offset      = headerSize.toLong
         val sectionMeta = sections.map { (name, bytes) =>
             val entry = (name, offset, bytes.length.toLong)
             offset += bytes.length
@@ -647,27 +647,27 @@ object SnapshotWriter:
             writeVarint(tagBytes.length)
             sink.writeBytes(tagBytes)
             err match
-                case TastyError.FileNotFound(path)              => writeStr(path)
-                case TastyError.CorruptedFile(path, at, reason) => writeStr(path); writeLong(at); writeStr(reason)
-                case TastyError.UnsupportedVersion(found, sup)  => writeVersion(found); writeVersion(sup)
+                case TastyError.FileNotFound(path)                    => writeStr(path)
+                case TastyError.CorruptedFile(path, at, reason)       => writeStr(path); writeLong(at); writeStr(reason)
+                case TastyError.UnsupportedVersion(found, sup)        => writeVersion(found); writeVersion(sup)
                 case TastyError.InconsistentClasspath(file, exp, fnd) =>
                     writeStr(file); writeUUID(exp); writeUUID(fnd)
-                case TastyError.FullNameCollisionError(fullName)       => writeStr(fullName)
-                case TastyError.MalformedSection(name, reason, at)     => writeStr(name); writeStr(reason); writeLong(at)
-                case TastyError.SymbolNotFound(fullName)               => writeStr(fullName)
-                case TastyError.NotFound(fullName)                     => writeStr(fullName)
-                case TastyError.ClassfileFormatError(path, reason, at) => writeStr(path); writeStr(reason); writeLong(at)
-                case TastyError.ClasspathClosed(ctx)                   => writeStr(ctx)
-                case TastyError.ClasspathBuilding(ctx)                 => writeStr(ctx)
-                case TastyError.SnapshotFormatError(path, reason, at)  => writeStr(path); writeStr(reason); writeLong(at)
-                case TastyError.SnapshotVersionMismatch(found, sup)    => writeVersion(found); writeVersion(sup)
-                case TastyError.SnapshotIoError(cause)                 => writeStr(cause)
-                case TastyError.NotImplemented(feature)                => writeStr(feature)
-                case TastyError.UnsupportedPlatform(feature)           => writeStr(feature)
-                case TastyError.UnknownTagInPosition(tag, pos)         => writeInt(tag); writeStr(pos)
-                case TastyError.InvalidFullName(fullName, reason)      => writeStr(fullName); writeStr(reason)
-                case TastyError.InvalidUuid(input)                     => writeStr(input)
-                case TastyError.DigestMismatch(exp, act)               => writeStr(exp); writeStr(act)
+                case TastyError.FullNameCollisionError(fullName)              => writeStr(fullName)
+                case TastyError.MalformedSection(name, reason, at)            => writeStr(name); writeStr(reason); writeLong(at)
+                case TastyError.SymbolNotFound(fullName)                      => writeStr(fullName)
+                case TastyError.NotFound(fullName)                            => writeStr(fullName)
+                case TastyError.ClassfileFormatError(path, reason, at)        => writeStr(path); writeStr(reason); writeLong(at)
+                case TastyError.ClasspathClosed(ctx)                          => writeStr(ctx)
+                case TastyError.ClasspathBuilding(ctx)                        => writeStr(ctx)
+                case TastyError.SnapshotFormatError(path, reason, at)         => writeStr(path); writeStr(reason); writeLong(at)
+                case TastyError.SnapshotVersionMismatch(found, sup)           => writeVersion(found); writeVersion(sup)
+                case TastyError.SnapshotIoError(cause)                        => writeStr(cause)
+                case TastyError.NotImplemented(feature)                       => writeStr(feature)
+                case TastyError.UnsupportedPlatform(feature)                  => writeStr(feature)
+                case TastyError.UnknownTagInPosition(tag, pos)                => writeInt(tag); writeStr(pos)
+                case TastyError.InvalidFullName(fullName, reason)             => writeStr(fullName); writeStr(reason)
+                case TastyError.InvalidUuid(input)                            => writeStr(input)
+                case TastyError.DigestMismatch(exp, act)                      => writeStr(exp); writeStr(act)
                 case TastyError.UnhandledSubtypingCase(shape, lhs, rhs, file) =>
                     writeStr(shape); writeType(lhs); writeType(rhs); writeStr(file)
                 case TastyError.UnresolvedReference(name, idx) =>
@@ -730,14 +730,14 @@ object SnapshotWriter:
         // Collect valid entries: (symIdx, tyconIds) where tyconIds is non-empty.
         val entries = symbols.zipWithIndex.flatMap { (symbol, idx) =>
             val annotations: Chunk[Tasty.Annotation] = symbol match
-                case c: Tasty.Symbol.ClassLike     => c.annotations
-                case m: Tasty.Symbol.Method        => m.annotations
-                case v: Tasty.Symbol.Val           => v.annotations
-                case w: Tasty.Symbol.Var           => w.annotations
-                case ta: Tasty.Symbol.TypeAlias    => ta.annotations
-                case ot: Tasty.Symbol.OpaqueType   => ot.annotations
-                case at: Tasty.Symbol.AbstractType => at.annotations
-                case p: Tasty.Symbol.Parameter     => p.annotations
+                case c: Tasty.Symbol.ClassLike                                                   => c.annotations
+                case m: Tasty.Symbol.Method                                                      => m.annotations
+                case v: Tasty.Symbol.Val                                                         => v.annotations
+                case w: Tasty.Symbol.Var                                                         => w.annotations
+                case ta: Tasty.Symbol.TypeAlias                                                  => ta.annotations
+                case ot: Tasty.Symbol.OpaqueType                                                 => ot.annotations
+                case at: Tasty.Symbol.AbstractType                                               => at.annotations
+                case p: Tasty.Symbol.Parameter                                                   => p.annotations
                 case _: Tasty.Symbol.Field | _: Tasty.Symbol.TypeParam | _: Tasty.Symbol.Package =>
                     Chunk.empty[Tasty.Annotation]
             // Extract the tycon fully-qualified name pool ID for Named and TermRef types.
@@ -834,7 +834,7 @@ object SnapshotWriter:
         val entries = fullNameIndex.toMap.toSeq.sortBy(_._1).flatMap { (fullName, id) =>
             symIdToIdx.get(id.value) match
                 case Some(idx) => Some((internName(fullName), idx))
-                case None =>
+                case None      =>
                     val canonicalFullName = FullNameNormalizer.canonicalSourceFullName(fullName)
                     if canonicalFullName != fullName then
                         fullNameIndex.get(canonicalFullName) match

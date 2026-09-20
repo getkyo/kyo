@@ -249,7 +249,7 @@ private[kyo] object BrowserLauncher:
         Frame
     )
         : String < (Async & Abort[BrowserSetupException]) =
-        val portFile = tmpDir / devToolsActivePortFile
+        val portFile                                              = tmpDir / devToolsActivePortFile
         val poll: String < (Async & Abort[BrowserSetupException]) =
             Loop(()) { _ =>
                 Abort.run[FileSystemException](Path.runReadOnly(portFile.read)).map {

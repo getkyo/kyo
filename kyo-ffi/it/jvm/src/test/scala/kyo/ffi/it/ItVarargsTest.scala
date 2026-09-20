@@ -11,7 +11,7 @@ import kyo.ffi.Ffi
 class ItVarargsTest extends ItVarargsSharedTest:
 
     "unsupported runtime class surfaces a clear FfiLoadError.Unsupported" in {
-        val b = Ffi.load[ItVarargsBindings]
+        val b  = Ffi.load[ItVarargsBindings]
         val ex = intercept[kyo.ffi.FfiLoadError.Unsupported] {
             discard(b.kyoItSumVarargs(1, List(1, 2, 3)))
         }

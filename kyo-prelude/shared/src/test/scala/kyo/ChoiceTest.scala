@@ -339,7 +339,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
 
         "a bracket outside the region releases once, after every branch" in {
             var log = Chunk.empty[String]
-            val v =
+            val v   =
                 Bracket("res") { _ =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map { n =>
@@ -355,7 +355,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
 
         "a bracket outside the region is live in every branch" in {
             var released = false
-            val v =
+            val v        =
                 Bracket(1) { res =>
                     Choice.run {
                         Choice.eval(1, 2, 3).map(n => (n, released))
@@ -370,7 +370,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
         "a bracket inside a branch releases once per branch" in {
             var opens  = 0
             var closes = 0
-            val v = Choice.run {
+            val v      = Choice.run {
                 for
                     n <- Choice.eval(1, 2, 3)
                     r <- Bracket({ opens += 1; n })(a => a * 10)((_, _) => closes += 1)
@@ -384,7 +384,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
 
         "a bracket acquired in a branch is released before the next branch acquires" in {
             var log = Chunk.empty[String]
-            val v = Choice.run {
+            val v   = Choice.run {
                 for
                     n <- Choice.eval(1, 2)
                     r <- Bracket({ log = log.append(s"open$n"); n })(a => a)((_, _) => log = log.append(s"close$n"))
@@ -399,7 +399,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             // bracket travels with each branch's remainder. The region declares escaping and repeated, so the
             // bracket is held across every branch and discharged once by the scope below.
             var log = Chunk.empty[String]
-            val v =
+            val v   =
                 Choice.runStream {
                     Bracket("res")(_ =>
                         Choice.eval(1, 2, 3).map { n =>
@@ -415,7 +415,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
             // the bracket sits below the region that replays, so it is not part of any branch's remainder:
             // every branch runs against the live resource and the release runs once when the stream body ends
             var log = Chunk.empty[String]
-            val v =
+            val v   =
                 Stream {
                     Bracket("res")(_ =>
                         Choice.runStream(

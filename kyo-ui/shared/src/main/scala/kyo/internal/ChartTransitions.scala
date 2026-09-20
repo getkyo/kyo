@@ -107,7 +107,7 @@ private[kyo] object ChartTransitions:
     private def rowKey[A](spec: Chart[A], mark: Mark[A], row: A): String =
         spec.key match
             case Present(kf) => kf(row)
-            case Absent =>
+            case Absent      =>
                 mark match
                     case m: Mark.Bar[A, ?, ?] =>
                         m.x.plottable.toDomain(m.x.accessor(row)) match
@@ -201,16 +201,16 @@ private[kyo] object ChartTransitions:
       * and the new path's rendered string becomes `to`.
       */
     private def renderPathDataStr(d: Svg.PathData): String =
-        def fmtD(v: Double): String = NumberFormat.double(v)
+        def fmtD(v: Double): String         = NumberFormat.double(v)
         def cmd(c: Svg.PathCommand): String = c match
-            case Svg.PathCommand.MoveTo(x, y)   => s"M${fmtD(x)} ${fmtD(y)}"
-            case Svg.PathCommand.MoveBy(dx, dy) => s"m${fmtD(dx)} ${fmtD(dy)}"
-            case Svg.PathCommand.LineTo(x, y)   => s"L${fmtD(x)} ${fmtD(y)}"
-            case Svg.PathCommand.LineBy(dx, dy) => s"l${fmtD(dx)} ${fmtD(dy)}"
-            case Svg.PathCommand.HLineTo(x)     => s"H${fmtD(x)}"
-            case Svg.PathCommand.HLineBy(dx)    => s"h${fmtD(dx)}"
-            case Svg.PathCommand.VLineTo(y)     => s"V${fmtD(y)}"
-            case Svg.PathCommand.VLineBy(dy)    => s"v${fmtD(dy)}"
+            case Svg.PathCommand.MoveTo(x, y)                      => s"M${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.MoveBy(dx, dy)                    => s"m${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.LineTo(x, y)                      => s"L${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.LineBy(dx, dy)                    => s"l${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.HLineTo(x)                        => s"H${fmtD(x)}"
+            case Svg.PathCommand.HLineBy(dx)                       => s"h${fmtD(dx)}"
+            case Svg.PathCommand.VLineTo(y)                        => s"V${fmtD(y)}"
+            case Svg.PathCommand.VLineBy(dy)                       => s"v${fmtD(dy)}"
             case Svg.PathCommand.CubicTo(c1x, c1y, c2x, c2y, x, y) =>
                 s"C${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
             case Svg.PathCommand.CubicBy(c1x, c1y, c2x, c2y, dx, dy) =>
@@ -219,10 +219,10 @@ private[kyo] object ChartTransitions:
                 s"S${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
             case Svg.PathCommand.SmoothCubicBy(c2x, c2y, dx, dy) =>
                 s"s${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
-            case Svg.PathCommand.QuadTo(cx, cy, x, y)   => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
-            case Svg.PathCommand.QuadBy(cx, cy, dx, dy) => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
-            case Svg.PathCommand.SmoothQuadTo(x, y)     => s"T${fmtD(x)} ${fmtD(y)}"
-            case Svg.PathCommand.SmoothQuadBy(dx, dy)   => s"t${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.QuadTo(cx, cy, x, y)                       => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.QuadBy(cx, cy, dx, dy)                     => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.SmoothQuadTo(x, y)                         => s"T${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.SmoothQuadBy(dx, dy)                       => s"t${fmtD(dx)} ${fmtD(dy)}"
             case Svg.PathCommand.ArcTo(rx, ry, xRot, largeArc, sweep, x, y) =>
                 val la = if largeArc then 1 else 0
                 val sw = if sweep then 1 else 0
@@ -307,14 +307,14 @@ private[kyo] object ChartTransitions:
         ): (Chunk[(A, Svg.SvgElement)], Map[TransKey, MarkGeom], Chunk[Svg.SvgElement]) =
             if i >= rows.size then (acc, geom, labels)
             else
-                val row     = rows(i)
-                val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
+                val row        = rows(i)
+                val yDomain    = mark.y.plottable.toDomain(mark.y.accessor(row))
                 val nextResult = yDomain match
-                    case Absent => (acc, geom, labels)
+                    case Absent      => (acc, geom, labels)
                     case Present(yd) =>
                         val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
                         xDomain match
-                            case Absent => (acc, geom, labels)
+                            case Absent      => (acc, geom, labels)
                             case Present(xd) =>
                                 val barX = xs.apply(xd)
                                 val barW = xs.bandwidth
@@ -413,7 +413,7 @@ private[kyo] object ChartTransitions:
                 // resolved[seriesIdx] aligns with distinct[seriesIdx].
                 val cats: Chunk[(String, Any)]   = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
                 val resolved: Chunk[Style.Color] = ChartLegend.resolvePalette(spec, cats)
-                val distinct = ChartFoundations.distinctKeyed(
+                val distinct                     = ChartFoundations.distinctKeyed(
                     rows,
                     r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
                 )
@@ -424,7 +424,7 @@ private[kyo] object ChartTransitions:
                 )
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
-                        val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
+                        val seriesRows  = rowsByKey.getOrElse(catKey, Chunk.empty)
                         val strokeColor =
                             if resolved.isEmpty then ChartAxes.DefaultPalette(seriesIdx % ChartAxes.DefaultPalette.size)
                             else resolved(seriesIdx                                     % resolved.size)
@@ -444,7 +444,7 @@ private[kyo] object ChartTransitions:
                 val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
                 val newGeom2    = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
                 val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
-                val nextTagged = repRowMaybe match
+                val nextTagged  = repRowMaybe match
                     case Present(r) => accTagged.append((r, emittedPath))
                     case Absent     => accTagged
                 (nextTagged, newGeom2)
@@ -500,10 +500,10 @@ private[kyo] object ChartTransitions:
             // ordinal order of collectColorCategoriesWithRaw, so rawPaths(i) corresponds to transKeys(i).
             // For the no-color single-series case, use TransKey.SingleSeries(markIdx).
             val seriesPair: (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
-                case Absent => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
+                case Absent            => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
                 case Present(colorEnc) =>
-                    val colorEncAny: Encoding[A, ?] = colorEnc
-                    val cats                        = ChartLegend.collectColorCategoriesWithRaw(rows, colorEncAny)
+                    val colorEncAny: Encoding[A, ?]             = colorEnc
+                    val cats                                    = ChartLegend.collectColorCategoriesWithRaw(rows, colorEncAny)
                     val catKeys: Chunk[ChartFoundations.CatKey] =
                         cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
                     val transKeys = catKeys.map(ck => TransKey.Series(markIdx, ck))
@@ -525,7 +525,7 @@ private[kyo] object ChartTransitions:
                     val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
                     val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
                     val repRowMaybe = if seriesIdx < seriesRepRows.size then seriesRepRows(seriesIdx) else Absent
-                    val nextTagged = repRowMaybe match
+                    val nextTagged  = repRowMaybe match
                         case Present(r) => accTagged.append((r, emittedPath))
                         case Absent     => accTagged
                     (nextTagged, newGeom2)

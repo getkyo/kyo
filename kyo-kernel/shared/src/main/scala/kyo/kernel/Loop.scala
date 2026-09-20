@@ -314,7 +314,7 @@ object Loop:
                 case kyo: Pending[Outcome[A, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Outcome[A, O], O, S]:
-                            def frame = _frame
+                            def frame                                                                    = _frame
                             def apply[C, S2](v: Outcome[A, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome[A, O], S2] @unchecked =>
@@ -359,7 +359,7 @@ object Loop:
                 case kyo: Pending[Outcome2[A, B, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Outcome2[A, B, O], O, S]:
-                            def frame = _frame
+                            def frame                                                                        = _frame
                             def apply[C, S2](v: Outcome2[A, B, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome2[A, B, O], S2] @unchecked =>
@@ -406,7 +406,7 @@ object Loop:
                 case kyo: Pending[Outcome3[A, B, C, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Outcome3[A, B, C, O], O, S]:
-                            def frame = _frame
+                            def frame                                                                              = _frame
                             def apply[C2, S2](v: Outcome3[A, B, C, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome3[A, B, C, O], S2] @unchecked =>
@@ -455,7 +455,7 @@ object Loop:
                 case kyo: Pending[Outcome4[A, B, C, D, O], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Outcome4[A, B, C, D, O], O, S]:
-                            def frame = _frame
+                            def frame                                                                                 = _frame
                             def apply[C2, S2](v: Outcome4[A, B, C, D, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome4[A, B, C, D, O], S2] @unchecked =>
@@ -647,7 +647,7 @@ object Loop:
                 case kyo: Pending[Outcome[Unit, A], S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Outcome[Unit, A], A, S]:
-                            def frame = _frame
+                            def frame                                                                       = _frame
                             def apply[C, S2](v: Outcome[Unit, A] < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Outcome[Unit, A], S2] @unchecked =>
@@ -715,7 +715,7 @@ object Loop:
                 case kyo: Pending[Any, S] @unchecked =>
                     val arrow = step.getOrElse {
                         new Step[Any, Nothing, S]:
-                            def frame = _frame
+                            def frame                                                                = _frame
                             def apply[C, S2](v: Any < S2, cont: Arrow[Nothing, C, S2]): C < (S & S2) =
                                 v match
                                     case kyo: Pending[Any, S2] @unchecked =>
@@ -756,7 +756,7 @@ object Loop:
                         case kyo: Pending[Any, S] @unchecked =>
                             val arrow = step.getOrElse {
                                 new Step[Any, Unit, S]:
-                                    def frame = _frame
+                                    def frame                                                             = _frame
                                     def apply[C, S2](v: Any < S2, cont: Arrow[Unit, C, S2]): C < (S & S2) =
                                         v match
                                             case kyo: Pending[Any, S2] @unchecked =>

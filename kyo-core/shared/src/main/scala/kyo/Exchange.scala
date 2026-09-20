@@ -79,7 +79,9 @@ object Exchange:
       * `Event = Nothing` and return only `Message.Response` or `Message.Skip` from `decode`.
       *
       * @param encode
-      *   Encodes a request with its auto-assigned `Int` ID into a wire message. Called once per `apply`.
+      *   Encodes a request with its auto-assigned `Int` ID into a wire message. Called once per `apply`. May abort `E` when a particular request cannot be represented on the
+      *   wire; that request then fails with the error and its pending entry is removed, rather
+      *   than a substitute wire value being sent in its place.
       * @param send
       *   Sends a wire message over the connection. Fails with `Abort[E]` on transport error, which closes the Exchange.
       * @param receive
@@ -88,7 +90,7 @@ object Exchange:
       *   Classifies each incoming wire message as a Response, Push event, or Skip. Must not park (called from the reader fiber).
       */
     def init[Req, Resp, Wire, Event, E](
-        encode: (Int, Req) => Wire < Sync,
+        encode: (Int, Req) => Wire < (Sync & Abort[E]),
         send: Wire => Unit < (Async & Abort[E]),
         receive: Stream[Wire, Async & Abort[E]],
         decode: Wire => Exchange.Message[Int, Resp, Event] < Sync
@@ -105,7 +107,9 @@ object Exchange:
       * @param nextId
       *   Produces the next request ID (re-evaluated per `apply` call). Must yield unique IDs for the lifetime of this Exchange.
       * @param encode
-      *   Encodes a request with its assigned ID into a wire message. Called once per `apply`.
+      *   Encodes a request with its assigned ID into a wire message. Called once per `apply`. May abort `E` when a particular request cannot be represented on the
+      *   wire; that request then fails with the error and its pending entry is removed, rather
+      *   than a substitute wire value being sent in its place.
       * @param send
       *   Sends a wire message over the connection. Fails with `Abort[E]` on transport error, which closes the Exchange.
       * @param receive
@@ -117,7 +121,7 @@ object Exchange:
       */
     def init[Id, Req, Resp, Wire, Event, E](
         nextId: => Id < Sync,
-        encode: (Id, Req) => Wire < Sync,
+        encode: (Id, Req) => Wire < (Sync & Abort[E]),
         send: Wire => Unit < (Async & Abort[E]),
         receive: Stream[Wire, Async & Abort[E]],
         decode: Wire => Exchange.Message[Id, Resp, Event] < Sync,
@@ -133,7 +137,9 @@ object Exchange:
       * `Event = Nothing` and return only `Message.Response` or `Message.Skip` from `decode`.
       *
       * @param encode
-      *   Encodes a request with its auto-assigned `Int` ID into a wire message. Called once per `apply`.
+      *   Encodes a request with its auto-assigned `Int` ID into a wire message. Called once per `apply`. May abort `E` when a particular request cannot be represented on the
+      *   wire; that request then fails with the error and its pending entry is removed, rather
+      *   than a substitute wire value being sent in its place.
       * @param send
       *   Sends a wire message over the connection. Fails with `Abort[E]` on transport error, which closes the Exchange.
       * @param receive
@@ -142,7 +148,7 @@ object Exchange:
       *   Classifies each incoming wire message as a Response, Push event, or Skip. Must not park (called from the reader fiber).
       */
     def initUnscoped[Req, Resp, Wire, Event, E](
-        encode: (Int, Req) => Wire < Sync,
+        encode: (Int, Req) => Wire < (Sync & Abort[E]),
         send: Wire => Unit < (Async & Abort[E]),
         receive: Stream[Wire, Async & Abort[E]],
         decode: Wire => Exchange.Message[Int, Resp, Event] < Sync
@@ -167,7 +173,7 @@ object Exchange:
       */
     def initUnscoped[Id, Req, Resp, Wire, Event, E](
         nextId: => Id < Sync,
-        encode: (Id, Req) => Wire < Sync,
+        encode: (Id, Req) => Wire < (Sync & Abort[E]),
         send: Wire => Unit < (Async & Abort[E]),
         receive: Stream[Wire, Async & Abort[E]],
         decode: Wire => Exchange.Message[Id, Resp, Event] < Sync,
@@ -264,7 +270,7 @@ object Exchange:
                 Sync.Unsafe.defer {
                     self.donePromise.poll() match
                         case Maybe.Present(Result.Failure(err)) => Abort.fail(err)
-                        case Maybe.Absent =>
+                        case Maybe.Absent                       =>
                             val promise = Promise.Unsafe.init[Resp, Abort[E | Closed]]()
                             self.addPending(id, promise)
                             // Double-check: close() may have drained the pending map
@@ -322,7 +328,7 @@ object Exchange:
         private val decodeFn: Wire => (AllowUnsafe ?=> Message[Id, Resp, Event]),
         // Safe callbacks used by safe apply extension and readerLoop
         private[Exchange] val safeNextId: () => Id < Sync,
-        private[Exchange] val safeEncode: (Id, Req) => Wire < Sync,
+        private[Exchange] val safeEncode: (Id, Req) => Wire < (Sync & Abort[E]),
         private[Exchange] val safeSend: Wire => Unit < (Async & Abort[E]),
         // Shared state
         private val pending: ConcurrentHashMap[Id, Promise.Unsafe[Resp, Abort[E | Closed]]],

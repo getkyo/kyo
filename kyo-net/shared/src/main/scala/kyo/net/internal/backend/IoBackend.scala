@@ -173,13 +173,13 @@ private[net] object IoBackend:
     )(using AllowUnsafe, Frame): Result[NetBackendUnavailableException, B] =
         ordered.headMaybe match
             case Present(entry) =>
-                val rest = ordered.tail
+                val rest      = ordered.tail
                 val attempted =
                     try Result.succeed(build(entry))
                     catch case e: NetBackendUnavailableException => Result.fail(e)
                 attempted match
                     case Result.Success(built) => Result.succeed(built)
-                    case Result.Failure(e) =>
+                    case Result.Failure(e)     =>
                         log.warn(
                             s"IoBackend: backend '${entry.name}' is available but failed to build; falling back to the next available backend",
                             e

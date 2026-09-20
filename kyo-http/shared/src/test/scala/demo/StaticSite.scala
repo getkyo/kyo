@@ -48,11 +48,11 @@ object StaticSite extends KyoApp:
             .metadata(_.summary("Serve a file").description("Supports ETag/If-None-Match for 304.").tag("files"))
             .handler { req =>
                 resolveSafe(req.fields.path) match
-                    case None => HttpResponse.halt(HttpResponse.forbidden)
+                    case None           => HttpResponse.halt(HttpResponse.forbidden)
                     case Some(safePath) =>
                         store.get.map { files =>
                             files.get(safePath) match
-                                case None => Abort.fail(ApiError(s"File not found: ${req.fields.path}"))
+                                case None        => Abort.fail(ApiError(s"File not found: ${req.fields.path}"))
                                 case Some(bytes) =>
                                     val etag     = computeEtag(bytes)
                                     val fileName = safePath.split("/").last
@@ -77,11 +77,11 @@ object StaticSite extends KyoApp:
             .metadata(_.summary("File metadata").tag("files"))
             .handler { req =>
                 resolveSafe(req.fields.path) match
-                    case None => HttpResponse.forbidden
+                    case None           => HttpResponse.forbidden
                     case Some(safePath) =>
                         store.get.map { files =>
                             files.get(safePath) match
-                                case None => HttpResponse.notFound
+                                case None        => HttpResponse.notFound
                                 case Some(bytes) =>
                                     HttpResponse.ok
                                         .etag(computeEtag(bytes))

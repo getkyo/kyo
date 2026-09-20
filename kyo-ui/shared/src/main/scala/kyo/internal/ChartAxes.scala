@@ -106,7 +106,7 @@ private[kyo] object ChartAxes:
         // An explicit theme axis color is a deliberate override and wins over per-mark color-coding.
         theme.axisColor match
             case Present(c) => c
-            case Absent =>
+            case Absent     =>
                 val bound: Chunk[(Mark[A], Int)] = marks.zipWithIndex.collect:
                     case (m, i) if !m.isInstanceOf[Mark.Rule[?]] && markAxisOf(m) == axis => (m, i)
                 bound match
@@ -194,7 +194,7 @@ private[kyo] object ChartAxes:
         val background    = buildBackground(layout, spec.theme)
         val axisLines     = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
         val leftAxis      = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
-        val rightAxis = ysR match
+        val rightAxis     = ysR match
             case Present(ysR_) =>
                 buildYAxis(
                     layout,
@@ -242,7 +242,7 @@ private[kyo] object ChartAxes:
         leftChrome: Style.Color,
         rightChrome: Style.Color
     )(using Frame): Chunk[Svg.SvgElement] =
-        val chrome = axisChromeColor(theme)
+        val chrome   = axisChromeColor(theme)
         val leftLine = Svg.line
             .x1(layout.plotX).y1(layout.plotY)
             .x2(layout.plotX).y2(layout.plotBaseline)
@@ -344,7 +344,7 @@ private[kyo] object ChartAxes:
         //   Right axis: rotate +90 degrees, centred near the right edge of the SVG (x = svgW - AxisLabelInset).
         cfg.axisLabel match
             case Present(lbl) =>
-                val midY = layout.plotY + layout.plotH / 2.0
+                val midY                      = layout.plotY + layout.plotH / 2.0
                 val labelElem: Svg.SvgElement =
                     if isRight then
                         val cx = layout.svgW - AxisLabelInset
@@ -460,7 +460,7 @@ private[kyo] object ChartAxes:
             case _: Scale.Time =>
                 cfg.tickFormatTime match
                     case Present(f) => f(Instant.Epoch + tick.value.toLong.millis)
-                    case Absent =>
+                    case Absent     =>
                         cfg.tickFormat match
                             case Present(f) => f(tick.value)
                             case Absent     => tick.label

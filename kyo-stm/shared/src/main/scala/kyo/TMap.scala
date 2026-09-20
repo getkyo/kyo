@@ -191,7 +191,7 @@ object TMap:
           */
         def remove(key: K)(using Frame): Maybe[V] < STM =
             use(key) {
-                case Absent => Absent
+                case Absent         => Absent
                 case Present(value) =>
                     self.update(_ - key).andThen(Maybe(value))
             }
@@ -203,7 +203,7 @@ object TMap:
           */
         def removeDiscard(key: K)(using Frame): Unit < STM =
             use(key) {
-                case Absent => ()
+                case Absent         => ()
                 case Present(value) =>
                     self.update(_ - key)
             }

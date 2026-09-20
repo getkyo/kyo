@@ -78,9 +78,9 @@ object FlamegraphDemo extends KyoApp:
         // Build the node reached by `routed`: `total` sums every count flowing through it, `self` the counts whose
         // path ends here, and children group the deeper stacks by their next frame in first-appearance order.
         def build(name: String, routed: Chunk[(Chunk[String], Long)]): FrameNode =
-            val total  = routed.foldLeft(0L)(_ + _._2)
-            val self   = routed.foldLeft(0L)((acc, s) => if s._1.isEmpty then acc + s._2 else acc)
-            val deeper = routed.filter(_._1.nonEmpty)
+            val total    = routed.foldLeft(0L)(_ + _._2)
+            val self     = routed.foldLeft(0L)((acc, s) => if s._1.isEmpty then acc + s._2 else acc)
+            val deeper   = routed.filter(_._1.nonEmpty)
             val children = Chunk.from(deeper.map(_._1.head).distinct).map { head =>
                 build(head, deeper.collect { case (frames, c) if frames.head == head => (frames.drop(1), c) })
             }
@@ -251,7 +251,7 @@ object FlamegraphDemo extends KyoApp:
                 val bright  = state.hover.forall(h => onHoverChain(cells, h, c))
                 val opacity = if bright then 1.0 else 0.3
                 val tip     = s"${c.name}: ${c.total} samples (${pctOf(c.total, rootTotal)}%)"
-                val rect = Svg.rect
+                val rect    = Svg.rect
                     .id(rectId(c))
                     .x(c.x).y(c.y).width(c.w).height(rowHeight - rowGap)
                     .fill(Svg.Paint.Color(c.color))
@@ -335,7 +335,7 @@ object FlamegraphDemo extends KyoApp:
 
             onCellClick = (c: Cell) => tweenTo(state, c.s0, c.s1)
             hoverSet    = (m: Maybe[String]) => state.updateAndGet(_.copy(hover = m)).unit
-            wheelZoom = (deltaY: Double) =>
+            wheelZoom   = (deltaY: Double) =>
                 state.updateAndGet(s => zoom(s, if deltaY < 0 then 0.85 else 1.0 / 0.85)).unit
             reset = tweenTo(state, 0.0, 1.0).andThen(state.updateAndGet(_.copy(hover = Absent)).unit)
 

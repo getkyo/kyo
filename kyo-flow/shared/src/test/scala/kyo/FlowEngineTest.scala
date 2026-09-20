@@ -130,7 +130,7 @@ abstract private[kyo] class FlowEngineSupport extends kyo.test.Test[Any]:
             }.andThen {
                 Maybe.fromOption(batch.find(_.state.executionId == eid)) match
                     case Present(claimed) => claimed
-                    case Absent =>
+                    case Absent           =>
                         store.getExecution(eid).map { row =>
                             Abort.panic(new IllegalStateException(
                                 s"the fixture could not claim ${eid.value}: it is held by ${row.flatMap(_.executor)}, and " +
@@ -176,7 +176,7 @@ abstract private[kyo] class FlowEngineSupport extends kyo.test.Test[Any]:
             }.andThen {
                 Maybe.fromOption(batch.find(_.state.executionId == eid)) match
                     case Present(claimed) => record(claimed)
-                    case Absent =>
+                    case Absent           =>
                         store.getExecution(eid).map { row =>
                             Abort.panic(new IllegalStateException(
                                 s"the fixture could not claim ${eid.value} to seed its waits: it is held by " +
@@ -226,8 +226,8 @@ abstract private[kyo] class FlowEngineSupport extends kyo.test.Test[Any]:
       * the poll was handed. That is a second decorator layer, and it is the only place those verbs can be reached.
       */
     protected class DelegatingClaimed(underlying: FlowStore.Claimed) extends FlowStore.Claimed:
-        def state: FlowStore.ExecutionState = underlying.state
-        def satisfied: Set[String]          = underlying.satisfied
+        def state: FlowStore.ExecutionState                                                                           = underlying.state
+        def satisfied: Set[String]                                                                                    = underlying.satisfied
         def appendEvent(event: Flow.Event)(using Frame): FlowStore.WriteOutcome < (Async & Abort[FlowStoreException]) =
             underlying.appendEvent(event)
         def recordWait(path: String, wake: Flow.Wake, event: Flow.Event)(using
@@ -431,7 +431,7 @@ class FlowEngineTest extends FlowEngineSupport:
           */
         "a seeded input and a signalled input leave different histories" in {
             withEngine { (engine, store, tc) =>
-                val flow = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
+                val flow                                = Flow.input[Int]("x").output("y")(ctx => ctx.x + 1)
                 def inputEvents(eid: Flow.Id.Execution) =
                     store.getHistory(eid, Maybe.empty, 0).map(_.events.map(_.kind).filter { kind =>
                         kind == Flow.EventKind.InputWaiting ||
@@ -792,7 +792,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "completed output is skipped on replay" in {
             withEngine { (engine, store, tc) =>
                 var callCount = 0
-                val flow = Flow.input[Int]("x").output("y") { ctx =>
+                val flow      = Flow.input[Int]("x").output("y") { ctx =>
                     callCount += 1
                     ctx.x + 1
                 }
@@ -867,7 +867,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a step already recorded as completed is not re-run when its start is also present" in {
             withEngine { (engine, store, tc) =>
                 var charges = 0
-                val flow = Flow.init("fulfillment").step("charge") { _ =>
+                val flow    = Flow.init("fulfillment").step("charge") { _ =>
                     charges += 1
                 }.output("receipt")(_ => "paid")
                 for
@@ -880,7 +880,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     hash = kyo.internal.WorkflowSchema.structuralHash(flow)
                     _       <- seedExecution(store, eid, wf1, Flow.Status.Running, hash)
                     claimed <- seedClaim(store, eid, wf1, hash, Flow.Id.Executor("executor-that-died"))
-                    _ <- claimed.appendEvent(
+                    _       <- claimed.appendEvent(
                         Flow.Event.StepStarted(wf1, eid, "charge", Flow.Id.Executor("executor-that-died"), now)
                     )
                     _      <- claimed.appendEvent(Flow.Event.StepCompleted(wf1, eid, "charge", now))
@@ -961,7 +961,8 @@ class FlowEngineTest extends FlowEngineSupport:
                             (c: v < (Env[String] & Abort[FlowEngineTest.ChargeDeclined])) =>
                                 Abort.recover[FlowEngineTest.ChargeDeclined](e => Abort.fail(e: FlowException))(
                                     Env.run("warehouse")(c)
-                            )).map { engine =>
+                                )
+                        ).map { engine =>
                             for
                                 handle <- engine.workflows.start(Flow.Id.Workflow("saga"))
                                 eid = handle.executionId
@@ -1129,7 +1130,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 FlowStore.initMemory.map { store =>
                     AtomicInt.init(0).map { compensations =>
                         val failing = new FailingFieldStore(store, "receipt")
-                        val flow =
+                        val flow    =
                             Flow.init("compensated-outage")
                                 .outputCompensated("reserve")(_ => "held")(_ => compensations.incrementAndGet.unit)
                                 .output("receipt")(_ => "paid")
@@ -1184,7 +1185,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(1).map { blips =>
                         AtomicInt.init(0).map { compensations =>
                             val flaky = new FailingCompletionStore(store, "receipt", blips)
-                            val flow =
+                            val flow  =
                                 Flow.init("compensated-blip")
                                     .outputCompensated("reserve")(_ => "held")(_ => compensations.incrementAndGet.unit)
                                     .output("receipt")(_ => "paid")
@@ -1277,11 +1278,11 @@ class FlowEngineTest extends FlowEngineSupport:
                         AtomicInt.init(0).map { refusals =>
                             Channel.init[Unit](1).map { parked =>
                                 val leaseSpan = 5.seconds
-                                val expired = new LapsingClaimStore(store, tc, leaseSpan, armed, refusals, parked)({
+                                val expired   = new LapsingClaimStore(store, tc, leaseSpan, armed, refusals, parked)({
                                     case _: Flow.Event.StepStarted => true
                                     case _                         => false
                                 })
-                                val flow = Flow.init("expired-lease").step("reserve")(_ => ()).output("receipt")(_ => "paid")
+                                val flow   = Flow.init("expired-lease").step("reserve")(_ => ()).output("receipt")(_ => "paid")
                                 val config = FlowEngine.Config(
                                     workerCount = 1,
                                     lease = leaseSpan,
@@ -1339,7 +1340,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicBoolean.init(false).map { started =>
                         AtomicInt.init(1).map { grants =>
                             val losing = new LosingRenewalStore(store, grants)
-                            val flow = Flow.init("losing-writes").step[Async]("work") { _ =>
+                            val flow   = Flow.init("losing-writes").step[Async]("work") { _ =>
                                 started.set(true).andThen(Async.never)
                             }.output("done")(_ => Async.delay(Duration.Zero)("ok"))
                             val config = FlowEngine.Config(
@@ -1393,7 +1394,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         val parking = Flow.init("unfinished-ledger").input[String]("approval").output("answer")(ctx => ctx.approval)
                         val working = Flow.init("unfinished-ledger").step[Async]("work")(_ => Async.never)
                             .output("answer")(_ => "worked")
-                        val flow = Flow.race(parking, working)
+                        val flow   = Flow.race(parking, working)
                         val config =
                             FlowEngine.Config(workerCount = 1, lease = 5.seconds, renewEvery = 100.millis, pollTimeout = 100.millis)
                         FlowEngine.init(losing, config, flow).map { engine =>
@@ -1442,7 +1443,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         AtomicBoolean.init(false).map { stopped =>
                             AtomicInt.init(1).map { grants =>
                                 val losing = new LosingRenewalStore(store, grants)
-                                val flow = Flow.init("long-step").step[Async]("work") { _ =>
+                                val flow   = Flow.init("long-step").step[Async]("work") { _ =>
                                     Sync.ensure(stopped.set(true))(started.set(true).andThen(Async.never))
                                 }.output("done")(_ => Async.delay(Duration.Zero)("ok"))
                                 val config =
@@ -2265,7 +2266,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                 held.exists(_.status == Flow.Status.Running),
                                 s"the premise is an execution no engine serves yet, got ${held.map(_.status)}"
                             )
-                            _ <- engine.register(wfId, v2)
+                            _       <- engine.register(wfId, v2)
                             reached <- settle(tc, 10.millis, 500) {
                                 store.getExecution(eid).map(_.exists(_.status.isTerminal))
                             }
@@ -2532,7 +2533,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     _  <- pump(tc, store, eid1, _.isTerminal)
                     h2 <- engine.workflows.start(wf1)
                     eid2 = h2.executionId
-                    _ <- pumpState(tc, store, eid2, waitingFor("x"))
+                    _       <- pumpState(tc, store, eid2, waitingFor("x"))
                     running <- engine.executions.search(
                         wfId = Maybe(wf1),
                         filter = Maybe(FlowStore.ExecutionFilter.WaitingForInput(Maybe("x")))
@@ -2643,7 +2644,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "step and output interleaved" in {
             withEngine { (engine, store, tc) =>
                 var stepExecuted = false
-                val flow = Flow.input[Int]("x")
+                val flow         = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
                     .step("side-effect")(ctx => stepExecuted = true)
                     .output("z")(ctx => ctx.y * 10)
@@ -3037,7 +3038,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensated output fires on later failure" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
-                val flow = Flow.input[Int]("x")
+                val flow        = Flow.input[Int]("x")
                     .outputCompensated("y")(ctx => ctx.x + 1)(ctx => compensated = true)
                     .output("z")(ctx =>
                         throw new RuntimeException("fail"); ""
@@ -3069,7 +3070,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a node whose compensation ran reads as compensated on the progress surface" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
-                val flow = Flow.input[Int]("x")
+                val flow        = Flow.input[Int]("x")
                     .outputCompensated("y")(ctx => ctx.x + 1)(ctx => compensated = true)
                     .output("z")(ctx =>
                         throw new RuntimeException("fail"); ""
@@ -3166,7 +3167,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 Channel.init[Unit](1).map { release =>
                     var reserveUndone = false
                     var answerUndone  = false
-                    val reserving = Flow.init("race-comp")
+                    val reserving     = Flow.init("race-comp")
                         .outputCompensated("reserve")(_ => "held")(_ => reserveUndone = true)
                         .input[String]("never")
                         .output("answer")(ctx => ctx.never)
@@ -3201,7 +3202,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "all succeed → no compensations fire" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
-                val flow = Flow.input[Int]("x")
+                val flow        = Flow.input[Int]("x")
                     .outputCompensated("y")(ctx => ctx.x + 1)(ctx => compensated = true)
                     .output("z")(ctx => ctx.y * 2)
                 for
@@ -3220,7 +3221,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensations do NOT fire on suspension (WaitingForInput)" in {
             withEngine { (engine, store, tc) =>
                 var compensated = false
-                val flow = Flow.input[Int]("x")
+                val flow        = Flow.input[Int]("x")
                     .outputCompensated("y")(ctx => ctx.x + 1)(ctx => compensated = true)
                     .input[String]("name")
                     .output("z")(ctx => ctx.name)
@@ -3475,7 +3476,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "step: Abort.recover catches error, step continues" in {
             withEngine { (engine, store, tc) =>
                 var called = false
-                val flow = Flow.input[Int]("x")
+                val flow   = Flow.input[Int]("x")
                     .step("side-effect") { ctx =>
                         Abort.recover[RuntimeException](_ => ())(
                             if ctx.x == 0 then throw new RuntimeException("fail")
@@ -3521,7 +3522,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "loop: Abort.recover in body" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
-                val flow = Flow.input[Int]("x")
+                val flow     = Flow.input[Int]("x")
                     .loop("count") { ctx =>
                         attempts += 1
                         Abort.recover[RuntimeException](_ => -1, _ => -1)(
@@ -3657,7 +3658,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a loop's timeout bounds the iteration, not the whole loop" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loop("work", timeout = 1.second) { ctx =>
                         iterations += 1
                         Async.sleep(400.millis).andThen {
@@ -3790,7 +3791,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "completed output is not re-executed on replay" in {
             withEngine { (engine, store, tc) =>
                 var callCount = 0
-                val flow = Flow.input[Int]("x")
+                val flow      = Flow.input[Int]("x")
                     .output("y") { ctx =>
                         callCount += 1; ctx.x + 1
                     }
@@ -3815,7 +3816,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "completed step is not re-executed on replay" in {
             withEngine { (engine, store, tc) =>
                 var stepCount = 0
-                val flow = Flow.input[Int]("x")
+                val flow      = Flow.input[Int]("x")
                     .output("y")(ctx => ctx.x + 1)
                     .step("sideEffect") { ctx => stepCount += 1 }
                     .input[String]("name")
@@ -3839,7 +3840,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "partial completion: first outputs skipped, rest execute" in {
             withEngine { (engine, store, tc) =>
                 var counts = scala.collection.mutable.Map[String, Int]().withDefaultValue(0)
-                val flow = Flow.input[Int]("x")
+                val flow   = Flow.input[Int]("x")
                     .output("a") { ctx =>
                         counts("a") += 1; ctx.x + 1
                     }
@@ -3878,7 +3879,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "two compensated outputs, second fails: first fires in reverse" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => log = log :+ "revert-a")
                     .outputCompensated("b")(ctx => ctx.a + 1)(ctx => log = log :+ "revert-b")
@@ -3905,7 +3906,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "all succeed: no reverts fire" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => fired = true)
                     .output("b")(ctx => ctx.a * 2)
                 for
@@ -3923,7 +3924,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "revert handler throws: swallowed, other reverts still run" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => log = log :+ "revert-a")
                     .outputCompensated("b")(ctx => ctx.a + 1)(ctx => throw new RuntimeException("revert-boom"))
@@ -3950,7 +3951,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation does NOT fire on suspension" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => fired = true)
                     .input[String]("name")
                     .output("b")(ctx => ctx.name)
@@ -3968,7 +3969,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation re-registered on replay after skip" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => fired = true)
                     .input[String]("name")
                     .output("fail")(ctx =>
@@ -3995,7 +3996,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "andThen: first part has compensation, second fails" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => fired = true)
                     .output("fail")(ctx =>
                         throw new RuntimeException("boom"); ""
@@ -4286,7 +4287,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "five reverts fire in reverse order" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => 1)(ctx => log = log :+ "a")
                     .outputCompensated("b")(ctx => 2)(ctx => log = log :+ "b")
@@ -4313,7 +4314,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "revert does not fire for step that never completed" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x)(ctx => log = log :+ "a")
                     .output("fail")(ctx =>
@@ -4336,7 +4337,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "revert handler sees context at registration time" in {
             withEngine { (engine, store, tc) =>
                 var capturedX = -1
-                val flow = Flow.input[Int]("x")
+                val flow      = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 100)(ctx => capturedX = ctx.a)
                     .output("fail")(ctx =>
                         throw new RuntimeException("boom"); ""
@@ -4354,7 +4355,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "multiple throwing revert handlers: all still execute" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => 1)(ctx =>
                         log = log :+ "a"; throw new RuntimeException("a-throw")
@@ -4383,7 +4384,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "foreach body has no compensation, later step fails: no spurious reverts" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("n")
+                val flow  = Flow.input[Int]("n")
                     .foreach("items")(ctx => (1 to ctx.n).toSeq)(i => i * 2)
                     .output("fail")(ctx =>
                         fired = true; throw new RuntimeException("boom"); ""
@@ -4508,7 +4509,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a twice-embedded subflow's progress names its nodes by path" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount").step("charge")(_ => ())
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("first", child)(ctx => "amount" ~ ctx.x)
                     .subflow("second", child)(ctx => "amount" ~ ctx.x)
                     .output("done")(_ => "ok")
@@ -4553,7 +4554,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a subflow and its child's input read completed once the work under them has" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount").step("charge")(_ => ())
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("review", child)(ctx => "amount" ~ ctx.x)
                     .input[String]("approval")
                     .output("done")(_ => "ok")
@@ -4612,7 +4613,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a subflow whose child only declares inputs still completes" in {
             withEngine { (engine, store, tc) =>
                 val child = Flow.input[Int]("amount")
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .subflow("review", child)(ctx => "amount" ~ ctx.x)
                     .output("done")(_ => "ok")
                 for
@@ -4662,7 +4663,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "an inputs-only subflow in a race's losing arm reads pending, because nothing under it was recorded" in {
             withEngine { (engine, store, tc) =>
                 Latch.init(1).map { held =>
-                    val child = Flow.input[Int]("amount")
+                    val child  = Flow.input[Int]("amount")
                     val losing = Flow.init("race-derivation")
                         .step("blocked")(_ => held.await)
                         .subflow("review", child)(_ => "amount" ~ 1)
@@ -4750,7 +4751,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "loop body executes on every iteration (not cached)" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loop("result") { ctx =>
                         iterations += 1
                         if iterations < 3 then Loop.continue[Int]
@@ -4827,7 +4828,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation runs when step after sleep fails" in {
             withEngine { (engine, store, tc) =>
                 var fired = false
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x)(ctx => fired = true)
                     .sleep("pause", 300.millis)
                     .output("fail")(ctx =>
@@ -4857,7 +4858,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "dispatch skipped when result already in record" in {
             withEngine { (engine, store, tc) =>
                 var dispatchCalled = false
-                val flow = Flow.input[Int]("x")
+                val flow           = Flow.input[Int]("x")
                     .dispatch[String]("decision")
                     .when(
                         ctx =>
@@ -4891,7 +4892,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "zero-duration sleep does not execute and does not affect replay" in {
             withEngine { (engine, store, tc) =>
                 var afterCount = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .step("before")(ctx => ())
                     .sleep("zero", Duration.Zero)
                     .step("after") { ctx =>
@@ -4918,7 +4919,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation error propagates as Failure" in {
             withEngine { (engine, store, tc) =>
                 var compFired = false
-                val flow = Flow.input[Int]("x")
+                val flow      = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => compFired = true)
                     .output("b") { ctx =>
                         throw new RuntimeException("boom"); ""
@@ -4945,7 +4946,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation handler sees only fields present at registration" in {
             withEngine { (engine, store, tc) =>
                 var capturedKeys = Set.empty[String]
-                val flow = Flow.input[Int]("x")
+                val flow         = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1) { ctx =>
                         capturedKeys = ctx.toDict.foldLeft(Set.empty[String])((acc, k, _) => acc + k)
                     }
@@ -4974,7 +4975,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "compensation emits CompensationStarted and CompensationCompleted events" in {
             withEngine { (engine, store, tc) =>
                 var compFired = false
-                val flow = Flow.input[Int]("x")
+                val flow      = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => ctx.x + 1)(ctx => compFired = true)
                     .output("b") { ctx =>
                         throw new RuntimeException("fail"); ""
@@ -5018,7 +5019,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "fixed schedule stops when body returns done" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loopOn("count", Schedule.fixed(500.millis)) { ctx =>
                         iterations += 1
                         if iterations < 3 then Loop.continue[Int]
@@ -5042,7 +5043,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "schedule runs until body returns done" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loopOn("tick", Schedule.delay(200.millis).repeat(10)) {
                         ctx =>
                             iterations += 1
@@ -5067,7 +5068,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "body returns done before schedule exhausts" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loopOn("count", Schedule.fixed(100.millis).repeat(10)) { ctx =>
                         iterations += 1
                         if iterations < 2 then Loop.continue[Int]
@@ -5097,7 +5098,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a scheduled loop's delays survive the resume between iterations" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.init("paced")
+                val flow       = Flow.init("paced")
                     .loopOn("count", Schedule.fixed(100.millis).repeat(10)) { ctx =>
                         iterations += 1
                         if iterations < 3 then Loop.continue[Int]
@@ -5190,7 +5191,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { bodyRuns =>
                         val iterations = 6
                         val wfId       = Flow.Id.Workflow("loop-handoff")
-                        val flow = Flow.init("loop-handoff")
+                        val flow       = Flow.init("loop-handoff")
                             .loop("total", 0) { (state: Int, ctx) =>
                                 val outcome: Loop.Outcome[Int, Int] < Any =
                                     if state < iterations then Loop.continue(state + 1)
@@ -5216,7 +5217,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             }
                             before <- bodyRuns.get
                             _      <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _      <- Scope.run {
                                 FlowEngine.init(store, config, flow).map { second =>
                                     settle(tc, step = 250.millis, maxRounds = 80)(
                                         store.getExecution(eid).map(_.exists(_.status.isTerminal))
@@ -5292,7 +5293,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "scheduled loop body throws, so the execution fails" in {
             withEngine { (engine, store, tc) =>
                 var iterations = 0
-                val flow = Flow.input[Int]("x")
+                val flow       = Flow.input[Int]("x")
                     .loopOn("count", Schedule.fixed(100.millis).repeat(5)) { ctx =>
                         iterations += 1
                         if iterations == 3 then throw new RuntimeException("fail on 3")
@@ -5323,7 +5324,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "a scheduled loop iteration that throws is retried by the loop's schedule" in {
             withEngine { (engine, store, tc) =>
                 var calls = 0
-                val flow = Flow.input[Int]("x")
+                val flow  = Flow.input[Int]("x")
                     .loopOn("poll", Schedule.fixed(100.millis).repeat(5), retry = Maybe(Schedule.fixed(100.millis).repeat(3))) {
                         ctx =>
                             calls += 1
@@ -5372,7 +5373,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 FlowStore.initMemory.map { store =>
                     val wfId    = Flow.Id.Workflow("fallback-race")
                     val waiting = Flow.init("fallback-race").input[String]("ack").output("answer")(ctx => ctx.ack)
-                    val flaky = Flow.init("fallback-race").step("notify") { _ =>
+                    val flaky   = Flow.init("fallback-race").step("notify") { _ =>
                         Async.sleep(500.millis).andThen {
                             throw new RuntimeException("notify endpoint down"); ()
                         }
@@ -5389,7 +5390,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             )
                             afterFailure <- store.getExecution(eid)
                             _            <- Abort.run[FlowException](engine.executions.signal[String](eid, "ack", "rescued"))
-                            _ <- settle(tc, step = 100.millis, maxRounds = 40)(
+                            _            <- settle(tc, step = 100.millis, maxRounds = 40)(
                                 store.getExecution(eid).map(_.exists(_.status == Flow.Status.Completed))
                             )
                             finalState <- store.getExecution(eid)
@@ -5483,9 +5484,9 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "three branches all complete and merge" in {
             withEngine { (engine, store, tc) =>
-                val f1 = Flow.input[Int]("x").output("a")(ctx => ctx.x + 1)
-                val f2 = Flow.input[Int]("x").output("b")(ctx => ctx.x + 2)
-                val f3 = Flow.input[Int]("x").output("c")(ctx => ctx.x + 3)
+                val f1   = Flow.input[Int]("x").output("a")(ctx => ctx.x + 1)
+                val f2   = Flow.input[Int]("x").output("b")(ctx => ctx.x + 2)
+                val f3   = Flow.input[Int]("x").output("c")(ctx => ctx.x + 3)
                 val flow = Flow.input[Int]("x").andThen(Flow.gather(f1, f2, f3))
                     .output("sum")(ctx => ctx.a + ctx.b + ctx.c)
                 for
@@ -5565,7 +5566,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         }
                         before <- retriesOf(eid)
                         _      <- tc.advance(10.seconds)
-                        _ <- Scope.run {
+                        _      <- Scope.run {
                             FlowEngine.init(store, config, flow).map { second =>
                                 settle(tc, step = 250.millis, maxRounds = 80)(
                                     retriesOf(eid).map(_.size > before.size)
@@ -5618,7 +5619,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(1).map { grants =>
                         val store = new LosingRenewalStore(plain, grants)
                         val wfId  = Flow.Id.Workflow("lease-lost")
-                        val flow = Flow.init("lease-lost")
+                        val flow  = Flow.init("lease-lost")
                             .output("y", retry = Maybe(Schedule.fixed(1.second).repeat(5)))(_ =>
                                 throw new RuntimeException("keeps failing"); ""
                             )
@@ -5672,7 +5673,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         val store = new LosingRenewalStore(plain, grants)
                         val wfId  = Flow.Id.Workflow("interrupt-vs-retry")
                         var calls = 0
-                        val flow = Flow.init("interrupt-vs-retry")
+                        val flow  = Flow.init("interrupt-vs-retry")
                             .output("slow", retry = Maybe(Schedule.fixed(1.second).repeat(5))) { _ =>
                                 calls += 1
                                 Async.sleep(10.seconds).andThen("done")
@@ -5755,7 +5756,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         stateAfterClose <- store.getExecution(eid)
                         before          <- startedCount(eid)
                         _               <- tc.advance(10.seconds)
-                        _ <- Scope.run {
+                        _               <- Scope.run {
                             FlowEngine.init(store, config, flow).map { _ =>
                                 settle(tc, step = 250.millis, maxRounds = 40)(startedCount(eid).map(_ > before))
                             }
@@ -5825,10 +5826,10 @@ class FlowEngineTest extends FlowEngineSupport:
                         AtomicInt.init(0).map { refusals =>
                             AtomicInt.init(0).map { polls =>
                                 AtomicRef.init(Maybe.empty[Instant]).map { firstClaimAt =>
-                                    val lease = 2.seconds
-                                    val store = new LateFirstRenewalStore(plain, tc, lease, skews, refusals, polls, firstClaimAt)
-                                    val wfId  = Flow.Id.Workflow("refused-renewal")
-                                    val flow  = Flow.init("refused-renewal").output("done")(_ => "ok")
+                                    val lease  = 2.seconds
+                                    val store  = new LateFirstRenewalStore(plain, tc, lease, skews, refusals, polls, firstClaimAt)
+                                    val wfId   = Flow.Id.Workflow("refused-renewal")
+                                    val flow   = Flow.init("refused-renewal").output("done")(_ => "ok")
                                     val config = FlowEngine.Config(
                                         workerCount = 1,
                                         lease = lease,
@@ -5875,7 +5876,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "output with retry fails twice then succeeds" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
-                val flow = Flow.input[Int]("x")
+                val flow     = Flow.input[Int]("x")
                     .output("y", retry = Maybe(Schedule.fixed(100.millis).repeat(3))) { ctx =>
                         attempts += 1
                         if attempts <= 2 then throw new RuntimeException(s"attempt $attempts")
@@ -5899,7 +5900,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "output with retry exhausts its schedule then fails" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
-                val flow = Flow.input[Int]("x")
+                val flow     = Flow.input[Int]("x")
                     .output("y", retry = Maybe(Schedule.delay(100.millis).repeat(2))) { ctx =>
                         attempts += 1
                         throw new RuntimeException(s"always fails attempt $attempts")
@@ -5923,7 +5924,7 @@ class FlowEngineTest extends FlowEngineSupport:
         "step with retry retries a side-effecting step" in {
             withEngine { (engine, store, tc) =>
                 var attempts = 0
-                val flow = Flow.input[Int]("x")
+                val flow     = Flow.input[Int]("x")
                     .step("side-effect", retry = Maybe(Schedule.fixed(100.millis).repeat(3))) { ctx =>
                         attempts += 1
                         if attempts <= 1 then throw new RuntimeException("transient")
@@ -6018,7 +6019,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { refusals =>
                         val store = FailingTimeoutEventStore(mem, refusals)
                         val wfId  = Flow.Id.Workflow("timeout-vs-infra")
-                        val flow = Flow.init("timeout-vs-infra")
+                        val flow  = Flow.init("timeout-vs-infra")
                             .output("slow", timeout = 1.second, retry = Maybe(Schedule.fixed(1.second).repeat(3)))(_ =>
                                 Async.sleep(1.hour).andThen("done")
                             )
@@ -6078,7 +6079,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     var bCount = 0
                     var flag   = true
                     val wfId   = Flow.Id.Workflow("dispatch-replay")
-                    val flow = Flow.init("dispatch-replay")
+                    val flow   = Flow.init("dispatch-replay")
                         .dispatch[String]("route")
                         .when(_ => flag, name = "a") { ctx =>
                             aCount += 1
@@ -6268,7 +6269,7 @@ class FlowEngineTest extends FlowEngineSupport:
 
         "5 compensated outputs all fire in reverse on failure" in {
             withEngine { (engine, store, tc) =>
-                var log = Seq.empty[String]
+                var log  = Seq.empty[String]
                 val flow = Flow.input[Int]("x")
                     .outputCompensated("a")(ctx => 1)(ctx => log = log :+ "comp-a")
                     .outputCompensated("b")(ctx => 2)(ctx => log = log :+ "comp-b")
@@ -6503,7 +6504,7 @@ class FlowEngineTest extends FlowEngineSupport:
     "Progress.build with Sleeping status" - {
 
         "marks the sleeping node as Sleeping" in {
-            val until = Instant.Epoch + 1.hour
+            val until    = Instant.Epoch + 1.hour
             val progress =
                 FlowEngine.Progress.build(linearFlow, Set("x", "y", "log"), Flow.Status.Running, Dict("wait" -> Flow.Wake.At(until)))
             assert(progress.nodeByName("wait").get.status == FlowEngine.Progress.NodeStatus.Sleeping(until))
@@ -6513,7 +6514,7 @@ class FlowEngineTest extends FlowEngineSupport:
             val flow = Flow.input[Int]("x")
                 .sleep("s1", 1.minute)
                 .sleep("s2", 2.minutes)
-            val until = Instant.Epoch + 2.minutes
+            val until    = Instant.Epoch + 2.minutes
             val progress =
                 FlowEngine.Progress.build(flow, Set("x", "s1"), Flow.Status.Running, Dict("s2" -> Flow.Wake.At(until)))
             assert(progress.nodeByName("s1").get.status == FlowEngine.Progress.NodeStatus.Completed)
@@ -6658,7 +6659,7 @@ class FlowEngineTest extends FlowEngineSupport:
           */
         "a failure keyed by an iteration paints its loop, and one keyed by a subflow's child paints the child" in {
             val child = Flow.input[Int]("a").output("step")(ctx => ctx.a * 2)
-            val flow = Flow.input[Int]("x")
+            val flow  = Flow.input[Int]("x")
                 .loopOn("acc", Schedule.fixed(1.hour), 0) { (state: Int, ctx) => Loop.done(state) }
                 .subflow("review", child)(ctx => "a" ~ ctx.x)
             val iterationKeyed = FlowEngine.Progress.build(
@@ -6773,10 +6774,10 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { slowRuns =>
                         val wfId  = Flow.Id.Workflow("replay-handoff")
                         val quick = Flow.init("replay-handoff").output("winner")(_ => "quick")
-                        val slow = Flow.init("replay-handoff").step[Async]("stall") { _ =>
+                        val slow  = Flow.init("replay-handoff").step[Async]("stall") { _ =>
                             slowRuns.incrementAndGet.andThen(Async.never)
                         }.output("winner")(_ => "slow")
-                        val flow = Flow.race(quick, slow).andThen(Flow.input[Int]("go")).output("done")(ctx => ctx.go)
+                        val flow   = Flow.race(quick, slow).andThen(Flow.input[Int]("go")).output("done")(ctx => ctx.go)
                         val config = FlowEngine.Config(
                             workerCount = 1,
                             lease = 2.seconds,
@@ -6795,7 +6796,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             }
                             before <- store.getField[String](eid, "winner")
                             _      <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _      <- Scope.run {
                                 FlowEngine.init(store, config, flow).map { second =>
                                     second.executions.signal[Int](eid, "go", 5).andThen(
                                         settle(tc, step = 250.millis, maxRounds = 80)(
@@ -6835,7 +6836,7 @@ class FlowEngineTest extends FlowEngineSupport:
             withEngine { (engine, store, tc) =>
                 AtomicInt.init(0).map { slowRuns =>
                     val quick = Flow.init("replay-race").output("winner")(_ => "quick")
-                    val slow = Flow.init("replay-race").output("winner") { _ =>
+                    val slow  = Flow.init("replay-race").output("winner") { _ =>
                         val body: String < Sync = slowRuns.incrementAndGet.andThen("slow")
                         body
                     }
@@ -6942,7 +6943,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     // timeout makes the engine's timer fire once per interval inside it, so advancing an hour at a time against a
                     // 100ms poll schedules tens of thousands of callbacks per step and hundreds of thousands over the leaf, which a
                     // single-threaded runtime does not survive. Ten simulated seconds is ample for a sleep that should never wake.
-                    settled <- Kyo.foreachDiscard(1 to 100)(_ => tc.advance(100.millis)).andThen(Kyo.unit)
+                    settled    <- Kyo.foreachDiscard(1 to 100)(_ => tc.advance(100.millis)).andThen(Kyo.unit)
                     finalState <- started match
                         case Result.Success(h) => store.getExecution(h.executionId)
                         case _                 => Maybe.empty[FlowStore.ExecutionState]: Maybe[FlowStore.ExecutionState] < Any
@@ -6995,7 +6996,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                 ("deadline", Flow.Wake.At(deadline))
                             )
                             // The engine is built once the row is already parked. See [[seedWaits]].
-                            _ <- FlowEngine.init(store, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow)
+                            _        <- FlowEngine.init(store, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow)
                             resolved <- settle(tc, step = 100.millis, maxRounds = 100)(
                                 store.getExecution(eid).map(_.exists(_.status.isTerminal))
                             )
@@ -7028,7 +7029,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     val waiting = Flow.init("decided-race").input[String]("approval").output("answer")(ctx => ctx.approval)
                     val timeout = Flow.init("decided-race").sleep("deadline", 2.seconds).output("answer")(_ => "timed out")
                     val flow    = Flow.race(waiting, timeout).step("escalate")(_ => Async.sleep(1.hour))
-                    val config = FlowEngine.Config(
+                    val config  = FlowEngine.Config(
                         workerCount = 1,
                         lease = 2.seconds,
                         renewEvery = 500.millis,
@@ -7062,7 +7063,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             before          <- escalations(eid)
                             stateAfterClose <- store.getExecution(eid)
                             _               <- tc.advance(10.seconds)
-                            _ <- Scope.run {
+                            _               <- Scope.run {
                                 FlowEngine.init(store, config, flow).map { _ =>
                                     settle(tc, step = 250.millis, maxRounds = 60)(escalations(eid).map(_ > before))
                                 }
@@ -7122,7 +7123,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 val flow    = Flow.race(waiting, timeout)
                 def kinds(page: FlowStore.HistoryPage): Set[Flow.EventKind] = page.events.map(_.kind).toSet
                 for
-                    _ <- engine.register(wfId, flow)
+                    _    <- engine.register(wfId, flow)
                     both <- Kyo.foldLeft(Seq.range(0, rounds))(0) { (count, _) =>
                         for
                             handle <- engine.workflows.start(wfId)
@@ -7433,12 +7434,12 @@ class FlowEngineTest extends FlowEngineSupport:
                         for
                             // The first engine's attempt died with the input's row written, the sleep's not, and the claim still
                             // named: exactly what a shutdown between the two branches leaves behind.
-                            _ <- seedExecution(store, eid, wfId, Flow.Status.Running, theHash)
+                            _       <- seedExecution(store, eid, wfId, Flow.Status.Running, theHash)
                             claimed <-
                                 store.claimReady(Set((wfId, theHash)), Flow.Id.Executor("first-engine"), 5.seconds, 10, Duration.Zero)
                             _ = assert(claimed.size == 1, "the premise is that an executor held the execution when it died")
                             now <- Clock.now
-                            _ <- claimed.head.recordWait(
+                            _   <- claimed.head.recordWait(
                                 "approval",
                                 Flow.Wake.OnField("approval"),
                                 Flow.Event.InputWaiting(wfId, eid, "approval", now)
@@ -7492,7 +7493,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             val waiting = Flow.init("half-parked-live").input[String]("approval").output("answer")(ctx => ctx.approval)
                             val timeout = Flow.init("half-parked-live").sleep("deadline", 30.seconds).output("answer")(_ => "timed out")
                             val flow    = Flow.race(waiting, timeout)
-                            val config =
+                            val config  =
                                 FlowEngine.Config(workerCount = 1, lease = 5.seconds, renewEvery = 1.second, pollTimeout = 100.millis)
                             for
                                 eid <- Scope.run {
@@ -7512,7 +7513,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                 }
                                 held <- store.getExecution(eid)
                                 _    <- tc.advance(10.seconds)
-                                _ <- Scope.run {
+                                _    <- Scope.run {
                                     FlowEngine.init(store, config, flow).map { _ =>
                                         settle(tc, step = 1.second, maxRounds = 120)(
                                             store.getExecution(eid).map(_.exists(_.status.isTerminal))
@@ -7577,7 +7578,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                 ("deadline", Flow.Wake.At(t0 + 5.seconds))
                             )
                             // The engine is built once the row is already parked. See [[seedWaits]].
-                            _ <- FlowEngine.init(store, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow)
+                            _      <- FlowEngine.init(store, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow)
                             parked <- settle(tc, step = 100.millis, maxRounds = 100)(
                                 store.getExecution(eid).map(_.exists(waitingFor("ack")))
                             )
@@ -7629,17 +7630,17 @@ class FlowEngineTest extends FlowEngineSupport:
                         "the premise is that all three branches parked, each recording its own wait"
                     )
                     // The zip's input branch, one level down inside the race.
-                    _ <- engine.executions.signal[String](innerRun._1, "inner", "from-inner")
+                    _         <- engine.executions.signal[String](innerRun._1, "inner", "from-inner")
                     innerWoke <- settle(tc, step = 100.millis, maxRounds = 100)(
                         store.getField[String](innerRun._1, "answer").map(_.contains("from-inner"))
                     )
                     // The zip's sleep branch, the other one level down.
-                    _ <- Kyo.foreachDiscard(1 to 100)(_ => tc.advance(100.millis))
+                    _         <- Kyo.foreachDiscard(1 to 100)(_ => tc.advance(100.millis))
                     sleepWoke <- settle(tc, step = 100.millis, maxRounds = 100)(
                         store.getField[String](sleepRun._1, "slept").map(_.isDefined)
                     )
                     // The race's own branch, at the top level.
-                    _ <- engine.executions.signal[String](outerRun._1, "outer", "from-outer")
+                    _         <- engine.executions.signal[String](outerRun._1, "outer", "from-outer")
                     outerWoke <- settle(tc, step = 100.millis, maxRounds = 100)(
                         store.getExecution(outerRun._1).map(_.exists(_.status == Flow.Status.Completed))
                     )
@@ -7747,8 +7748,8 @@ class FlowEngineTest extends FlowEngineSupport:
                                     case _: Flow.Event.ExecutionResumed => true
                                     case _                              => false
                                 })
-                                val wfId = Flow.Id.Workflow("unfenced-wait")
-                                val flow = Flow.init("unfenced-wait").input[String]("x").output("done")(ctx => ctx.x)
+                                val wfId   = Flow.Id.Workflow("unfenced-wait")
+                                val flow   = Flow.init("unfenced-wait").input[String]("x").output("done")(ctx => ctx.x)
                                 val config = FlowEngine.Config(
                                     workerCount = 1,
                                     lease = leaseSpan,
@@ -7934,7 +7935,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                     Channel.init[Unit](1).map { renewals =>
                                         val parking = new ParkedRenewalStore(store, armed, renewals)
                                         val wfId    = Flow.Id.Workflow("stale-overwrite")
-                                        val flow = Flow.init("stale-overwrite")
+                                        val flow    = Flow.init("stale-overwrite")
                                             .step[Async]("work") { _ =>
                                                 entries.incrementAndGet.map { n =>
                                                     if n == 1 then
@@ -8033,7 +8034,7 @@ class FlowEngineTest extends FlowEngineSupport:
                                     Channel.init[Unit](1).map { renewals =>
                                         val parking = new ParkedRenewalStore(store, armed, renewals)
                                         val wfId    = Flow.Id.Workflow("stale-verdict")
-                                        val flow = Flow.init("stale-verdict")
+                                        val flow    = Flow.init("stale-verdict")
                                             .step[Async]("work") { _ =>
                                                 entries.incrementAndGet.map { n =>
                                                     if n == 1 then
@@ -8114,7 +8115,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { calls =>
                         Channel.init[Unit](1).map { gate =>
                             val flaky = new FlakyRenewalStore(store, calls)
-                            val flow = Flow.init("long-renew")
+                            val flow  = Flow.init("long-renew")
                                 .step[Async]("work")(_ => Abort.run[Closed](gate.take).unit)
                                 .output("done")(_ => Async.delay(Duration.Zero)("ok"))
                             val config = FlowEngine.Config(
@@ -8178,8 +8179,8 @@ class FlowEngineTest extends FlowEngineSupport:
                                     super.claimReady(served, executorId, claimLease, limit, timeout).map { batch =>
                                         widestBatch.updateAndGet(_ max batch.size).andThen(batch)
                                     }
-                            val slowId = Flow.Id.Workflow("batched-slow")
-                            val fastId = Flow.Id.Workflow("batched-fast")
+                            val slowId   = Flow.Id.Workflow("batched-slow")
+                            val fastId   = Flow.Id.Workflow("batched-fast")
                             val slowFlow = Flow.init("batched-slow")
                                 .output("done") { _ =>
                                     val body: String < Async = Abort.run[Closed](gate.take).unit.andThen("blocked")
@@ -8262,7 +8263,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     AtomicInt.init(0).map { refusals =>
                         val store = new UnrenewedCompensationStore(plain, refusals)
                         val wfId  = Flow.Id.Workflow("slow-comp")
-                        val flow = Flow.init("slow-comp")
+                        val flow  = Flow.init("slow-comp")
                             .outputCompensated("a")(_ => 1)(_ => Async.sleep(10.minutes))
                             .output("b") { _ =>
                                 throw new RuntimeException("boom"); ""
@@ -8302,8 +8303,8 @@ class FlowEngineTest extends FlowEngineSupport:
                                     yield eid
                                 }
                             }
-                            _     <- Kyo.foreachDiscard(1 to 200)(_ => tc.advance(100.millis))
-                            state <- store.getExecution(eid)
+                            _       <- Kyo.foreachDiscard(1 to 200)(_ => tc.advance(100.millis))
+                            state   <- store.getExecution(eid)
                             rescued <- store.claimReady(
                                 Set((wfId, kyo.internal.WorkflowSchema.structuralHash(flow))),
                                 Flow.Id.Executor("rescuer"),
@@ -8352,7 +8353,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         // takes the claim without racing a worker for it.
                         _       <- seedExecution(store, eid, wf1, Flow.Status.Compensating(cause), theHash)
                         claimed <- seedClaim(store, eid, wf1, theHash)
-                        _ <- claimed.recordProgress[String](
+                        _       <- claimed.recordProgress[String](
                             "a",
                             Maybe("held"),
                             Flow.Event.StepCompleted(wf1, eid, "a", now)
@@ -8412,7 +8413,7 @@ class FlowEngineTest extends FlowEngineSupport:
                             // so the engine serves no version this row could be claimed under while the fixture writes it.
                             _       <- seedExecution(store, eid, wf1, Flow.Status.Compensating(cause), theHash)
                             claimed <- seedClaim(store, eid, wf1, theHash)
-                            _ <- claimed.recordProgress[String](
+                            _       <- claimed.recordProgress[String](
                                 "a",
                                 Maybe("held"),
                                 Flow.Event.StepCompleted(wf1, eid, "a", now)
@@ -8561,8 +8562,8 @@ class FlowEngineTest extends FlowEngineSupport:
         "an input whose stored value cannot be decoded does not spin the poll loop" in {
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
-                    val undecodable = new UndecodableFieldStore(store, "x")
-                    val flow        = Flow.input[Int]("x").output("y")(ctx => ctx.x * 2)
+                    val undecodable                                                   = new UndecodableFieldStore(store, "x")
+                    val flow                                                          = Flow.input[Int]("x").output("y")(ctx => ctx.x * 2)
                     def idle(using Frame): Unit < (Async & Abort[FlowStoreException]) =
                         Kyo.foreachDiscard(1 to 50)(_ => tc.advance(10.millis))
                     FlowEngine.init(undecodable, FlowEngine.Config(workerCount = 1, pollTimeout = 100.millis), flow).map { engine =>
@@ -9053,8 +9054,8 @@ class FlowEngineTest extends FlowEngineSupport:
           */
         "a change inside a subflow parks the parent's in-flight executions" in {
             withEngine { (engine, store, tc) =>
-                val childV1 = Flow.input[Int]("a").output("b")(ctx => ctx.a)
-                val childV2 = Flow.input[Int]("a").step("extra")(_ => ()).output("b")(ctx => ctx.a)
+                val childV1  = Flow.input[Int]("a").output("b")(ctx => ctx.a)
+                val childV2  = Flow.input[Int]("a").step("extra")(_ => ()).output("b")(ctx => ctx.a)
                 val parentV1 = Flow.input[Int]("x")
                     .subflow("sub", childV1)(ctx => "a" ~ ctx.x)
                     .output("done")(_ => "ok")
@@ -9159,8 +9160,8 @@ class FlowEngineTest extends FlowEngineSupport:
             Clock.withTimeControl { tc =>
                 FlowStore.initMemory.map { store =>
                     AtomicInt.init(0).map { runs =>
-                        val wfId = Flow.Id.Workflow("two-engines")
-                        val flow = Flow.init("two-engines").output("done")(_ => runs.incrementAndGet)
+                        val wfId   = Flow.Id.Workflow("two-engines")
+                        val flow   = Flow.init("two-engines").output("done")(_ => runs.incrementAndGet)
                         val config =
                             FlowEngine.Config(workerCount = 1, lease = 2.seconds, renewEvery = 500.millis, pollTimeout = 100.millis)
                         for
@@ -9211,8 +9212,8 @@ class FlowEngineTest extends FlowEngineSupport:
                             for
                                 handle <- engine.workflows.start(wfId)
                                 eid = handle.executionId
-                                _     <- settle(tc)(store.getExecution(eid).map(_.exists(_.claimExpiry.nonEmpty)))
-                                early <- store.getExecution(eid)
+                                _        <- settle(tc)(store.getExecution(eid).map(_.exists(_.claimExpiry.nonEmpty)))
+                                early    <- store.getExecution(eid)
                                 advanced <- settle(tc) {
                                     store.getExecution(eid).map { s =>
                                         (s.flatMap(_.claimExpiry), early.flatMap(_.claimExpiry)) match
@@ -9420,7 +9421,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     yield
                         val kinds       = history.events.map(_.kind)
                         val cancelledAt = kinds.indexWhere(_ == Flow.EventKind.Cancelled)
-                        val stepsAfter =
+                        val stepsAfter  =
                             if cancelledAt < 0 then Chunk.empty
                             else
                                 kinds.drop(cancelledAt + 1).filter(k =>
@@ -9593,9 +9594,7 @@ class FlowEngineTest extends FlowEngineSupport:
                         r
                     }
                 for
-                    _ <- engine.register(wf1, flow)(
-                        [v] => c => Var.run(10)(c)
-                    )
+                    _      <- engine.register(wf1, flow)([v] => c => Var.run(10)(c))
                     handle <- engine.workflows.start(wf1)
                     eid = handle.executionId
                     _      <- engine.executions.signal[Int](eid, "x", 5)
@@ -9658,9 +9657,7 @@ class FlowEngineTest extends FlowEngineSupport:
                 }
                 val flow = Var.isolate.update[Int].use { left.zip(right) }
                 for
-                    _ <- engine.register(wf1, flow)(
-                        [v] => c => Var.run(10)(c)
-                    )
+                    _      <- engine.register(wf1, flow)([v] => c => Var.run(10)(c))
                     handle <- engine.workflows.start(wf1)
                     eid = handle.executionId
                     _        <- engine.executions.signal[Int](eid, "x", 5)
@@ -9691,9 +9688,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     }
                 val flow = Var.isolate.update[Int].use { Flow.input[Int]("x").andThen(Flow.race(fast, slow)) }
                 for
-                    _ <- engine.register(wf1, flow)(
-                        [v] => c => Var.run(0)(c)
-                    )
+                    _      <- engine.register(wf1, flow)([v] => c => Var.run(0)(c))
                     handle <- engine.workflows.start(wf1)
                     eid = handle.executionId
                     _      <- engine.executions.signal[Int](eid, "x", 1)

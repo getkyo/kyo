@@ -48,7 +48,7 @@ final private[sqlite] class SqliteRowReader(
     private def parsing[A](text: String)(parse: String => A): A =
         try parse(text)
         catch
-            case e: SqlException => throw e
+            case e: SqlException                                => throw e
             case e: Throwable if scala.util.control.NonFatal(e) =>
                 throw SqlDecodeColumnDecodeException(Present(cursor - 1), e)(using frame)
 
@@ -118,7 +118,7 @@ final private[sqlite] class SqliteRowReader(
     private def numeric[A](text: String)(parse: String => A): A =
         try parse(text)
         catch
-            case e: SqlException => throw e
+            case e: SqlException                                => throw e
             case e: Throwable if scala.util.control.NonFatal(e) =>
                 throw SqlDecodeNumericException(text, SqlDecodeNumericException.Subtype.Parse)(using frame)
 
@@ -266,7 +266,7 @@ final private[sqlite] class SqliteRowReader(
 
     override def fieldIndex(index: Int, names: Chunk[String]): Int =
         matchesFieldAt match
-            case Absent => index
+            case Absent           => index
             case Present(matches) =>
                 val found = names.indexWhere(name => matches(index, name))
                 if found >= 0 then found else index

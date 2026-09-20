@@ -87,7 +87,6 @@ private[kyo] object LspClientEngine:
                 .map(h => LspHandlerLift.liftClient(h, clientRef, registryImpl, negotiatedEncodingRef))
 
             JsonRpcHandler.initUnscoped(transport, userRoutes, jsonRpcConfig).map { handler =>
-
                 // Perform the eager initialize / initialized handshake.
                 // Build params with the client's position encoding preferences.
                 val clientEncodings: Chunk[LspHandler.PositionEncodingKind] =
@@ -118,7 +117,7 @@ private[kyo] object LspClientEngine:
                         .flatMap { result =>
                             // Negotiate position encoding: first match of server's list against our preferences.
                             val serverEncoding = result.capabilities.positionEncoding.getOrElse(LspHandler.PositionEncodingKind.UTF16)
-                            val negotiated =
+                            val negotiated     =
                                 if advertisedEncodings.contains(serverEncoding) then serverEncoding
                                 else advertisedEncodings.headOption.getOrElse(LspHandler.PositionEncodingKind.UTF16)
                             // Store server capabilities, server info, and the negotiated encoding.

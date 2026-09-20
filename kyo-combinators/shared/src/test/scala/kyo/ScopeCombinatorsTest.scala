@@ -6,11 +6,11 @@ class ScopeCombinatorsTest extends kyo.test.Test[Any]:
 
     "construct" - {
         "should construct a resource with acquireRelease" in {
-            var state = 0
+            var state   = 0
             val acquire = Sync.defer {
                 (i: Int) => Sync.defer { state = i }
             }
-            val resource = Kyo.acquireRelease(acquire)(_(0))
+            val resource                     = Kyo.acquireRelease(acquire)(_(0))
             val effect: Int < (Scope & Sync) =
                 for
                     setter <- resource
@@ -32,7 +32,7 @@ class ScopeCombinatorsTest extends kyo.test.Test[Any]:
         }
 
         "should construct a resource from an AutoCloseable" in {
-            var state = 0
+            var state     = 0
             val closeable = new AutoCloseable:
                 override def close(): Unit = state = 100
             val effect = Kyo.fromAutoCloseable(closeable)

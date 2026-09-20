@@ -29,12 +29,12 @@ class IoUringProbeDepthTest extends Test:
         ): Int = 0
         def kyo_uring_prep_write(sqe: Ffi.Handle[IoUringSqe], fd: Int, buf: Buffer[Byte], nbytes: Int, offset: Long)(using
             AllowUnsafe
-        ): Int = 0
+        ): Int                                                                                                                          = 0
         def kyo_uring_prep_recv(sqe: Ffi.Handle[IoUringSqe], fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Int = 0
         def kyo_uring_prep_send(sqe: Ffi.Handle[IoUringSqe], fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Int = 0
         def kyo_uring_prep_accept(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int], flags: Int)(using
             AllowUnsafe
-        ): Unit = ()
+        ): Unit                                                                                                                     = ()
         def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Unit = ()
         def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit               = ()
         def kyo_uring_prep_nop(sqe: Ffi.Handle[IoUringSqe])(using AllowUnsafe): Unit                                                = ()
@@ -44,7 +44,7 @@ class IoUringProbeDepthTest extends Test:
         ): Fiber.Unsafe[Int, Any] = Fiber.Unsafe.fromResult(Result.succeed(0))
         def kyo_uring_submit_and_wait_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
             AllowUnsafe
-        ): Fiber.Unsafe[Int, Any] = Fiber.Unsafe.fromResult(Result.succeed(0))
+        ): Fiber.Unsafe[Int, Any]                              = Fiber.Unsafe.fromResult(Result.succeed(0))
         def kyo_uring_kernel_version()(using AllowUnsafe): Int = 0
         def kyo_uring_prep_multishot_accept(
             sqe: Ffi.Handle[IoUringSqe],
@@ -54,7 +54,7 @@ class IoUringProbeDepthTest extends Test:
             flags: Int
         )(using
             AllowUnsafe
-        ): Unit = ()
+        ): Unit                                                                                       = ()
         def kyo_uring_cqe_get_flags(cqe: Long)(using AllowUnsafe): Int                                = 0
         def kyo_uring_recv_multishot_flag()(using AllowUnsafe): Int                                   = 0
         def kyo_uring_peek_cqe(ring: Buffer[Byte], cqePtr: Buffer[Long])(using AllowUnsafe): Int      = 0
@@ -64,7 +64,7 @@ class IoUringProbeDepthTest extends Test:
         def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int = 0
         def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit                          = ()
         def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int                               = 0
-        def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean =
+        def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean                         =
             lastDepth.set(depth)
             true
         // This test exercises only the depth-probe call below; the wake-eventfd surface is never invoked here.

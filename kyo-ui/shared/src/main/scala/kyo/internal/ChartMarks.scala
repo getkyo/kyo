@@ -59,8 +59,8 @@ private[kyo] object ChartMarks:
         // Each `lower*` returns a `Chunk[<Svg subtype>]` (e.g. `Chunk[Svg.Rect]`); `Svg` subtypes are `UI` and
         // `Chunk` is covariant, so ascribing the per-mark result to `Chunk[UI]` upcasts each arm by covariance.
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
-            val markColor = ChartAxes.markDefaultColor(theme, markIdx)
-            val ys        = if ChartAxes.markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
+            val markColor         = ChartAxes.markDefaultColor(theme, markIdx)
+            val ys                = if ChartAxes.markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
             val region: Chunk[UI] = mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
@@ -99,7 +99,7 @@ private[kyo] object ChartMarks:
                                 ChartInteraction.resolveHighlight(Present(s))
                             )
                         case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme)
-                case m: Mark.Rule[A] => lowerRuleChildren(m, layout, xs, ys)
+                case m: Mark.Rule[A]       => lowerRuleChildren(m, layout, xs, ys)
                 case m: Mark.Text[A, ?, ?] =>
                     lowerText(m, rows, xs, ys, markColor, theme, spec, ChartInteraction.resolveHighlight(spec))
                 case m: Mark.ErrorBar[A, ?, ?] =>
@@ -189,21 +189,21 @@ private[kyo] object ChartMarks:
             else
                 val row = rows(i)
                 // drop non-finite domain values; filterFinite returns Absent for NaN/Inf
-                val yDomain = ChartFoundations.filterFinite(mark.y.plottable.toDomain(mark.y.accessor(row)))
+                val yDomain                = ChartFoundations.filterFinite(mark.y.plottable.toDomain(mark.y.accessor(row)))
                 val (nextBars, nextLabels) = yDomain match
-                    case Absent => (bars, labels)
+                    case Absent      => (bars, labels)
                     case Present(yd) =>
                         val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
                         xDomain match
-                            case Absent => (bars, labels)
+                            case Absent      => (bars, labels)
                             case Present(xd) =>
                                 val barX = xs.apply(xd)
                                 val barW = xs.bandwidth
                                 val barY = ys.apply(yd)
                                 // min/abs ensure a non-negative rect height for negative data values:
                                 // a negative datum maps barY above the baseline in SVG coordinates.
-                                val rectY = math.min(barY, baseline)
-                                val rectH = math.abs(baseline - barY)
+                                val rectY  = math.min(barY, baseline)
+                                val rectH  = math.abs(baseline - barY)
                                 val iAttrs = spec.map(s => ChartInteraction.buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(
                                     UI.Ast.Attrs()
                                 )
@@ -297,7 +297,7 @@ private[kyo] object ChartMarks:
             case Present(s) =>
                 s.legendCfg.colorScale match
                     case Present(_) => ChartLegend.resolvePalette(s, colorCats)
-                    case Absent =>
+                    case Absent     =>
                         colorKeys.zipWithIndex.map: (_, i) =>
                             basePalette(i % basePalette.size)
             case Absent =>
@@ -344,11 +344,11 @@ private[kyo] object ChartMarks:
                 val row     = rows(i)
                 val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
                 val nextAcc = yDomain match
-                    case Absent => acc
+                    case Absent      => acc
                     case Present(yd) =>
                         val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
                         xDomain match
-                            case Absent => acc
+                            case Absent      => acc
                             case Present(xd) =>
                                 val bandX       = xs.apply(xd)
                                 val bandW       = xs.bandwidth
@@ -359,9 +359,9 @@ private[kyo] object ChartMarks:
                                 val subW = if dodge then bandW / numColors.toDouble else bandW
                                 val barX =
                                     if dodge then
-                                        val xKey    = ChartScales.domainKey(xd)
-                                        val present = presentByBand.getOrElse(xKey, Chunk.empty[Int])
-                                        val k       = present.size
+                                        val xKey     = ChartScales.domainKey(xd)
+                                        val present  = presentByBand.getOrElse(xKey, Chunk.empty[Int])
+                                        val k        = present.size
                                         val localIdx =
                                             // indexOf on Chunk is O(k); k <= numColors (small in practice).
                                             val idx = present.toSeq.indexOf(colorIdx)
@@ -377,7 +377,7 @@ private[kyo] object ChartMarks:
                                 val rectY     = math.min(barY, baseline)
                                 val rectH     = math.abs(baseline - barY)
                                 val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else basePalette(0)
-                                val iAttrs = spec.map(s => ChartInteraction.buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(
+                                val iAttrs    = spec.map(s => ChartInteraction.buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(
                                     UI.Ast.Attrs()
                                 )
                                 val r =
@@ -425,8 +425,8 @@ private[kyo] object ChartMarks:
         // painted in exactly the color its legend swatch shows (honoring an explicit `colorScale`).
         val groupEnc: Encoding[A, Any] =
             Encoding(groupFn, Plottable.any, summon[ConcreteTag[Any]])
-        val groupCats: Chunk[(String, Any)] = ChartLegend.collectColorCategoriesWithRaw(rows, groupEnc)
-        val groupKeys: Chunk[String]        = groupCats.map(_._1)
+        val groupCats: Chunk[(String, Any)]  = ChartLegend.collectColorCategoriesWithRaw(rows, groupEnc)
+        val groupKeys: Chunk[String]         = groupCats.map(_._1)
         val groupPalette: Chunk[Style.Color] = spec match
             case Present(s) => ChartLegend.resolvePalette(s, groupCats)
             case Absent     => ChartLegend.resolvePaletteFromCfg(groupKeys)
@@ -446,7 +446,7 @@ private[kyo] object ChartMarks:
             else
                 val row        = rows(i)
                 val xDomainOpt = mark.x.plottable.toDomain(mark.x.accessor(row))
-                val xKeyOpt = xDomainOpt match
+                val xKeyOpt    = xDomainOpt match
                     case Present(d) => Present(ChartScales.domainKey(d))
                     case Absent     => Absent
                 val yValOpt = mark.y.plottable.toDomain(mark.y.accessor(row)) match
@@ -455,7 +455,7 @@ private[kyo] object ChartMarks:
                 // Key by CatKey (tag + raw value) so distinct group values with the same toString stay
                 // separate. groupEnc.tag is ConcreteTag[Any]; groupFn(row) is the raw group value.
                 val groupCatKey = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
-                val withDomain = (xKeyOpt, xDomainOpt) match
+                val withDomain  = (xKeyOpt, xDomainOpt) match
                     case (Present(xk), Present(d)) if !m.xDomainByKey.contains(xk) =>
                         m.copy(xDomainByKey = m.xDomainByKey.updated(xk, d))
                     case _ => m
@@ -503,8 +503,8 @@ private[kyo] object ChartMarks:
                 def loopGroup(gi: Int, posAcc: Double, negAcc: Double, acc2: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
                     if gi >= groupCatKeys.size then acc2
                     else
-                        val gck  = groupCatKeys(gi)
-                        val rawY = groupMap.getOrElse(gck, 0.0)
+                        val gck        = groupCatKeys(gi)
+                        val rawY       = groupMap.getOrElse(gck, 0.0)
                         val effectiveY =
                             if mark.stack.normalize then
                                 if totalY > 0.0 then rawY / totalY else 0.0
@@ -529,8 +529,8 @@ private[kyo] object ChartMarks:
                             else if segLo == 0.0 && segHi >= 0.0 then baseline
                             else ys.apply(Domain.Continuous(segLo))
                         // rectY and rectH are always geometry-safe: min/abs ensure non-negative height.
-                        val rectY = math.min(topPx, botPx)
-                        val rectH = math.abs(topPx - botPx)
+                        val rectY     = math.min(topPx, botPx)
+                        val rectH     = math.abs(topPx - botPx)
                         val fillColor = if gi < groupPalette.size then groupPalette(gi)
                         else ChartAxes.DefaultPalette(gi % ChartAxes.DefaultPalette.size)
                         // Skip emission when the group contributes nothing at this x slot.
@@ -546,9 +546,9 @@ private[kyo] object ChartMarks:
                                     .fill(Svg.Paint.Color(fillColor))
                                 // Look up the row for this x+group combination to apply per-datum encodings.
                                 // (There is at most one row per x+group; rowBySlot holds the first match.)
-                                val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gck)))
+                                val rowForSlot: Maybe[A]                 = Maybe.fromOption(rowBySlot.get((xKey, gck)))
                                 val withEncodings: Chunk[Svg.SvgElement] = rowForSlot match
-                                    case Absent => Chunk(baseRect)
+                                    case Absent     => Chunk(baseRect)
                                     case Present(r) =>
                                         val withOpacity = mark.opacity match
                                             case Present(fn) => baseRect.fillOpacity(math.max(0.0, math.min(1.0, fn(r))))
@@ -605,8 +605,8 @@ private[kyo] object ChartMarks:
                 // No color encoding: single series whose stroke is the per-mark default color (palette by mark index).
                 // A line path has no per-row identity, so it is tagged with its first row as the series
                 // representative for the highlight wrap.
-                val path   = lowerLineSeries(rows, mark, xs, ys, defaultColor, spec, internalHoverRef)
-                val repRow = rows.headMaybe
+                val path                               = lowerLineSeries(rows, mark, xs, ys, defaultColor, spec, internalHoverRef)
+                val repRow                             = rows.headMaybe
                 val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
                     case Present(r) => Chunk((r, path))
                     case Absent     => Chunk.empty
@@ -615,7 +615,7 @@ private[kyo] object ChartMarks:
                 // resolvePalette (the same path the legend and stacked bars use) honors an explicit
                 // categorical/sequential colorScale so the line agrees with the legend, and falls back to
                 // theme.palette then DefaultPalette when no colorScale is set.
-                val cats: Chunk[(String, Any)] = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
+                val cats: Chunk[(String, Any)]  = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
                 val palette: Chunk[Style.Color] = spec match
                     case Present(s) => ChartLegend.resolvePalette(s, cats)
                     case Absent     => ChartAxes.DefaultPalette
@@ -651,7 +651,7 @@ private[kyo] object ChartMarks:
             if i >= rows.size then
                 if curSeg.isEmpty then segs else segs.append(curSeg)
             else
-                val row = rows(i)
+                val row       = rows(i)
                 val isDefined = mark.defined match
                     case Present(fn) => fn(row)
                     case Absent      => true
@@ -700,7 +700,7 @@ private[kyo] object ChartMarks:
     )(using Frame): Svg.Path =
         // Collect contiguous defined segments. Each segment is then threaded through
         // CurvePath.append for the chosen interpolation.
-        val segments = collectLineSegments(rows, mark, xs, ys)
+        val segments               = collectLineSegments(rows, mark, xs, ys)
         val pathData: Svg.PathData = segments.foldLeft(Svg.PathData.empty): (pd, seg) =>
             if seg.isEmpty then pd
             else
@@ -733,7 +733,7 @@ private[kyo] object ChartMarks:
         // Attach interaction attrs to the line path. The representative row for a line series
         // is the first row of the series chunk (path-level, not per-datum).
         spec match
-            case Absent => withTooltip
+            case Absent     => withTooltip
             case Present(s) =>
                 rows.headMaybe match
                     case Absent     => withTooltip
@@ -769,7 +769,7 @@ private[kyo] object ChartMarks:
             case Present(ch) => ChartLegend.collectColorCategoriesWithRaw(rows, ch)
             case Absent      => Chunk.empty
         val basePaletteText: Chunk[Style.Color] = ChartAxes.themePalette(theme)
-        val palette: Chunk[Style.Color] =
+        val palette: Chunk[Style.Color]         =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
                 spec match
@@ -794,7 +794,7 @@ private[kyo] object ChartMarks:
                 val row = rows(i)
                 // Gap check: skip rows where y is Absent.
                 val nextAcc = mark.y.accessor(row) match
-                    case Absent => acc
+                    case Absent      => acc
                     case Present(yv) =>
                         val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
                         val yd = mark.y.plottable.toDomain(yv)
@@ -803,10 +803,10 @@ private[kyo] object ChartMarks:
                                 // For a band/categorical x, xs.apply(x) is the band's LEFT edge (where bars start).
                                 // Centre the label on the band (the same x the bar is centred on) by adding half
                                 // the band width. For continuous scales bandwidth is 0, so this is a no-op there.
-                                val px = xs.apply(x) + xs.bandwidth / 2.0
-                                val py = ys.apply(y)
+                                val px                     = xs.apply(x) + xs.bandwidth / 2.0
+                                val py                     = ys.apply(y)
                                 val fillColor: Style.Color = mark.color match
-                                    case Absent => defaultColor
+                                    case Absent      => defaultColor
                                     case Present(ch) =>
                                         val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         val idx    = catIdxText.getOrElse(catKey, -1)
@@ -849,7 +849,7 @@ private[kyo] object ChartMarks:
             case Present(ch) => ChartLegend.collectColorCategoriesWithRaw(rows, ch)
             case Absent      => Chunk.empty
         val basePaletteErr: Chunk[Style.Color] = ChartAxes.themePalette(theme)
-        val palette: Chunk[Style.Color] =
+        val palette: Chunk[Style.Color]        =
             if colorCatsWithRaw.isEmpty then Chunk.empty
             else
                 spec match
@@ -872,27 +872,27 @@ private[kyo] object ChartMarks:
                 def loopFlat(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
                     if i >= rows.size then acc
                     else
-                        val row   = rows(i)
-                        val xd    = mark.x.plottable.toDomain(mark.x.accessor(row))
-                        val yd    = mark.y.plottable.toDomain(mark.y.accessor(row))
-                        val lowD  = mark.low.plottable.toDomain(mark.low.accessor(row))
-                        val highD = mark.high.plottable.toDomain(mark.high.accessor(row))
+                        val row     = rows(i)
+                        val xd      = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd      = mark.y.plottable.toDomain(mark.y.accessor(row))
+                        val lowD    = mark.low.plottable.toDomain(mark.low.accessor(row))
+                        val highD   = mark.high.plottable.toDomain(mark.high.accessor(row))
                         val nextAcc = (xd, yd, lowD, highD) match
                             case (Present(x), Present(y), Present(lo), Present(hi)) =>
-                                val px     = xs.apply(x) + xs.bandwidth / 2.0
-                                val py     = ys.apply(y)
-                                val pyLow  = ys.apply(lo)
-                                val pyHigh = ys.apply(hi)
+                                val px       = xs.apply(x) + xs.bandwidth / 2.0
+                                val py       = ys.apply(y)
+                                val pyLow    = ys.apply(lo)
+                                val pyHigh   = ys.apply(hi)
                                 val colorIdx = mark.color match
-                                    case Absent => -1
+                                    case Absent      => -1
                                     case Present(ch) =>
                                         val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
-                                val stroke = Svg.Paint.Color(color)
-                                val vLine  = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
-                                val capLow = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
+                                val stroke  = Svg.Paint.Color(color)
+                                val vLine   = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val capLow  = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
                                 val capHigh =
                                     Svg.line.x1(px - halfCap).y1(pyHigh).x2(px + halfCap).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
                                 val marker = Svg.circle.cx(px).cy(py).r(3.0).fill(stroke)
@@ -909,27 +909,27 @@ private[kyo] object ChartMarks:
                 def loopGrouped(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
                     if i >= rows.size then acc
                     else
-                        val row   = rows(i)
-                        val xd    = mark.x.plottable.toDomain(mark.x.accessor(row))
-                        val yd    = mark.y.plottable.toDomain(mark.y.accessor(row))
-                        val lowD  = mark.low.plottable.toDomain(mark.low.accessor(row))
-                        val highD = mark.high.plottable.toDomain(mark.high.accessor(row))
+                        val row     = rows(i)
+                        val xd      = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd      = mark.y.plottable.toDomain(mark.y.accessor(row))
+                        val lowD    = mark.low.plottable.toDomain(mark.low.accessor(row))
+                        val highD   = mark.high.plottable.toDomain(mark.high.accessor(row))
                         val nextAcc = (xd, yd, lowD, highD) match
                             case (Present(x), Present(y), Present(lo), Present(hi)) =>
-                                val px     = xs.apply(x) + xs.bandwidth / 2.0
-                                val py     = ys.apply(y)
-                                val pyLow  = ys.apply(lo)
-                                val pyHigh = ys.apply(hi)
+                                val px       = xs.apply(x) + xs.bandwidth / 2.0
+                                val py       = ys.apply(y)
+                                val pyLow    = ys.apply(lo)
+                                val pyHigh   = ys.apply(hi)
                                 val colorIdx = mark.color match
-                                    case Absent => -1
+                                    case Absent      => -1
                                     case Present(ch) =>
                                         val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
-                                val stroke = Svg.Paint.Color(color)
-                                val vLine  = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
-                                val capLow = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
+                                val stroke  = Svg.Paint.Color(color)
+                                val vLine   = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val capLow  = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
                                 val capHigh =
                                     Svg.line.x1(px - halfCap).y1(pyHigh).x2(px + halfCap).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
                                 val marker = Svg.circle.cx(px).cy(py).r(3.0).fill(stroke)
@@ -968,13 +968,13 @@ private[kyo] object ChartMarks:
         internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
     )(using Frame): Maybe[Svg.SvgElement] =
         mark.y match
-            case Absent => Absent
+            case Absent        => Absent
             case Present(yEnc) =>
                 val baseline = layout.plotBaseline
                 // Collect (px, py) pairs, skipping non-finite values (NaN/Infinity produce corrupt SVG paths).
                 val points: Chunk[(Double, Double)] = seriesRows.flatMap: row =>
                     yEnc.accessor(row) match
-                        case Absent => Chunk.empty
+                        case Absent      => Chunk.empty
                         case Present(yv) =>
                             val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
                             val yd = yEnc.plottable.toDomain(yv)
@@ -1000,11 +1000,11 @@ private[kyo] object ChartMarks:
                     val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
                     // Apply opacity encoding if present; default fillOpacity=0.7.
                     val baseOpacity = 0.7
-                    val opacity = mark.opacity match
+                    val opacity     = mark.opacity match
                         case Present(fn) =>
                             seriesRows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
                         case Absent => baseOpacity
-                    val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(fill)).fillOpacity(opacity)
+                    val basePath    = Svg.path.d(pd2).fill(Svg.Paint.Color(fill)).fillOpacity(opacity)
                     val withTooltip = mark.tooltip match
                         case Present(fn) =>
                             seriesRows.headMaybe match
@@ -1014,7 +1014,7 @@ private[kyo] object ChartMarks:
                     // Attach interaction attrs to the area path.
                     // The representative row is the first defined row.
                     val withInteraction = spec match
-                        case Absent => withTooltip
+                        case Absent     => withTooltip
                         case Present(s) =>
                             seriesRows.headMaybe match
                                 case Absent     => withTooltip
@@ -1049,8 +1049,8 @@ private[kyo] object ChartMarks:
                     case Present(_) =>
                         // Stacked area has no natural per-row identity; tag with the first row of rows
                         // as the series-representative for highlight (series-level granularity).
-                        val stacked = lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
-                        val repRow  = rows.headMaybe
+                        val stacked                            = lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
+                        val repRow                             = rows.headMaybe
                         val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
                             case Absent     => stacked.map(el => (rows(0), el)) // unreachable when stacked is non-empty
                             case Present(r) => stacked.map(el => (r, el))
@@ -1063,7 +1063,7 @@ private[kyo] object ChartMarks:
                                 // No color encoding: single series using the per-mark default color.
                                 val pathMaybe = buildSimpleAreaPath(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
                                 val tagged: Chunk[(A, Svg.SvgElement)] = pathMaybe match
-                                    case Absent => Chunk.empty
+                                    case Absent        => Chunk.empty
                                     case Present(path) =>
                                         rows.headMaybe match
                                             case Present(r) => Chunk((r, path))
@@ -1074,7 +1074,7 @@ private[kyo] object ChartMarks:
                                 // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
                                 // so a non-stacked area without a colorScale uses the theme palette.
                                 val colorEncAny: Encoding[A, ?] = colorEnc
-                                val cats: Chunk[(String, Any)] =
+                                val cats: Chunk[(String, Any)]  =
                                     ChartLegend.collectColorCategoriesWithRaw(rows, colorEncAny)
                                 val palette: Chunk[Style.Color] = spec match
                                     case Present(s) => ChartLegend.resolvePalette(s, cats)
@@ -1093,7 +1093,7 @@ private[kyo] object ChartMarks:
                                     val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
                                     val fillColor  = palette(idx % palette.size)
                                     buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef) match
-                                        case Absent => Chunk.empty
+                                        case Absent        => Chunk.empty
                                         case Present(path) =>
                                             seriesRows.headMaybe match
                                                 case Present(r) => Chunk((r, path))
@@ -1103,8 +1103,8 @@ private[kyo] object ChartMarks:
             case Absent =>
                 // y0/y1 band form: render a closed ribbon between the two edges.
                 // Tag the ribbon with the first row as the series-representative for highlight.
-                val ribbon = buildBandRibbon(rows, mark, xs, ys, defaultColor)
-                val repRow = rows.headMaybe
+                val ribbon                             = buildBandRibbon(rows, mark, xs, ys, defaultColor)
+                val repRow                             = rows.headMaybe
                 val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
                     case Absent     => Chunk.empty
                     case Present(r) => ribbon.map(el => (r, el))
@@ -1160,11 +1160,11 @@ private[kyo] object ChartMarks:
                     val connectedPd = forwardPd.lineTo(y0ptsRev(0)._1, y0ptsRev(0)._2)
                     val ribbonPd    = CurvePath.append(connectedPd, y0ptsRev.drop(1), mark.curve).close
                     val baseOpacity = 0.7
-                    val opacity = mark.opacity match
+                    val opacity     = mark.opacity match
                         case Present(fn) =>
                             rows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
                         case Absent => baseOpacity
-                    val basePath = Svg.path.d(ribbonPd).fill(Svg.Paint.Color(fillColor)).fillOpacity(opacity)
+                    val basePath    = Svg.path.d(ribbonPd).fill(Svg.Paint.Color(fillColor)).fillOpacity(opacity)
                     val withTooltip = mark.tooltip match
                         case Present(fn) =>
                             rows.headMaybe match
@@ -1220,7 +1220,7 @@ private[kyo] object ChartMarks:
         val groupKeys: Chunk[String] = ChartLegend.collectColorCategories(rows, groupEnc)
         // Per-group palette, resolved the SAME way the stacked-bar path does so each band gets a
         // distinct fill color (honoring a custom theme.palette; DefaultPalette under the default theme).
-        val groupCats: Chunk[(String, Any)] = ChartLegend.collectColorCategoriesWithRaw(rows, groupEnc)
+        val groupCats: Chunk[(String, Any)]  = ChartLegend.collectColorCategoriesWithRaw(rows, groupEnc)
         val groupPalette: Chunk[Style.Color] = spec match
             case Present(s) => ChartLegend.resolvePalette(s, groupCats)
             case Absent     => ChartLegend.resolvePaletteFromCfg(groupKeys)
@@ -1250,7 +1250,7 @@ private[kyo] object ChartMarks:
         def buildMap(i: Int, m: Map[String, Map[ChartFoundations.CatKey, Double]]): Map[String, Map[ChartFoundations.CatKey, Double]] =
             if i >= rows.size then m
             else
-                val row = rows(i)
+                val row     = rows(i)
                 val xKeyOpt = mark.x.plottable.toDomain(mark.x.accessor(row)) match
                     case Present(d) => Present(ChartScales.domainKey(d))
                     case Absent     => Absent
@@ -1332,7 +1332,7 @@ private[kyo] object ChartMarks:
                         // Attach interaction attrs to each group path.
                         // The representative row is the first row in this group (precomputed in rowByGroup).
                         val withInteraction = spec match
-                            case Absent => basePath
+                            case Absent     => basePath
                             case Present(s) =>
                                 Maybe.fromOption(rowByGroup.get(gck)) match
                                     case Absent     => basePath
@@ -1410,16 +1410,16 @@ private[kyo] object ChartMarks:
         // the same stable, cross-platform type identity the per-row lookup uses below, with no widening cast.
         val colorByKey: Map[ChartFoundations.CatKey, Style.Color] =
             mark.color match
-                case Absent => Map.empty
+                case Absent            => Map.empty
                 case Present(colorEnc) =>
-                    val cats = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
+                    val cats    = ChartLegend.collectColorCategoriesWithRaw(rows, colorEnc)
                     val palette = spec match
                         case Present(s) => ChartLegend.resolvePalette(s, cats)
                         case Absent     => cats.zipWithIndex.map((_, i) => ChartAxes.DefaultPalette(i % ChartAxes.DefaultPalette.size))
                     cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
                         val ((label, raw), idx) = pair
                         val key                 = ChartFoundations.categoryKey(colorEnc.tag, raw)
-                        val color =
+                        val color               =
                             if idx < palette.size then palette(idx) else ChartAxes.DefaultPalette(idx % ChartAxes.DefaultPalette.size)
                         m.updated(key, color)
 
@@ -1433,9 +1433,9 @@ private[kyo] object ChartMarks:
         ): (Chunk[(A, Svg.SvgElement)], Chunk[Svg.SvgElement]) =
             if i >= rows.size then (glyphs, labels)
             else
-                val row = rows(i)
+                val row                                                          = rows(i)
                 val nextAcc: (Chunk[(A, Svg.SvgElement)], Chunk[Svg.SvgElement]) = mark.y.accessor(row) match
-                    case Absent => (glyphs, labels)
+                    case Absent      => (glyphs, labels)
                     case Present(yv) =>
                         val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
                         val yd = mark.y.plottable.toDomain(yv)
@@ -1451,14 +1451,14 @@ private[kyo] object ChartMarks:
                                     // Resolve radius: sizePx > size > DefaultRadius.
                                     val r = mark.sizePx match
                                         case Present(fn) => fn(row)
-                                        case Absent =>
+                                        case Absent      =>
                                             sizeScale match
                                                 case Present(sc) => sc.radius(mark.size.map(_(row)).getOrElse(DefaultRadius))
                                                 case Absent      => DefaultRadius
 
                                     // Resolve fill color.
                                     val fillColor = mark.color match
-                                        case Absent => defaultColor
+                                        case Absent            => defaultColor
                                         case Present(colorEnc) =>
                                             val key = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
                                             colorByKey.getOrElse(key, defaultColor)
@@ -1481,7 +1481,7 @@ private[kyo] object ChartMarks:
                                             .stroke(Svg.Paint.Color(separator))
                                             .strokeWidth(PointStrokeWidth)
                                             .withAttrs(iAttrs)
-                                        val withOp = opacity.fold(base)(op => base.fillOpacity(op))
+                                        val withOp  = opacity.fold(base)(op => base.fillOpacity(op))
                                         val withTip = mark.tooltip match
                                             case Present(fn) => withOp(Svg.title(fn(row)))
                                             case Absent      => withOp
@@ -1497,7 +1497,7 @@ private[kyo] object ChartMarks:
                                                 .stroke(Svg.Paint.Color(separator))
                                                 .strokeWidth(PointStrokeWidth)
                                                 .withAttrs(iAttrs)
-                                            val withOp = opacity.fold(base)(op => base.fillOpacity(op))
+                                            val withOp  = opacity.fold(base)(op => base.fillOpacity(op))
                                             val withTip = mark.tooltip match
                                                 case Present(fn) => withOp(Svg.title(fn(row)))
                                                 case Absent      => withOp
@@ -1620,7 +1620,7 @@ private[kyo] object ChartMarks:
         // point rather than aligning to the band left wall.
         def xLine(d: Domain): Svg.Line =
             val leftEdge = xs.apply(d)
-            val px = d match
+            val px       = d match
                 case _: Domain.Category => leftEdge + xs.bandwidth / 2.0
                 case _                  => leftEdge
             Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)

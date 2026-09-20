@@ -145,7 +145,7 @@ class PostgresEncoderIntervalTest extends Test:
     "INTERVAL decode raises SqlDecodeException when months != 0" in {
         // months = -1 (e.g. PG INTERVAL '1 month ago')
         val bytes = intervalBytes(0L, 0, -1)
-        val ex = intercept[SqlDecodeIntervalException] {
+        val ex    = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
         assert(ex.field == "months", s"expected months field, got: ${ex.field}")
@@ -155,7 +155,7 @@ class PostgresEncoderIntervalTest extends Test:
     "INTERVAL decode raises SqlDecodeException when days != 0 and months == 0" in {
         // days = 3, months = 0
         val bytes = intervalBytes(0L, 3, 0)
-        val ex = intercept[SqlDecodeIntervalException] {
+        val ex    = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
         assert(ex.field == "days", s"expected days field, got: ${ex.field}")
@@ -165,7 +165,7 @@ class PostgresEncoderIntervalTest extends Test:
     "INTERVAL decode raises months error before days error when both are non-zero" in {
         // months=1, days=5: months check fires first
         val bytes = intervalBytes(0L, 5, 1)
-        val ex = intercept[SqlDecodeIntervalException] {
+        val ex    = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
         assert(ex.field == "months", s"expected months field first, got: ${ex.field}")
@@ -227,7 +227,7 @@ class PostgresEncoderIntervalTest extends Test:
     "INTERVAL text decode raises SqlDecodeException for PG verbose format with months" in {
         val s     = "1 year 2 mons 00:01:02"
         val bytes = Span.from(s.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        val ex = intercept[SqlDecodeIntervalException] {
+        val ex    = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Text, bytes)
         }
         assert(ex.field == "text", s"expected 'text' field, got: ${ex.field}")
@@ -383,19 +383,17 @@ class PostgresEncoderIntervalTest extends Test:
     end readMicros
 
     /** Reads the raw Int32 days from a 16-byte INTERVAL binary payload (offset 8). */
-    private def readDays(bytes: Span[Byte]): Int =
-        ((bytes(8) & 0xff) << 24) |
-            ((bytes(9) & 0xff) << 16) |
-            ((bytes(10) & 0xff) << 8) |
-            (bytes(11) & 0xff)
+    private def readDays(bytes: Span[Byte]): Int = ((bytes(8) & 0xff) << 24) |
+        ((bytes(9) & 0xff) << 16) |
+        ((bytes(10) & 0xff) << 8) |
+        (bytes(11) & 0xff)
     end readDays
 
     /** Reads the raw Int32 months from a 16-byte INTERVAL binary payload (offset 12). */
-    private def readMonths(bytes: Span[Byte]): Int =
-        ((bytes(12) & 0xff) << 24) |
-            ((bytes(13) & 0xff) << 16) |
-            ((bytes(14) & 0xff) << 8) |
-            (bytes(15) & 0xff)
+    private def readMonths(bytes: Span[Byte]): Int = ((bytes(12) & 0xff) << 24) |
+        ((bytes(13) & 0xff) << 16) |
+        ((bytes(14) & 0xff) << 8) |
+        (bytes(15) & 0xff)
     end readMonths
 
     "Period encodes as INTERVAL with months and days, OID 1186 Binary" in {

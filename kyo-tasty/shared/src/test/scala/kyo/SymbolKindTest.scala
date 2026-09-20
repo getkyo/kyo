@@ -18,7 +18,7 @@ class SymbolKindTest extends kyo.test.Test[Any]:
             values.length == 14,
             s"Expected 14 SymbolKind cases but got ${values.length}: ${values.mkString(", ")}"
         )
-        val kindSet = values.toSet
+        val kindSet                    = values.toSet
         val expected: List[SymbolKind] = List(
             SymbolKind.Package,
             SymbolKind.Class,

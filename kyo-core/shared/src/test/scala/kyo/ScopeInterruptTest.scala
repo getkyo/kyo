@@ -43,7 +43,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
                 freed    <- AtomicInt.init(0)
-                _ <- selfInterrupting(rounds) { self =>
+                _        <- selfInterrupting(rounds) { self =>
                     Bracket(
                         Bracket(Sync.defer(0)) { _ =>
                             Sync.defer {
@@ -81,7 +81,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
                 ended    <- AtomicInt.init(0)
-                _ <- selfInterrupting(rounds) { self =>
+                _        <- selfInterrupting(rounds) { self =>
                     Sync.acquireReleaseWith {
                         Sync.ensure(ended.incrementAndGet.unit) {
                             Sync.defer {
@@ -112,7 +112,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
-                _ <- selfInterrupting(rounds) { self =>
+                _        <- selfInterrupting(rounds) { self =>
                     Sync.acquireReleaseWith {
                         Sync.defer {
                             import AllowUnsafe.embrace.danger
@@ -133,7 +133,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
-                _ <- selfInterrupting(rounds) { self =>
+                _        <- selfInterrupting(rounds) { self =>
                     Sync.acquireReleaseWith {
                         Sync.defer {
                             // Unsafe: the interrupt must be requested from inside the acquire, in the step that
@@ -187,7 +187,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         for
             released <- AtomicInt.init(0)
             child    <- Promise.init[Int, Any]
-            parent <- Fiber.initUnscoped {
+            parent   <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.acquireRelease(child.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
                 }
@@ -209,7 +209,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             released <- AtomicInt.init(0)
             child    <- Promise.init[Int, Any]
             inner    <- Fiber.initUnscoped(child.get)
-            parent <- Fiber.initUnscoped {
+            parent   <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.acquireRelease(inner.get)(_ => released.incrementAndGet.unit).andThen(Async.never)
                 }
@@ -238,7 +238,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             permits <- Channel.init[Unit](1)
             _       <- permits.put(())
             gate    <- Promise.init[Unit, Any]
-            parent <- Fiber.initUnscoped {
+            parent  <- Fiber.initUnscoped {
                 Scope.run {
                     Fiber.initUnscoped(gate.get.andThen(Scope.acquireRelease(permits.take)(_ => permits.put(())).unit))
                         .andThen(Async.never)
@@ -262,7 +262,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             permits    <- Channel.init[Unit](1)
             _          <- permits.put(())
             registered <- Latch.init(1)
-            parent <- Fiber.initUnscoped {
+            parent     <- Fiber.initUnscoped {
                 Scope.run {
                     Async.timeout(1.hour) {
                         Scope.acquireRelease(permits.take)(_ => permits.put(())).andThen(registered.release)
@@ -284,7 +284,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             permits <- Channel.init[Unit](1)
             _       <- permits.put(())
             gate    <- Promise.init[Unit, Any]
-            parent <- Fiber.initUnscoped {
+            parent  <- Fiber.initUnscoped {
                 Scope.run {
                     Async.timeout(1.hour) {
                         gate.get.andThen(Scope.acquireRelease(permits.take)(_ => permits.put(())))
@@ -307,7 +307,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             entered  <- AtomicBoolean.init(false)
             log      <- AtomicRef.init(Chunk.empty[String])
             released <- Latch.init(1)
-            _ <- Scope.run {
+            _        <- Scope.run {
                 Fiber.init {
                     Sync.ensure(log.updateAndGet(_.append("released")).andThen(released.release)) {
                         entered.set(true).andThen(Async.never)
@@ -398,7 +398,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             finalized <- AtomicInt.init(0)
             resumed   <- AtomicBoolean.init(false)
             promise   <- Sync.Unsafe.defer(Promise.Unsafe.initUninterruptible[Unit, Any]().safe)
-            fiber <- Fiber.initUnscoped {
+            fiber     <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.ensure(finalized.incrementAndGet.unit).andThen(promise.get.andThen(resumed.set(true)))
                 }
@@ -430,7 +430,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             gate     <- Latch.init(1)
             draining <- Latch.init(1)
             closes   <- AtomicInt.init(0)
-            fiber <- Fiber.initUnscoped {
+            fiber    <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.run(Scope.ensure(draining.release.andThen(gate.await)).andThen(Sync.defer("handle")))
                         .ensureMap(h => Scope.ensure(closes.incrementAndGet.unit).andThen(h))
@@ -455,7 +455,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             released <- AtomicBoolean.init(false)
             entered  <- Latch.init(1)
             gate     <- Latch.init(1)
-            child <- Scope.run {
+            child    <- Scope.run {
                 Emit.runFirst[Int] {
                     Sync.ensure(released.set(true)) {
                         Emit.value(1).andThen(entered.release).andThen(gate.await).andThen(released.get)

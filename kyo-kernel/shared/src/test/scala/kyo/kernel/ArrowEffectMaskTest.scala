@@ -16,34 +16,36 @@ import scala.collection.mutable.ListBuffer
 class ArrowEffectMaskTest extends AnyFreeSpec:
 
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
-    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+    def ask: Int < Ask                                     = ArrowEffect.suspend[Any](Tag[Ask], ())
     def runAsk[A, S](v: A < (Ask & S))(answer: Int): A < S =
         ArrowEffect.handleCont(Tag[Ask], v)([C] => (_, cont) => cont(answer))
 
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
-    def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
+    def say(s: String): Unit < Say                                     = ArrowEffect.suspend[Any](Tag[Say], s)
     def runSay[A, S](v: A < (Say & S))(buf: ListBuffer[String]): A < S =
         ArrowEffect.handleCont(Tag[Say], v)([C] =>
             (input, cont) =>
                 buf += input
-                cont(()))
+                cont(())
+        )
 
     sealed trait AskSub extends Ask
 
-    def askSub: Int < Ask = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
+    def askSub: Int < Ask                                        = ArrowEffect.suspend[Any](Tag[AskSub].asInstanceOf[Tag[Ask]], ())
     def runAskSub[A, S](v: A < (AskSub & S))(answer: Int): A < S =
         ArrowEffect.handleCont(Tag[AskSub], v)([C] => (_, cont) => cont(answer))
 
     sealed trait Log extends ArrowEffect[Const[String], Const[Unit]]
-    def logLine(s: String): Unit < Log = ArrowEffect.suspend[Any](Tag[Log], s)
+    def logLine(s: String): Unit < Log                                 = ArrowEffect.suspend[Any](Tag[Log], s)
     def runLog[A, S](v: A < (Log & S))(buf: ListBuffer[String]): A < S =
         ArrowEffect.handleCont(Tag[Log], v)([C] =>
             (input, cont) =>
                 buf += input
-                cont(()))
+                cont(())
+        )
 
     sealed trait Cfg extends ContextEffect[Int]
-    def readCfg: Int < Cfg = ContextEffect.suspend(Tag[Cfg])
+    def readCfg: Int < Cfg                                = ContextEffect.suspend(Tag[Cfg])
     def runCfg[A, S](v: A < (Cfg & S))(value: Int): A < S =
         ContextEffect.handleInheritable(Tag[Cfg], value)(v)
 
@@ -76,7 +78,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "masking is selective: other effects stay live for local handlers and outer answers flow back in" in {
-        val buf = ListBuffer[String]()
+        val buf                  = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say(s"got $a").map(_ => ask.map(b => a + b)))
         val masked: Int < (Mask[Ask] & Say) = Mask[Ask](v)
@@ -90,7 +92,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     "interactions" - {
 
         "a bracket inside the mask releases after the tunneled answer flows back" in {
-            var order = List.empty[String]
+            var order        = List.empty[String]
             val v: Int < Ask =
                 Bracket(Effect.defer {
                     order ::= "acquire"
@@ -107,7 +109,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a bracket inside the mask releases when the outer handler discards the continuation" in {
-            var order = List.empty[String]
+            var order        = List.empty[String]
             val v: Int < Ask =
                 Bracket(Effect.defer {
                     order ::= "acquire"
@@ -116,7 +118,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
                     ask
                 }((_, _) => order ::= "release")
             val unmasked: Int < Ask = Mask.run[Ask](Mask[Ask](v))
-            val out: Int < Any = ArrowEffect.handleCont(Tag[Ask], unmasked)(
+            val out: Int < Any      = ArrowEffect.handleCont(Tag[Ask], unmasked)(
                 [C] => (_, _) => -1,
                 a => a
             )
@@ -126,7 +128,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
 
         "a recovering region inside the mask catches a failure raised after the tunneled answer returns" in {
             val body: Int < (Say & Ask) = ask.map(a => (throw Boom): Int)
-            val v: Int < Ask = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
+            val v: Int < Ask            = ArrowEffect.handleCont[Const[String], Const[Unit], Say, Int, Int, Ask, Any](Tag[Say], body)(
                 [C] => (_, cont) => cont(()),
                 a => a,
                 _ => Maybe(-1)
@@ -147,11 +149,11 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a multi-shot outer handler replays the masked region and its local effects" in {
-            val buf = ListBuffer[String]()
+            val buf                  = ListBuffer[String]()
             val v: Int < (Ask & Say) =
                 ask.map(a => say(a.toString).map(_ => a))
             val out: Int < Ask = Mask.run[Ask](runSay(Mask[Ask](v))(buf))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], out)(
+            val r: Int < Any   = ArrowEffect.handleCont(Tag[Ask], out)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 a => a
             )
@@ -186,8 +188,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "a slice parked mid-tunnel resumes and both masked effects still route" in {
-            val innerBuf = ListBuffer[String]()
-            val outerBuf = ListBuffer[String]()
+            val innerBuf             = ListBuffer[String]()
+            val outerBuf             = ListBuffer[String]()
             val v: Int < (Ask & Say) =
                 ask.map { a =>
                     requestStop()
@@ -212,7 +214,7 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
         }
 
         "an outer handler that ends without resuming stops the masked remainder" in {
-            var later = false
+            var later        = false
             val v: Int < Ask = ask.map { a =>
                 later = true
                 a + 1
@@ -271,9 +273,9 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "a mask over part of a wider row leaves the other effects live" in {
-        val logs     = ListBuffer[String]()
-        val innerBuf = ListBuffer[String]()
-        val outerBuf = ListBuffer[String]()
+        val logs                       = ListBuffer[String]()
+        val innerBuf                   = ListBuffer[String]()
+        val outerBuf                   = ListBuffer[String]()
         val v: Int < (Ask & Say & Log) =
             ask.map(a => logLine("mid").map(_ => say("s").map(_ => ask.map(b => a + b))))
         val masked = Mask[Ask & Say](v)
@@ -324,10 +326,10 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "interleaved operations of both masked effects keep program order" in {
-        val order = ListBuffer[String]()
+        val order                = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say("first").map(_ => ask.map(b => say("second").map(_ => a * 10 + b))))
-        val out = Mask.run[Ask & Say](Mask[Ask & Say](v))
+        val out                    = Mask.run[Ask & Say](Mask[Ask & Say](v))
         val askAnswered: Int < Say = ArrowEffect.handleCont(Tag[Ask], out)(
             [C] =>
                 (_, cont) =>
@@ -349,8 +351,8 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "one mask over an intersection masks both effects and each re-emerges at its own handler" in {
-        val innerBuf = ListBuffer[String]()
-        val outerBuf = ListBuffer[String]()
+        val innerBuf             = ListBuffer[String]()
+        val outerBuf             = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say(s"got $a").map(_ => ask.map(b => a + b)))
         val masked       = Mask[Ask & Say](v)
@@ -364,11 +366,11 @@ class ArrowEffectMaskTest extends AnyFreeSpec:
     }
 
     "masks of different effects stack independently" in {
-        val innerBuf = ListBuffer[String]()
-        val outerBuf = ListBuffer[String]()
+        val innerBuf             = ListBuffer[String]()
+        val outerBuf             = ListBuffer[String]()
         val v: Int < (Ask & Say) =
             ask.map(a => say("crossed").map(_ => a))
-        val bothMasked: Int < (Mask[Ask] & Mask[Say]) = Mask[Say](Mask[Ask](v))
+        val bothMasked: Int < (Mask[Ask] & Mask[Say])   = Mask[Say](Mask[Ask](v))
         val innerHandled: Int < (Mask[Ask] & Mask[Say]) =
             runSay(runAsk(bothMasked)(1))(innerBuf)
         val out = runSay(runAsk(Mask.run[Say](Mask.run[Ask](innerHandled)))(42))(outerBuf)

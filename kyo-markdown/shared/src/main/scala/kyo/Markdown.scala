@@ -277,7 +277,7 @@ object Markdown:
                 val slug           = makeSlug(text)
                 val inlineNodes    = parseInline(text)
                 val inlineChildren = html(inlineNodes)
-                val heading: UI = level match
+                val heading: UI    = level match
                     case 1 => UI.h1.id(slug)(inlineChildren*)
                     case 2 => UI.h2.id(slug)(inlineChildren*)
                     case 3 => UI.h3.id(slug)(inlineChildren*)
@@ -431,7 +431,7 @@ object Markdown:
             val headerCells = parseRowCells(tableLines.head)
             val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Chunk.empty[String]
             val headerTr    = UI.tr(html(headerCells.map(cell => UI.th(html(parseInline(cell))*)))*)
-            val bodyTrs = bodyRows.map { row =>
+            val bodyTrs     = bodyRows.map { row =>
                 val cells = parseRowCells(row)
                 UI.tr(html(cells.map(cell => UI.td(html(parseInline(cell))*)))*)
             }
@@ -576,8 +576,8 @@ object Markdown:
       * adjacent literal characters into single `Ast.Text` leaves.
       */
     private def coalesceText(tokens: Chunk[Token])(using Frame): Chunk[UI] =
-        val out = new mutable.ArrayBuffer[UI]()
-        val buf = new mutable.StringBuilder()
+        val out           = new mutable.ArrayBuffer[UI]()
+        val buf           = new mutable.StringBuilder()
         def flush(): Unit =
             if buf.nonEmpty then
                 out += Ast.Text(buf.toString)

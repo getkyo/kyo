@@ -33,7 +33,7 @@ object FrameAssembler:
         Pipe:
             Loop(Span.empty[Byte], Undecided) { (carry, mode) =>
                 Poll.andMap[Chunk[Span[Byte]]] {
-                    case Absent => Loop.done(())
+                    case Absent         => Loop.done(())
                     case Present(spans) =>
                         val combined = spans.foldLeft(carry)((acc, s) => acc ++ s)
                         if combined.isEmpty then Loop.continue(combined, mode)
@@ -64,7 +64,7 @@ object FrameAssembler:
             if offset + 8 > len then offset
             else
                 val streamType = arr(offset) & 0xff
-                val size = ((arr(offset + 4) & 0xff) << 24) |
+                val size       = ((arr(offset + 4) & 0xff) << 24) |
                     ((arr(offset + 5) & 0xff) << 16) |
                     ((arr(offset + 6) & 0xff) << 8) |
                     (arr(offset + 7) & 0xff)

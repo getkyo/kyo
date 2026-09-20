@@ -200,7 +200,7 @@ object Flag {
                     val elements = s.split(",").toSeq.map(_.trim)
                     elements.foldLeft[Either[Throwable, Seq[A]]](Right(Seq.empty)) { (acc, elem) =>
                         acc match {
-                            case Left(e) => Left(e)
+                            case Left(e)    => Left(e)
                             case Right(seq) =>
                                 r(elem) match {
                                     case Left(e)  => Left(e)
@@ -258,7 +258,7 @@ object Flag {
             val sourceHeader  = "Source"
 
             val rows = flags.map { flag =>
-                val typ = if (flag.isDynamic) "dynamic" else "static"
+                val typ   = if (flag.isDynamic) "dynamic" else "static"
                 val value = flag match {
                     case f: StaticFlag[?] => String.valueOf(f.value)
                     case _                => "\u2014" // em dash for dynamic flags
@@ -274,19 +274,21 @@ object Flag {
             val defaultW = math.max(defaultHeader.length, rows.map(_._4.length).max)
             val sourceW  = math.max(sourceHeader.length, rows.map(_._5.length).max)
 
-            def pad(s: String, w: Int): String = s + " " * (w - s.length)
+            def pad(s: String, w: Int): String                              = s + " " * (w - s.length)
             def line(l: String, m: String, r: String, fill: String): String =
                 s"$l${fill * (nameW + 2)}$m${fill * (typeW + 2)}$m${fill * (valueW + 2)}$m${fill * (defaultW + 2)}$m${fill * (sourceW + 2)}$r"
 
             val sb = new StringBuilder
             sb ++= line("\u250c", "\u252c", "\u2510", "\u2500")
             sb += '\n'
-            sb ++= s"\u2502 ${pad(nameHeader, nameW)} \u2502 ${pad(typeHeader, typeW)} \u2502 ${pad(valueHeader, valueW)} \u2502 ${pad(defaultHeader, defaultW)} \u2502 ${pad(sourceHeader, sourceW)} \u2502"
+            sb ++=
+                s"\u2502 ${pad(nameHeader, nameW)} \u2502 ${pad(typeHeader, typeW)} \u2502 ${pad(valueHeader, valueW)} \u2502 ${pad(defaultHeader, defaultW)} \u2502 ${pad(sourceHeader, sourceW)} \u2502"
             sb += '\n'
             sb ++= line("\u251c", "\u253c", "\u2524", "\u2500")
             sb += '\n'
             rows.foreach { case (name, typ, value, default, source) =>
-                sb ++= s"\u2502 ${pad(name, nameW)} \u2502 ${pad(typ, typeW)} \u2502 ${pad(value, valueW)} \u2502 ${pad(default, defaultW)} \u2502 ${pad(source, sourceW)} \u2502"
+                sb ++=
+                    s"\u2502 ${pad(name, nameW)} \u2502 ${pad(typ, typeW)} \u2502 ${pad(value, valueW)} \u2502 ${pad(default, defaultW)} \u2502 ${pad(source, sourceW)} \u2502"
                 sb += '\n'
             }
             sb ++= line("\u2514", "\u2534", "\u2518", "\u2500")

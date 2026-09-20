@@ -147,8 +147,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                 Log.warn(
                                     s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                                 ).andThen(Abort.fail(e))
-                            case Result.Failure(e) => Abort.fail(e)
-                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                            case Result.Failure(e)  => Abort.fail(e)
+                            case Result.Panic(t)    => Abort.error(Result.Panic(t))
                             case Result.Success(()) =>
                                 leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis))
                                     .andThen(acquireScoped(address, password, netKey, config, leaseClock))
@@ -422,8 +422,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                 Log.warn(
                                     s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                                 ).andThen(Abort.fail(e))
-                            case Result.Failure(e) => Abort.fail(e)
-                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                            case Result.Failure(e)  => Abort.fail(e)
+                            case Result.Panic(t)    => Abort.error(Result.Panic(t))
                             case Result.Success(()) =>
                                 sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
                                     Abort.run[SqlException](body).flatMap {
@@ -583,7 +583,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                             }
                         case RingAttempt.Reserved   => Loop.done[Unit, Maybe[C]](Absent)
                         case RingAttempt.PoolClosed => Abort.fail(SqlConnectionPoolClosedException())
-                        case RingAttempt.InTransit =>
+                        case RingAttempt.InTransit  =>
                             withinAcquireBudget(transitClock, config).andThen(Async.sleep(1.milli).andThen(Loop.continue(())))
                     }
                 }
@@ -626,7 +626,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       */
     private def healthy(conn: C, config: SqlConfig)(using Frame): Boolean < (Async & Abort[SqlException]) =
         config.connectionTestQuery match
-            case Absent => true
+            case Absent       => true
             case Present(sql) =>
                 Log.use { logger =>
                     Abort.run[SqlException] {

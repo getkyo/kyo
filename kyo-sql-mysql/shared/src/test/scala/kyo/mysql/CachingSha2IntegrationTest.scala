@@ -47,7 +47,7 @@ class CachingSha2IntegrationTest extends SqlContainerTest:
                 Abort.run[SqlException](f(details)).flatMap {
                     case Result.Success(a) => a
                     case Result.Failure(e) => Abort.fail(e: Throwable)
-                    case Result.Panic(t) =>
+                    case Result.Panic(t)   =>
                         scala.Console.err.println(s"[CachingSha2IntegrationTest] panic: ${t.getMessage}")
                         Abort.fail(t)
                 }

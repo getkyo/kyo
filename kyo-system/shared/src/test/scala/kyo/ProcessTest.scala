@@ -192,8 +192,8 @@ class ProcessTest extends kyo.test.Test[Any]:
                 // If collectOutput called waitFor, alive would always be false
                 // This test documents that the process may still be running after drain
                 assert(new String(out.toArray).trim == "done")
-                // alive may be true or false depending on timing — the key insight is
-                // that collectOutput doesn't guarantee process exit
+            // alive may be true or false depending on timing — the key insight is
+            // that collectOutput doesn't guarantee process exit
         }
     }
 
@@ -208,8 +208,8 @@ class ProcessTest extends kyo.test.Test[Any]:
             yield
                 // stdout was drained, but process may not have exited yet
                 assert(new String(out.toArray).trim == "x")
-                // code may be Absent if process is still in sleep phase
-                // This documents the race: callers must explicitly waitFor
+            // code may be Absent if process is still in sleep phase
+            // This documents the race: callers must explicitly waitFor
         }
     }
 
@@ -403,7 +403,7 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         for
             pidHolder <- AtomicLong.init(0L)
-            _ <- Scope.run {
+            _         <- Scope.run {
                 for
                     proc <- Command("sleep", "60").spawn
                     pid  <- proc.pid
@@ -470,7 +470,7 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         for
             pidHolder <- AtomicLong.init(0L)
-            _ <- Scope.run {
+            _         <- Scope.run {
                 for
                     proc <- Command("sleep", "60").spawn
                     pid  <- proc.pid
@@ -502,7 +502,7 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         for
             pidRef <- AtomicLong.init(0L)
-            _ <- Scope.run {
+            _      <- Scope.run {
                 for
                     proc <- Command("sleep", "60").spawn
                     pid  <- proc.pid
@@ -530,7 +530,7 @@ class ProcessTest extends kyo.test.Test[Any]:
         unixOnly
         for
             pidRef <- AtomicLong.init(0L)
-            _ <- Abort.run[String] {
+            _      <- Abort.run[String] {
                 Scope.run {
                     for
                         proc <- Command("sleep", "60").spawn

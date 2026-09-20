@@ -167,11 +167,9 @@ class PendingTest extends Test:
 
     sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect:
-        def apply(i: Int): Int < TestEffect = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
+        def apply(i: Int): Int < TestEffect       = ArrowEffect.suspend[Unit](Tag[TestEffect], i)
         def run[A, S](v: => A < (TestEffect & S)) =
-            ArrowEffect.handleCont(Tag[TestEffect], v)(
-                [C] => (input, cont) => cont(input + 1)
-            )
+            ArrowEffect.handleCont(Tag[TestEffect], v)([C] => (input, cont) => cont(input + 1))
     end TestEffect
 
     "evalNow" - {
@@ -188,7 +186,7 @@ class PendingTest extends Test:
         // The handled computation is settled by running it; evalNow reports Absent until then.
         "accepts nested computations" in {
             Kyo.lift(TestEffect(1)).evalNow match
-                case Absent => fail()
+                case Absent     => fail()
                 case Present(v) =>
                     assert(TestEffect.run(v).evalNow == Absent)
                     assert(TestEffect.run(v).eval == 2)
@@ -197,7 +195,7 @@ class PendingTest extends Test:
 
         "evalNow builds its receiver once" in {
             var runs = 0
-            val r = (1: Int < Any).map { a =>
+            val r    = (1: Int < Any).map { a =>
                 runs += 1
                 a + 1
             }.evalNow
@@ -226,7 +224,7 @@ class PendingTest extends Test:
 
         "allows chaining of operations" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result = effect
+            val result                   = effect
                 .handle(v => v.map(_ * 2))
                 .handle(v => TestEffect.run(v))
             assert(result.eval == 4)
@@ -234,7 +232,7 @@ class PendingTest extends Test:
 
         "works with functions that return effects" in {
             val effect: Int < TestEffect = TestEffect(1)
-            val result = effect.handle { v =>
+            val result                   = effect.handle { v =>
                 TestEffect.run(v).map { x =>
                     TestEffect.run(TestEffect(1))
                 }
@@ -399,7 +397,8 @@ class PendingTest extends Test:
             def run[A, S](v: A < (TestEffect1 & S)): A < S =
                 ArrowEffect.handleCont(Tag[TestEffect1], v)([C] =>
                     (input, cont) =>
-                        cont(s"Effect1:$input"))
+                        cont(s"Effect1:$input")
+                )
         end TestEffect1
 
         sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[Int]]
@@ -410,7 +409,8 @@ class PendingTest extends Test:
             def run[A, S](v: A < (TestEffect2 & S)): A < S =
                 ArrowEffect.handleCont(Tag[TestEffect2], v)([C] =>
                     (input, cont) =>
-                        cont(input.length + 10))
+                        cont(input.length + 10)
+                )
         end TestEffect2
 
         sealed trait TestEffect3 extends ContextEffect[Boolean]
@@ -450,7 +450,7 @@ class PendingTest extends Test:
             // the lift's wrapper
             val inner: Nothing < TestEffect1          = TestEffect1(7).map(_ => (throw new IllegalStateException("unreached")): Nothing)
             val nested: (Nothing < TestEffect1) < Any = Kyo.lift(inner)
-            val stopped: String < Any =
+            val stopped: String < Any                 =
                 ArrowEffect.handleLoop(Tag[TestEffect1], nested.flatten)([C] => input => Loop.done(s"stopped at $input"))
             assert(stopped.eval == "stopped at 7")
         }
@@ -478,7 +478,7 @@ class PendingTest extends Test:
             var mapped         = false
             var ensureMapped   = false
             val one: Int < Any = 1
-            val deferred = drainedBudget(one.map { v =>
+            val deferred       = drainedBudget(one.map { v =>
                 mapped = true; v
             })
             val applied = drainedBudget(one.ensureMap { v =>
@@ -583,7 +583,7 @@ class PendingTest extends Test:
             def processValue(v: Int): Int < TestEffect2 < TestEffect1 =
                 TestEffect1(v).map(s => Kyo.lift(TestEffect2(s + "!")))
 
-            val input = 100
+            val input  = 100
             val result = processValue(input).flatten
                 .map(n => n * 2)
                 .flatMap(n => TestEffect3().map(_ => n))
@@ -731,7 +731,7 @@ class PendingTest extends Test:
     "map receives a pending payload as a value" in {
         val inner: Int < Ask    = ask
         var received: Int < Ask = 0
-        val r: Int < Any = Kyo.lift(inner).map { c =>
+        val r: Int < Any        = Kyo.lift(inner).map { c =>
             received = c
             7
         }
@@ -755,12 +755,12 @@ class PendingTest extends Test:
     }
 
     "a handler applies done to a settled payload without driving it" in {
-        val outer: (Unit < Say) < Ask = Kyo.lift(say("x"): Unit < Say)
+        val outer: (Unit < Say) < Ask   = Kyo.lift(say("x"): Unit < Say)
         val handled: (Unit < Say) < Any =
             ArrowEffect.handleLoop(Tag[Ask], outer)([C] => _ => Loop.continue(1), a => Kyo.lift(a))
         val payload: Unit < Say = handled.eval
         var seen                = ""
-        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
+        val r: Unit < Any       = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
@@ -773,12 +773,12 @@ class PendingTest extends Test:
     }
 
     "a region returns a foreign payload untouched" in {
-        val body: (Unit < Say) < Ask = after(say("y"): Unit < Say)
+        val body: (Unit < Say) < Ask    = after(say("y"): Unit < Say)
         val handled: (Unit < Say) < Any =
             ArrowEffect.handleLoop(Tag[Ask], body)([C] => _ => Loop.continue(1), a => Kyo.lift(a))
         val payload: Unit < Say = handled.eval
         var seen                = ""
-        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Say], payload)(
+        val r: Unit < Any       = ArrowEffect.handleLoop(Tag[Say], payload)(
             [C] =>
                 s =>
                     seen = s
@@ -840,8 +840,8 @@ class PendingTest extends Test:
     }
 
     "a loop can end its region with a computation result" in {
-        val inner: Int < Ask = ask.map(_ + 1)
-        val body: Int < Give = give.map(_ => 0)
+        val inner: Int < Ask     = ask.map(_ + 1)
+        val body: Int < Give     = give.map(_ => 0)
         val r: (Int < Ask) < Any = ArrowEffect.handleLoop(Tag[Give], body)(
             [C] => _ => Loop.done(Kyo.lift(inner)),
             a => Kyo.lift(inner)
@@ -870,7 +870,7 @@ class PendingTest extends Test:
     }
 
     "a loop answer payload delivers unwrapped through a bare suspension" in {
-        val inner: Int < Ask = ask.map(_ + 1)
+        val inner: Int < Ask     = ask.map(_ + 1)
         val r: (Int < Ask) < Any =
             ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(Kyo.lift(inner)), a => Kyo.lift(a))
         val payload: Int < Ask = r.eval
@@ -878,7 +878,7 @@ class PendingTest extends Test:
     }
 
     "a suspended loop answer delivering a payload resumes unwrapped" in {
-        val inner: Int < Ask = ask.map(_ + 1)
+        val inner: Int < Ask           = ask.map(_ + 1)
         val handled: (Int < Ask) < Ask =
             ArrowEffect.handleLoop(Tag[Give], give)([C] => _ => Loop.continue(after(inner)), a => Kyo.lift(a))
         val payload: Int < Ask = answerAsk(0)(handled).eval
@@ -886,7 +886,7 @@ class PendingTest extends Test:
     }
 
     "a stateful loop answer payload delivers unwrapped through a bare suspension" in {
-        val inner: Int < Ask = ask.map(_ + 1)
+        val inner: Int < Ask     = ask.map(_ + 1)
         val r: (Int < Ask) < Any =
             ArrowEffect.handleLoopState(Tag[Give], 0, give)(
                 [C] => (s, _) => Loop.continue(s + 1, Kyo.lift(inner)),
@@ -897,7 +897,7 @@ class PendingTest extends Test:
     }
 
     "a loop can end its region effectfully with a computation result" in {
-        val inner: Int < Ask = ask.map(_ + 1)
+        val inner: Int < Ask     = ask.map(_ + 1)
         val r: (Int < Ask) < Ask = ArrowEffect.handleLoop(Tag[Give], give)(
             [C] => _ => after(0).map(_ => Loop.done(Kyo.lift(inner))),
             a => Kyo.lift(a)
@@ -928,7 +928,7 @@ class PendingTest extends Test:
     "flatMap receives a pending payload as a value" in {
         val inner: Int < Ask    = ask
         var received: Int < Ask = 0
-        val r: Int < Any = Kyo.lift(inner).flatMap { c =>
+        val r: Int < Any        = Kyo.lift(inner).flatMap { c =>
             received = c
             7
         }
@@ -937,7 +937,7 @@ class PendingTest extends Test:
     }
 
     "andThen sequences effects and discards the value" in {
-        var ran = false
+        var ran          = false
         val r: Int < Ask = ask.andThen {
             ran = true
             ask.map(_ + 1)
@@ -975,7 +975,7 @@ class PendingTest extends Test:
 
     "map on a settled value runs eagerly" in {
         var ran = false
-        val v = (1: Int < Any).map { n =>
+        val v   = (1: Int < Any).map { n =>
             ran = true
             n + 1
         }

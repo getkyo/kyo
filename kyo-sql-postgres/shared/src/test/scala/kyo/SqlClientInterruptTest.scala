@@ -233,7 +233,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
                             client <- SqlClient.initUnscoped(url, warm)
                             _      <- assertEventually(sessions.map(_ == 2))
                             fiber  <- Fiber.initUnscoped(Sync.defer(closing.set(true)).andThen(Abort.run[SqlException](client.close)))
-                            _ <- Sync.Unsafe.defer {
+                            _      <- Sync.Unsafe.defer {
                                 val bound = java.lang.System.nanoTime() + 200_000_000L
                                 while !closing.get() && java.lang.System.nanoTime() < bound do ()
                                 val target = java.lang.System.nanoTime() + (i % 60) * 10_000L
@@ -242,7 +242,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
                             }
                             _     <- fiber.getResult
                             began <- client.isClosed
-                            gone <-
+                            gone  <-
                                 if began then
                                     Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(sessions.map(_ == 0)))).map(_.isSuccess)
                                 else Abort.run[SqlException](client.close).andThen(assertEventually(sessions.map(_ == 0))).andThen(true)

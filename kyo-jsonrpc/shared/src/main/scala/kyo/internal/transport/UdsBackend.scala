@@ -48,8 +48,8 @@ final private[kyo] class UdsServerWireTransport(
         val p: Promise[kyo.net.Connection, Abort[NetException | Closed]]         = first.safe
         val pending: kyo.net.Connection < (Async & Abort[NetException | Closed]) = p.get
         Abort.run[NetException | Closed](pending).map {
-            case Result.Success(conn)           => conn.outbound.safe.put(Span.fromUnsafe(bytes.toArray))
-            case Result.Failure(closed: Closed) => Abort.fail(closed)
+            case Result.Success(conn)            => conn.outbound.safe.put(Span.fromUnsafe(bytes.toArray))
+            case Result.Failure(closed: Closed)  => Abort.fail(closed)
             case Result.Failure(e: NetException) =>
                 Abort.panic(e) // a transport failure reaching the first-accept promise surfaces typed, never silently
             case Result.Panic(e) => Abort.panic(e)
@@ -61,11 +61,11 @@ final private[kyo] class UdsServerWireTransport(
             val p: Promise[kyo.net.Connection, Abort[NetException | Closed]]         = first.safe
             val pending: kyo.net.Connection < (Async & Abort[NetException | Closed]) = p.get
             Abort.run[NetException | Closed](pending).map {
-                case Result.Success(conn)      => ConnectionWireTransport(conn).incoming.emit
-                case Result.Failure(_: Closed) => () // closed before any client connected: empty stream, orderly end
+                case Result.Success(conn)            => ConnectionWireTransport(conn).incoming.emit
+                case Result.Failure(_: Closed)       => () // closed before any client connected: empty stream, orderly end
                 case Result.Failure(e: NetException) =>
                     Abort.panic(e) // a transport failure reaching the first-accept promise surfaces typed, never silently
-                case Result.Panic(e) => Abort.panic(e)
+                case Result.Panic(e)                 => Abort.panic(e)
             }
 
     def close(using Frame): Unit < Async =

@@ -9,7 +9,7 @@ class FfiReflectCoreMissingCtorTest extends Test:
 
     "instantiate a class with no nullary constructor produces a diagnostic naming the class and the missing-nullary-ctor cause" in {
         val cls = classOf[FfiReflectCoreMissingCtorTest.NoNullaryCtor]
-        val ex = intercept[IllegalStateException] {
+        val ex  = intercept[IllegalStateException] {
             FfiReflect.instantiate(cls.getName, cls.getName)
         }
         val msg = ex.getMessage

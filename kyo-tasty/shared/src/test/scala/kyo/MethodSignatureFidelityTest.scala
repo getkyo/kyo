@@ -19,7 +19,7 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val scalaOnlyMethods = classpath.allMethods.filter(!_.isJava)
             val total            = scalaOnlyMethods.size
-            val sentinelMethods = scalaOnlyMethods.flatMap(_.declaredType.toList).filter {
+            val sentinelMethods  = scalaOnlyMethods.flatMap(_.declaredType.toList).filter {
                 case Tasty.Type.Named(id) => id.value == -1
                 case _                    => false
             }
@@ -230,9 +230,9 @@ class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
 
     "parent injection improves non-empty parentTypes coverage" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-            val allClassLike = classpath.allClassLike
-            val totalClasses = allClassLike.size
-            val withParents  = allClassLike.count(_.parentTypes.nonEmpty)
+            val allClassLike        = classpath.allClassLike
+            val totalClasses        = allClassLike.size
+            val withParents         = allClassLike.count(_.parentTypes.nonEmpty)
             val fractionWithParents =
                 if totalClasses > 0 then withParents.toDouble / totalClasses else 1.0
             assert(

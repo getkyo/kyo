@@ -182,7 +182,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     "shared drag API renders SVG target metadata without making it draggable" in {
         val target = Drag.Target("svg\"&<target>", Drag.Accept.types(mediaTypePattern("image/svg+xml")), Present("svg target"))
-        val ui = Svg.rect
+        val ui     = Svg.rect
             .id("drop-zone")
             .dropTarget(target)
             .onDragStart("drag-start-handler-secret")
@@ -233,7 +233,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     "typed drag observers preserve concrete effect results and immutable wiring" in {
         val source = Drag.Source("observer-source", Chunk.empty)
         val target = Drag.Target("observer-target", Drag.Accept())
-        val event = Drag.Event(
+        val event  = Drag.Event(
             sessionId = "observer-session",
             items = Chunk.empty,
             operation = Drag.Operation.Move,
@@ -244,7 +244,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             position = Absent
         )
         val end = Drag.End(event, canceled = false)
-        val ui = UI.div
+        val ui  = UI.div
             .id("observer")
             .dragSource(source)
             .dropTarget(target)
@@ -375,7 +375,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         )
         for
             calls <- AtomicInt.init(0)
-            _ <- withDispatch(UI.div.onDragStart((_: Drag.Event) => calls.incrementAndGet)) { dispatch =>
+            _     <- withDispatch(UI.div.onDragStart((_: Drag.Event) => calls.incrementAndGet)) { dispatch =>
                 dispatch(Seq.empty, invalid)
             }
             count <- calls.get
@@ -392,7 +392,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             UI.Modifiers.none,
             Absent
         )
-        val noHandler = Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
+        val noHandler  = Drag.Decision.Reject(Drag.Rejection.Application("No drop handler accepted the operation."))
         val knownStart = DragProtocol.StartData(
             "known",
             Chunk.empty,
@@ -403,7 +403,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         )
         val knownTarget = target.copy(sessionId = "known")
         val sortStart   = knownStart.copy(sessionId = "no-sort")
-        val move = Drag.Move(
+        val move        = Drag.Move(
             Chunk("a"),
             Drag.Location("left"),
             Drag.Location("right"),
@@ -628,7 +628,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                         firstSort      <- Fiber.init(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "sort", move)))
                         duplicateStart <- Fiber.init(dispatch(Seq.empty, start("drop")))
                         duplicateDrop  <- Fiber.init(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("drop"))))
-                        duplicateSort <-
+                        duplicateSort  <-
                             Fiber.init(dispatch(Seq.empty, UIEvent.SortMove(Seq.empty, "sort", move)))
                         _ <- release.release
                         _ <- firstDrop.get
@@ -689,7 +689,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     }
 
     "drag session capacity and expiry are bounded and generation safe" in {
-        val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
+        val limits            = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
         def start(id: String) = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
@@ -759,7 +759,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                         dropFiber <- Fiber.init(dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("ordered"))))
                         _         <- entered.await
                         overFiber <- Fiber.init(dispatch(Seq.empty, UIEvent.DragOver(Seq.empty, target("ordered"))))
-                        endFiber <- Fiber.init(dispatch(
+                        endFiber  <- Fiber.init(dispatch(
                             Seq.empty,
                             UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("ordered", Drag.Operation.Move, cancelled = false))
                         ))
@@ -789,7 +789,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     }
 
     "terminal expiry is silent and a stale timer cannot remove a reused identifier" in {
-        val limits = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 2.seconds)
+        val limits            = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 2.seconds)
         def start(id: String) = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
@@ -842,14 +842,14 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     "closing the subscription scope cancels active expiry work" in {
         val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
-        val event = UIEvent.DragStart(
+        val event  = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData("closing", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
         )
         Clock.withTimeControl { control =>
             for
                 resolutions <- AtomicRef.init(Chunk.empty[Drag.Decision])
-                _ <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
+                _           <- DragCommands.resolveSink.let(Present((_, decision) => resolutions.getAndUpdate(_.append(decision)).unit)) {
                     withDispatch(UI.div, limits)(_(Seq.empty, event).unit)
                 }
                 _      <- control.advance(1.second, 100.millis)
@@ -860,7 +860,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     "drag Start and End churn keeps one bounded expiry worker" in {
         val limits = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.hour)
-        val start = UIEvent.DragStart(
+        val start  = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData("churn", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
         )
@@ -873,7 +873,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                 for
                     root         <- ReactiveUI.normalize(UI.div, Seq.empty)
                     subscription <- ReactiveUI.subscribe(root, new NoopExchange, limits)
-                    _ <- Kyo.foreach(0 until 1000) { _ =>
+                    _            <- Kyo.foreach(0 until 1000) { _ =>
                         subscription.handle(Seq.empty, start).andThen(subscription.handle(Seq.empty, end))
                     }
                     sessions <- subscription.dragSessionCount
@@ -892,7 +892,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     }
 
     "an earlier drag deadline wakes the expiry scheduler" in {
-        val limits = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 1.hour)
+        val limits            = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 1.hour)
         def start(id: String) = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
@@ -922,7 +922,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val sensors = Drag.Source("sensors", Chunk.empty, activation = Drag.Activation.Sensors)
         val both    = Drag.Source("source\"&<", Chunk.empty)
         val target  = Drag.Target("target\"&<", Drag.Accept())
-        val cases = Chunk(
+        val cases   = Chunk(
             UI.div.dragSource(native)   -> true,
             UI.div.dragSource(sensors)  -> false,
             UI.div.dragSource(both)     -> true,
@@ -959,17 +959,17 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val safeTarget   = Drag.Target("safe-target", Drag.Accept(maxFileSize = Present(ByteSize.fromBytes(maxSafe))))
         val unsafeTarget = Drag.Target("unsafe-target", Drag.Accept(maxFileSize = Present(ByteSize.fromBytes(maxSafe + 1L))))
         val tooMany      = Drag.Source("many", Chunk.fill(DragProtocol.Limits.default.maxItemCount + 1)(Drag.Item.Uri("https://kyo.dev")))
-        val tooMuchText =
+        val tooMuchText  =
             Drag.Source("text", Chunk(dragText("text/plain" -> ("x" * (DragProtocol.Limits.default.maxTextLength + 1)))))
-        val aggregateText = "x" * DragProtocol.Limits.default.maxAttributeLength
-        val tooLargeJson  = Drag.Source("aggregate", Chunk(dragText("text/plain" -> aggregateText)))
+        val aggregateText          = "x" * DragProtocol.Limits.default.maxAttributeLength
+        val tooLargeJson           = Drag.Source("aggregate", Chunk(dragText("text/plain" -> aggregateText)))
         val tooManyRepresentations = Drag.Source(
             "representations",
             Chunk(Drag.Item.Text(
                 (0 to DragProtocol.Limits.default.maxTextRepresentationCount).map(i => mediaType(s"text/x-$i") -> "x").toMap
             ))
         )
-        val invalidKey = Drag.Source("x" * (DragProtocol.Limits.default.maxIdentifierLength + 1), Chunk.empty)
+        val invalidKey   = Drag.Source("x" * (DragProtocol.Limits.default.maxIdentifierLength + 1), Chunk.empty)
         val invalidLabel = Drag.Source(
             "label",
             Chunk.empty,
@@ -1034,7 +1034,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     "drag action handlers stay lazy, propagate failures, and coexist with typed handlers" in {
         val dropFailure = new RuntimeException("drop failure")
         val sortFailure = new RuntimeException("sort failure")
-        val ui = UI.div
+        val ui          = UI.div
             .onDrop(Sync.defer(throw dropFailure))
             .onDrop((_: Drag.Event) => Drag.Decision.Accept)
             .onSortMove(Sync.defer(throw sortFailure))
@@ -1109,7 +1109,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             ref <- AtomicRef.init(0.0)
             ui = UI.div.onScroll((w: UI.WheelEvent) => ref.set(w.deltaY))
             dispatch <- makeDispatch(ui)
-            _ <- dispatch(
+            _        <- dispatch(
                 Seq.empty,
                 UIEvent.Scroll(Seq.empty, deltaX = 0.0, deltaY = 42.0, modifiers = UI.Modifiers.none, targetId = Absent)
             )
@@ -1136,7 +1136,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             ref <- AtomicRef.init((0.0, 0.0))
             ui = Svg.rect.onScroll((w: UI.WheelEvent) => ref.set((w.deltaX, w.deltaY)))
             dispatch <- makeDispatch(ui)
-            _ <-
+            _        <-
                 dispatch(Seq.empty, UIEvent.Scroll(Seq.empty, deltaX = 3.0, deltaY = 5.0, modifiers = UI.Modifiers.none, targetId = Absent))
             result <- ref.get
         yield assert(result == (3.0, 5.0))
@@ -1276,7 +1276,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             position = Present(Drag.Position.Before)
         )
         val endData = DragProtocol.EndData("session-1", Drag.Operation.Move, cancelled = true)
-        val move = Drag.Move(
+        val move    = Drag.Move(
             keys = Chunk("alpha", "beta", "gamma"),
             source = Drag.Location("backlog"),
             destination = Drag.Location("done"),

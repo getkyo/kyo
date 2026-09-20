@@ -34,9 +34,9 @@ class MachineHandlesJvmTest extends kyo.test.Test[Any]:
     "source-scanning guard" - {
 
         "walks up from the forked JVM cwd and asserts the exact count of files it checked".onlyJvm in {
-            val moduleRoot = locateModuleRoot()
-            val scalaFiles = collectMainScalaFiles(moduleRoot)
-            val banned     = List("Thread.sleep", "synchronized", "CountDownLatch.await")
+            val moduleRoot                                   = locateModuleRoot()
+            val scalaFiles                                   = collectMainScalaFiles(moduleRoot)
+            val banned                                       = List("Thread.sleep", "synchronized", "CountDownLatch.await")
             def hasBannedConstruct(f: java.io.File): Boolean =
                 val content = new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
                 banned.exists(content.contains)

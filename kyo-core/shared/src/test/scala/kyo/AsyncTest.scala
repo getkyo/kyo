@@ -110,7 +110,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         Clock.withTimeControl { control =>
             for
                 started <- Latch.init(1)
-                fiber <- Fiber.initUnscoped(
+                fiber   <- Fiber.initUnscoped(
                     Abort.run[Timeout](Async.timeout(100.millis)(started.release.andThen(Async.never)))
                 )
                 _       <- started.await
@@ -187,8 +187,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             // still launching could leave one unlinked and running (orphaned). Asserts the children STOP
             // advancing after the parent is interrupted, independent of finalizers, by checking that a shared
             // progress counter stops changing once every fiber has been awaited.
-            val progress          = new java.util.concurrent.atomic.AtomicLong(0)
-            def spin: Unit < Sync = Sync.defer(discard(progress.incrementAndGet())).andThen(spin)
+            val progress           = new java.util.concurrent.atomic.AtomicLong(0)
+            def spin: Unit < Sync  = Sync.defer(discard(progress.incrementAndGet())).andThen(spin)
             def once: Unit < Async =
                 for
                     fiber <- Fiber.initUnscoped(Async.foreachDiscard(1 to 16)(_ => spin))
@@ -224,8 +224,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
         }
         "multiple" in {
-            val ac = new JAtomicInteger(0)
-            val bc = new JAtomicInteger(0)
+            val ac                                     = new JAtomicInteger(0)
+            val bc                                     = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < Sync =
                 Sync.defer {
                     if i > 0 then
@@ -251,8 +251,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
         }
         "returns the last failure if all fibers fail" in {
-            val ex1 = new Exception
-            val ex2 = new Exception
+            val ex1  = new Exception
+            val ex2  = new Exception
             val race =
                 Async.race(
                     Async.sleep(100.millis).andThen(Abort.panic[Int](ex1)),
@@ -281,8 +281,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
         }
         "n" in {
-            val ac = new JAtomicInteger(0)
-            val bc = new JAtomicInteger(0)
+            val ac                                     = new JAtomicInteger(0)
+            val bc                                     = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < Sync =
                 Sync.defer {
                     if i > 0 then
@@ -345,7 +345,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             def close(): Unit =
                 set(-1)
         "outer" in {
-            val resource1 = new TestResource
+            val resource1                                                     = new TestResource
             val io1: (JAtomicInteger & Closeable, Set[Int]) < (Scope & Async) =
                 for
                     r  <- Scope.acquire(resource1)
@@ -379,8 +379,8 @@ class AsyncTest extends kyo.test.Test[Any]:
             }
         }
         "mixed" in {
-            val resource1 = new TestResource
-            val resource2 = new TestResource
+            val resource1                       = new TestResource
+            val resource2                       = new TestResource
             val io1: Set[Int] < (Scope & Async) =
                 for
                     r  <- Scope.acquire(resource1)
@@ -490,7 +490,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             gate           <- Latch.init(1)
             callerReleased <- AtomicBoolean.init(false)
             produced       <- Promise.init[Int, Any]
-            fiber <- Fiber.initUnscoped {
+            fiber          <- Fiber.initUnscoped {
                 Sync.ensure(callerReleased.set(true)) {
                     Async.uninterruptible(start.release.andThen(gate.await).andThen(produced.complete(Result.succeed(42)).unit))
                 }
@@ -517,7 +517,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             entered  <- Latch.init(1)
             gate     <- Latch.init(1)
             released <- AtomicBoolean.init(false)
-            fiber <- Fiber.initUnscoped {
+            fiber    <- Fiber.initUnscoped {
                 Scope.run {
                     Scope.acquireRelease(Async.uninterruptible(entered.release.andThen(gate.await).andThen("handle")))(_ =>
                         released.set(true)
@@ -583,7 +583,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 val v: Int < Abort[Int] = 1
 
                 val _: (Fiber[Int, Abort[Int]], Fiber[Int, Abort[Int]]) < Async = Async.zip(Fiber.initUnscoped(v), Fiber.initUnscoped(v))
-                val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async)              =
                     Async.zip(KyoApp.runAndBlock(1.second)(v), KyoApp.runAndBlock(1.second)(v))
                 val _: (Int, Int) < (Abort[Int] & Async)               = Async.zip(Async.uninterruptible(v), Async.uninterruptible(v))
                 val _: (Int, Int) < (Abort[Int | Timeout] & Async)     = Async.zip(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
@@ -764,9 +764,9 @@ class AsyncTest extends kyo.test.Test[Any]:
         "interrupt chained promise operations".onlyJvm in {
             Kyo.foreach(1 to 50) { _ =>
                 for
-                    p1 <- Promise.init[Int, Any]
-                    p2 <- Promise.init[Int, Any]
-                    p3 <- Promise.init[Int, Any]
+                    p1    <- Promise.init[Int, Any]
+                    p2    <- Promise.init[Int, Any]
+                    p3    <- Promise.init[Int, Any]
                     fiber <- Fiber.initUnscoped {
                         for
                             _ <- p1.get
@@ -784,7 +784,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             // When using Scope, child fibers are tracked and interrupted with parent
             for
                 innerPromise <- Promise.init[Int, Any]
-                outerFiber <- Fiber.initUnscoped {
+                outerFiber   <- Fiber.initUnscoped {
                     Scope.run {
                         Fiber.init(innerPromise.get).map(_.get)
                     }
@@ -836,7 +836,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 for
                     promise <- Promise.init[Int, Any]
                     fiber   <- Fiber.initUnscoped(promise.get)
-                    _ <- Async.zip(
+                    _       <- Async.zip(
                         promise.complete(Result.succeed(42)),
                         fiber.interrupt
                     )
@@ -977,7 +977,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             Var.runTuple(1) {
                 for
                     start <- Var.get[Int]
-                    _ <-
+                    _     <-
                         Var.isolate.update[Int].use {
                             Async.uninterruptible {
                                 for
@@ -1040,7 +1040,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
         "collectAll with concurrency limit + isolate" in {
             var count = 0
-            val f = Memo[Int, Int, Any] { x =>
+            val f     = Memo[Int, Int, Any] { x =>
                 count += 1
                 x * 2
             }
@@ -1125,7 +1125,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "executes side effects" in {
             for
                 counter <- AtomicInt.init(0)
-                _ <- Async.foreachDiscard(1 to 3) { _ =>
+                _       <- Async.foreachDiscard(1 to 3) { _ =>
                     counter.incrementAndGet
                 }
                 count <- counter.get
@@ -1137,7 +1137,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "executes all effects" in {
             for
                 counter <- AtomicInt.init(0)
-                _ <- Async.collectAllDiscard(
+                _       <- Async.collectAllDiscard(
                     List(
                         counter.incrementAndGet,
                         counter.incrementAndGet,
@@ -1468,7 +1468,7 @@ class AsyncTest extends kyo.test.Test[Any]:
     "memoize" - {
         "caches successful results" in {
             for
-                counter <- AtomicInt.init(0)
+                counter  <- AtomicInt.init(0)
                 memoized <- Async.memoize {
                     counter.incrementAndGet.map(_ => 42)
                 }
@@ -1485,7 +1485,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
         "retries after failure" in {
             for
-                counter <- AtomicInt.init(0)
+                counter  <- AtomicInt.init(0)
                 memoized <- Async.memoize {
                     counter.incrementAndGet.map { count =>
                         if count == 1 then throw new RuntimeException("First attempt fails")
@@ -1505,7 +1505,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
         "works with async operations" in {
             for
-                counter <- AtomicInt.init(0)
+                counter  <- AtomicInt.init(0)
                 memoized <- Async.memoize {
                     for
                         _     <- Async.sleep(1.millis)
@@ -1525,7 +1525,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
         "handles concurrent access" in {
             for
-                counter <- AtomicInt.init(0)
+                counter  <- AtomicInt.init(0)
                 memoized <- Async.memoize {
                     for
                         _     <- Async.sleep(1.millis)
@@ -1574,7 +1574,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "suspends computation" in {
-            var counter = 0
+            var counter     = 0
             val computation = Async.defer {
                 counter += 1
                 counter
@@ -1596,7 +1596,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 started <- Latch.init(1)
                 done    <- Latch.init(1)
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     started.release.andThen {
                         Async.defer { executed = true }.andThen {
                             done.release
@@ -1678,7 +1678,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 maxConcurrent <- AtomicInt.init(0)
                 active        <- AtomicInt.init(0)
-                results <- Async.foreach(0 until 8, concurrency = 2) { i =>
+                results       <- Async.foreach(0 until 8, concurrency = 2) { i =>
                     for
                         current <- active.incrementAndGet
                         _       <- maxConcurrent.updateAndGet(max => if current > max then current else max)
@@ -1738,8 +1738,8 @@ class AsyncTest extends kyo.test.Test[Any]:
     "fiber with multiple children" - {
         "immediate" in {
             for
-                done <- Latch.init(1)
-                exit <- Latch.init(1)
+                done  <- Latch.init(1)
+                exit  <- Latch.init(1)
                 fiber <- Fiber.initUnscoped {
                     Kyo.fill(100) {
                         Promise.init[Int, Any].map { p2 =>
@@ -1754,8 +1754,8 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
         "with delay" in {
             for
-                done <- Latch.init(1)
-                exit <- Latch.init(1)
+                done  <- Latch.init(1)
+                exit  <- Latch.init(1)
                 fiber <- Fiber.initUnscoped {
                     Kyo.fill(100) {
                         Async.sleep(1.nanos)
@@ -1823,7 +1823,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 called <- AtomicBoolean.init(false)
                 ready  <- Promise.init[Unit, Any]
-                fiber <- Fiber.initUnscoped {
+                fiber  <- Fiber.initUnscoped {
                     Sync.ensure(called.set(true)) {
                         ready.completeUnit.andThen(Async.sleep(1.day))
                     }
@@ -1843,7 +1843,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 counter <- AtomicInt.init(0)
                 ready   <- Promise.init[Unit, Any]
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     Scope.run {
                         Scope.ensure(counter.incrementAndGet.unit)
                             .andThen(ready.completeUnit)
@@ -1894,7 +1894,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "timeout triggers scope cleanup".onlyJvm in {
             for
                 counter <- AtomicInt.init(0)
-                result <- Abort.run[Timeout] {
+                result  <- Abort.run[Timeout] {
                     Async.timeout(100.millis) {
                         Scope.run {
                             Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
@@ -1924,7 +1924,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 counter <- AtomicInt.init(0)
                 ready   <- Promise.init[Unit, Any]
-                fiber <- Fiber.initUnscoped {
+                fiber   <- Fiber.initUnscoped {
                     Scope.run {
                         Scope.acquireRelease(Sync.defer("resource"))(_ => counter.incrementAndGet.unit)
                             .andThen(ready.completeUnit)
@@ -2010,7 +2010,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                         entered  <- Latch.init(1)
                         gate     <- Latch.init(1)
                         released <- AtomicBoolean.init(false)
-                        fiber <- Fiber.initUnscoped {
+                        fiber    <- Fiber.initUnscoped {
                             Sync.defer(arming.set(true)).andThen {
                                 Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
                             }
@@ -2022,8 +2022,8 @@ class AsyncTest extends kyo.test.Test[Any]:
                             while java.lang.System.nanoTime() < target do ()
                             discard(fiber.unsafe.interrupt())
                         }
-                        _   <- fiber.getResult
-                        ran <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
+                        _     <- fiber.getResult
+                        ran   <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
                         freed <-
                             if ran.isSuccess then
                                 Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)

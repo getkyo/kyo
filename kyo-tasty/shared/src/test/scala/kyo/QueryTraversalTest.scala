@@ -54,7 +54,7 @@ class QueryTraversalTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
         val symEc: Tasty.Symbol = enumCase
-        val label = symEc match
+        val label               = symEc match
             case _: Tasty.Symbol.EnumCase => "enumCase"
             case _: Tasty.Symbol.Class    => "class"
             case _                        => "other"

@@ -60,7 +60,7 @@ class UpcallRoundTripBench extends BenchBase:
         stubArena = Arena.ofShared()
         // Build a MethodHandle pointing at this.compareInts(MemorySegment, MemorySegment): Int
         val mhLookup = MethodHandles.lookup()
-        val cmpMH = mhLookup.findVirtual(
+        val cmpMH    = mhLookup.findVirtual(
             classOf[UpcallRoundTripBench],
             "compareInts",
             MethodType.methodType(classOf[Int], classOf[MemorySegment], classOf[MemorySegment])

@@ -33,7 +33,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "renders the live user frame of a blocked effectful fiber" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask.detached(work)
             for
@@ -55,7 +55,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "renders no kernel frame" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask.detached(work)
             for
@@ -98,7 +98,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "never throws while the fiber it reads is running" in {
             val blocker                      = new IOPromise[Nothing, Unit]()
             def userStep(x: Int): Int < Sync = Sync.defer(x + 1)
-            def work: Unit < Async =
+            def work: Unit < Async           =
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask.detached(work)
             for
@@ -140,7 +140,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         "runs the ensure finalizer even though the fatal aborts the fiber".onlyJvm in {
             for
                 probe <- Promise.init[Unit, Any]
-                _ <- Fiber.initUnscoped {
+                _     <- Fiber.initUnscoped {
                     Sync.ensure { probe.completeDiscard(Result.succeed(())) } {
                         Sync.defer[Unit, Any](throw new InternalError("fatal error"))
                     }

@@ -62,8 +62,8 @@ object TreeUnpickler:
         sectionBytes: Array[Byte],
         sectionOffset: Int
     )(using AllowUnsafe): Tasty.Tree =
-        val view       = ByteView(pickle, 0, pickle.length)
-        val dummyArena = TypeArena.canonical()
+        val view        = ByteView(pickle, 0, pickle.length)
+        val dummyArena  = TypeArena.canonical()
         val typeSession =
             new TypeUnpickler.TreeTypeSession(names, loadingAddrMap, dummyArena, sectionBytes, sectionOffset)
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
@@ -161,7 +161,7 @@ object TreeUnpickler:
         val treeAddrCache = new mutable.HashMap[Int, Tasty.Tree]()
         val dummyArena    = TypeArena.canonical()
         val typeSession   = new TypeUnpickler.TreeTypeSession(names, loadingAddrMap, dummyArena, bytes, body.sectionOffset)
-        val ctx = DecodeCtx(
+        val ctx           = DecodeCtx(
             names,
             addrMap,
             typeSession,
@@ -338,7 +338,7 @@ object TreeUnpickler:
             // ── Category 3: tag + sub-AST (90-109) ───────────────────────────────
 
             case TastyFormat.THIS =>
-                val tpe = readType(view, ctx)
+                val tpe    = readType(view, ctx)
                 val symbol = tpe match
                     case Tasty.Type.Named(id)    => resolveSymbolById(id, ctx, "this-class")
                     case Tasty.Type.ThisType(id) => resolveSymbolById(id, ctx, "this-class")
@@ -355,7 +355,7 @@ object TreeUnpickler:
                 Tasty.Tree.This(symbol)
 
             case TastyFormat.QUALTHIS =>
-                val tpe = readType(view, ctx)
+                val tpe    = readType(view, ctx)
                 val symbol = tpe match
                     case Tasty.Type.Named(id) => resolveSymbolById(id, ctx, "qualthis")
                     case _: Tasty.Type.TermRef | _: Tasty.Type.Applied | _: Tasty.Type.TypeLambda |
@@ -564,7 +564,7 @@ object TreeUnpickler:
             case TastyFormat.ANNOTATION =>
                 val end       = view.readEnd()
                 val annotType = readTree(view, ctx)
-                val arg =
+                val arg       =
                     if view.position < end then readTree(view, ctx)
                     else Tasty.Tree.Unknown(0, 0)
                 view.goto(end)
@@ -661,7 +661,7 @@ object TreeUnpickler:
                 val end     = view.readEnd()
                 val address = view.readNat()
                 val from    = ctx.addrMap.getOrElse(address, makeUnresolvedSym(s"return-target@$address"))
-                val expr =
+                val expr    =
                     if view.position < end then
                         val peek = view.peekByte(view.position) & 0xff
                         if !isModifierTag(peek) then Maybe(readTree(view, ctx))
@@ -781,7 +781,7 @@ object TreeUnpickler:
             case TastyFormat.SUPER =>
                 val end  = view.readEnd()
                 val qual = readTree(view, ctx)
-                val mix =
+                val mix  =
                     if view.position < end then
                         Maybe(nameFromRef(view.readNat(), ctx))
                     else Maybe.Absent
@@ -1035,7 +1035,7 @@ object TreeUnpickler:
             case TastyFormat.OBJECT        => Tasty.Flag.Module
             case TastyFormat.TRAIT         => Tasty.Flag.Trait
             case TastyFormat.ENUM          => Tasty.Flag.Enum
-            case other =>
+            case other                     =>
                 throw new DecodeException(s"unknown category-1 modifier tag $other", view.position.toLong)
         Tasty.Tree.Modifier(flag)
     end decodeCategoryOneModifier
@@ -1599,7 +1599,7 @@ object TreeUnpickler:
                 // Explicit declared bounds use Type.Bounds, not Type.Wildcard.
                 val payloadEnd = view.readEnd()
                 val lo         = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
-                val hi =
+                val hi         =
                     if view.position < payloadEnd then TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                     else lo
                 view.goto(payloadEnd)
@@ -1717,7 +1717,7 @@ object TreeUnpickler:
                     val tpEnd   = view.readEnd()
                     val nameRef = view.readNat()
                     val symName = session.names(nameRef)
-                    val symbol = InternalSymbol.makeSymbol(
+                    val symbol  = InternalSymbol.makeSymbol(
                         id = session.nextUnresolvedId(),
                         kind = SymbolKind.TypeParam,
                         flags = Tasty.Flags.empty,

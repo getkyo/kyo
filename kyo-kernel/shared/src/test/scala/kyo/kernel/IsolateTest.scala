@@ -58,7 +58,7 @@ class IsolateTest extends Test:
         new Isolate[CellA, Any, CellA]:
             type State        = Int
             type Transform[A] = (Int, A)
-            def capture[A, S](f: Int => A < S)(using Frame) = getA.map(f)
+            def capture[A, S](f: Int => A < S)(using Frame)                = getA.map(f)
             def isolate[A, S](state: Int, v: A < (S & CellA))(using Frame) =
                 runA(state)(v)
             def restore[A, S](v: (Int, A) < S)(using Frame) =
@@ -68,7 +68,7 @@ class IsolateTest extends Test:
         new Isolate[CellB, Any, CellB]:
             type State        = Int
             type Transform[A] = (Int, A)
-            def capture[A, S](f: Int => A < S)(using Frame) = getB.map(f)
+            def capture[A, S](f: Int => A < S)(using Frame)                = getB.map(f)
             def isolate[A, S](state: Int, v: A < (S & CellB))(using Frame) =
                 runB(state)(v)
             def restore[A, S](v: (Int, A) < S)(using Frame) =
@@ -78,7 +78,7 @@ class IsolateTest extends Test:
         new Isolate[CellA, Any, Any]:
             type State        = Int
             type Transform[A] = A
-            def capture[A, S](f: Int => A < S)(using Frame) = getA.map(f)
+            def capture[A, S](f: Int => A < S)(using Frame)                = getA.map(f)
             def isolate[A, S](state: Int, v: A < (S & CellA))(using Frame) =
                 runA(state)(v).map(t => t._2)
             def restore[A, S](v: A < S)(using Frame) = v
@@ -181,7 +181,7 @@ class IsolateTest extends Test:
 
         "allows access to context" in {
             val isolate = Isolate.derive[TestEffect1, Any, Any]
-            val effect = Isolate.internal.Contextual.capture { snapshot =>
+            val effect  = Isolate.internal.Contextual.capture { snapshot =>
                 ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1], 42)
             }
             val result = ContextEffect.handleInheritable(Tag[TestEffect1], 10, _ + 1)(effect)
@@ -189,7 +189,7 @@ class IsolateTest extends Test:
         }
 
         "isolates runtime effect" in {
-            val isolate = Isolate.derive[TestEffect1, Any, Any]
+            val isolate                   = Isolate.derive[TestEffect1, Any, Any]
             val effect: Int < TestEffect1 = isolate.run {
                 ContextEffect.suspend(Tag[TestEffect1])
             }
@@ -217,7 +217,7 @@ class IsolateTest extends Test:
     }
 
     "with non-context effect" in {
-        val isolate = Isolate.derive[TestEffect1, Any, Any]
+        val isolate                                        = Isolate.derive[TestEffect1, Any, Any]
         val effect: Int < (TestEffect1 & NotContextEffect) = isolate.run {
             for
                 x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
@@ -260,7 +260,7 @@ class IsolateTest extends Test:
         }
 
         "allows using residual effects within isolate" in {
-            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val isolate                                      = Isolate.derive[TestEffect1, ResidualEffect, Any]
             val effect: Int < (TestEffect1 & ResidualEffect) =
                 isolate.run {
                     for
@@ -279,7 +279,7 @@ class IsolateTest extends Test:
         }
 
         "preserves residual effects after isolate application" in {
-            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val isolate                                      = Isolate.derive[TestEffect1, ResidualEffect, Any]
             val effect: Int < (TestEffect1 & ResidualEffect) = isolate.run {
                 ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
             }
@@ -293,7 +293,7 @@ class IsolateTest extends Test:
         }
 
         "supports subclasses of residual effects" in {
-            val isolate = Isolate.derive[TestEffect1, ResidualEffect, Any]
+            val isolate                                         = Isolate.derive[TestEffect1, ResidualEffect, Any]
             val effect: Int < (TestEffect1 & SubResidualEffect) = isolate.run {
                 for
                     x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
@@ -410,7 +410,7 @@ class IsolateTest extends Test:
         }
 
         "allows effect handling between nest and flatten" in {
-            val isolate = Isolate.derive[TestEffect1, TestEffect2, Any]
+            val isolate                                   = Isolate.derive[TestEffect1, TestEffect2, Any]
             val effect: Int < (TestEffect1 & TestEffect2) =
                 for
                     x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
@@ -465,7 +465,7 @@ class IsolateTest extends Test:
         "a pending arrow effect crosses the boundary and is handled outside" in {
             def op(n: Int): Int < NotContextEffect = ArrowEffect.suspend[Any](Tag[NotContextEffect], n)
 
-            val v = updateA.run(setA(5).map(_ => op(10)).map(_ + 1))
+            val v                    = updateA.run(setA(5).map(_ => op(10)).map(_ + 1))
             val handled: Int < CellA =
                 ArrowEffect.handleCont(Tag[NotContextEffect], v)([C] => (input, cont) => cont(input * 2), a => a)
             assert(runA(0)(handled).eval == ((5, 21)))
@@ -474,7 +474,7 @@ class IsolateTest extends Test:
         "an operation raised at a subtype tag crosses and is answered outside" in {
             def opSub(n: Int): Int < NotContextEffect =
                 ArrowEffect.suspend[Any](Tag[NotContextEffectSub].asInstanceOf[Tag[NotContextEffect]], n)
-            val v = updateA.run(setA(5).map(_ => opSub(10)).map(_ + 1))
+            val v                    = updateA.run(setA(5).map(_ => opSub(10)).map(_ + 1))
             val handled: Int < CellA =
                 ArrowEffect.handleCont(Tag[NotContextEffectSub], v)([C] => (input, cont) => cont(input * 2), a => a)
             assert(runA(0)(handled).eval == ((5, 21)))
@@ -483,7 +483,7 @@ class IsolateTest extends Test:
 
     "andThen" - {
         "composes captures, isolations, and restores of both isolates" in {
-            val both = updateA.andThen(updateB)
+            val both                        = updateA.andThen(updateB)
             val body: Int < (CellA & CellB) =
                 setA(1).map(_ => setB(2)).map(_ => getA.map(a => getB.map(b => a * 10 + b)))
             val v = both.run(body)
@@ -524,7 +524,7 @@ class IsolateTest extends Test:
         def forkHere: Int < Fork = ArrowEffect.suspend[Any](Tag[Fork], ())
 
         def continuationOf[A](v: A < Fork): Arrow[Int, A, Fork] =
-            var out = Maybe.empty[Arrow[Int, A, Fork]]
+            var out           = Maybe.empty[Arrow[Int, A, Fork]]
             val r: Unit < Any = ArrowEffect.handleFirst(Tag[Fork], v)(
                 [C] =>
                     (_, cont) =>
@@ -569,7 +569,7 @@ class IsolateTest extends Test:
         }
 
         "the inner binding of a tag still answers after the crossing" in {
-            val body = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect2]))
+            val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect2]))
             val bound =
                 ContextEffect.handleInheritable(Tag[TestEffect2], "outer") {
                     ContextEffect.handleInheritable(Tag[TestEffect2], "inner")(body)
@@ -580,7 +580,7 @@ class IsolateTest extends Test:
 
         "derived layers reconstruct the fork point values on resume" in {
 
-            val body = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
+            val body  = forkHere.map(_ => ContextEffect.suspend(Tag[TestEffect1]))
             val bound =
                 ContextEffect.handleInheritable(Tag[TestEffect1], 1) {
                     ContextEffect.handleInheritable(Tag[TestEffect1], 0, _ + 10)(body)
@@ -631,7 +631,7 @@ class IsolateTest extends Test:
         }
 
         "join observes the parent's current state, the forked state, and the child's final state" in {
-            var seen = List.empty[(Int, Int, Int)]
+            var seen             = List.empty[(Int, Int, Int)]
             val prog: Int < Bind =
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read))
@@ -663,7 +663,7 @@ class IsolateTest extends Test:
         }
 
         "joins run for every region in scope, in entry order" in {
-            var order = List.empty[String]
+            var order                          = List.empty[String]
             val body: Int < (Bind & OuterBind) =
                 contextual.capture { st =>
                     contextual.restore(contextual.isolate(st, read.map(a => readOuter.map(_ + a))))
@@ -689,7 +689,7 @@ class IsolateTest extends Test:
         }
 
         "a region exited before the merge is not joined" in {
-            var joins = 0
+            var joins                                                 = 0
             val captured: (Stack.Snapshot, Stack.Snapshot, Int) < Any =
                 ContextEffect.handle(
                     Tag[Bind],
@@ -713,7 +713,7 @@ class IsolateTest extends Test:
         }
 
         "an isolated computation replays at its forked state" in {
-            var forks = 0
+            var forks                   = 0
             val prog: (Int, Int) < Bind =
                 contextual.capture { st =>
                     val iso = contextual.isolate(st, read)
@@ -776,7 +776,7 @@ class IsolateTest extends Test:
         }
 
         "an isolate cycle fires done once, for the region the user installed, with the joined state" in {
-            val log = ListBuffer[String]()
+            val log          = ListBuffer[String]()
             val r: Int < Any = ContextEffect.handle(
                 Tag[TestEffect1],
                 (o: Maybe[Int]) => o.getOrElse(10),
@@ -856,7 +856,7 @@ class IsolateTest extends Test:
         "a crossing inside an isolated child resumed twice joins each shot into the live parent" in {
             val log                              = ListBuffer[String]()
             val child: Int < (TestEffect1 & Ask) = Isolate.internal.Contextual.run(read.map(c => ask.map(a => c + a)))
-            val handled: Int < TestEffect1 = ArrowEffect.handleCont(Tag[Ask], child)(
+            val handled: Int < TestEffect1       = ArrowEffect.handleCont(Tag[Ask], child)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 a => a
             )
@@ -872,7 +872,7 @@ class IsolateTest extends Test:
         }
 
         "an isolate parked inside its child joins into the origin re-established by the park" in {
-            val log = ListBuffer[String]()
+            val log                      = ListBuffer[String]()
             val child: Int < TestEffect1 = Isolate.internal.Contextual.run(read.map { c =>
                 requestStop()
                 Effect.defer(c + 1)
@@ -892,8 +892,8 @@ class IsolateTest extends Test:
         }
 
         "an isolate resumed under a different region of its tag joins nothing" in {
-            var stash = Maybe.empty[Arrow[Int, Int, Ask & TestEffect1]]
-            val log   = ListBuffer[String]()
+            var stash                                                 = Maybe.empty[Arrow[Int, Int, Ask & TestEffect1]]
+            val log                                                   = ListBuffer[String]()
             def region[A](label: String)(v: A < TestEffect1): A < Any =
                 ContextEffect.handle(
                     Tag[TestEffect1],
@@ -906,7 +906,7 @@ class IsolateTest extends Test:
                     release = (s: Int, failure: Maybe[Throwable]) => if failure.isEmpty then discard(log += s"done $label $s")
                 )(v)
             val child: Int < (TestEffect1 & Ask) = Isolate.internal.Contextual.run(read.map(c => ask.map(a => c + a)))
-            val first: Int < Any = region("first")(
+            val first: Int < Any                 = region("first")(
                 ArrowEffect.handleCont(Tag[Ask], child)(
                     [C] =>
                         (_, cont) =>

@@ -50,7 +50,7 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
     }
 
     "a shared exception keeps its construction site's physical frames across a splice on another thread" in {
-        val shared = new Boom
+        val shared             = new Boom
         def spliceHere(): Unit =
             try discard(answerAsk(1)(ask.map(_ => (throw shared): Int)).eval)
             catch case _: Boom => ()
@@ -63,7 +63,7 @@ class EffectTraceThreadingTest extends AnyFreeSpec:
         val walkedOnce = carrier().elements.length
         assert(afterFirst.nonEmpty)
         @volatile var afterSecond = List.empty[String]
-        val t = new Thread(
+        val t                     = new Thread(
             () =>
                 spliceHere()
                 afterSecond =

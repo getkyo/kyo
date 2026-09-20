@@ -46,7 +46,7 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                             )
                             afterEight <- engine.supervisions.get
                             _          <- engine.workflows.start(Flow.Id.Workflow("bounded-engine-slow"))
-                            tracked <- settle(tc, step = 10.millis, maxRounds = 200)(
+                            tracked    <- settle(tc, step = 10.millis, maxRounds = 200)(
                                 engine.supervisions.get.map(_.exists(_.nonEmpty))
                             )
                             inFlight <- engine.supervisions.get
@@ -189,7 +189,7 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                         else
                             val flow = Flow.input[Int]("x")
                             for
-                                gate <- Latch.init(1)
+                                gate   <- Latch.init(1)
                                 eidRef <- Scope.run {
                                     FlowEngine.init(
                                         store,

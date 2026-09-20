@@ -151,7 +151,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
             override def toString: String = "same"
         case class Item(name: String, value: Double, cat: Collision)
         given CanEqual[Item, Item] = CanEqual.derived
-        val rows = Chunk(
+        val rows                   = Chunk(
             Item("a", 10.0, Collision.X),
             Item("b", 20.0, Collision.Y)
         )
@@ -249,7 +249,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
             // x Band: n=1, totalW=560, slot=560, bandW=560*0.9=504
             // barX = 60 + (560 - 504)/2 = 60 + 28 = 88
             val expectedX = 88.0
-            val actualX = rects(0).svgAttrs.x match
+            val actualX   = rects(0).svgAttrs.x match
                 case Present(Svg.Coord.Num(v)) => v
                 case other                     => fail(s"Expected Coord.Num for x but got $other")
             assert(math.abs(actualX - expectedX) < 1e-6, s"bar x expected $expectedX but got $actualX")
@@ -351,7 +351,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
     "colorScale typed pairs map matched categories and fall back for unmatched" in {
         val naColor = Style.Color.hex("#AA0000").getOrElse(fail("bad hex naColor"))
         val euColor = Style.Color.hex("#00AA00").getOrElse(fail("bad hex euColor"))
-        val rows = Chunk(
+        val rows    = Chunk(
             Sale("Jan", 1000.0, region = Region.NA),
             Sale("Feb", 2000.0, region = Region.EU),
             Sale("Mar", 3000.0, region = Region.APAC)

@@ -60,7 +60,7 @@ object Main extends KyoApp:
     )(using Frame): Doctest.Report < (Async & Scope & Sync & Abort[Throwable]) =
         Abort.run[Doctest.Error](Doctest.check(config)).flatMap { (result: Result[Doctest.Error, Doctest.Report]) =>
             result match
-                case Result.Success(r) => Sync.defer(r)
+                case Result.Success(r)   => Sync.defer(r)
                 case Result.Failure(err) =>
                     Log.error(s"doctest: fatal error: $err").andThen(Sync.defer { scala.sys.exit(1) })
                 case Result.Panic(t) =>

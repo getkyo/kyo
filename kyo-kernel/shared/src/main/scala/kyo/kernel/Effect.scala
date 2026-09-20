@@ -86,9 +86,9 @@ object Effect:
     @nowarn("msg=anonymous")
     private[kyo] inline def deferInline[A, S](inline f: => A < S)(using inline _frame: Frame): A < S =
         new Pending.DeferWith[Unit, A, S]:
-            override def frame          = _frame
-            def value                   = ()
-            override def apply(v: Unit) = f
+            override def frame                                             = _frame
+            def value                                                      = ()
+            override def apply(v: Unit)                                    = f
             override def apply[C, S2](v: Unit < S2, cont: Arrow[A, C, S2]) =
                 v match
                     case kyo: Pending[Unit, S2] @unchecked =>

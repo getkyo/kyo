@@ -25,7 +25,8 @@ import kyo.Chunk
   * @see
   *   [[kyo.test.LeafInfo]] whose path and suite fields are the match targets for path patterns
   * @see
-  *   `kyo.test.runner.Cli` which parses `--include`, `--exclude`, `--tag` flags into a TestFilter
+  *   `kyo.test.runner.Cli` which parses `--filter=<glob>`, `--tag=<name>` and `--exclude-tag=<name>` into a TestFilter. There is no flag
+  *   for `pathExclude`; a caller that needs one builds the TestFilter directly.
   */
 final case class TestFilter(
     pathInclude: Chunk[String] = Chunk.empty,

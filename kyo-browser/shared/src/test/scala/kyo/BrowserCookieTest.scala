@@ -257,7 +257,7 @@ class BrowserCookieTest extends BrowserTest:
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Clock.now.map { now =>
                     val expected = now + 1.day
-                    val cookie = Browser.Cookie(
+                    val cookie   = Browser.Cookie(
                         name = "with-expiry",
                         value = "v",
                         domain = Present("localhost"),

@@ -292,7 +292,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "URL-encoded path segments" - {
             val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok(req.fields.name)
             }
             runServer(ep) { url =>
@@ -310,7 +310,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "rest capture" - {
             val route = HttpRoute.getRaw("files" / Capture.Rest("path")).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok(req.fields.path)
             }
             runServer(ep) { url =>
@@ -342,7 +342,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "rest capture with preceding literal and capture" - {
             val route = HttpRoute.getRaw("api" / Capture[Int]("version") / Capture.Rest("path")).response(_.bodyText)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 HttpResponse.ok(s"v${req.fields.version}:${req.fields.path}")
             }
             runServer(ep) { url =>
@@ -886,7 +886,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "response ByteStream" - {
             val route = HttpRoute.getRaw("stream").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe("hello ".getBytes("UTF-8")),
                     Span.fromUnsafe("world".getBytes("UTF-8"))
@@ -916,7 +916,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "response Ndjson" - {
             val route = HttpRoute.getRaw("events").response(_.bodyNdjson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val users = Stream.init(Seq(User(1, "alice"), User(2, "bob")))
                 HttpResponse.ok.addField("body", users)
             }
@@ -941,7 +941,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "response SSE" - {
             val route = HttpRoute.getRaw("sse").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Seq(
                     HttpSseEvent("hello", Present("msg"), Absent, Absent),
                     HttpSseEvent("world", Present("msg"), Absent, Absent)
@@ -1003,7 +1003,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "many streaming chunks" - {
             val route = HttpRoute.getRaw("many").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream.init((1 to 100).map(i =>
                     Span.fromUnsafe(s"chunk$i\n".getBytes("UTF-8"))
                 ))
@@ -1036,7 +1036,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler throws exception returns 500" - {
             val route = HttpRoute.getRaw("fail").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("boom")
                 HttpResponse.ok("unreachable")
             }
@@ -1049,7 +1049,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler returns Abort.fail returns 500" - {
             val route = HttpRoute.getRaw("abort").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 Abort.fail(HttpJsonDecodeException("bad", "TEST", "/test")).asInstanceOf[Nothing < Any]
             }
             runServer(ep) { url =>
@@ -1299,7 +1299,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "concurrent handler isolation" - {
             val route = HttpRoute.postText("handler-id")
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 val id = req.fields.body
                 HttpResponse.ok(id)
             }
@@ -1307,8 +1307,8 @@ class HttpServerTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(4, 8, 16)
                 (for
-                    size  <- sizes
-                    latch <- Latch.init(1)
+                    size   <- sizes
+                    latch  <- Latch.init(1)
                     fibers <- Kyo.foreach(0 until size) { i =>
                         Fiber.initUnscoped(
                             latch.await.andThen(
@@ -1346,7 +1346,7 @@ class HttpServerTest extends BaseHttpTest:
                         Abort.run[Throwable](send(url, slowRoute, HttpRequest.getRaw(HttpUrl.fromUri("/slow-h"))))
                     )
                     // Fast requests must complete quickly even while slow handler runs
-                    latch <- Latch.init(1)
+                    latch      <- Latch.init(1)
                     fastFibers <- Kyo.fill(size)(Fiber.initUnscoped(
                         latch.await.andThen(
                             send(url, fastRoute, HttpRequest.getRaw(HttpUrl.fromUri("/fast-h")))
@@ -1363,7 +1363,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "concurrent streaming responses data isolation" - {
             val route = HttpRoute.getRaw("stream-iso").response(_.bodyStream)
-            val ep = route.handler { req =>
+            val ep    = route.handler { req =>
                 val marker = req.headers.get("X-Marker").getOrElse("x")
                 val chunks = Stream.init(Seq(
                     Span.fromUnsafe(s"$marker-1\n".getBytes("UTF-8")),
@@ -1376,8 +1376,8 @@ class HttpServerTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
-                    size  <- sizes
-                    latch <- Latch.init(1)
+                    size   <- sizes
+                    latch  <- Latch.init(1)
                     fibers <- Kyo.foreach(0 until size) { i =>
                         Fiber.initUnscoped(
                             latch.await.andThen {
@@ -1466,7 +1466,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "large request body" - {
             val largeText = "x" * 50000
-            val route = HttpRoute.postRaw("big")
+            val route     = HttpRoute.postRaw("big")
                 .request(_.bodyText)
                 .response(_.bodyText)
             val ep = route.handler(req => HttpResponse.ok(s"len=${req.fields.body.length}"))
@@ -1725,7 +1725,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "event name, id, and retry fields" - {
             val route = HttpRoute.getRaw("sse").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Seq(
                     HttpSseEvent("hello", Present("greeting"), Present("evt-1"), Present(5.seconds)),
                     HttpSseEvent("world", Present("greeting"), Present("evt-2"), Absent)
@@ -1758,7 +1758,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "SSE wire format should not JSON-wrap string data" - {
             val route = HttpRoute.getRaw("sse").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Seq(HttpSseEvent("hello", Absent, Absent, Absent)))
                 HttpResponse.ok.addField("body", events)
             }
@@ -2034,7 +2034,7 @@ class HttpServerTest extends BaseHttpTest:
             // disconnects mid-stream" scenario this test exists to cover.
             kyo.Latch.init(1).map { handlerDone =>
                 val route = HttpRoute.getRaw("infinite").response(_.bodyStream)
-                val ep = route.handler { _ =>
+                val ep    = route.handler { _ =>
                     val infiniteStream = Stream[Span[Byte], Async] {
                         Sync.ensure(handlerDone.release) {
                             kyo.Loop.foreach {
@@ -2068,7 +2068,7 @@ class HttpServerTest extends BaseHttpTest:
             // The write fiber should be interrupted, not leaked.
             kyo.Latch.init(1).map { writeDone =>
                 val route = HttpRoute.getRaw("hang").response(_.bodyStream)
-                val ep = route.handler { _ =>
+                val ep    = route.handler { _ =>
                     val hangStream = Stream[Span[Byte], Async] {
                         // Emit one chunk, then block forever
                         kyo.Emit.valueWith(Chunk(Span.fromUnsafe("first\n".getBytes("UTF-8")))) {
@@ -2133,7 +2133,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler error returns 500 and does not hang" - {
             val route = HttpRoute.getRaw("error").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("handler boom")
             }
             runServer(ep) { url =>
@@ -2187,7 +2187,7 @@ class HttpServerTest extends BaseHttpTest:
             // Node.js emits MaxListenersExceededWarning. We verify the response completes
             // without hanging (a sign of listener issues).
             val route = HttpRoute.getRaw("many-chunks").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val manyChunks = Stream[Span[Byte], Async] {
                     // Emit 50 chunks — enough to trigger backpressure multiple times
                     var i = 0
@@ -2222,7 +2222,7 @@ class HttpServerTest extends BaseHttpTest:
             // Server stream throws after a few chunks. Client should still get a response
             // (possibly truncated) and not hang.
             val route = HttpRoute.getRaw("err-stream").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val failingStream = Stream[Span[Byte], Async] {
                     kyo.Emit.valueWith(Chunk(Span.fromUnsafe("ok\n".getBytes("UTF-8")))) {
                         throw new RuntimeException("stream error")
@@ -2257,7 +2257,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "500 response has non-empty body when handler throws" - {
             val route = HttpRoute.getRaw("throw-test").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("boom"); HttpResponse.ok("unreachable")
             }
             runServer(ep) { url =>
@@ -2339,7 +2339,7 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.postRaw("json-test")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
-            val ep = route.handler(_ => HttpResponse.ok("should not reach"))
+            val ep        = route.handler(_ => HttpResponse.ok("should not reach"))
             val textRoute = HttpRoute.postRaw("json-test")
                 .request(_.bodyText)
                 .response(_.bodyText)
@@ -2647,7 +2647,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "CORS on SSE endpoint adds headers to GET response" in {
             val route = HttpRoute.getRaw("cors-sse-get2").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Seq(HttpSseEvent("test")))
                 HttpResponse.ok.addField("body", events)
             }
@@ -2749,7 +2749,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "CORS filter on SSE endpoint adds headers to GET response" - {
             val route = HttpRoute.getRaw("cors-sse-get").response(_.bodySseText)
-            val ep = route.filter(HttpFilter.server.cors()).handler { _ =>
+            val ep    = route.filter(HttpFilter.server.cors()).handler { _ =>
                 val events = Stream.init(Seq(HttpSseEvent("test")))
                 HttpResponse.ok.addField("body", events)
             }
@@ -2847,7 +2847,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "SSE with delayed first event" - {
             val route = HttpRoute.getRaw("sse-delayed").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Chunk(1, 2, 3)).mapChunk { chunk =>
                     Async.delay(1.millis) {
                         chunk.map(i => HttpSseEvent(s"event-$i"))
@@ -2879,9 +2879,9 @@ class HttpServerTest extends BaseHttpTest:
 
         "NDJSON with infinite stream and delay" - {
             val route = HttpRoute.getRaw("ndjson-repeat").response(_.bodyNdjson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val counter = new java.util.concurrent.atomic.AtomicInteger(0)
-                val users = Stream[User, Async] {
+                val users   = Stream[User, Async] {
                     Loop.foreach {
                         for
                             _ <- Async.delay(1.millis)(())
@@ -2915,7 +2915,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "NDJSON with delayed chunks" - {
             val route = HttpRoute.getRaw("ndjson-delayed").response(_.bodyNdjson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val users = Stream.init(Chunk(User(1, "alice"), User(2, "bob"))).mapChunk { chunk =>
                     Async.delay(1.millis) {
                         chunk
@@ -2946,7 +2946,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "empty SSE stream" - {
             val route = HttpRoute.getRaw("sse-empty").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.empty[HttpSseEvent[String]]
                 HttpResponse.ok.addField("body", events)
             }
@@ -2968,7 +2968,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "SSE with gaps between events" - {
             val route = HttpRoute.getRaw("sse-gaps").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream[HttpSseEvent[String], Async] {
                     Emit.valueWith(Chunk(HttpSseEvent("first", Present("msg"), Absent, Absent))) {
                         Async.delay(1.millis) {
@@ -3007,7 +3007,7 @@ class HttpServerTest extends BaseHttpTest:
         // Tests the .map pattern (used in McpServer — BUG-9) vs .mapChunk pattern (used in EventBus — works)
         "delayed stream via map pattern" - {
             val route = HttpRoute.getRaw("sse-map-delay").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Chunk(1, 2, 3)).map { i =>
                     Async.delay(1.millis) {
                         HttpSseEvent(s"item-$i")
@@ -3101,7 +3101,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "stream with Async.delay before first Emit sends headers immediately" - {
             val route = HttpRoute.getRaw("sse-delay-first").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream[HttpSseEvent[String], Async] {
                     Async.delay(1.millis) {
                         Emit.value(Chunk(HttpSseEvent("delayed-event")))
@@ -3134,7 +3134,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler throws exception returns 500 with non-empty body" - {
             val route = HttpRoute.getRaw("fail-body").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("boom")
                 HttpResponse.ok("unreachable")
             }
@@ -3184,7 +3184,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler exception does not leak exception message in body" - {
             val route = HttpRoute.getRaw("throw-leak").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("secret internal detail")
                 HttpResponse.ok("unreachable")
             }
@@ -3474,7 +3474,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "SSE response has Content-Type text/event-stream" - {
             val route = HttpRoute.getRaw("sse-ct").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val events = Stream.init(Seq(HttpSseEvent("test")))
                 HttpResponse.ok.addField("body", events)
             }
@@ -3493,7 +3493,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "NDJSON response has Content-Type application/x-ndjson" - {
             val route = HttpRoute.getRaw("ndjson-ct").response(_.bodyNdjson[User])
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val users = Stream.init(Seq(User(1, "alice")))
                 HttpResponse.ok.addField("body", users)
             }
@@ -3688,7 +3688,7 @@ class HttpServerTest extends BaseHttpTest:
         "server recovers after 500 error" in {
             val route   = HttpRoute.getRaw("maybe-fail").response(_.bodyText)
             var counter = 0
-            val ep = route.handler { _ =>
+            val ep      = route.handler { _ =>
                 counter += 1
                 if counter == 1 then throw new RuntimeException("first request fails")
                 else HttpResponse.ok("recovered")
@@ -3709,7 +3709,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "concurrent error responses do not hang" - {
             val route = HttpRoute.getRaw("concurrent-err").response(_.bodyText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 throw new RuntimeException("fail"); HttpResponse.ok("x")
             }
             runServer(ep) { url =>
@@ -3723,7 +3723,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "empty SSE stream returns 200 with no events" - {
             val route = HttpRoute.getRaw("sse-empty").response(_.bodySseText)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 HttpResponse.ok.addField("body", Stream.empty[HttpSseEvent[String]])
             }
             runServer(ep) { url =>
@@ -3845,7 +3845,7 @@ class HttpServerTest extends BaseHttpTest:
 
         "streaming response via chunked encoding" in {
             val route = HttpRoute.getRaw("pump-chunked").response(_.bodyStream)
-            val ep = route.handler { _ =>
+            val ep    = route.handler { _ =>
                 val chunks = Stream.init((1 to 10).map(i =>
                     Span.fromUnsafe(s"chunk-$i\n".getBytes("UTF-8"))
                 ))
@@ -3959,9 +3959,9 @@ class HttpServerTest extends BaseHttpTest:
         "an interrupt landing as the listener binds leaves no listener behind".pendingUntilFixed(
             "HttpServer.initUnscoped joins the listen fiber and maps the bound server in a later step, so a stop landing between the bind and that step leaves the listener bound with nobody to close it"
         ).notJs.notWasm in {
-            val route   = HttpRoute.getRaw("test").response(_.bodyText)
-            val handler = route.handler(_ => HttpResponse.ok("hello"))
-            val rounds  = 80
+            val route                            = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler                          = route.handler(_ => HttpResponse.ok("hello"))
+            val rounds                           = 80
             def bind(port: Int): Boolean < Async =
                 Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
             Loop.indexed { i =>
@@ -3969,7 +3969,7 @@ class HttpServerTest extends BaseHttpTest:
                 else
                     val binding = new java.util.concurrent.atomic.AtomicBoolean(false)
                     for
-                        port <- Scope.run(HttpServer.init(0, "127.0.0.1")(handler).map(_.port))
+                        port  <- Scope.run(HttpServer.init(0, "127.0.0.1")(handler).map(_.port))
                         fiber <- Fiber.initUnscoped(Scope.run(
                             Sync.defer(binding.set(true)).andThen(HttpServer.init(port, "127.0.0.1")(handler)).andThen(Async.never)
                         ))

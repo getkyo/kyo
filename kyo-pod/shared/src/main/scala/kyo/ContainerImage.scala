@@ -114,7 +114,7 @@ object ContainerImage:
                     end if
 
             // Parse the path components: registry/namespace/name or namespace/name or name
-            val parts = beforeTag.split("/").toSeq
+            val parts                                = beforeTag.split("/").toSeq
             val (registryVal, namespaceVal, nameVal) = parts match
                 case Seq(single)                                => (Absent: Maybe[Registry], Absent: Maybe[String], single)
                 case Seq(first, rest*) if isRegistryHost(first) =>
