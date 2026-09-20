@@ -142,3 +142,9 @@ case class MTStringDict(d: Dict[String, Int]) derives CanEqual, Schema
 case class MTOrderedDictLevelsRecord(name: String, byLevel: OrderedDict[Int, String], count: Int) derives CanEqual, Schema
 case class MTStringDictRecord(name: String, tags: Dict[String, Int], count: Int) derives CanEqual, Schema
 case class MTIntStringDictRecord(name: String, byId: Dict[Int, String], count: Int) derives CanEqual, Schema
+
+// The same omit coverage for Map, whose two givens split on the key type exactly as Dict's do:
+// stringMapSchema (String key, object wire form) and mapSchema (non-String key, array-of-{key,value}
+// wire form).
+case class MTStringMapRecord(name: String, tags: Map[String, Int], count: Int) derives CanEqual, Schema
+case class MTIntMapRecord(name: String, byId: Map[Int, String], count: Int) derives CanEqual, Schema
