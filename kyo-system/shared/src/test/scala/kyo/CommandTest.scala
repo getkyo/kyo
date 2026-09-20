@@ -286,6 +286,7 @@ class CommandTest extends kyo.test.Test[Any]:
     // on a flag the spawner sets before the fork, staggers its offset, and requests the stop directly. The check is on
     // the operating system's view, by a unique argv.
     "an interrupt landing during spawn does not orphan the process".notJs.notWasm in {
+        assumeUnix() // sleep / pgrep / kill have no Windows equivalent
         val seconds                                                  = 300 + scala.util.Random.nextInt(1000)
         val cmd                                                      = Command("sleep", seconds.toString)
         val rounds                                                   = 80
