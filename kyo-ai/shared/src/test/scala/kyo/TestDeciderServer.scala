@@ -46,6 +46,14 @@ object TestDeciderServer:
 
     /** Binds the server on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. */
     def run[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+        // Every leaf that scripts a decider needs a decider to script, which is a server on a port. A browser page has
+        // no port to bind, so the leaf has nothing to run rather than something to fail. Same pre-flight as
+        // TestCompletionServer's, which this fixture otherwise follows.
+        if kyo.internal.Platform.isBrowser then
+            Sync.defer(throw new kyo.test.TestCancelled("this test scripts a decider server, and this host is a browser page"))
+        else bindHere(f)
+
+    private def bindHere[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[String])

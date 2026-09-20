@@ -102,9 +102,14 @@ class ZipCodecTest extends kyo.test.Test[Any]:
                 assert(readsBack(out, longText), s"level $level")
                 out.length
             }
-            // Stored at level 0, so larger than the input; each higher level no larger than the one below it.
+            // Level 0 stores, which RFC 1951 makes larger than the input: the level reaches the engine.
             assert(sizes(0) > longText.length, s"sizes $sizes")
-            assert(sizes(1) >= sizes(2) && sizes(2) >= sizes(3), s"sizes $sizes")
+            // Every other level compresses, to a small fraction of the input on text this repetitive.
+            // The compressing levels are NOT ordered against each other. DEFLATE does not promise that a higher
+            // level is never a byte larger, and zlib builds disagree on this input: one answers 12682, 12689,
+            // 12429 for levels 1, 6 and 9, putting level 6 above level 1. Asserting the order tests zlib's
+            // match-search tuning rather than this codec.
+            assert(sizes.tail.forall(_ < longText.length / 10), s"sizes $sizes")
         }
 
         "under the huffman-only strategy, which finds no matches" in {
