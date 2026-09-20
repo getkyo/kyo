@@ -901,48 +901,41 @@ final private[kyo] class HttpContainerBackend(
 
     /** Build an AttachSession from an HttpRawConnection.
       *
-      * Wraps the bidirectional raw byte connection as an AttachSession with proper demultiplexing. In TTY mode, raw bytes are treated as
-      * stdout text. In non-TTY mode, Docker's 8-byte multiplexed stream headers are parsed to separate stdout/stderr.
+      * The output pump ([[ContainerBackend.attachOutput]]) reads the raw connection once: in TTY mode its bytes are stdout, otherwise Docker's
+      * 8-byte multiplexed frame headers separate stdout from stderr.
       */
     private def buildAttachSession(
         conn: HttpRawConnection,
         isTty: Boolean,
         includeStdout: Boolean,
         includeStderr: Boolean
-    ): AttachSession =
-        new AttachSession:
-            def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                conn.write(Span.from(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+    )(using Frame): AttachSession < (Sync & Scope) =
+        val demuxed: Stream[AttachSession.Output, Async] =
+            if isTty then conn.read.mapChunkPure(spans => spans.map(bytes => AttachSession.Output(LogEntry.Source.Stdout, bytes)))
+            else
+                conn.read.into(FrameAssembler.pipe).mapChunkPure(frames =>
+                    frames.map((bytes, source) => AttachSession.Output(source, bytes))
+                )
+        val selected = demuxed.filter { chunk =>
+            chunk.source match
+                case LogEntry.Source.Stdout => includeStdout
+                case LogEntry.Source.Stderr => includeStderr
+        }
+        ContainerBackend.attachOutput(selected, ContainerBackend.attachOutputCapacity()).map { outputStream =>
+            new AttachSession:
+                def write(data: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                    conn.write(Span.from(data.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
 
-            def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
-                conn.write(Span.from(data.toArray))
+                def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException]) =
+                    conn.write(Span.from(data.toArray))
 
-            def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
-                val rawStream =
-                    if isTty then
-                        conn.read.mapChunk { spans =>
-                            spans.flatMap { bytes =>
-                                val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                val lines = text.split("\n").filter(_.nonEmpty)
-                                Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
-                            }
-                        }
-                    else
-                        conn.read.into(FrameAssembler.pipe).mapChunkPure { framePairs =>
-                            framePairs.flatMap { case (content, source) =>
-                                content.split("\n").iterator.filter(_.nonEmpty).map(line => LogEntry(source, line)).toSeq
-                            }
-                        }
-                rawStream.filter { entry =>
-                    entry.source match
-                        case LogEntry.Source.Stdout => includeStdout
-                        case LogEntry.Source.Stderr => includeStderr
-                }
-            end read
+                def output(using Frame): Stream[AttachSession.Output, Async & Abort[ContainerException]] =
+                    outputStream
 
-            def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
-                () // Resize can be added later via POST to resize endpoint
-        end new
+                def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException]) =
+                    () // Resize can be added later via POST to resize endpoint
+            end new
+        }
     end buildAttachSession
 
     // --- Logs ---
@@ -1020,7 +1013,6 @@ final private[kyo] class HttpContainerBackend(
                 val drain =
                     if isTty then
                         byteStream
-                            .mapChunkPure { spans => spans.map(s => new String(s.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
                             .into(LineAssembler.pipe)
                             .foreachChunk { lines =>
                                 val entries = lines.collect {
@@ -1432,7 +1424,6 @@ final private[kyo] class HttpContainerBackend(
     )(using Frame): Unit < (Async & Abort[ContainerException] & S) =
         Abort.runWith[HttpException](
             byteStream
-                .mapChunkPure { spans => spans.map(s => new String(s.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
                 .into(LineAssembler.pipe)
                 .foreachChunk { lines =>
                     Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty))(processLine)
@@ -2071,14 +2062,12 @@ final private[kyo] class HttpContainerBackend(
       *   When true, attempt to parse Docker timestamp prefix from each line (format: `2024-01-01T00:00:00.000000000Z content`).
       */
     private def demuxStream(bytes: Span[Byte], timestamps: Boolean = false)(using Frame): Chunk[LogEntry] =
-        val frames = Stream.init(Seq(bytes)).into(FrameAssembler.pipe).run.eval
-        val result = Chunk.newBuilder[LogEntry]
-        frames.foreach { case (content, source) =>
-            content.split("\n").iterator.filter(_.nonEmpty).foreach { line =>
-                result.addOne(makeLogEntry(line, source, timestamps))
-            }
-        }
-        result.result()
+        Stream.init(Seq(bytes))
+            .into(FrameAssembler.pipe)
+            .into(LineAssembler.partitionedPipe[LogEntry.Source])
+            .run
+            .eval
+            .collect { case (line, source) if line.nonEmpty => makeLogEntry(line, source, timestamps) }
     end demuxStream
 
     /** Construct a [[LogEntry]] for a single non-empty log line, optionally parsing a Docker timestamp prefix.
