@@ -121,9 +121,25 @@ class CapabilityProbeTest extends Test:
         end match
     }
 
-    "the platform tag reads as <os>-<arch>" in {
-        assert(CapabilityProbe.platform.contains("-"), s"expected an <os>-<arch> tag, got ${CapabilityProbe.platform}")
-        assert(CapabilityProbe.platform.nonEmpty)
+    /** A system library resolves from the process's own symbol scope and is never packaged, so a LibraryNotFound
+      * over one means a SYMBOL the binding declared is absent and the loader's message is the only thing naming
+      * it. NotBundled would answer that with an instruction to add a classifier artifact, and none of them
+      * carries a libc.
+      */
+    "a system library's failure keeps the loader's message instead of naming a classifier" in {
+        val thrown = new FfiLoadError.LibraryNotFound(
+            "c",
+            Chunk("process default scope"),
+            "Symbol 'io_uring_setup' is absent from system library 'c' on linux-x86_64; " +
+                "this is a missing symbol, not a missing library",
+            null
+        )
+        CapabilityProbe.classify(thrown, Chunk("c")) match
+            case CapabilityOutcome.Unavailable(reason) =>
+                assert(reason.contains("io_uring_setup"), s"the absent symbol must survive, got $reason")
+                assert(!reason.contains("classifier"), s"a libc failure must not advise a classifier, got $reason")
+            case other => fail(s"a system library must not classify as a packaging problem: ${other.describe}")
+        end match
     }
 
 end CapabilityProbeTest
