@@ -28,6 +28,23 @@ class BrowserExceptionHierarchyTest extends BaseBrowserTest:
         succeed("BrowserNavigationFailedException is a BrowserNavigationException and a BrowserReadException")
     }
 
+    "BrowserNavigationTransportFailedException extends BrowserNavigationException with BrowserReadException" in {
+        discard(summon[BrowserNavigationTransportFailedException <:< BrowserNavigationException])
+        discard(summon[BrowserNavigationTransportFailedException <:< BrowserReadException])
+        succeed("BrowserNavigationTransportFailedException is a BrowserNavigationException and a BrowserReadException")
+    }
+
+    // A caller retrying a transport failure must not silently pick up HTTP-status failures with it. The two are
+    // siblings under the navigation marker, never one under the other, so Retry[BrowserNavigationTransportFailedException]
+    // cannot match a 404.
+    "BrowserNavigationTransportFailedException is not a BrowserNavigationFailedException" in {
+        val transport: BrowserNavigationException = BrowserNavigationTransportFailedException("chrome-error://chromewebdata/")
+        assert(!transport.isInstanceOf[BrowserNavigationFailedException])
+        val httpError: BrowserNavigationException = BrowserNavigationFailedException("http://example.test/", "HTTP 404")
+        assert(!httpError.isInstanceOf[BrowserNavigationTransportFailedException])
+        succeed("the two navigation-failure leaves are disjoint")
+    }
+
     "BrowserScriptErrorException extends BrowserScriptException with BrowserReadException" in {
         discard(summon[BrowserScriptErrorException <:< BrowserScriptException])
         discard(summon[BrowserScriptErrorException <:< BrowserReadException])
