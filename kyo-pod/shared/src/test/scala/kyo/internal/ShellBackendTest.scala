@@ -268,4 +268,52 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    /** A pull that reached the registry and got a server error is not a pull that found nothing.
+      *
+      * Everything podman prints about a failed pull opens with `initializing source docker://<ref>`, whether the manifest was absent or the
+      * registry could not answer. Classifying the whole family as a missing image gives a transient outage the one label callers treat as
+      * permanent, and `Container.init` then fails a container that a second attempt would have started. Only the status podman quotes back
+      * separates the two.
+      */
+    "mapError on a failed pull" - {
+        val backend = new ShellBackend("podman")
+        val ctx     = ResourceContext.Image("alpine:3.20")
+
+        def classify(output: String)(using Frame): kyo.ContainerException =
+            backend.mapError(output, ctx, Seq("pull", "alpine:3.20"))
+
+        // The shape podman printed on main run 35491732864, with the reference it was asked for.
+        "a quoted gateway status is a registry fault" in {
+            val ex = classify(
+                "Error: initializing source docker://alpine:3.20: reading manifest 3.20 in docker.io/library/alpine: " +
+                    "received unexpected HTTP status: 502 Bad Gateway"
+            )
+            assert(ex.isInstanceOf[kyo.ContainerRegistryUnavailableException], s"expected a registry-unavailable failure, got $ex")
+        }
+
+        "every quoted server status is a registry fault" in {
+            val statuses = Seq("500 Internal Server Error", "502 Bad Gateway", "503 Service Unavailable", "504 Gateway Timeout")
+            val classes  =
+                statuses.map(s => classify(s"Error: initializing source docker://alpine:3.20: received unexpected HTTP status: $s"))
+            assert(
+                classes.forall(_.isInstanceOf[kyo.ContainerRegistryUnavailableException]),
+                s"expected every quoted server status to read as a registry fault, got $classes"
+            )
+        }
+
+        // The other half of the contract: an absent image must still read as absent, or the retry above would
+        // spend its whole schedule on an image that is never going to appear.
+        "a manifest the registry answered for is still a missing image" in {
+            val ex = classify(
+                "Error: initializing source docker://alpine:nope: reading manifest nope in docker.io/library/alpine: manifest unknown"
+            )
+            assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
+        }
+
+        "a registry denial is still an auth failure" in {
+            val ex = classify("Error: initializing source docker://private/app:1: unauthorized: authentication required")
+            assert(ex.isInstanceOf[kyo.ContainerAuthException], s"expected an auth failure, got $ex")
+        }
+    }
+
 end ShellBackendTest

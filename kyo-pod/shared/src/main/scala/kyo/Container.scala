@@ -455,20 +455,23 @@ object Container:
     def init(config: Config)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         init(config, Retry.defaultSchedule)
 
-    /** As `init(config)`, but retries the image-vanished race on the given schedule.
+    /** As `init(config)`, but retries the image-vanished race and registry outages on the given schedule.
       *
       * @param retrySchedule
-      *   covers the image-vanished race noted on `init`: a concurrent operation removing the image after
-      *   `imageEnsure` and before `create`, which the HTTP backend surfaces as a 404 /
-      *   `ContainerImageMissingException`. A permanently absent image fails fast (the up-front `imageEnsure`
-      *   is not retried), as do `create` conflicts and other errors.
+      *   covers two transient conditions. The image-vanished race noted on `init`: a concurrent operation
+      *   removing the image after `imageEnsure` and before `create`, which the HTTP backend surfaces as a
+      *   404 / `ContainerImageMissingException`. And a registry that could not answer, which arrives as
+      *   `ContainerRegistryUnavailableException` from either backend. A permanently absent image fails
+      *   fast, as do auth rejections, `create` conflicts, and other errors.
       */
     def init(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         currentBackend.map { b =>
-            // Ensure the image up front. A permanently absent image (or auth/registry error) fails here,
-            // fast: retrying a genuinely absent image never helps. Only the transient post-ensure race is
-            // retried below.
-            b.imageEnsure(config.image, Absent, Absent).andThen {
+            // Ensure the image up front so a permanently absent image (or an auth rejection) fails here, fast:
+            // retrying either never helps. A registry that could not answer asserts neither, and is the one
+            // up-front failure worth another attempt, so it alone is retried.
+            Retry[ContainerRegistryUnavailableException](retrySchedule) {
+                b.imageEnsure(config.image, Absent, Absent)
+            }.andThen {
                 // The image was present, but under concurrent suites another operation can remove it before
                 // `create` runs (the HTTP backend's create then returns 404 / ImageMissing, since unlike
                 // `docker run` it does not auto-pull). Retry re-ensures (re-pulling the vanished image) then
@@ -578,15 +581,18 @@ object Container:
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         initUnscoped(config, Retry.defaultSchedule)
 
-    /** As `initUnscoped(config)`, but retries the image-vanished race on the given schedule (see `init`). */
+    /** As `initUnscoped(config)`, but retries the image-vanished race and registry outages on the given schedule (see `init`). */
     def initUnscoped(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                 AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
-                    // Ensure the image up front so a permanently absent image fails fast (no retry). Then
-                    // retry the create-side image-vanished race (see `init`), re-pulling on each attempt;
-                    // scoped to ImageMissing so create conflicts and other errors propagate at once.
-                    b.imageEnsure(config.image, Absent, Absent).andThen {
+                    // Ensure the image up front so a permanently absent image fails fast, retrying only a
+                    // registry that could not answer (see `init`). Then retry the create-side image-vanished
+                    // race, re-pulling on each attempt; scoped to ImageMissing so create conflicts and other
+                    // errors propagate at once.
+                    Retry[ContainerRegistryUnavailableException](retrySchedule) {
+                        b.imageEnsure(config.image, Absent, Absent)
+                    }.andThen {
                         Retry[ContainerImageMissingException](retrySchedule) {
                             b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
                         }
