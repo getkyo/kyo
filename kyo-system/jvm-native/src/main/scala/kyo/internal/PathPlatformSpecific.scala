@@ -331,7 +331,9 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
                 Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE)
             case FileSystem.WriteOpen.CreateNew =>
                 ensureParent(jpath)
-                Array(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)
+                // Exclusive creation is the platform's to guarantee: atomic in the JDK's CREATE_NEW, absent from
+                // Scala Native's, which claims the path here instead. See NioExclusiveCreatePlatform.
+                NioExclusiveCreatePlatform.claimExclusively(jpath)
         val opts: Array[StandardOpenOption] = mode match
             case Path.RawChannelAccess.Read            => Array(StandardOpenOption.READ)
             case Path.RawChannelAccess.Write(open)     => writeOptions(open)

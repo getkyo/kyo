@@ -1,11 +1,11 @@
 package kyo.scheduler.util
 
+import java.util.List as JList
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.{List as JList}
 import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
@@ -22,7 +22,7 @@ import org.scalatest.time.Span
 class HandoffRetryExecutorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     // Bounded only as a hang canary: every assertion below is a state the executor reaches or does not.
-    given patience: PatienceConfig = PatienceConfig(timeout = Span(30, Seconds))
+    implicit val patience: PatienceConfig = PatienceConfig(timeout = Span(30, Seconds))
 
     private val factory = Threads("test-handoff-retry")
 
@@ -68,10 +68,10 @@ class HandoffRetryExecutorTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "a submission that runs late alongside its retry still executes once" in {
-        val pool = new StubPool(drops = 0)
-        val exec = new HandoffRetryExecutor(pool, factory)
-        val runs = new AtomicInteger(0)
-        val ran  = new CountDownLatch(1)
+        val pool           = new StubPool(drops = 0)
+        val exec           = new HandoffRetryExecutor(pool, factory)
+        val runs           = new AtomicInteger(0)
+        val ran            = new CountDownLatch(1)
         val task: Runnable = () => { runs.incrementAndGet(); ran.countDown() }
         // Submit the same tracked runnable through the wrapper twice over: the started flag is what makes the
         // duplicate a no-op, so both arrivals together must still produce one run.

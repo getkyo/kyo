@@ -54,7 +54,7 @@ class JsGuardRetainTest extends Test:
         "a thrown unregister is swallowed, other retained handles still get their call" in {
             var callIndex = 0
             val seen      = scala.collection.mutable.ArrayBuffer.empty[Int]
-            val prev = CallbackRegistry.setUnregister { (_: sjs.Any) =>
+            val prev      = CallbackRegistry.setUnregister { (_: sjs.Any) =>
                 val idx = callIndex
                 callIndex += 1
                 if idx == 1 then throw new RuntimeException("boom")

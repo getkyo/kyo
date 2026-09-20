@@ -74,7 +74,7 @@ final private[internal] class JsTask(
         // On Scala.js, Class.forName(String) is not available. Use the Scala.js Reflect API to obtain
         // the runtime Class object for the test suite. The class is included in the reflection registry
         // because kyo.test.Test extends KyoTestReflect which carries @EnableReflectiveInstantiation.
-        val fqn = taskDef.fullyQualifiedName()
+        val fqn          = taskDef.fullyQualifiedName()
         val runtimeClass = Reflect
             .lookupInstantiatableClass(fqn)
             .getOrElse(

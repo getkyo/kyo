@@ -19,7 +19,7 @@ object TestResourceLoader:
             case p if p.endsWith("BaseClass.tasty")              => kyo.fixtures.Embedded.baseClassTasty
             case p if p.endsWith("ChildClass.tasty")             => kyo.fixtures.Embedded.childClassTasty
             case p if p.endsWith("Shape.tasty")                  => kyo.fixtures.Embedded.shapeTasty
-            case other =>
+            case other                                           =>
                 throw new RuntimeException(s"JS: fixture not embedded: $other; add to Embedded.scala under kyo-tasty/fixtures")
 
 end TestResourceLoader

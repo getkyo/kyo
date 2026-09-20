@@ -296,7 +296,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 _ <- assertEventually(Sync.defer(tracker.added.size == 28))
                 _ <- Sync.defer {
                     val button = dom.document.getElementById("active-handler")
-                    val event = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
+                    val event  = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MouseEvent)(
                         "click",
                         scalajs.Dynamic.literal(bubbles = true)
                     )
@@ -398,7 +398,7 @@ class DomBackendDelegationTest extends kyo.test.Test[Any]:
                 UI.div(UI.button("nav").id("scroll-key-target").tabIndex(0).preventScrollKeys),
                 ready
             )))
-            _ <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("scroll-key-target") != null))
+            _         <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("scroll-key-target") != null))
             prevented <- Sync.defer {
                 val target = dom.document.getElementById("scroll-key-target")
                 assert(scalajs.isUndefined(target.asInstanceOf[scalajs.Dynamic].isContentEditable))

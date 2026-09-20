@@ -83,16 +83,34 @@ jobs:
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
       # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
       # published with no native for a platform it needs.
+      # Retriable for the same reason the staging steps below are: sbt resolves against Maven Central
+      # here, publish declares needs on all five producers, and a single dropped connection in any of
+      # them fails the release. The dependency cache is the first line and the retry is the second,
+      # because a cache keyed on the build files is cold after every dependency bump and the repo sits
+      # at the 10 GB budget where eviction is continuous. Re-running a producer is cheap: the staging
+      # scripts skip what is already staged.
       - name: Compile every module's darwin natives (darwin-aarch64 + darwin-x86_64)
-        shell: bash
-        run: |
-          # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
-          sbt -Dplatform=JVM ffiCompileAll
-          # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
-          # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
-          # ffiCFlags is a build-wide setting, so one ThisBuild append covers every project this leg
-          # cross-builds. Same form the plugin's own generated workflow uses.
-          sbt -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: |
+            # A `run:` step gets -eo pipefail from the runner; a command handed to the retry action does
+            # not necessarily, and every block here runs more than one command. Set it explicitly so a
+            # failure in any of them fails the attempt instead of being retried into a false success.
+            set -euo pipefail
+            # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
+            sbt -Dplatform=JVM ffiCompileAll
+            # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
+            # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
+            # ffiCFlags is a build-wide setting, so one ThisBuild append covers every project this leg
+            # cross-builds. Same form the plugin's own generated workflow uses.
+            sbt -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
       - name: Collect darwin natives
         shell: bash
         run: |
@@ -159,38 +177,58 @@ jobs:
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
       - name: Build linux-x86_64 (glibc) natives
-        shell: bash
-        run: |
-          bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
-          bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
-          bash kyo-sql-doltlite/scripts/build-doltlite.sh
-          sbt -Dplatform=JVM ffiCompileAll
-          mkdir -p natives-out
-          find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
-      - name: Build linux-musl-x86_64 natives (Alpine)
-        shell: bash
-        run: |
-          # apk add the exact toolchain the staging scripts need (they are bash scripts: Alpine ships
-          # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
-          # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
-          # glibc dependency).
-          # Mount the cache in, or the container resolves into throwaway storage.
-          mkdir -p "$HOME/.cache/coursier"
-          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
-            set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
-            sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
-            curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
-            export PATH="/opt/sbt/bin:$PATH"
-            bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
-            bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: |
+            set -euo pipefail
+            bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
+            bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
             bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
-            find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
-          '
+            find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
+      # The container resolves against the mounted cache, so it is exposed even on a run where the host
+      # cache was warm. A reset here is what failed release 35440372541 at sbt project load.
+      - name: Build linux-musl-x86_64 natives (Alpine)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: |
+            set -euo pipefail
+            # apk add the exact toolchain the staging scripts need (they are bash scripts: Alpine ships
+            # only busybox sh), plus liburing-dev for the posix_uring shim, util-linux-dev for the Aeron
+            # driver's -luuid, and curl/tar for the sbt launcher, which is a JAR the musl JDK runs (no
+            # glibc dependency).
+            # Mount the cache in, or the container resolves into throwaway storage.
+            mkdir -p "$HOME/.cache/coursier"
+            docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+              set -eu
+              apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
+              sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
+              curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
+              export PATH="/opt/sbt/bin:$PATH"
+              bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
+              bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
+              bash kyo-sql-sqlite/scripts/build-sqlite.sh
+              bash kyo-sql-doltlite/scripts/build-doltlite.sh
+              sbt -Dplatform=JVM ffiCompileAll
+              mkdir -p natives-out
+              find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
+            '
       - name: Verify + list natives
         shell: bash
         run: |
@@ -250,34 +288,52 @@ jobs:
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
       - name: Build linux-aarch64 (glibc) natives
-        shell: bash
-        run: |
-          bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
-          bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
-          bash kyo-sql-doltlite/scripts/build-doltlite.sh
-          sbt -Dplatform=JVM ffiCompileAll
-          mkdir -p natives-out
-          find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
-      - name: Build linux-musl-aarch64 natives (Alpine)
-        shell: bash
-        run: |
-          # Mount the cache in, or the container resolves into throwaway storage.
-          mkdir -p "$HOME/.cache/coursier"
-          docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
-            set -eu
-            apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
-            sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
-            curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
-            export PATH="/opt/sbt/bin:$PATH"
-            bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
-            bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: |
+            set -euo pipefail
+            bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
+            bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
             bash kyo-sql-sqlite/scripts/build-sqlite.sh
             bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
-            find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
-          '
+            find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
+      - name: Build linux-musl-aarch64 natives (Alpine)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: |
+            set -euo pipefail
+            # Mount the cache in, or the container resolves into throwaway storage.
+            mkdir -p "$HOME/.cache/coursier"
+            docker run --rm -v "$PWD:/work" -v "$HOME/.cache/coursier:/root/.cache/coursier" -w /work eclipse-temurin:25-jdk-alpine sh -c '
+              set -eu
+              apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
+              sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
+              curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
+              export PATH="/opt/sbt/bin:$PATH"
+              bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
+              bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
+              bash kyo-sql-sqlite/scripts/build-sqlite.sh
+              bash kyo-sql-doltlite/scripts/build-doltlite.sh
+              sbt -Dplatform=JVM ffiCompileAll
+              mkdir -p natives-out
+              find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
+            '
       - name: Verify + list natives
         shell: bash
         run: |
@@ -349,8 +405,16 @@ jobs:
         shell: bash
         run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-x86_64 natives
-        shell: bash
-        run: sbt -Dplatform=JVM ffiCompileAll
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: sbt -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-x86_64
@@ -413,8 +477,16 @@ jobs:
         run: |
           bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-aarch64 natives
-        shell: bash
-        run: sbt -Dplatform=JVM ffiCompileAll
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_wait_seconds: 30
+          timeout_minutes: 120
+          # Resets only. The default retries a timeout too, and three 120-minute attempts exhaust the
+          # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
+          retry_on: error
+          shell: bash
+          command: sbt -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-aarch64

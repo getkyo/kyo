@@ -8,6 +8,161 @@ import scala.annotation.nowarn
 
 class TagTest extends kyo.test.Test[Any]:
 
+    "ordinary operations are portable in the macro host" in {
+        val failures = kyo.internal.TagTestMacro.portabilityFailures()
+        assert(failures.isEmpty, failures.mkString("\n"))
+    }
+
+    "colliding nominal hashes" - {
+        class Aa
+        class BB
+
+        "the independently derived encodings collide" in {
+            val a        = Tag[Aa]
+            val b        = Tag[BB]
+            val encodedA = Tag.internal.encode[Aa](a.tpe.staticDB)
+            val encodedB = Tag.internal.encode[BB](b.tpe.staticDB)
+            assert(encodedA != encodedB)
+            assert(encodedA.hashCode == encodedB.hashCode)
+            assert(TagHash.of(a) == TagHash.of(b))
+            assert(a.show != b.show)
+        }
+
+        "distinct types agree with the compiler" - {
+            test[Aa, BB]
+        }
+
+        "same types agree with the compiler" - {
+            test[Aa, Aa]
+        }
+
+        "an equal encoding that is not the same instance still compares equal" in {
+            // The `eq` short circuit answers every pair of derived literals, so nothing else reaches the
+            // comparison with an equal pair. A copy does. `=:=` treats a false here as final for a concrete
+            // tag, so a false negative would report a type as different from itself.
+            // On JVM and Native the copy is a distinct instance, so the comparison runs for real. On JS
+            // reference identity is value equality, so the short circuit answers it and the leaf is trivial.
+            val derived = Tag[Aa]
+            val copy    = new String(Tag.internal.encode[Aa](derived.tpe.staticDB)).asInstanceOf[Tag[Aa]]
+            assert(copy =:= derived)
+            assert(derived =:= copy)
+            assert(copy <:< derived)
+            assert(!(copy =!= derived))
+        }
+
+        "a cached successful subtype does not admit a colliding type" in {
+            val accepted = Tag[List[Aa]]
+            val rejected = Tag[List[BB]]
+            val target   = Tag[Seq[Aa]]
+            assert(TagHash.of(accepted) == TagHash.of(rejected))
+            assert(TagHash.of(accepted) != TagHash.of(target))
+            for _ <- 0 until 3 do
+                assert(accepted <:< target)
+                assert(!(rejected <:< target))
+        }
+
+        "a cached rejected subtype does not reject a colliding type" in {
+            val rejected = Tag[Vector[Aa]]
+            val accepted = Tag[Vector[BB]]
+            val target   = Tag[Seq[BB]]
+            assert(TagHash.of(accepted) == TagHash.of(rejected))
+            assert(TagHash.of(accepted) != TagHash.of(target))
+            for _ <- 0 until 3 do
+                assert(!(rejected <:< target))
+                assert(accepted <:< target)
+        }
+    }
+
+    "dynamic captured lambda bodies" - {
+        trait Higher[F[_]]
+        def original[A: Tag]: Tag[Higher[[X] =>> Either[A, X]]] = Tag.dynamic[Higher[[X] =>> Either[A, X]]]
+        def renamed[A: Tag]: Tag[Higher[[Y] =>> Either[A, Y]]]  = Tag.dynamic[Higher[[Y] =>> Either[A, Y]]]
+
+        "alpha-equivalent bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[Y] =>> Either[Int, Y]]](using
+                original[Int],
+                renamed[Int],
+                summon[RegisterFunction],
+                summon[Frame]
+            )
+        }
+
+        "different captured bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[String, X]]](using
+                original[Int],
+                original[String],
+                summon[RegisterFunction],
+                summon[Frame]
+            )
+        }
+
+        "dynamic and static bodies agree with the compiler" - {
+            test[Higher[[X] =>> Either[Int, X]], Higher[[X] =>> Either[Int, X]]](using
+                original[Int],
+                Tag[Higher[[X] =>> Either[Int, X]]],
+                summon[RegisterFunction],
+                summon[Frame]
+            )
+        }
+    }
+
+    "original literal representation" - {
+        "typed literal payloads retain NUL and unpaired surrogate code units" in {
+            val tag                           = Tag["\u0000\ud800x\udfff"]
+            val _: Tag["\u0000\ud800x\udfff"] = tag
+            val shown                         = tag.show
+            assert(shown.length == 4)
+            assert(shown.charAt(0).toInt == 0)
+            assert(shown.charAt(1).toInt == 0xd800)
+            assert(shown.charAt(2).toInt == 120)
+            assert(shown.charAt(3).toInt == 0xdfff)
+        }
+
+        "derived literals retain the exact original encoding" in {
+            def check[A](tag: Tag[A]): Unit =
+                val encoded = Tag.internal.encode[A](tag.tpe.staticDB)
+                assert(tag.equals(encoded))
+                assert(TagHash.of(tag) == kyo.internal.XXHashPlatform.stringHash(encoded))
+                assert(Tag.internal.decode(encoded).toString == tag.show)
+            end check
+            check(Tag[Int])
+            check(Tag[String])
+            check(Tag[List[Int]])
+            check(Tag[Int | String])
+            check(Tag["λ\u0000\ud800"])
+        }
+
+        "dynamic hashes retain the original parent and child representation" in {
+            def nested[A: Tag, B: Tag]: Tag[Map[A, List[B]]] = Tag.dynamic[Map[A, List[B]]]
+            val tag                                          = nested[String, Int]
+            val _: Tag[Map[String, List[Int]]]               = tag
+            val tpe                                          = tag.tpe
+            val encoded                                      = Tag.internal.encode[Map[String, List[Int]]](tpe.staticDB)
+            assert(tpe.dynamicDB.nonEmpty)
+            val original = Tag.internal.Dynamic(encoded, tpe.dynamicDB)
+            assert(original.hashCode == tag.hash)
+            assert(original.tpe.toString == tag.show)
+            assert(Tag.internal.Dynamic(encoded, tpe.dynamicDB.toSeq.reverse.toMap).hashCode == tag.hash)
+            assert(nested[String, Int].hash == tag.hash)
+            assert(nested[Int, String].hash != tag.hash)
+        }
+
+        "dispatch hashes retain zero, negative values and UTF-16 code units" in {
+            val cases = Span(
+                (Span(1, 19, 3, 29, 11, 19, 2), 0),
+                (Span(4, 1, 4, 8, 11, 0, 4), Int.MinValue),
+                (Span(0, 26, 21, 10, 21, 30, 6), 0xd800dc00),
+                (Span(1, 19, 4, 0, 7, 4, 25), 0x0000d800)
+            )
+            cases.foreach { (digits, expected) =>
+                val original = "." + digits.map(_.toChar).mkString
+                assert(kyo.internal.XXHashPlatform.stringHash(original) == expected)
+                assert(TagHash.of(original) == expected)
+                assert(TagHash.of(original) == expected)
+            }
+        }
+    }
+
     "without variance" - {
         "equal tags" - {
             class Test[A]
@@ -525,9 +680,10 @@ class TagTest extends kyo.test.Test[Any]:
             assert(Tag[Thread].show == "java.lang.Thread")
         }
 
-        "type params".pendingUntilFixed("Tag.show does not yet render type parameters (Tag[Test[Int]].show omits the type argument)") in {
-            class Test[A]
-            assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
+        "type params" in {
+            val tag                           = Tag[TagTest.ShowType[Int]]
+            val _: Tag[TagTest.ShowType[Int]] = tag
+            assert(tag.show == "kyo.TagTest$.ShowType[scala.Int]", tag.show)
         }
 
         "primitive" in {
@@ -1578,4 +1734,8 @@ class TagTest extends kyo.test.Test[Any]:
         if pending then name.ignore in test
         else name in { test; succeed("the real check is the scala.Predef.assert inside test; succeed registers the leaf with AssertScope") }
 
+end TagTest
+
+object TagTest:
+    class ShowType[A]
 end TagTest

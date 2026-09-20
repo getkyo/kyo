@@ -14,10 +14,10 @@ end RawTagMemo
 /** A `Tag`'s hash code, memoized for the encoded `String` form.
   *
   * Scala.js compiles `String.hashCode` to a loop over the characters and nothing memoizes the result:
-  * a JS string has nowhere to keep one, unlike the JVM's `String.hash` field. `Tag`'s dispatch path
-  * asks for it up to four times per comparison that misses the identity check, twice in the fast path
-  * and twice more to build the subtype cache's key, over encoded types that run to a few hundred
-  * characters. Hashing was the largest single cost of effect dispatch on JS because of it.
+  * a JS string has nowhere to keep one, unlike the JVM's `String.hash` field. The two calls that build
+  * the subtype cache's key are what reach this on the dispatch path, over encoded types that run to
+  * tens of thousands of characters. The fast-path comparison does not: `TagPlatformSpecific` carries
+  * why a hash cannot pay for itself there on this platform.
   *
   * Keys are the statically derived tag strings, a set the program fixes at compile time, so this grows
   * no further than the decode cache it sits beside. Dynamic tags carry their own `hashCode` and pass
@@ -25,17 +25,27 @@ end RawTagMemo
   */
 private[kyo] object TagHash:
 
-    private val memo = js.Map.empty[String, Int].asInstanceOf[RawTagMemo]
+    // A JS artifact's class files also execute during macro expansion on the JVM.
+    // Select by execution environment once; Platform.isJS describes the compilation target.
+    private val runningOnJS = java.lang.System.getProperty("java.vm.name") == "Scala.js"
 
     def of(tag: Any): Int =
         tag match
-            case tag: String =>
-                val cached = memo.get(tag)
-                if cached.isDefined then cached.get
-                else
-                    val hash = tag.hashCode
-                    memo.set(tag, hash)
-                    hash
-                end if
-            case tag => tag.hashCode
+            case tag: String if runningOnJS => JavaScript.of(tag)
+            case tag                        => tag.hashCode
+
+    // Kept behind the runtime branch so JVM macro execution never initializes a JS object.
+    private object JavaScript:
+        private val memo = js.Map.empty[String, Int].asInstanceOf[RawTagMemo]
+
+        def of(tag: String): Int =
+            val cached = memo.get(tag)
+            if cached.isDefined then cached.get
+            else
+                val hash = tag.hashCode
+                memo.set(tag, hash)
+                hash
+            end if
+        end of
+    end JavaScript
 end TagHash
