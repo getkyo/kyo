@@ -68,7 +68,7 @@ The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup 
 > .enablePlugins(KyoNativesPlugin)
 > ```
 >
-> On Scala Native it links the binary against the library and stages it beside the binary, so the directory `nativeLink` writes travels as a unit: a binary deployed without `libkyo_aeron.<ext>` beside it fails in the dynamic loader naming the file. On Node it writes the library where the loader resolves it and installs koffi. Without the plugin a Native binary still links, and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`.
+> On Scala Native it links the binary against the library and stages it beside the binary, so the directory `nativeLink` writes travels as a unit: a binary deployed without `libkyo_aeron.<ext>` beside it fails in the dynamic loader naming the file. On Node it writes the library where the loader resolves it and installs koffi, which is a native Node addon rather than a Scala.js dependency and so cannot travel in a jar: the plugin pins it to `^2.7` in `target/package.json` and runs `npm install` once per clean, the one thing in this path fetched from npm rather than Maven. Without the plugin a Native binary still links, and every `Topic.run` and `AeronClient.connect` panics with `FfiLoadError.LibraryNotFound` naming `kyo_aeron`.
 >
 > On the JVM the downcalls go through `java.lang.foreign`, which warns about restricted methods unless you add:
 > ```

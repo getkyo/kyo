@@ -302,6 +302,8 @@ The transport is not delivered this way and does not need to be: Scala Native co
 
 On Node the same plugin delivers the transport and BoringSSL libraries, which koffi opens from the filesystem since it never sees a classpath, and the application then runs on the posix transport rather than the `JsTransport` floor. A driver with no socket registered parks its poll loop there rather than re-arming it, because on Node the poll is a work request the runtime counts when it decides whether the process may exit; a program holding an open listener keeps the process alive, as it should, and one that closed its last connection ends. Without the plugin Node runs on the floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
+Opening a library on Node needs koffi, which is a native Node addon rather than a Scala.js dependency, so it cannot travel in a jar. The plugin writes `target/package.json` pinning `koffi` to `^2.7` and runs `npm install` into `target/node_modules` once per clean. That is the one thing in this path your build fetches from npm rather than from Maven, and it is the thing to point your own registry, lockfile or audit at. `kyoNativesKoffi := false` turns the install off for a build that provides koffi itself.
+
 io_uring, and TLS from the machine's own OpenSSL rather than from the artifact, come from libraries on the machine that links. kyo-net's artifact declares them, system OpenSSL and a static liburing on Linux, and the kyo FFI plugin looks for them in your build: it compiles and links a small probe against each, and for each one that links it enables the shim and adds the library to your link. That plugin needs the two lines that fold its answer into `nativeConfig`:
 
 ```

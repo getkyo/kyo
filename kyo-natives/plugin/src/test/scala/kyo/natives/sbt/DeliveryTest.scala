@@ -65,6 +65,24 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         }
     }
 
+    test("two modules declaring one library id fail, rather than race for the file name") {
+        val delivery = Map("kyo_sqlite" -> NativeDelivery.Entry("", NativeDelivery.allPlatforms))
+        withJar(Seq(deliveryEntry(delivery))) { first =>
+            withJar(Seq(deliveryEntry(delivery))) { second =>
+                val classpath = Seq(
+                    ("io.getkyo" % "kyo-sql-sqlite_native0.5_3" % "1.2.3")   -> first,
+                    ("io.getkyo" % "kyo-sql-doltlite_native0.5_3" % "1.2.3") -> second
+                )
+                val message = intercept[RuntimeException] {
+                    Delivery.requests(classpath, "darwin-aarch64", "native")
+                }.getMessage
+                message should include("kyo_sqlite")
+                message should include("kyo-sql-sqlite_3")
+                message should include("kyo-sql-doltlite_3")
+            }
+        }
+    }
+
     test("a jar carrying no declaration asks for nothing") {
         withJar(Seq("kyo/Something.class" -> "irrelevant")) { jar =>
             Delivery.requests(Seq(("org" % "thing_3" % "1") -> jar), "darwin-aarch64", "jvm") shouldBe Nil

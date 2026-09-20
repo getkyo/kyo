@@ -92,11 +92,19 @@ object KyoNativesPlugin extends AutoPlugin {
 
     /** The carrier jars, on the JVM only. The Native and JS legs link or copy the libraries instead, and a jar on their
       * classpath would put a second copy of every native into the application's own artifact.
+      *
+      * Each carries the coordinate it was resolved from. sbt-assembly's dedup and sbt-native-packager's `lib/` naming
+      * both read `moduleID` off a classpath entry, and an entry without one shows up as an anonymous file rather than
+      * as the kyo artifact it is.
       */
     private def jvmJars: Def.Initialize[Task[Seq[Attributed[File]]]] = Def.task {
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet)
-        val jars     = kyoNativesJars.value
-        if (platform == Platform.Jvm) jars.map(Attributed.blank) else Nil
+        val fetched  = kyoNativesFetched.value
+        if (platform != Platform.Jvm) Nil
+        else
+            fetched.map(_._2).groupBy(_.jar).toSeq.map { case (jar, group) =>
+                Attributed.blank(jar).put(Keys.moduleID.key, group.head.module)
+            }
     }
 
     private def requestsTask: Def.Initialize[Task[Seq[(String, Delivery.Request)]]] = Def.task {
@@ -127,7 +135,7 @@ object KyoNativesPlugin extends AutoPlugin {
             val os = NativeTargets.osOf(osArch)
             val fetched = Delivery.resolve(depRes, request.module, log).right.flatMap { jar =>
                 Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
-                    .map(lib => Delivery.Fetched(request.libId, lib, jar))
+                    .map(lib => Delivery.Fetched(request.libId, lib, jar, request.module))
                     .toRight(s"${jar.getName} carries no ${request.libId} for $osArch")
             }
             fetched match {
@@ -147,19 +155,29 @@ object KyoNativesPlugin extends AutoPlugin {
         val log      = streams.value.log
         val fetched  = kyoNativesFetched.value
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet)
-        log.info(s"[kyo-natives] ${kyoNativesSource.value}, platform $platform, target(s) ${kyoNativesResolvedTargets.value.mkString(", ")}")
+        val targets  = kyoNativesResolvedTargets.value
+        log.info(s"[kyo-natives] ${kyoNativesSource.value}, platform $platform, target(s) ${targets.mkString(", ")}")
+        // A JVM classpath is portable and the default target is not: an image built here and run on another OS
+        // carries this machine's pole and falls back to whatever floor the module has. Nothing else says so, since
+        // the delivery itself succeeds.
+        if (platform == Platform.Jvm && kyoNativesTargets.value.isEmpty)
+            log.info(
+                s"[kyo-natives] ${targets.mkString(", ")} is this build host; an image that runs on another OS or " +
+                    "architecture needs that target named in kyoNativesTargets"
+            )
         if (fetched.isEmpty) log.info("[kyo-natives] no libraries delivered")
-        else
+        else {
             fetched.foreach { case (osArch, f) =>
                 log.info(s"[kyo-natives]   ${f.libId} ($osArch) from ${f.jar.getName} -> ${f.library}")
             }
-        platform match {
-            case Platform.Jvm =>
-                log.info("[kyo-natives] on the runtime and test classpaths; the POM is untouched")
-            case Platform.Native =>
-                log.info(s"[kyo-natives] linked into the binary, which looks for them beside itself and needs them there to run")
-            case Platform.Js =>
-                log.info("[kyo-natives] under target/node_modules, where koffi resolves them")
+            platform match {
+                case Platform.Jvm =>
+                    log.info("[kyo-natives] on the runtime and test classpaths; the POM is untouched")
+                case Platform.Native =>
+                    log.info("[kyo-natives] linked into the binary, which looks for them beside itself and needs them there to run")
+                case Platform.Js =>
+                    log.info("[kyo-natives] under target/node_modules, where koffi resolves them")
+            }
         }
     }
 }

@@ -1,0 +1,13 @@
+# One enablePlugins on the crossProject has to reach all three legs, each through its own half of the delivery.
+# The answer 2 is what says the delivered engine was opened; the driver reports it unavailable otherwise.
+> appJVM/kyoNativesReport
+> appNative/kyoNativesReport
+> appJS/kyoNativesReport
+> appJVM/run
+$ exec sh -c 'cat out-jvm.txt; grep -q "CONSUMER jvm=2" out-jvm.txt'
+# The Native binary needs the library beside it, which nativeLink stages, so it is run from the directory it
+# landed in rather than from here.
+> appNative/nativeLink
+$ exec sh -c 'set -eu; bin=$(find native/target -type f -perm -u+x -name consumer | head -n1); "$bin" > out-native.txt 2>&1; cat out-native.txt; grep -q "CONSUMER native=2" out-native.txt'
+> appJS/fastLinkJS
+$ exec sh -c 'set -eu; entry=$(find js/target -name main.js -path "*fastopt*" | head -n1); test -n "$entry"; node "$entry"; cat out-js.txt; grep -q "CONSUMER js=2" out-js.txt'

@@ -18,8 +18,8 @@ private[sbt] object Delivery {
     /** One library to fetch: the artifact carrying it, and the id naming the file inside. */
     final case class Request(module: ModuleID, libId: String)
 
-    /** A library that was fetched, and the jar it came from. */
-    final case class Fetched(libId: String, library: File, jar: File)
+    /** A library that was fetched, the jar it came from, and the coordinate that jar was resolved from. */
+    final case class Fetched(libId: String, library: File, jar: File, module: ModuleID)
 
     /** The classpath-relative path a JVM artifact packages a library at. Both halves come from the packaging side, so
       * a consumer cannot look for a name the producer does not write.
@@ -36,9 +36,13 @@ private[sbt] object Delivery {
       *
       * A declaration that does not deliver to `platform` is skipped, which is how a library whose C already compiles
       * into a Native binary stays out of that link.
+      *
+      * Two modules declaring the same library id is an error rather than a choice. The id names the file that both the
+      * Native `-L` directory and the Node package hold, so the second would overwrite the first and the build would
+      * link or open whichever was unpacked last, with nothing said.
       */
-    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: String): Seq[Request] =
-        classpath.flatMap { case (module, file) =>
+    def requests(classpath: Seq[(ModuleID, File)], osArch: String, platform: String): Seq[Request] = {
+        val found = classpath.flatMap { case (module, file) =>
             if (!file.isFile || !file.getName.endsWith(".jar")) Nil
             else
                 NativeDelivery.readJar(file).filter(_.deliversTo(platform)).map { declared =>
@@ -48,6 +52,14 @@ private[sbt] object Delivery {
                     Request(withClassifier.withCrossVersion(CrossVersion.disabled).intransitive(), declared.id)
                 }
         }.distinct
+        found.groupBy(_.libId).find(_._2.size > 1).foreach { case (libId, clashing) =>
+            sys.error(
+                s"[kyo-natives] $libId is declared by more than one module (${clashing.map(_.module.name).sorted.mkString(", ")}), " +
+                    "and both would deliver to the same file name."
+            )
+        }
+        found
+    }
 
     /** Resolves `module` to its single jar, or a message saying why not.
       *

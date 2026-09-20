@@ -1,0 +1,5 @@
+addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.4.0")
+addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.4.0")
+addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % sys.props("scalajs.version"))
+addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % sys.props("scalanative.version"))
+addSbtPlugin("io.getkyo"          % "kyo-natives-plugin"            % sys.props("kyo.version"))

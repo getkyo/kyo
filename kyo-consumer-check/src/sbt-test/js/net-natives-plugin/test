@@ -1,7 +1,6 @@
 # The delivered natives put this application on the koffi posix transport, and the process still has to end by
 # itself. It is run directly rather than through `> run` for that reason: a program that never exits would hang
 # sbt with nothing to report, and the point here is to catch exactly that.
-#
 # The bound is generous on purpose. What it separates is a process that ends from one that cannot, not a fast run
 # from a slow one, and the driver's poll cycle holds a Node work request open for as long as it is armed.
 > kyoNativesReport
