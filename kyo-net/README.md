@@ -295,7 +295,9 @@ addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
 .enablePlugins(KyoNativesPlugin)
 ```
 
-That is the whole setup, and it needs no OpenSSL on the machine: the shim compiles to nothing and the library supplies its entry points. The library is staged beside the linked binary, which is then what the binary needs beside it to run, the way a JVM application needs its jars. `sbt kyoNativesReport` names each library, the artifact it came from and the directory it was staged in. The same one line delivers on the JVM, where it adds the per-os-arch classifier jars to the runtime classpath, and on Node, where it writes the libraries where the loader resolves them and installs koffi.
+That is the whole setup, and it needs no OpenSSL on the machine: the shim compiles to nothing and the library supplies its entry points. The library is staged beside the linked binary, which is then what the binary needs beside it to run, the way a JVM application needs its jars. `sbt kyoNativesReport` names each library, the artifact it came from and the directory it was staged in. The same two lines serve the JVM, where they add the per-os-arch classifier jars to the runtime classpath in place of the two `classifier` dependencies above.
+
+On Node the plugin delivers nothing for kyo-net, deliberately: its natives there would select the koffi posix transport, and a Node process on that transport does not exit, because the poll loop's indefinite `kevent` is dispatched to a libuv worker and an outstanding work request keeps Node's event loop alive. Node runs on the `JsTransport` floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
 The transport is not delivered this way and does not need to be: Scala Native compiles kyo-net's epoll and kqueue C into your binary from the sources the artifact ships, so the plain transport works with no setup at all.
 

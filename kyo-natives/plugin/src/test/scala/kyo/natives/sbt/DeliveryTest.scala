@@ -77,11 +77,10 @@ class DeliveryTest extends AnyFunSuite with Matchers {
         }
     }
 
-    test("library file names follow each platform's convention") {
-        Delivery.libraryFileName("kyo_aeron", "darwin") shouldBe "libkyo_aeron.dylib"
-        Delivery.libraryFileName("kyo_aeron", "linux") shouldBe "libkyo_aeron.so"
-        Delivery.libraryFileName("kyo_aeron", "linux-musl") shouldBe "libkyo_aeron.so"
-        Delivery.libraryFileName("kyo_aeron", "windows") shouldBe "kyo_aeron.dll"
+    test("the entry path a consumer looks up is the one the packaging writes") {
+        Delivery.entryPath("kyo_aeron", "darwin-aarch64", "darwin") shouldBe "META-INF/native/darwin-aarch64/libkyo_aeron.dylib"
+        Delivery.entryPath("kyo_aeron", "linux-musl-x86_64", "linux-musl") shouldBe "META-INF/native/linux-musl-x86_64/libkyo_aeron.so"
+        Delivery.entryPath("kyo_aeron", "windows-x86_64", "windows") shouldBe "META-INF/native/windows-x86_64/kyo_aeron.dll"
     }
 
     test("unpack writes the library flat, because -L names one directory") {

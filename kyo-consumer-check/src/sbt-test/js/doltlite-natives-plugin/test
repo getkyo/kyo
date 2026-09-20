@@ -1,0 +1,10 @@
+# The engine reaches Node through the package `NativeLoader.jsResolve` asks `require.resolve` for, so Node is the judge
+# of the path rather than a stat this test could write itself: it resolves the exact specifier from the linked output's
+# directory, the way the application does. Then the query is answered rather than refused, which is what says the
+# library koffi opened is the real engine.
+> kyoNativesReport
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
+$ exec node -e "const path=require('path'),fs=require('fs');const os=process.platform==='darwin'?'darwin':process.platform==='win32'?'windows':'linux';const arch=process.arch==='x64'?'x86_64':process.arch==='arm64'?'aarch64':process.arch;const ext=os==='darwin'?'dylib':os==='windows'?'dll':'so';const out=fs.readdirSync('target').find(d=>d.startsWith('scala-'));const dir=path.resolve('target',out);const spec='@kyo/ffi-native/native/'+os+'-'+arch+'/libkyo_doltlite.'+ext;const r=require('module').createRequire(path.join(dir,'x.js'));console.log('resolved',r.resolve(spec));"
+> run
+$ exec sh -c 'cat out.txt; grep -q "CONSUMER doltlite=2" out.txt'

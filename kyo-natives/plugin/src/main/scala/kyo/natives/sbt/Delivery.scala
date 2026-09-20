@@ -2,6 +2,7 @@ package kyo.natives.sbt
 
 import java.util.zip.ZipFile
 import kyo.ffi.sbt.NativeDelivery
+import kyo.ffi.sbt.NativeTargets
 import sbt._
 import sbt.librarymanagement.DependencyResolution
 import sbt.util.Logger
@@ -20,15 +21,11 @@ private[sbt] object Delivery {
     /** A library that was fetched, and the jar it came from. */
     final case class Fetched(libId: String, library: File, jar: File)
 
-    /** The file name of library `libId` on `os`, matching the name kyo's build links it under. */
-    def libraryFileName(libId: String, os: String): String =
-        if (os == "windows") s"$libId.dll"
-        else if (os == "darwin") s"lib$libId.dylib"
-        else s"lib$libId.so"
-
-    /** The classpath-relative path a JVM artifact packages a library at. */
+    /** The classpath-relative path a JVM artifact packages a library at. Both halves come from the packaging side, so
+      * a consumer cannot look for a name the producer does not write.
+      */
     def entryPath(libId: String, osArch: String, os: String): String =
-        s"META-INF/native/$osArch/${libraryFileName(libId, os)}"
+        s"META-INF/native/$osArch/${NativeTargets.libraryFileName(libId, os)}"
 
     /** What `classpath` asks for on `platform`, for target `osArch`.
       *
@@ -94,7 +91,7 @@ private[sbt] object Delivery {
         val zip  = new ZipFile(jar)
         try
             zip.entries().asScala.find(_.getName == path).map { entry =>
-                val dest = out / libraryFileName(libId, os)
+                val dest = out / NativeTargets.libraryFileName(libId, os)
                 IO.createDirectory(out)
                 val in = zip.getInputStream(entry)
                 try IO.transfer(in, dest)

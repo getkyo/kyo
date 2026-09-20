@@ -2588,10 +2588,18 @@ lazy val `kyo-net` =
             // vendored library, and Scala Native compiles it into the binary from the sources the artifact ships. A
             // delivered copy would be shadowed by that one and still have to travel beside the binary. BoringSSL is
             // the opposite case, a shim whose library a Native binary has no other way to get.
+            //
+            // Neither is delivered to Node, and that is a defect elsewhere rather than a property of the libraries:
+            // a Node process whose transport is the koffi PosixTransport never exits. The poll loop parks in `kevent`
+            // through koffi's async dispatch, which is a libuv work request, so Node's loop can never drain while the
+            // process-lifetime transport lives, and nothing closes it. Measured on darwin-aarch64: the same
+            // application exits in about 30s on the Node transport and was still idle after 3m38s on the posix one.
+            // Delivering here would silently move every Node consumer onto that transport, and BoringSSL alone buys
+            // nothing there because it only drives it. Restore both to `allPlatforms` once the poller can idle.
             ffiNativeDelivery := ffiLibraries.value.flatMap { lib =>
                 kyoNetNativeClassifier(NativeDelivery.targetToken, lib.id).map { pattern =>
                     val platforms =
-                        if (lib.id == "kyonet_boringssl") NativeDelivery.allPlatforms else NativeDelivery.defaultPlatforms
+                        if (lib.id == "kyonet_boringssl") Set("jvm", "native") else Set("jvm")
                     lib.id -> NativeDelivery.Entry(pattern, platforms)
                 }
             }.toMap
