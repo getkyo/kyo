@@ -3956,9 +3956,7 @@ class HttpServerTest extends BaseHttpTest:
         // directly. Each round takes a port the OS hands out, closes that probe so the port is free by number, and
         // then waits, bounded, for a bind on the same port to succeed: a release still in flight frees the port
         // within the bound, a listener nobody registered holds it for good.
-        "an interrupt landing as the listener binds leaves no listener behind".pendingUntilFixed(
-            "HttpServer.initUnscoped joins the listen fiber and maps the bound server in a later step, so a stop landing between the bind and that step leaves the listener bound with nobody to close it"
-        ).notJs.notWasm in {
+        "an interrupt landing as the listener binds leaves no listener behind".notJs.notWasm in {
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
             val rounds                           = 80
@@ -3995,9 +3993,7 @@ class HttpServerTest extends BaseHttpTest:
         // staggered offsets from the step before it, close the client's scope, and read the operating system's view of
         // the sockets connected to the server's port: a tracked connection closes with the pool within the bound, an
         // untracked one stays.
-        "an interrupt landing as the client's connection completes leaves no connection behind".pendingUntilFixed(
-            "the client pool joins its connect fiber and tracks the connection for closeAll in the step the join delivers it, so a stop landing between the connection's completion and that step leaves a connection no registry knows, established on both ends"
-        ).notJs.notWasm in {
+        "an interrupt landing as the client's connection completes leaves no connection behind".notJs.notWasm in {
             val route   = HttpRoute.getRaw("test").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("hello"))
             val rounds  = 300

@@ -83,7 +83,20 @@ object HttpServer:
     def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
-        Scope.acquireRelease(initUnscoped(config)(handlers*))(_.closeNow)
+        // The listener is owned by a scope finalizer registered before the bind's join, reading the bound server from a
+        // cell the bind fills as it completes. On the JVM the bind completes synchronously, so a plain
+        // `Scope.acquireRelease` over the join has a window: the server reaches the join's promise successfully while the
+        // caller is abandoned before the release registers, so neither the release nor the bind's own lost-handoff branch
+        // fires and the listener stays bound. The cell closes that window: the finalizer runs on every scope exit and
+        // closes whatever the bind produced, held or abandoned. Same shape as `UdsBackend` and `Connection.openSocket`.
+        Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map { serverCell =>
+            Scope.ensure { _ =>
+                Sync.Unsafe.defer(serverCell.get()).map {
+                    case Present(server) => server.closeNow
+                    case Absent          => ()
+                }
+            }.andThen(initInto(config, serverCell)(handlers*))
+        }
 
     def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
@@ -113,6 +126,13 @@ object HttpServer:
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException]) =
+        // Unscoped: the caller owns the returned server. The cell the bind fills is a throwaway here (only `init`'s
+        // scope reads it); the bind's own lost-handoff branch closes a listener a lost async handoff abandons.
+        Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map(serverCell => initInto(config, serverCell)(handlers*))
+
+    private def initInto(config: HttpServerConfig, serverCell: AtomicRef.Unsafe[Maybe[HttpServer]])(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -135,18 +155,38 @@ object HttpServer:
         Sync.Unsafe.defer {
             val transport   = kyo.net.NetPlatform.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
-            Abort.run[NetException](listenFiber.safe.get).map {
-                case Result.Success(server) => server.safe
-                case Result.Failure(netEx)  =>
-                    val bindTarget = config.unixSocket match
-                        case Present(path) => path
-                        case Absent        => config.host
-                    Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
-                case Result.Panic(t) =>
-                    throw t
+            // The bound server reaches the caller through a promise the caller joins, with the bind failure already
+            // translated, so no step separates the join from whatever the caller registers on the value (`init`'s
+            // release among them). A caller stopped at that join settles the promise first, and a bind completing
+            // afterwards finds nobody to hand the server to and closes it: the listener is owned on every path.
+            val bound = Promise.Unsafe.init[HttpServer, Abort[HttpBindException]]()
+            listenFiber.onComplete { result =>
+                result.foldError(
+                    // The completed fiber's payload is a settled `Unsafe < Any`; `eval` reads the bound server out of it.
+                    // The cell is set as the server binds, in the same step `bound` is completed, so `init`'s finalizer
+                    // finds it whether or not the caller consumed the handoff; a lost async handoff also closes it here.
+                    serverComp =>
+                        val server = serverComp.eval.safe
+                        serverCell.set(Maybe(server))
+                        if !bound.complete(Result.succeed(server)) then discard(server.closeFiber(Duration.Zero))
+                    ,
+                    {
+                        // Type patterns, not the `Failure` extractor: its `unapply` returns `Maybe`, so an extractor match
+                        // is not provably exhaustive over the opaque `Error` union and `-Werror` rejects it.
+                        case panic: Result.Panic                              => bound.completeDiscard(panic)
+                        case failure: Result.Failure[NetException] @unchecked =>
+                            val bindTarget = config.unixSocket match
+                                case Present(path) => path
+                                case Absent        => config.host
+                            bound.completeDiscard(
+                                Result.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(failure.failure.getMessage)))
+                            )
+                    }
+                )
             }
+            bound.safe.get
         }
-    end initUnscoped
+    end initInto
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame

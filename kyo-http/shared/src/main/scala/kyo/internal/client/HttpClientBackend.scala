@@ -92,12 +92,19 @@ final private[kyo] class HttpClientBackend private (
                         val isDefaultPort   = if url.ssl then port == 443 else port == 80
                         val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
                         val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
+                        // Tracked here, in the step that creates it, rather than by the caller once the handoff delivers
+                        // it: a caller stopped after the handoff completed and before it resumed never tracks anything,
+                        // and a connection no registry knows stays established until its idle life ends. Registered from
+                        // creation, `closeAll` reaches it whatever the caller did.
+                        trackConn(conn)
                         // The handoff is at-most-once, so a caller that already settled (a request timeout or any other
                         // interrupt of `resultPromise`) leaves this connection undelivered. Nobody will ever use it and
                         // nobody else holds it, so dropping the outcome would strand its socket for the life of the
                         // process. Closing on a lost handoff is the same posture the transport takes when its own
                         // connect completes after the caller has gone.
-                        if !resultPromise.complete(Result.succeed(conn)) then transportConn.close()
+                        if !resultPromise.complete(Result.succeed(conn)) then
+                            registry.remove(conn)
+                            transportConn.close()
                     catch
                         case t: Throwable =>
                             // The connection was established; only the wrapping failed. It is owned by nothing at this
@@ -1204,7 +1211,6 @@ final private[kyo] class HttpClientBackend private (
                             Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
                                 val connectFiber = connect(url, config.connectTimeout, config.tls)
                                 connectFiber.safe.use { conn =>
-                                    trackConn(conn)
                                     val (responseFiber, bodyOutcome) =
                                         sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
                                     releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
