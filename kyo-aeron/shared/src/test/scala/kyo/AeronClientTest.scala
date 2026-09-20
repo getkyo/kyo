@@ -258,11 +258,9 @@ class AeronClientTest extends Test:
         def testInjectError(client: Ffi.Handle[AeronClientHandle], errcode: Int, errmsg: String)(using AllowUnsafe): Unit      = ???
     end FakeBindings
 
-    // externalWith builds the runtime (and its close) in the step after the blocking clientConnect join. A stop landing
-    // at the join leaves the connected client with no runtime, so Scope.acquireRelease never registers its close and the
-    // native client the connect produced is held by nobody. Deterministic via the seam: a fake binding gates the connect
-    // fiber, and the caller's interrupt is registered on it via onComplete (LIFO before the caller's resume) so the
-    // client is taken and then abandoned.
+    // externalWith builds the runtime (and its close) a step after the blocking clientConnect join, so a stop at the
+    // join leaves the connected client with no `Scope.acquireRelease` to close it. Deterministic via the seam: a fake
+    // binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
     "an interrupt landing at the connect join leaves the connected client unclosed".pendingUntilFixed(
         "externalWith builds the runtime and its close after the blocking clientConnect join; an interrupt at the join leaves the connected client unclosed"
     ) in {

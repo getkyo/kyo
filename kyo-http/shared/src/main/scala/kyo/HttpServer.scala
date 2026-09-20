@@ -84,11 +84,9 @@ object HttpServer:
         Frame
     ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         // The listener is owned by a scope finalizer registered before the bind's join, reading the bound server from a
-        // cell the bind fills as it completes. On the JVM the bind completes synchronously, so a plain
-        // `Scope.acquireRelease` over the join has a window: the server reaches the join's promise successfully while the
-        // caller is abandoned before the release registers, so neither the release nor the bind's own lost-handoff branch
-        // fires and the listener stays bound. The cell closes that window: the finalizer runs on every scope exit and
-        // closes whatever the bind produced, held or abandoned. Same shape as `UdsBackend` and `Connection.openSocket`.
+        // cell the bind fills: a plain `Scope.acquireRelease` over the join leaves a window (the JVM bind completes
+        // synchronously) where an abandoned caller strands the listener. The finalizer closes whatever the bind
+        // produced on every exit. Same shape as `UdsBackend`.
         Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map { serverCell =>
             Scope.ensure { _ =>
                 Sync.Unsafe.defer(serverCell.get()).map {
@@ -155,16 +153,14 @@ object HttpServer:
         Sync.Unsafe.defer {
             val transport   = kyo.net.NetPlatform.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
-            // The bound server reaches the caller through a promise the caller joins, with the bind failure already
-            // translated, so no step separates the join from whatever the caller registers on the value (`init`'s
-            // release among them). A caller stopped at that join settles the promise first, and a bind completing
-            // afterwards finds nobody to hand the server to and closes it: the listener is owned on every path.
+            // The bound server reaches the caller through a promise, with the bind failure already translated, so no
+            // step separates the join from what the caller registers on the value. A caller stopped at the join settles
+            // the promise first; a bind completing afterwards finds nobody to hand the server to and closes it.
             val bound = Promise.Unsafe.init[HttpServer, Abort[HttpBindException]]()
             listenFiber.onComplete { result =>
                 result.foldError(
-                    // The completed fiber's payload is a settled `Unsafe < Any`; `eval` reads the bound server out of it.
-                    // The cell is set as the server binds, in the same step `bound` is completed, so `init`'s finalizer
-                    // finds it whether or not the caller consumed the handoff; a lost async handoff also closes it here.
+                    // The fiber's payload is a settled `Unsafe < Any`; `eval` reads the bound server. The cell is set in
+                    // the same step `bound` completes, so `init`'s finalizer finds it whether or not the caller took the handoff.
                     serverComp =>
                         val server = serverComp.eval.safe
                         serverCell.set(Maybe(server))

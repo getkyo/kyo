@@ -208,27 +208,24 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * interrupt landing mid-drain cannot leave a connection open.
       */
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
-        // The pool is marked closed first so tryReserve stops handing out slots and no new connection opens. The
-        // slot channels stay open through the grace period so in-flight callers can hand their slots back.
-        // `ensureMap`, not `map`: the drain that owns the force-close has to install in the step that extracts the
-        // ring, or a stop landing on the poll between the two abandons connections the pool no longer holds.
+        // Marked closed first so tryReserve opens no new connection; slot channels stay open through the grace
+        // period for in-flight callers. `ensureMap`, not `map`: the drain must install in the step that extracts the
+        // ring, or a stop on the poll between abandons connections the pool no longer holds.
         Sync.Unsafe.defer(closeExtract()).ensureMap(idleConns => closeDrain(idleConns, gracePeriod))
 
-    /** Marks the ring closed and drains its idle connections for the caller to force-close, in one unsafe step.
+    /** Marks the ring closed and extracts its idle connections, in one unsafe step.
       *
-      * Separate from [[closeDrain]] so a caller that gates the close on its own flag ([[kyo.db.Runtime.close]]) can flip that flag and
-      * extract the ring in a single unsafe block, with no poll a stop could park in front of between the two: a stop landing there
-      * would leave the carrier marked closed while the ring it never extracted stays open, and the idempotent flag then makes the pool
-      * unclosable.
+      * Separate from [[closeDrain]] so [[kyo.db.Runtime.close]] can flip its own closed flag and extract the ring with
+      * no poll between: a stop there would mark the carrier closed while the ring it never extracted stays open, and the
+      * idempotent flag then makes the pool unclosable.
       */
     def closeExtract()(using AllowUnsafe): Chunk[C] =
         pool.close()
 
     /** Force-closes the connections [[closeExtract]] pulled from the ring, under a grace-period drain.
       *
-      * The force-close runs as a `Sync.ensure` finalizer, not a plain `andThen`, so a fiber interrupt during the grace poll still
-      * closes the idle connections. `Sync.ensure` covers the interrupt and panic edges; the drain carries no typed abort (it swallows
-      * its own Timeout), so those are the only edges. The force-close stays one `Sync.Unsafe.defer`, atomic once reached.
+      * The force-close is a `Sync.ensure` finalizer, not a plain `andThen`, so an interrupt during the grace poll still
+      * closes the idle connections; it stays one `Sync.Unsafe.defer`, atomic once reached.
       */
     def closeDrain(idleConns: Chunk[C], gracePeriod: Duration)(using Frame): Unit < Async =
         Log.use { logger =>
@@ -506,11 +503,11 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         }
     end acquireAndRun
 
-    /** Owns a reservation the body may take from the ring, from before it is taken.
+    /** Owns a reservation the body may take from the ring, registered before it is taken.
       *
-      * The finalizer is registered before `acquireOrReserve` runs and the flag is set in the step that reserves, so there is no poll at
-      * which a taken reservation has no owner; registering the release once the reservation is in hand would put it a step later, and a
-      * stop landing on that poll would leave an in-flight count the ring never decrements. Same shape as [[withSlot]]'s permit.
+      * The finalizer is registered before `acquireOrReserve` and the flag set in the reserving step, so no poll leaves
+      * a taken reservation unowned; registering once it is in hand would strand the in-flight count on a stop. Same
+      * shape as [[withSlot]]'s permit.
       */
     private def reserving[A, S](netKey: SqlConnectionPool.Endpoint)(
         body: AtomicBoolean.Unsafe => A < (S & Async & Abort[SqlException])
@@ -784,9 +781,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
 
     /** Registers a lease's exit on the innermost scope and runs `claim` in the same step.
       *
-      * The two are one step on purpose. Registered as a suspension of its own, the exit would land a poll before the claim, and a stop
-      * on that poll leaves the exit registered against something the claim never took: a lease's custody untaken, so the orphan
-      * finalizer closes a connection the exit then returns to the ring, two owners for one connection.
+      * One step on purpose: a poll between would let a stop register the exit against a custody the claim never took,
+      * so the orphan finalizer and the exit would both own the connection.
       */
     private def registeringExit(exit: Maybe[Result.Error[Any]] => Unit < Sync, claim: AllowUnsafe ?=> Unit)(using
         Frame

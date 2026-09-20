@@ -1973,12 +1973,10 @@ class AsyncTest extends kyo.test.Test[Any]:
 
     "timeout under interruption" - {
         // The timeout forks the guarded computation and installs the bracket that owns it as the spawn's handle
-        // arrives, through `ensureMap`. A stop requested as the handle settles parks in front of the step that
-        // installs the bracket, with the handle in hand: the caller's abandonment must interrupt the child all the
-        // same, so the child cannot be left running with nothing holding it. The step is a few microseconds, below
-        // what a timer lands in, so the leaf's own fiber spins on a flag set in the step before the timeout, then to
-        // a staggered offset, and requests the stop directly; a child known to have started must then release, and
-        // one stopped before it started owes nothing.
+        // arrives (`acquireReleaseWith`, no poll between): a stop requested as the handle settles must still interrupt
+        // the child, not leave it running. The window is a few microseconds, below what a timer lands in, so the leaf
+        // spins on a flag set before the timeout, staggers its offset, and requests the stop directly; a child known
+        // to have started must then release.
         "an interrupt landing at the timeout's spawn reaches the guarded computation".notJs.notWasm in {
             val rounds = 80
             Loop.indexed { i =>

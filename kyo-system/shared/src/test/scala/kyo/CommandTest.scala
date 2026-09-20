@@ -281,12 +281,10 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
-    // `spawn` must register the process's release in the step that forks it, or a stop delivered while the fork runs
-    // parks the registration and the process is nobody's. The fork lasts a fraction of a millisecond on Native and a
-    // few on the JVM, below what a timer lands in, and a fiber woken by a latch the spawner releases is queued behind
-    // the fork on the same worker. So the leaf's own fiber, already running, spins on a flag the spawner sets in the
-    // step before the fork, spins on to a staggered offset, and requests the stop directly. The check is on the
-    // operating system's view, by a unique argv.
+    // `spawn` must register the process's release in the step that forks it, or a stop during the fork parks the
+    // registration and the process is nobody's. The fork is below what a timer lands in, so the leaf's own fiber spins
+    // on a flag the spawner sets before the fork, staggers its offset, and requests the stop directly. The check is on
+    // the operating system's view, by a unique argv.
     "an interrupt landing during spawn does not orphan the process".notJs.notWasm in {
         val seconds                                                  = 300 + scala.util.Random.nextInt(1000)
         val cmd                                                      = Command("sleep", seconds.toString)

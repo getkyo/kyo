@@ -88,11 +88,8 @@ private[kyo] object SpawnBackend:
         Abort.run[Throwable] {
             Abort.catching[Throwable] {
                 // `close` owns the process and aeron client only once init succeeds; until then a failure or interrupt
-                // anywhere after each was produced must force-kill the partial worker and close the client, else an
-                // orphaned JVM and aeron thread leak. Each is the acquire of its own bracket, whose release is armed in
-                // the step that produces it: a stop landing on the aeron connect or the exchange wiring, both of which
-                // park, then still kills the worker. On success, ownership transfers to `close` and the releases stand
-                // down through the flag.
+                // must force-kill the partial worker and close the client. Each is its own bracket, released unless the
+                // `started` flag is set, so a stop on the aeron connect or the exchange wiring still kills the worker.
                 AtomicBoolean.init(false).map { started =>
                     Sync.acquireReleaseWith(spawnWorker(config, driver, reqStreamId, respStreamId)) { process =>
                         started.get.map(ok => if ok then () else process.destroyForcibly)
@@ -169,10 +166,8 @@ private[kyo] object SpawnBackend:
         // The worker is spawned unscoped: its lifetime is owned by this backend's `close` (and the
         // pool's close-on-evict finalizer), not by an enclosing scope.
         //
-        // The fork and the error translation are one unsafe step, so the process arrives from `Abort.get` with no kernel
-        // `.map` behind it: `init` brackets this to arm the kill, and a kernel `.map` between the fork and that bracket's
-        // registration would be a poll a stop parks in front of, orphaning the worker JVM. `.map(_.safe)` and `mapError`
-        // are pure `Result` combinators, not kernel steps.
+        // The fork and the error translation are one unsafe step, so the process reaches `init`'s bracket from
+        // `Abort.get` with no kernel `.map` a stop could park on. `.map(_.safe)` and `mapError` are pure `Result` ops.
         Sync.Unsafe.defer {
             Abort.get(
                 Command(args*).inheritStderr.unsafe.spawn()

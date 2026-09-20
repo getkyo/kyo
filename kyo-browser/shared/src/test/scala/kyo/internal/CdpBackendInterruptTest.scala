@@ -66,10 +66,8 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(wire.seen.get.map(_.contains(method))))).map(_.isSuccess)
 
-    /** Whether `method` shows up at least `n` times within a bounded wait; `false` on timeout. Apply and restore share one
-      * method name at every site below except the marks/freeze evals (background-color override, emulated media, and the
-      * download policy each re-send their own apply method for the restore), so "the method fired again" is a count, not a
-      * second distinct name the way `withViewport`'s apply/clear pair is.
+    /** Whether `method` shows up at least `n` times within a bounded wait; `false` on timeout. Most sites re-send their
+      * apply method for the restore, so "fired again" is a count, not a second name the way `withViewport`'s pair is.
       */
     private def sawEventuallyCount(wire: Wire, method: String, n: Int)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.seen.get.map(_.count(_ == method) >= n)))).map(_.isSuccess)
@@ -79,21 +77,15 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
       */
     private val elementClipReplyJson: String = """{"found":true,"ok":true,"x":0,"y":0,"width":10,"height":10}"""
 
-    /** Canned `Runtime.evaluate` reply used by [[serveEval]] for every eval it does not gate or tag as a restore: the
-      * mutation-observer install, the in-page quiescence poll, and the fonts-ready await. Its result is a discarded string
-      * for the first and third; for the quiescence poll it must additionally decode as `MutationSettlement`'s
-      * `{"tag": ...}` wire shape, which this JSON satisfies too.
+    /** Canned `Runtime.evaluate` reply for every eval [[serveEval]] does not gate or tag: a discarded string that also
+      * decodes as `MutationSettlement`'s `{"tag": ...}` quiescence-poll shape.
       */
     private val evalDoneJson: String = """{"tag":"done"}"""
 
-    /** Browser side for the freeze/marks leaves, where the apply AND the restore both go through `Runtime.evaluate` (an
-      * in-page eval), so the method name alone cannot pick out the call to gate, or distinguish it from the restore the way
-      * [[serve]]'s method-keyed `gates` can for the other page-state sites. Requests are disambiguated by the JS expression
-      * they carry instead: `gateOn` marks the one call whose reply is withheld until `gate` opens, recording a
-      * `"Runtime.evaluate:gate-hit"` marker the instant it is recognised (before waiting on the gate, so the marker is
-      * visible even though the reply is not sent yet); `removeOn` marks the restore call, recording
-      * `"Runtime.evaluate:remove-hit"` when it arrives. Every other `Runtime.evaluate` call gets an immediate reply
-      * carrying [[evalDoneJson]].
+    /** Browser side for the freeze/marks leaves, where apply and restore both go through `Runtime.evaluate`, so the
+      * method name cannot pick out the call to gate. `gateOn` marks the call whose reply is withheld until `gate` opens
+      * (recording `Runtime.evaluate:gate-hit` before waiting), `removeOn` marks the restore (recording
+      * `Runtime.evaluate:remove-hit`); every other eval gets an immediate [[evalDoneJson]] reply.
       */
     private def serveEval(
         browserEnd: JsonRpcTransport,
@@ -272,9 +264,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     }
 
     // `screenshotElement(transparentBackground = true)` applies the background-color override through a plain
-    // `Scope.acquireRelease(<CDP call>)(restore)`, not the detached-acquire pattern `withViewport` uses. A stop landing at
-    // that reply's join abandons the acquire before its finalizer is ever registered, so the clear the reply confirmed is
-    // owed is never sent and the transparent override sticks at the browser side.
+    // `Scope.acquireRelease(<CDP call>)(restore)`, not the detached `acquire`, so a stop at the reply strands it.
     "an interrupt landing at the background-color override reply still clears it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -309,10 +299,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `withEmulation` applies the emulated-media override through `Scope.acquireRelease(afterAction(<CDP call>))(restore)`,
-    // the same un-detached shape. Quiescence is disabled so `afterAction` sends the override directly instead of first
-    // installing a mutation observer this suite's fake browser side does not answer. A stop landing at the override
-    // reply's join abandons the acquire before its finalizer registers, so the restore the reply owes is never sent.
+    // `withEmulation` applies the emulated-media override through the same un-detached `Scope.acquireRelease` shape;
+    // quiescence is disabled so `afterAction` sends it directly, not via a mutation observer the fake browser does not
+    // answer. A stop at the reply strands the override with no restore.
     "an interrupt landing at the emulated-media override reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -348,10 +337,8 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `withDownloads` applies the download policy through the same plain `Scope.acquireRelease(<CDP call>)(restore)` shape.
-    // A stop landing at that reply's join abandons the acquire before its finalizer registers, so the tab is left
-    // accepting downloads to the temp path with no restore ever sent; of the five sites here this is the longest-lived,
-    // since nothing else in this API surface later resets the download policy on its own.
+    // `withDownloads` applies the download policy through the same plain `Scope.acquireRelease(<CDP call>)(restore)`
+    // shape, so a stop at the reply leaves the tab accepting downloads with no restore sent.
     "an interrupt landing at the download-policy reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -385,10 +372,8 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `HoldStill.withFrozenPage` injects the freeze stylesheet through `Scope.acquireRelease(evalJs(freezeStyleJs))(remove)`,
-    // the same un-detached shape as the other three sites above, just carried over `Runtime.evaluate` instead of a typed CDP
-    // method. A stop landing at the injection reply's join abandons the acquire before its finalizer registers, so the
-    // removal the reply owes is never sent and the frozen (paused animations, hidden caret) style sticks on the page.
+    // `HoldStill.withFrozenPage` injects the freeze stylesheet through the same un-detached `Scope.acquireRelease`,
+    // over `Runtime.evaluate` instead of a typed CDP method, so a stop at the reply leaves the freeze style on the page.
     "an interrupt landing at the freeze-style injection reply still removes the freeze style".pendingUntilFixed(
         "the freeze style is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the injected style with no removal"
     ) in {
@@ -415,10 +400,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `screenshotMarks` injects the numbered-badge overlay the same way, inside an outer `withFrozenPage` that freezes and
-    // unfreezes the page around the whole capture. A stop landing at the marks injection reply's join abandons that
-    // acquire specifically: the freeze/unfreeze pair (its own acquire already complete by then) still unwinds normally as
-    // part of the same interrupt, but the marks overlay's own acquire never registered a finalizer, so it is never removed.
+    // `screenshotMarks` injects the numbered-badge overlay the same way, inside an outer `withFrozenPage`. A stop at
+    // the marks injection reply abandons that acquire specifically: the freeze/unfreeze pair unwinds normally, but the
+    // marks overlay's acquire never registered its removal.
     "an interrupt landing at the marks injection reply still removes the marks overlay".pendingUntilFixed(
         "the marks overlay is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the overlay with no removal"
     ) in {

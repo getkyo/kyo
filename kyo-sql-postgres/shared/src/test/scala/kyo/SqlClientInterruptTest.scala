@@ -209,11 +209,10 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** The leaf above locks a free key, so the grant is instant and a millisecond-offset interrupt never lands in the one-park window
-      * between the grant and the `Scope.ensure(release)` step. Here a second client holds the lock, so `locker`'s `pg_advisory_lock`
-      * genuinely blocks; the interrupt is requested while `locker` waits, then the holder releases so the grant lands into the abandoned
-      * fiber before its release registers. If the grant is taken and no release was registered, the lock rides the pooled session and
-      * `held` stays 1 after the fiber settled. Deterministic: the window is the real duration the holder keeps the lock, not a timer race.
+    /** The prior leaf locks a free key, so the grant is instant and never lands in the one-park window between the grant
+      * and `Scope.ensure(release)`. Here a second client holds the lock so `pg_advisory_lock` blocks; the interrupt is
+      * requested while it waits, then the holder releases so the grant lands into the abandoned fiber before its release
+      * registers. Deterministic: the window is the holder's real lock duration, not a timer race.
       */
     "an interrupt landing as a contended advisory lock is granted strands no lock".pendingUntilFixed(
         "withAdvisoryLock grants the lock in a server round trip and registers Scope.ensure(release) only in the next step; " +

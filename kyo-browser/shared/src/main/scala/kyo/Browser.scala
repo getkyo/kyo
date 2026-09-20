@@ -2272,9 +2272,8 @@ object Browser:
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )
-                    // The override is owed its restore on this scope, named here because the settlement wait around the
-                    // override runs under a scope of its own that ends before `body`; the restore registers as the
-                    // override's reply arrives, whichever scope is innermost then.
+                    // The override is owed its restore on this scope; the restore registers as the override's reply
+                    // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
                     ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
                         MutationSettlement.afterAction {
                             tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(

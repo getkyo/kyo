@@ -92,10 +92,9 @@ final private[kyo] class HttpClientBackend private (
                         val isDefaultPort   = if url.ssl then port == 443 else port == 80
                         val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
                         val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
-                        // Tracked here, in the step that creates it, rather than by the caller once the handoff delivers
-                        // it: a caller stopped after the handoff completed and before it resumed never tracks anything,
-                        // and a connection no registry knows stays established until its idle life ends. Registered from
-                        // creation, `closeAll` reaches it whatever the caller did.
+                        // Tracked in the step that creates it, not by the caller after the handoff: a caller stopped
+                        // after the handoff never tracks anything, and an untracked connection stays established.
+                        // Registered from creation, `closeAll` reaches it whatever the caller did.
                         trackConn(conn)
                         // The handoff is at-most-once, so a caller that already settled (a request timeout or any other
                         // interrupt of `resultPromise`) leaves this connection undelivered. Nobody will ever use it and

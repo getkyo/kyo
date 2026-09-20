@@ -65,10 +65,9 @@ object Command:
           * If the scope closes before `waitFor` completes, the process is forcibly killed.
           */
         def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
-            // The fork is the acquire: the release is registered in the step that produces the process, so a stop
-            // delivered during the fork cannot land between the two and leave the process with no owner. The `.safe`
-            // conversion is a pure `Result.map` inside the unsafe block, not a kernel `.map`: a kernel `.map` between
-            // the fork and `acquireRelease`'s `ensureMap` would be a poll a stop parks in front of, stranding the fork.
+            // The fork is the acquire, so the release registers in the step that produces the process: a stop during
+            // the fork cannot leave it unowned. `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
+            // `.map` a stop could park on between the fork and `acquireRelease`'s `ensureMap`.
             Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
                 Sync.Unsafe.defer {
                     // Feeds are stopped unconditionally: the process may have exited
@@ -85,8 +84,7 @@ object Command:
           */
         def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
             // `.safe` is a pure `Result.map` inside the unsafe block, so the process arrives from `Abort.get` with no
-            // trailing kernel `.map`. A caller that brackets this (SpawnBackend) then has its release sit directly on
-            // the produced value, with no poll between the fork and the registration for a stop to park in front of.
+            // trailing kernel `.map` a stop could park on before a bracketing caller (SpawnBackend) registers its release.
             Sync.Unsafe.defer {
                 Abort.get(self.unsafe.spawn().map(_.safe))
             }

@@ -21,14 +21,10 @@ private[kyo] object UdsBackend:
         Sync.Unsafe.defer {
             val first                      = Promise.Unsafe.init[kyo.net.Connection, Abort[NetException | Closed]]()
             val wire: JsonRpcWireTransport = new UdsServerWireTransport(first)
-            // The teardown finalizer is registered on the scope BEFORE the listen is launched, reading the listen fiber out of a
-            // cell it fills in the same unsafe step it launches in. That ordering is the point: `listenUnix` owns a bound socket
-            // (and its file) from the instant it is called, and on the JVM completes its fiber synchronously inside the call, so a
-            // finalizer registered on the far side of the join leaves a window where an interrupt lands with the listener bound,
-            // handed to a promise the interrupted caller never reads, and nobody owning its close. A finalizer registered before the
-            // launch finds `Absent` and does nothing; one that runs after interrupts the listen fiber, awaits it, and closes the
-            // listener it produced, then removes the socket file, whichever side of the caller's abandonment the bind landed on.
-            // `Scope.acquireRelease` is not a substitute: it has the same `acquire.map(r => ensure(release(r)))` shape and window.
+            // The teardown finalizer is registered BEFORE the listen launches, reading the listen fiber from a cell the
+            // launch fills in the same unsafe step: `listenUnix` binds a socket (and its file) synchronously on the JVM,
+            // so a finalizer on the far side of the join leaves a window where an interrupt strands the bound listener.
+            // Registered first, it closes the listener and removes the socket file on any exit; `Scope.acquireRelease` has the same window.
             Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[kyo.Fiber[kyo.net.Listener, Abort[NetException]]])).map { listenCell =>
                 Scope.ensure { _ =>
                     wire.close.andThen {

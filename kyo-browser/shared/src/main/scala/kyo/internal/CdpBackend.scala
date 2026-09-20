@@ -86,11 +86,9 @@ final private[kyo] class CdpBackend private[kyo] (
 
     /** A call whose reply stands for something the browser now holds (a context, an override), owed `release` on `finalizer`.
       *
-      * The release registers in the step the reply reaches the caller. The call runs detached from the caller: a caller stopped at
-      * the join is abandoned without the reply, and the call, still running, finds nobody to hand it to and releases what it stands
-      * for itself. Linked to the caller instead, the call would be interrupted with it and the late reply dropped, leaving what the
-      * browser created for it held by nobody. `finalizer` is named by the caller rather than read from the innermost scope so a
-      * caller can own the reply across a scope of its own that ends earlier, as the settlement wait around an override does.
+      * The release registers as the reply arrives. The call is detached: a caller abandoned at the join has the call
+      * release what it created rather than dropping the late reply. `finalizer` is a parameter, not the innermost scope,
+      * so a caller can own the reply across a scope of its own that ends earlier (the settlement wait around an override).
       */
     private[kyo] def acquire[P: Schema, R: Schema](finalizer: Scope.Finalizer, method: String, params: P)(
         release: R => Unit < (Async & Abort[BrowserReadException])
@@ -513,9 +511,8 @@ private[kyo] object CdpBackend:
     private[kyo] def initUnscoped(
         transport: JsonRpcTransport,
         launchCfg: Browser.LaunchConfig,
-        // Test seam: invoked with the dialog queue created during init, so a test can observe the dialog drainer fiber
-        // (which is spawned unscoped and parked on this queue) after an interrupt at the version probe abandons init
-        // before it yields the backend that owns the drainer's close. A no-op in production.
+        // Test seam: handed the dialog queue during init, so a test can observe the unscoped dialog drainer parked on
+        // it after an interrupt at the version probe abandons init before it yields the backend. A no-op in production.
         dialogQueueProbe: Channel[(Boolean, String, Maybe[SessionId])] => Unit = _ => ()
     )(using
         Frame
