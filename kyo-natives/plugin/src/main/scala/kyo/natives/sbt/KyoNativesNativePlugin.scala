@@ -106,7 +106,12 @@ object KyoNativesNativePlugin extends AutoPlugin {
             (defines, dirs.map("-L" + _.getAbsolutePath) ++ links ++ rpaths)
         }
 
-    /** The compile and link flags for the system libraries this machine turned out to have. */
+    /** The compile and link flags for the system libraries this machine turned out to have.
+      *
+      * Link flags are NOT deduped. A static resolution renders as an ordered `-Wl,-Bstatic ... -Wl,-Bdynamic` window
+      * around its libraries, and dropping a repeated marker would leave the window unbalanced and pull every later
+      * library in statically. Compile flags are plain defines and includes, where a repeat is only noise.
+      */
     private def systemFlags(resolved: Seq[NativeSystemLibraries.Resolved]): (Seq[String], Seq[String]) =
         (resolved.flatMap(_.compileFlags).distinct, resolved.flatMap(_.linkFlags))
 

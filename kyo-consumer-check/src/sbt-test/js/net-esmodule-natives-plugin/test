@@ -1,0 +1,17 @@
+# The CommonJS fixture's round trips under ModuleKind.ESModule, where the loader's global-`require` candidates are
+# inert and only KYO_FFI_<ID>_PATH can find the libraries.
+#
+# Run directly rather than through `> run` for the same reason the CommonJS fixture does: the transport is
+# process-lifetime, and a program that never exits would hang sbt with nothing to report. The bound separates a
+# process that ends from one that cannot, not a fast run from a slow one.
+> kyoNativesReport
+
+# The override is what carries this module kind, so its absence is the failure to catch here rather than in the run.
+$ exec sh -c 'set -eu; test -n "$(find target/kyo-natives -name "libkyonet_boringssl.*" | head -n1)"'
+
+> fastLinkJS
+$ exec sh -c 'set -eu; test -f target/node_modules/koffi/package.json'
+$ exec sh -c 'set -eu; entry=$(find target -name "main.mjs" -path "*fastopt*" | head -n1); test -n "$entry"; node "$entry" > run.log 2>&1 & pid=$!; i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 120 ]; do sleep 1; i=$((i+1)); done; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; echo "the process was still alive after ${i}s with its transport open"; cat run.log; exit 1; fi; wait "$pid" || { cat run.log; exit 1; }; echo "exited after ${i}s"'
+
+# PosixTransport, not the JS floor: the floor is what an ESModule build gets when the libraries cannot be found.
+$ exec sh -c 'cat run.log; grep -q "CONSUMER transport=PosixTransport plain=hello tls=hello" run.log'

@@ -1,6 +1,7 @@
 package kyo.natives.sbt
 
 import kyo.ffi.sbt.KoffiBootstrap
+import kyo.ffi.sbt.NativeTargets
 import org.scalajs.jsenv.nodejs.NodeJSEnv
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport._
@@ -14,11 +15,15 @@ import sbt.Keys._
   * Node's own resolution walks up from the linked output and reaches that directory, which is also where the koffi
   * bootstrap installs.
   *
-  * `jsEnv` is replaced with a `NodeJSEnv` carrying `NODE_PATH` for that directory, for a project that delivers
-  * something and does not set `jsEnv` itself. An ESModule build resolves through `node:module`'s `createRequire`,
-  * which anchors on the working directory rather than the module, and reaches the package only through `NODE_PATH`.
-  * A project that sets its own `jsEnv` keeps it, and folds in
+  * `jsEnv` is replaced with a `NodeJSEnv` carrying that environment, for a project that delivers something and does
+  * not set `jsEnv` itself. A project that sets its own `jsEnv` keeps it, and folds in
   * [[KyoNativesJSPlugin.autoImport.kyoNativesNodeEnv]] to get the same resolution.
+  *
+  * Two resolution paths, because the module kind decides which one exists. Under `ModuleKind.CommonJSModule` the
+  * loader finds the package through the global `require`, which `NODE_PATH` points at the materialized directory.
+  * Under `ModuleKind.ESModule` there is no global `require` at all, so that path is inert and `NODE_PATH` helps only
+  * `createRequire` find koffi itself; the per-library `KYO_FFI_<ID>_PATH` override is what carries an ESModule build,
+  * and it is the loader's first candidate on every module kind.
   */
 object KyoNativesJSPlugin extends AutoPlugin {
 
@@ -70,19 +75,34 @@ object KyoNativesJSPlugin extends AutoPlugin {
         Test / fullLinkJS    := (Test / fullLinkJS).dependsOn(kyoNativesMaterialize).value
     )
 
-    /** The `NODE_PATH` a Node process needs to resolve the materialized package, or an empty map when this project
-      * delivers nothing.
+    /** What a Node process needs to find the delivered libraries, or an empty map when this project delivers nothing.
       *
-      * The directory is PREPENDED to the inherited `NODE_PATH` rather than written over it. `ExternalJSRun` overlays
-      * this map on the environment the Node process inherits, so a bare assignment takes away whatever the build or
-      * the developer's shell had pointed it at.
+      * `NODE_PATH` resolves the materialized package, and the directory is PREPENDED to the inherited value rather
+      * than written over it. `ExternalJSRun` overlays this map on the environment the Node process inherits, so a bare
+      * assignment takes away whatever the build or the developer's shell had pointed it at.
+      *
+      * `KYO_FFI_<ID>_PATH` names each library outright, and is what makes an ESModule build work. The loader's package
+      * lookup and its koffi probe both go through the GLOBAL `require`, which exists under `ModuleKind.CommonJSModule`
+      * and not under `ModuleKind.ESModule`; `NODE_PATH` does not rescue that, because it only helps `createRequire`
+      * find koffi itself. This override is the first candidate the loader tries on every module kind, so it is the one
+      * path that does not depend on which one the application linked with.
+      *
+      * Only the host's own target is named. The variable holds one path per library and the process runs on this
+      * machine, so a build that resolved several targets, or one target that is not this machine's, falls back to the
+      * package lookup rather than pointing Node at a library it cannot load.
       */
     private def nodeEnvTask: Def.Initialize[Task[Map[String, String]]] = Def.task {
         if (kyoNativesRequests.value.isEmpty) Map.empty[String, String]
         else {
             val dir       = (target.value / "node_modules").getAbsolutePath
             val inherited = sys.env.getOrElse("NODE_PATH", "")
-            Map("NODE_PATH" -> (if (inherited.isEmpty) dir else dir + java.io.File.pathSeparator + inherited))
+            val nodePath  = Map("NODE_PATH" -> (if (inherited.isEmpty) dir else dir + java.io.File.pathSeparator + inherited))
+            val host      = NativeTargets.host
+            val libraries = kyoNativesFetched.value.collect {
+                case (osArch, f) if osArch == host =>
+                    s"KYO_FFI_${f.libId.toUpperCase.replace('-', '_')}_PATH" -> f.library.getAbsolutePath
+            }.toMap
+            nodePath ++ libraries
         }
     }
 
