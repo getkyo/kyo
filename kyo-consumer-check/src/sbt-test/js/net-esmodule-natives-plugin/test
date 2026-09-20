@@ -6,8 +6,8 @@
 > kyoNativesReport
 
 # The overrides themselves, not their effect. `jsEnv` reaches only the Node processes sbt spawns, so a run launched
-# from a shell sees them only if they are exported, and asserting them here is what distinguishes "the plugin set
-# them" from "something else found the library".
+# from a shell sees them only if they are exported. Asserting them here is what separates the plugin having set
+# them from something else having found the library.
 > writeNodeEnv
 $ exec sh -c 'set -eu; cat node-env.sh; grep -q "KYO_FFI_KYONET_BORINGSSL_PATH=" node-env.sh; grep -q "KYO_FFI_KYONET_POSIX_URING_PATH=" node-env.sh'
 # Each one has to name a file that exists, since the loader honours the override only when it does.
