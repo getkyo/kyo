@@ -255,7 +255,7 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 | JVM, Linux | io_uring / epoll | BoringSSL | NIO + JDK TLS |
 | JVM, macOS | kqueue | BoringSSL | NIO + JDK TLS |
 | JVM, Windows | (none) | (none) | NIO + JDK TLS |
-| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL with kyo-natives-plugin, or system OpenSSL with the kyo FFI plugin | epoll / kqueue, no TLS |
+| Native, Linux/macOS/BSD | io_uring / epoll / kqueue | BoringSSL, or the machine's OpenSSL, both through kyo-natives-plugin | epoll / kqueue, no TLS |
 | JS / Wasm, Node | koffi io_uring / epoll / kqueue | koffi BoringSSL | Node transport + Node TLS |
 
 The native I/O backend is the primary on every posix platform, and so is BoringSSL on the JVM and Node; the Floor column is what runs when no native is available (the JVM main jar with no classifier dependency, a host with no staged native, a Scala Native build that neither delivers BoringSSL nor finds a system library, Windows). Selection always prefers the native and degrades to the floor unless a `-D` property forces a choice.
@@ -302,7 +302,7 @@ The transport is not delivered this way and does not need to be: Scala Native co
 
 On Node the same plugin delivers the transport and BoringSSL libraries, and the application then runs on the posix transport rather than the `JsTransport` floor. A Node process on this transport stays alive while a listener is open and exits once its last connection closes. Without the plugin Node runs on the floor, whose behavior [Platform capability differences](#platform-capability-differences) describes.
 
-io_uring, and TLS from the machine's own OpenSSL rather than from the artifact, come from libraries on the machine that links rather than from the artifact. The same plugin finds them. kyo-net's artifact declares what to look for, system OpenSSL and a static liburing on Linux, and the plugin compiles and links a small probe against each: for every one that links, it enables that shim and adds the library to your link. Nothing further to add, and `sbt show kyoNativesSystemLibraries` lists what it found.
+io_uring, and TLS from the machine's own OpenSSL, come from the machine that links rather than from the artifact, and the same plugin finds them. kyo-net's artifact declares what to look for, system OpenSSL and a static liburing on Linux, and the plugin compiles and links a small probe against each: for every one that links, it enables that shim and adds the library to your link. There is nothing further to add, and `sbt show kyoNativesSystemLibraries` lists what it found.
 
 The probe has to run in your build rather than in kyo's because `nativeConfig` is per-project and does not cross a dependency edge, while the C does: Scala Native compiles kyo-net's shims into your binary, so your link is the one that needs their libraries.
 

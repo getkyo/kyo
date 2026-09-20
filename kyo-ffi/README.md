@@ -1071,7 +1071,7 @@ Setting one of those at `ThisBuild` has no effect.
 | `ffiDumpCcCommand` | return the `cc` command-line that `ffiCompile` would invoke (diagnostic; does not run the compiler) |
 | `ffiNativeLinkingOptions` | compute the Native linking options to wire into `nativeConfig.linkingOptions` |
 | `ffiNativeCompileOptions` | compute the Native compile options (include paths and `KYO_FFI_LINKED_<ID>` defines) to wire into `nativeConfig.compileOptions` |
-| `ffiNativeDependencyLinkingOptions` / `ffiNativeDependencyCompileOptions` | the same for the bundled C of this project's dependencies, including the system libraries they declare |
+| `ffiNativeDependencyLinkingOptions` / `ffiNativeDependencyCompileOptions` | the same for the bundled C of this project's dependencies, including the system libraries they declare. An application consuming kyo gets this folded into `nativeConfig` by `kyo-natives-plugin`, along with the delivered libraries and the link-time service providers; these keys are for a build that wires it itself |
 | `ffiNativeSystemLibraries` | the system libraries dependencies declare that this machine links, found by probe |
 | `ffiPackagingCheck` | verify each staged native matches the platform directory it sits in, and that every declared library has one for each `ffiRequiredPlatforms` entry |
 

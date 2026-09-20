@@ -3,8 +3,10 @@ import kyo.ffi.sbt.KyoFfiPlugin.autoImport._
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 
-// A Scala Native application that depends on kyo-net and wires kyo-ffi-plugin exactly as kyo-net's README says, so
-// the plugin resolves on this machine the system OpenSSL that kyo-net's artifact declares and enables its TLS shim.
+// A Scala Native application that reaches kyo-net's system OpenSSL through kyo-ffi-plugin and a hand-written
+// nativeConfig, which is the escape hatch for a build that does not take kyo-natives-plugin. The
+// net-natives-plugin fixture covers the plugin path; this one keeps the manual one working, since
+// ffiNativeDependencyLinkingOptions and ffiNativeDependencyCompileOptions remain a supported surface.
 lazy val root = (project in file("."))
     .enablePlugins(ScalaNativePlugin, KyoFfiPlugin)
     .settings(
