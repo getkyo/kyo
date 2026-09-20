@@ -48,15 +48,19 @@ object NativeFacade:
     /** Whether koffi can be required in this runtime. A presence check on `require` and the module itself rather
       * than a browser heuristic: a bundler can leave a `require` shim in a browser bundle, and a Node process can
       * be missing the optional koffi dependency.
+      *
+      * This is the gate that decides whether the koffi path is taken at all, so it has to agree with
+      * [[KoffiFacade]] about what "reachable" means. Asking only for the global `require` disagrees on every
+      * ESModule bundle, where the answer is a flat `false` and the caller reports a native-less runtime rather
+      * than a module kind it did not look for.
       */
     private def koffiAvailable(): Boolean =
         try
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
-            else
-                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                !js.isUndefined(koffi) && koffi != null
-            end if
+            NodeRequire.find() match
+                case None => false
+                case Some(req) =>
+                    val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+                    !js.isUndefined(koffi) && koffi != null
         catch case _: Throwable => false
 
 end NativeFacade

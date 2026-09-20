@@ -18,9 +18,15 @@ private[ffi] object NodeRequire:
     def find(): Option[js.Dynamic] =
         fromGlobal().orElse(fromNodeModule())
 
+    /** The `js.typeOf` guard is load-bearing, not defensive: reading a global that was never declared throws a
+      * ReferenceError, and an ESModule bundle is exactly where `require` is undeclared. `js.typeOf` compiles to a
+      * bare `typeof`, which is the one read of an undeclared name that is allowed to answer instead of throwing.
+      */
     private def fromGlobal(): Option[js.Dynamic] =
-        val req = js.Dynamic.global.selectDynamic("require")
-        if js.isUndefined(req) || req == null then None else Some(req)
+        if js.typeOf(js.Dynamic.global.selectDynamic("require")) == "undefined" then None
+        else
+            val req = js.Dynamic.global.selectDynamic("require")
+            if req == null then None else Some(req)
     end fromGlobal
 
     /** Anchored at the working directory with a trailing separator, so createRequire treats it as a directory and

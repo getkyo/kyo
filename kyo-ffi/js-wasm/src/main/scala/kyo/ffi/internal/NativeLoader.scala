@@ -91,7 +91,7 @@ object NativeLoader:
     private def requireResolve(resolvePath: String): Option[String] =
         Try {
             NodeRequire.find() match
-                case None => null
+                case None      => null
                 case Some(req) =>
                     val r = req.applyDynamic("resolve")(resolvePath)
                     if js.isUndefined(r) || r == null then null
@@ -112,13 +112,14 @@ object NativeLoader:
     private def tryKoffiLoad(name: String): Boolean =
         Try {
             NodeRequire.find() match
-                case None => false
+                case None      => false
                 case Some(req) =>
                     val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
                     if js.isUndefined(koffi) || koffi == null then false
                     else
                         val lib = koffi.applyDynamic("load")(name)
                         !js.isUndefined(lib) && lib != null
+                    end if
         }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).

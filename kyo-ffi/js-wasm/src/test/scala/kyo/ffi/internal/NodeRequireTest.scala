@@ -12,6 +12,14 @@ import scala.scalajs.js as sjs
   */
 class NodeRequireTest extends Test:
 
+    /** Guards the rest of this suite. The assertions below only exercise the constructed require while this axis
+      * has no global one, so a module kind change here would leave them passing on the CommonJS path and testing
+      * nothing that ever broke.
+      */
+    "this axis has no global require" in {
+        assert(sjs.typeOf(sjs.Dynamic.global.selectDynamic("require")) == "undefined")
+    }
+
     "finds a require on Node whatever the module kind" in {
         assert(NodeRequire.find().isDefined)
     }
