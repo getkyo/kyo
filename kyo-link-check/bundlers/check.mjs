@@ -98,7 +98,20 @@ async function page(dist) {
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "kyo-bundle-chrome-"));
-  const proc = spawn(chrome, ["--headless", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  // --no-sandbox and --disable-dev-shm-usage are what let Chrome start on a CI runner, where the namespace
+  // sandbox is unavailable and /dev/shm is too small for the default shared-memory allocation. kyo-browser's
+  // own launcher passes the same three (BrowserLauncher.chromiumFlags), which is why the browser test rows
+  // start a browser on the runners that this check could not.
+  const flags = [
+    "--headless",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${profile}`,
+    "about:blank",
+  ];
+  const proc = spawn(chrome, flags, { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = "";
     proc.stderr.on("data", (d) => {

@@ -317,7 +317,10 @@ object LinkCheck {
             val bareGlobals =
                 if (platform != "JS") Nil
                 else checkedBareGlobals(linkState, ref) ++ kinds.flatMap(kind => kind.bareGlobals.map(read => s"$read, as ${kind.label}"))
-            val bundlers = if (program.hostChunks && platform == "JS") bundlerRuns(program, outDir, tools) else Right(Nil)
+            val bundlers =
+                if (!(program.hostChunks && platform == "JS")) Right(Nil)
+                else if (browserlessHost) Right(Seq("note: this host has no chrome-headless-shell, so the bundled page was not opened"))
+                else bundlerRuns(program, outDir, tools)
             Row(program, size, initial.map(_.length).sum, gzipSize(initial), found, linked, nodeImports, eager, bareGlobals, bundlers, runs)
         }
         log(s"$platform sizes (bytes; total is every output file, initial is what a host fetches before any code runs):")
@@ -765,6 +768,17 @@ object LinkCheck {
     /** What the bundler check needs: its directory, with the pinned bundlers installed, and the Chrome the browser test rows run. */
     final private case class BundlerTools(dir: File, chrome: String, logs: File)
 
+    /** Whether this host has no browser the bundled page could be opened in.
+      *
+      * Google publishes no chrome-headless-shell for linux-arm64, which is what kyo-browser downloads, so the browser test rows do not run
+      * on that pole either. A bundled page that cannot be opened is something this host cannot answer, not something the program got wrong.
+      */
+    private def browserlessHost: Boolean = {
+        val name = sys.props.getOrElse("os.name", "").toLowerCase(java.util.Locale.ROOT)
+        val arch = sys.props.getOrElse("os.arch", "").toLowerCase(java.util.Locale.ROOT)
+        name.contains("linux") && (arch == "aarch64" || arch == "arm64")
+    }
+
     private def bundlerTools(state: State): Either[String, BundlerTools] = {
         val extracted = Project.extract(state)
         val base      = extracted.get(LocalRootProject / baseDirectory)
@@ -808,10 +822,18 @@ object LinkCheck {
             runProcess(command, t.dir, 1800, t.logs / s"${program.name}-bundlers.out").flatMap { case (code, lines) =>
                 val results = lines.filter(_.matches("^(ok|note|FAIL) .*"))
                 if (code != 0 && !results.exists(_.startsWith("FAIL")))
-                    Left(s"the bundler check exited with $code: ${lines.takeRight(5).mkString(" | ")}")
+                    Left(s"the bundler check exited with $code: ${diagnosis(lines)}")
                 else Right(results)
             }
         }
+
+    /** The lines of a failed run worth reading: what threw, then the tail. A stack trace is five lines on its own, so the tail alone reads
+      * as the frames that caught the throw rather than the message that names it.
+      */
+    private def diagnosis(lines: Seq[String]): String = {
+        val thrown = lines.filter(l => l.startsWith("Error:") || l.contains("Exception")).take(2)
+        (thrown ++ lines.takeRight(5)).distinct.mkString(" | ")
+    }
 
     private def readCeilings(file: File): Map[(String, String), Long] =
         if (!file.exists) Map.empty
