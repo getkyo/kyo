@@ -109,8 +109,8 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     // The group node carries the extra `Env[Db]` row, so the suite declares it in `S` (the inner leaf bodies use `Env.get[Db]`); the
     // group-level `.handle` discharges it. The inner `-` calls register through the base `S = Env[Db]` extension, and the runner invokes
-    // the composed transform freshly per descended leaf (O7).
-    "group-level .handle applies per descended leaf (O7) ; leaf-a" in {
+    // the composed transform freshly per descended leaf.
+    "group-level .handle applies per descended leaf ; leaf-a" in {
         val leaf = discover(Chunk(0, 0)) {
             new kyo.test.Test[Env[Db]]:
                 "group".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)) - {
@@ -125,7 +125,7 @@ class HandleTest extends AsyncFreeSpec with NonImplicitAssertions:
         Future.successful(succeed)
     }
 
-    "group-level .handle applies per descended leaf (O7) ; leaf-b" in {
+    "group-level .handle applies per descended leaf ; leaf-b" in {
         val leaf = discover(Chunk(0, 1)) {
             new kyo.test.Test[Env[Db]]:
                 "group".handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(db)(b)) - {

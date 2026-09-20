@@ -5,22 +5,22 @@ import kyo.SqlCodec.Format
 
 /** A single row from a MySQL result set.
   *
-  * Stores the raw bytes for each column alongside the column metadata from [[ColumnDefinition41]] and the wire [[Format]] the values came
+  * Stores the raw bytes for each column alongside the column metadata from [[ColumnDefinition41]] and the wire `Format` the values came
   * back in (Text for simple-query, Binary for extended / prepared-stmt). SQL NULL columns are represented as [[Maybe.Absent]].
   *
   * This is separate from the shared [[kyo.SqlRow]] to keep MySQL column metadata ([[ColumnDefinition41]]) decoupled from the
-  * Postgres-oriented [[kyo.internal.postgres.FieldDescription]] type.
+  * Postgres-oriented `kyo.internal.postgres.FieldDescription` type.
   *
-  * WARNING: `MysqlRow.columns` is `Chunk[ColumnDefinition41]`, not the `Chunk[FieldDescription]` exposed by [[kyo.SqlRow.fields]]. Code
-  * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly and forward the
-  * `format` field, do not pass `columns` where `fields` is expected.
+  * WARNING: `MysqlRow.columns` is `Chunk[ColumnDefinition41]`, not the `Chunk[SqlRow.Column]` that [[kyo.SqlRow]] exposes under the same
+  * name. Code that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly and
+  * forward the `format` field; the two `columns` are not interchangeable despite matching.
   *
   * @param values
   *   one entry per column; [[Maybe.Absent]] = SQL NULL
   * @param columns
   *   column definitions from the preceding ColumnDefinition41 packets, in the same order as [[values]]
   * @param format
-  *   wire format the `values` bytes are encoded in; [[Format.Text]] for simple-query, [[Format.Binary]] for extended / prepared-stmt
+  *   wire format the `values` bytes are encoded in; `Format.Text` for simple-query, `Format.Binary` for extended / prepared-stmt
   */
 final class MysqlRow(
     val values: Chunk[Maybe[Span[Byte]]],

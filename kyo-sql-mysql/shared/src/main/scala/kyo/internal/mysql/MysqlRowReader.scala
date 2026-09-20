@@ -33,14 +33,14 @@ import kyo.internal.mysql.types.MysqlTemporalDecoder
   * fixed-width little-endian integer or IEEE-754 field per column type, and the text protocol writes the value's ASCII rendering. Parsing the
   * ASCII digits of `1234` as a little-endian `LONG` yields 875770417, and the ASCII `0` of a false boolean is byte 0x30, so a format-blind
   * read returns plausible wrong values rather than errors. NULL columns are represented as [[Maybe.Absent]] in [[SqlRow.values]] (the
-  * null-bitmap was resolved during row assembly by [[BinaryResultsetRowUnmarshaller]]).
+  * null-bitmap was resolved during row assembly by `BinaryResultsetRowUnmarshaller`).
   *
   * Width and signedness come from the column, never from the Scala type. [[MysqlColumnToken]] on each [[SqlRow.Column]] carries the server's
   * type byte and UNSIGNED flag, so an `Int` field over a `BIGINT` widens through `Long` and aborts when the value does not fit, rather than
   * taking the low four bytes, and an `INT UNSIGNED` above 2^31 reads as its magnitude rather than as a negative number.
   *
   * For Schema-derived case class reads, the object-iteration protocol (`objectStart`, `hasNextField`, `fieldParse`, `matchField`,
-  * `objectEnd`) walks the row in column order, and [[matchField]] decides which schema field the column at the cursor belongs to by name.
+  * `objectEnd`) walks the row in column order, and `matchField` decides which schema field the column at the cursor belongs to by name.
   *
   * MySQL has no native array type, so an array travels as a `TYPE_JSON` column holding a `[…]` document. Each array read consumes that one
   * whole column and parses its text through [[SqlJsonArray]].

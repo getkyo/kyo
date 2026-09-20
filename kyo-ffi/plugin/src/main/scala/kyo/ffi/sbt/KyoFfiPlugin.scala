@@ -519,7 +519,7 @@ object KyoFfiPlugin extends AutoPlugin {
             }
             // -I dirs for the Native header-availability probe: a vendored header (e.g. a staged
             // BoringSSL tree) is off the system include path, so without these the probe would not
-            // find it and the binding would be emitted as a throwing stub instead of @extern (RI-006).
+            // find it and the binding would be emitted as a throwing stub instead of @extern.
             val probeIncludeDirs: Seq[String] = {
                 val multi      = ffiLibraries.value
                 val headerDirs = multi.flatMap(_.cHeaders).map(_.getParentFile)

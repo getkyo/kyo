@@ -105,7 +105,7 @@ import kyo.kernel.Isolate
   * #### Concurrent forks: Browser.isolate
   *
   * `Browser <: Env[BrowserTab] & Async`, but the opaque type hides the `Env` so two fibers cannot accidentally share a tab. Concurrent
-  * combinators like [[kyo.Async.zip]] / [[kyo.Async.foreach]] / [[kyo.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
+  * combinators like [[kyo.Async.zip]] / [[kyo.Async.foreach]] / [[kyo.kernel.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
   * `Browser` effect across fibers; the compiler refuses to derive one automatically because there is no safe default split for a single CDP
   * session. `Browser.isolate` provides the two safe ones and you pick the right semantics explicitly.
   *
@@ -154,12 +154,12 @@ object Browser:
 
     /** Selects which Chrome-for-Testing artifact [[chromeForTestingLaunchConfig]] downloads.
       *
-      *   - [[HeadlessShell]] (default): `chrome-headless-shell`, Google's standalone headless build of Chrome (the same code path as
+      *   - [[ChromeForTestingBuild.HeadlessShell]] (default): `chrome-headless-shell`, Google's standalone headless build of Chrome (the same code path as
       *     `chrome --headless=new`, packaged without the GUI compositor / GPU stack / extension loader). ~120 MB compressed, faster
       *     startup, smaller memory footprint, fully CDP-compatible. This is Puppeteer's default since v22.
-      *   - [[Chrome]]: the full `chrome` binary, ~190 MB compressed, with the GUI compositor included. Required for headed mode
+      *   - [[ChromeForTestingBuild.Chrome]]: the full `chrome` binary, ~190 MB compressed, with the GUI compositor included. Required for headed mode
       *     (`headless = false`) and for any feature that needs the UI surface (e.g. visible-window debugging). Behaves identically to
-      *     [[HeadlessShell]] when launched with `headless = true`.
+      *     [[ChromeForTestingBuild.HeadlessShell]] when launched with `headless = true`.
       */
     enum ChromeForTestingBuild derives CanEqual:
         case HeadlessShell
@@ -601,7 +601,7 @@ object Browser:
 
     /** Like [[press(key)]] but holds the supplied `modifiers` (`shift`, `ctrl`, `alt`, `meta`) for both keyDown and keyUp. Modifiers OR
       * with `KeyInfo.mapKey(key).modifierBit`. Construct via the named-arg case-class apply, e.g. `KeyModifiers(shift = true)`, or via
-      * the [[KeyModifiers.of]] factory.
+      * the [[kyo.internal.KeyModifiers.of]] factory.
       */
     def press(
         key: Key,
@@ -656,8 +656,8 @@ object Browser:
     /** Presses `key` while `selector` is focused, with the given `modifiers` held for both keyDown and keyUp. Modifiers OR with
       * `KeyInfo.mapKey(key).modifierBit`, so `press(sel, Key.Shift)` is unchanged.
       *
-      * `modifiers` defaults to [[KeyModifiers.none]]; supply a non-default value via the named-arg case-class apply, e.g.
-      * `KeyModifiers(shift = true)`, or the [[KeyModifiers.of]] factory.
+      * `modifiers` defaults to [[kyo.internal.KeyModifiers.none]]; supply a non-default value via the named-arg case-class apply, e.g.
+      * `KeyModifiers(shift = true)`, or the [[kyo.internal.KeyModifiers.of]] factory.
       *
       * Note: a disabled element does NOT block `press`. Real browsers still fire `keydown` / `keyup` against disabled inputs (the page's
       * keyboard handlers can observe focus + key state regardless), so the actionability gate skips the disabled probe for `press`.
@@ -3861,7 +3861,7 @@ object Browser:
 
     /** Emulated `prefers-color-scheme` value for [[withEmulation]].
       *
-      * [[NoPreference]] clears the override: the W3C dropped `no-preference` as a settable value for this feature, so it maps to the
+      * [[ColorScheme.NoPreference]] clears the override: the W3C dropped `no-preference` as a settable value for this feature, so it maps to the
       * empty-string clear sent to `Emulation.setEmulatedMedia`.
       */
     enum ColorScheme derives CanEqual:
@@ -3935,7 +3935,7 @@ object Browser:
       *
       * Field shape mirrors the CDP `AXNode` wire surface. The `properties` map carries common AX state (`disabled`, `checked`, `expanded`,
       * …) plus `"backendDOMNodeId"` keyed to the underlying DOM node's CDP backend id (stringified) when the node maps to a DOM element.
-      * The `"backendDOMNodeId"` entry is the join key used by [[role]] / [[accessibleName]] to align a [[Selector]]-resolved [[NodeRef]]
+      * The `"backendDOMNodeId"` entry is the join key used by [[role]] / [[accessibleName]] to align a [[Selector]]-resolved `NodeRef`
       * with its AX-tree entry.
       */
     final case class AxNode(
@@ -3998,10 +3998,10 @@ object Browser:
 
     /** How Chrome should handle downloads triggered by the page.
       *
-      *   - [[Allow]]: Chrome saves the file (to the path supplied to [[allowDownloads]] / [[setDownloadBehavior]] if given) and emits
+      *   - [[DownloadBehavior.Allow]]: Chrome saves the file (to the path supplied to [[allowDownloads]] / [[setDownloadBehavior]] if given) and emits
       *     `Page.downloadWillBegin` / `Page.downloadProgress` events.
-      *   - [[Deny]]: Chrome drops the download; no file is written and no events are emitted.
-      *   - [[Default]]: restores Chrome's normal behaviour (no explicit policy; no events).
+      *   - [[DownloadBehavior.Deny]]: Chrome drops the download; no file is written and no events are emitted.
+      *   - [[DownloadBehavior.Default]]: restores Chrome's normal behaviour (no explicit policy; no events).
       */
     enum DownloadBehavior derives CanEqual:
         case Allow, Deny, Default
@@ -4024,8 +4024,8 @@ object Browser:
 
     /** A download lifecycle event emitted while an [[onDownload]] subscription is active.
       *
-      *   - [[WillBegin]]: fires once when Chrome resolves the download's URL and filename.
-      *   - [[Progress]]: fires repeatedly until the download finishes, with `state` advancing through `"inProgress"` → `"completed"` (or
+      *   - [[DownloadEvent.WillBegin]]: fires once when Chrome resolves the download's URL and filename.
+      *   - [[DownloadEvent.Progress]]: fires repeatedly until the download finishes, with `state` advancing through `"inProgress"` → `"completed"` (or
       *     `"canceled"`).
       *
       * Both events carry the same `guid` for a given download, so handlers can correlate them.

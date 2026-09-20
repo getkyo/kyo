@@ -13,12 +13,12 @@ import kyo.net.NetException
   * is its own clean close. `LocalShutdown` is set only from a known local half-close transition,
   * never inferred from `recv == 0`, so a peer FIN and a self-inflicted shutdown stay distinguishable.
   *
-  *   - [[Bytes]]: `n > 0`, deliver the span.
-  *   - [[WouldBlock]]: EAGAIN, re-arm; NOT EOF (residual is handled by the consumer-paced re-dispatch).
-  *   - [[PeerFin]]: `recv == 0` with no local shutdown: an orderly peer EOF.
-  *   - [[LocalShutdown]]: `recv == 0` AFTER our own `shutdown(SHUT_RD)` (a known local transition).
-  *   - [[CleanClose]]: a TLS close_notify was consumed (RFC 8446 6.1).
-  *   - [[Failed]]: a hard error, carried as a typed [[NetException]].
+  *   - [[ReadOutcome.Bytes]]: `n > 0`, deliver the span.
+  *   - [[ReadOutcome.WouldBlock]]: EAGAIN, re-arm; NOT EOF (residual is handled by the consumer-paced re-dispatch).
+  *   - [[ReadOutcome.PeerFin]]: `recv == 0` with no local shutdown: an orderly peer EOF.
+  *   - [[ReadOutcome.LocalShutdown]]: `recv == 0` AFTER our own `shutdown(SHUT_RD)` (a known local transition).
+  *   - [[ReadOutcome.CleanClose]]: a TLS close_notify was consumed (RFC 8446 6.1).
+  *   - [[ReadOutcome.Failed]]: a hard error, carried as a typed [[NetException]].
   */
 private[kyo] enum ReadOutcome derives CanEqual:
     case Bytes(span: Span[Byte])

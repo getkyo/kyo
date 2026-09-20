@@ -54,7 +54,7 @@ final class PostgresConnection(
 
     /** Executes `sql` using the simple-query protocol and returns all rows.
       *
-      * No barrier is wrapped around the call, because [[SimpleQueryExchange.run]] is its own: it reads to [[ReadyForQuery]] on every exit,
+      * No barrier is wrapped around the call, because `SimpleQueryExchange.run` is its own: it reads to [[ReadyForQuery]] on every exit,
       * the error path included, so the connection is left clean for the next command.
       */
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
@@ -302,7 +302,7 @@ final class PostgresConnection(
     def terminate(using Frame): Unit < (Async & Abort[SqlException]) =
         TerminatorExchange.run(channel)
 
-    /** Returns true if the underlying [[Connection]] is still open. */
+    /** Returns true if the underlying `Connection` is still open. */
     def isOpen(using Frame): Boolean < Sync =
         // Unsafe: kyo-net Connection.isOpen is unsafe-tier; a plain flag read, no suspension needed.
         Sync.Unsafe.defer(channel.conn.isOpen)
@@ -432,14 +432,14 @@ object PostgresConnection:
     /** Establishes a Postgres connection to `address` using plaintext or TLS authentication.
       *
       * Sequence:
-      *   1. Connect via [[NetPlatform.transport]].
-      *   2. If `tls` is [[Present]]: send SSLRequest via [[InitSSLExchange]]; upgrade the connection to TLS on 'S'; fail on 'N'.
-      *   3. Run [[StartupExchange]] over the (optionally TLS-wrapped) connection.
+      *   1. Connect via `NetPlatform.transport`.
+      *   2. If `tls` is `Present`: send SSLRequest via `InitSSLExchange`; upgrade the connection to TLS on 'S'; fail on 'N'.
+      *   3. Run [[kyo.internal.postgres.exchange.StartupExchange]] over the (optionally TLS-wrapped) connection.
       *   4. Initialise the per-connection prepared-statement cache.
       *   5. Return a [[PostgresConnection]] populated from the startup result.
       *
-      * The returned connection is NOT scope-managed here; the caller (pool or [[SqlClient]]) is responsible for calling [[terminate]] /
-      * [[close]].
+      * The returned connection is NOT scope-managed here; the caller (pool or [[SqlClient]]) is responsible for calling
+      * [[PostgresConnection.terminate]] / [[PostgresConnection.close]].
       *
       * @param host
       *   hostname or IP address
@@ -451,11 +451,11 @@ object PostgresConnection:
       *   database name
       * @param password
       *   the credential to authenticate with, or [[Absent]] when there is none: trust auth, or a URL whose userinfo carried no
-      *   `:`. [[Present]] with an empty string also arrives, from a URL whose userinfo ended in a bare `:`, and
-      *   [[StartupExchange]] refuses it exactly as it refuses [[Absent]], since no PostgreSQL method that reaches the handshake
-      *   has a usable empty credential.
+      *   `:`. `Present` with an empty string also arrives, from a URL whose userinfo ended in a bare `:`, and
+      *   [[kyo.internal.postgres.exchange.StartupExchange]] refuses it exactly as it refuses [[Absent]], since no
+      *   PostgreSQL method that reaches the handshake has a usable empty credential.
       * @param tls
-      *   optional TLS configuration; [[Absent]] = plaintext, [[Present]] = TLS required
+      *   optional TLS configuration; [[Absent]] = plaintext, `Present` = TLS required
       * @param preparedStmtCacheSize
       *   maximum number of prepared statements to cache per connection (default 64)
       * @param preparedStmtTtl
@@ -514,7 +514,7 @@ object PostgresConnection:
 
     /** Like [[connect]] but with an optional [[TlsNegotiator]] for opportunistic TLS (sslmode=prefer/allow).
       *
-      * When `negotiator` is [[Present]], it is called with the raw plaintext [[Connection]] (before startup) and may either upgrade it to
+      * When `negotiator` is `Present`, it is called with the raw plaintext `Connection` (before startup) and may either upgrade it to
       * TLS or return it unchanged. The [[StartupExchange]] runs on the result.
       *
       * Carries an optional [[TlsNegotiator]] so [[PostgresSqlConnection]] can request opportunistic TLS while [[connect]] stays the strict-mode
@@ -533,7 +533,7 @@ object PostgresConnection:
       * @param tls
       *   TLS configuration passed to [[connect]] for strict modes; for negotiated modes this may be [[Absent]]
       * @param negotiator
-      *   optional opportunistic TLS negotiator; if [[Present]], it pre-processes the raw connection before startup
+      *   optional opportunistic TLS negotiator; if `Present`, it pre-processes the raw connection before startup
       * @param preparedStmtCacheSize
       *   prepared-statement cache capacity
       * @param preparedStmtTtl
