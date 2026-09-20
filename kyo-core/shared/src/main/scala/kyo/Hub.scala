@@ -174,16 +174,25 @@ final class Hub[A] private[kyo] (
                 Sync.Unsafe.defer {
                     val child    = Channel.Unsafe.init[A](bufferSize, Access.SingleProducerMultiConsumer).safe
                     val listener = new Listener[A](this, child, filter)
-                    discard(listeners.add(listener))
-                    closed.map {
-                        case true =>
-                            // race condition
-                            Sync.defer {
-                                discard(listeners.remove(listener))
-                                fail
-                            }
-                        case false =>
-                            Scope.acquireRelease(listener)(_.close.unit)
+                    // The listener's close is registered on the scope BEFORE it is added to the set, so no poll sits
+                    // between the add and the registration. An interrupt landing on that poll would otherwise abandon a
+                    // listener that is in the set with nothing to close it, and the hub's publisher then parks forever on
+                    // its full buffer. `listener.close` removes it from the set and closes its channel and is idempotent,
+                    // so it is safe both when the closed re-check below removes the listener and when the interrupt lands
+                    // before the add ever ran.
+                    Scope.ensure(listener.close.unit).andThen {
+                        discard(listeners.add(listener))
+                        closed.map {
+                            case true =>
+                                // The hub closed between the outer check and the add: remove the just-added listener and
+                                // fail. The finalizer above still runs on unwind, a harmless second close.
+                                Sync.defer {
+                                    discard(listeners.remove(listener))
+                                    fail
+                                }
+                            case false =>
+                                listener
+                        }
                     }
                 }
         }

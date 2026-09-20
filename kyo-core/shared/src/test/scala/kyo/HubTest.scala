@@ -591,20 +591,32 @@ class HubTest extends kyo.test.Test[Any]:
         // `listen` adds the listener to the hub's set in one step and registers its release in the next, behind a
         // poll of the hub's closed flag. An interrupt landing on that poll abandons the registration: the listener
         // stays in the set with nobody to close it, and once its one-slot buffer fills the publisher parks on it
-        // and no later value reaches the listeners that are alive. The interrupt is requested at a small staggered
-        // delay after the fiber starts, so the rounds sample that poll. The probe afterwards publishes two values
+        // and no later value reaches the listeners that are alive. The stop is requested from the leaf's own fiber
+        // spinning to a staggered sub-microsecond offset past the step before `listen`, sampling that poll directly; a
+        // crude ms-scale delay lands after listen (which finishes in microseconds) and only catches the window on a cold
+        // JVM. The probe afterwards publishes two values
         // through a live listener; a leaked listener holds the first and stalls the publisher on the second.
         "a listener whose registration is abandoned is not left in the set" in {
-            val rounds = 100
+            val rounds = 500
             Hub.initWith[Int](8) { hub =>
                 Loop.indexed { i =>
                     if i >= rounds then Loop.done
                     else
+                        val started = new java.util.concurrent.atomic.AtomicBoolean(false)
                         for
-                            fiber <- Fiber.initUnscoped(Scope.run(hub.listen(1).andThen(Async.never)))
-                            _     <- Async.delay((i % 3).millis)(fiber.interrupt)
-                            _     <- fiber.getResult
+                            fiber <- Fiber.initUnscoped(
+                                Sync.defer(started.set(true)).andThen(Scope.run(hub.listen(1).andThen(Async.never)))
+                            )
+                            _ <- Sync.Unsafe.defer {
+                                val bound = java.lang.System.nanoTime() + 200_000_000L
+                                while !started.get() && java.lang.System.nanoTime() < bound do ()
+                                val target = java.lang.System.nanoTime() + (i % 80) * 200L
+                                while java.lang.System.nanoTime() < target do ()
+                                discard(fiber.unsafe.interrupt())
+                            }
+                            _ <- fiber.getResult
                         yield Loop.continue
+                        end for
                 }.andThen {
                     hub.listen(8).map { live =>
                         Abort.run[Timeout] {
