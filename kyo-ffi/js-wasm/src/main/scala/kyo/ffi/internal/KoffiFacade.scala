@@ -93,15 +93,9 @@ private[ffi] object Koffi:
     end cjsRequire
 
     private def esmRequire(): js.Dynamic =
-        val proc = js.Dynamic.global.selectDynamic("process")
-        if js.isUndefined(proc) || proc == null then null
-        else
-            val nodeModule = proc.applyDynamic("getBuiltinModule")("node:module")
-            val cwd        = proc.applyDynamic("cwd")().asInstanceOf[String]
-            val require    =
-                nodeModule.applyDynamic("createRequire")((cwd + "/").asInstanceOf[js.Any]).asInstanceOf[js.Function1[String, js.Dynamic]]
-            require("koffi")
-        end if
+        NodeRequire.find() match
+            case None      => null
+            case Some(req) => req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
     end esmRequire
 
     /** koffi 2.x helper that pins a JS value to a specific koffi type. Used for variadic call sites where each vararg must be typed at call

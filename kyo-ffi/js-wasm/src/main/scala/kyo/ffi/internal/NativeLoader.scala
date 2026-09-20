@@ -90,13 +90,12 @@ object NativeLoader:
     /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */
     private def requireResolve(resolvePath: String): Option[String] =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then null
-            else
-                val r = req.applyDynamic("resolve")(resolvePath)
-                if js.isUndefined(r) || r == null then null
-                else r.asInstanceOf[String]
-            end if
+            NodeRequire.find() match
+                case None => null
+                case Some(req) =>
+                    val r = req.applyDynamic("resolve")(resolvePath)
+                    if js.isUndefined(r) || r == null then null
+                    else r.asInstanceOf[String]
         }.toOption.flatMap(Option(_))
 
     /** Probe whether koffi can load `name` (an installed system library by SONAME / default search). `false` when
@@ -105,19 +104,21 @@ object NativeLoader:
       * koffi is required DYNAMICALLY (`require("koffi")`), not through the static `@JSImport` facade, so this
       * loader keeps no static dependency on the koffi package: a runtime with no koffi installed just makes the
       * probe return `false` instead of failing to load this module.
+      *
+      * The require comes from [[NodeRequire]] rather than the global, because this probe is a presence gate: on a
+      * module kind with no global `require` a direct reach answers `false` for every library on the machine, and
+      * the caller reports that as the backend being inapplicable to the OS.
       */
     private def tryKoffiLoad(name: String): Boolean =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
-            else
-                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                if js.isUndefined(koffi) || koffi == null then false
-                else
-                    val lib = koffi.applyDynamic("load")(name)
-                    !js.isUndefined(lib) && lib != null
-                end if
-            end if
+            NodeRequire.find() match
+                case None => false
+                case Some(req) =>
+                    val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+                    if js.isUndefined(koffi) || koffi == null then false
+                    else
+                        val lib = koffi.applyDynamic("load")(name)
+                        !js.isUndefined(lib) && lib != null
         }.getOrElse(false)
 
     /** koffi-loadable resolution for known system libraries (libc, libm, pthread, dl, rt).
