@@ -180,8 +180,26 @@ lazy val `kyo-settings` = Seq(
         } else {
             IO.createDirectory(out)
             log.info(s"Documenting $project with scaladoc $toolVersion")
+            // Scaladoc reports an unresolved link and carries on with exit code 0, and `-Werror` does not
+            // reach it, so the only record is a line on stderr. `OutputStrategy.CustomOutput` redirects
+            // stdout alone, which reads back empty.
+            val docLog    = log
+            val collected = scala.collection.mutable.ListBuffer.empty[String]
+            val tee       = new sbt.util.Logger {
+                def trace(t: => Throwable): Unit                               = docLog.trace(t)
+                def success(message: => String): Unit                          = docLog.success(message)
+                def log(level: sbt.util.Level.Value, message: => String): Unit = {
+                    val line = message
+                    collected.synchronized { collected += line; () }
+                    docLog.log(if (level == sbt.util.Level.Error) sbt.util.Level.Warn else level, line)
+                }
+            }
+            // Named so a module that documents locally documents on a runner: the JVM default is a
+            // quarter of physical RAM, 4G beside the 12G driver on the 16G runner that runs this.
             val exit = Fork.java(
-                ForkOptions().withRunJVMOptions(Vector("-cp", tool.mkString(sep))),
+                ForkOptions()
+                    .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
+                    .withOutputStrategy(OutputStrategy.LoggedOutput(tee)),
                 Seq(
                     "dotty.tools.scaladoc.Main",
                     "-d",
@@ -192,11 +210,32 @@ lazy val `kyo-settings` = Seq(
                     deps.mkString(sep)
                 ) ++ opts ++ classes.map(_.getAbsolutePath)
             )
+            val said = collected.synchronized(collected.toList)
             if (exit != 0) sys.error(s"scaladoc failed for $project")
             // Scaladoc exits 0 when handed nothing to read, so success alone does not mean a module
             // was documented. Without this an empty api directory reaches the published javadoc jar.
             if (PathFinder(out).allPaths.get.forall(!_.getName.endsWith(".html")))
                 sys.error(s"scaladoc produced no pages for $project")
+            // The message sits in a caret block under a `-- Warning: <file>:<line>:<col> --` header, which
+            // is the only thing carrying the position.
+            val position = """^-- (?:Warning|Error): (\S+)""".r
+            val found    = List.newBuilder[String]
+            var where    = project
+            said.foreach { raw =>
+                val line = raw.replaceAll("\\[[0-9;]*m", "")
+                position.findFirstMatchIn(line.trim).foreach(m => where = m.group(1))
+                val at = math.max(
+                    line.indexOf("Couldn't resolve a member for the given link query"),
+                    line.indexOf("Could not find any member to link for")
+                )
+                if (at >= 0) found += s"$where: ${line.substring(at)}"
+            }
+            val unresolvedLinks = found.result()
+            if (unresolvedLinks.nonEmpty)
+                sys.error(
+                    s"scaladoc could not resolve ${unresolvedLinks.size} link(s) in $project:" +
+                        unresolvedLinks.map(l => s"\n  $l").mkString
+                )
             out
         }
     }.tag(DocTag).value,

@@ -76,7 +76,7 @@ class MysqlDialect extends Idiom:
     /** MySQL spells rollup as a trailing modifier on the key list, `GROUP BY <keys> WITH ROLLUP`, rather than the function-call form
       * `GROUP BY ROLLUP (<keys>)` the baseline emits. Only the Rollup arm diverges; every other grouping kind is the baseline (CUBE and
       * GROUPING SETS fail typed, MySQL having no grouping sets). Overrides the clause seam alone, so the grouped source and the optional
-      * HAVING stay the baseline's ([[Idiom.groupBy]] renders them around this), reusing the baseline key list ([[Idiom.groupByKeys]]).
+      * HAVING stay the baseline's (`Idiom.groupBy` renders them around this), reusing the baseline key list (`Idiom.groupByKeys`).
       */
     override def groupByClause(ctx: Idiom.Ctx, g: Sql.GroupBy[?, ?]): Unit =
         g.kind match
@@ -90,7 +90,7 @@ class MysqlDialect extends Idiom:
       * is the baseline plain `/`. MySQL has no truncating `/`; it spells the truncated quotient `DIV`, so that arm diverges.
       *
       * The divisor still takes the baseline's guard: a SELECT dividing by zero answers absent here, but a data-change statement raises 1365
-      * under the default `sql_mode`, and division reaches a `SET` through the typed lane. See [[Idiom.guardingDivisor]].
+      * under the default `sql_mode`, and division reaches a `SET` through the typed lane. See `Idiom.guardingDivisor`.
       */
     override def arithmetic(ctx: Idiom.Ctx, ar: Sql.Arithmetic[?]): Unit =
         ar.op match

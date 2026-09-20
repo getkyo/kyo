@@ -9,7 +9,7 @@ import kyo.ffi.Ffi
   * `va_arg` and returns their sum. Scala Native's `@extern` cannot express variadic function pointers, so this binding is intentionally not
   * loaded on Native; Native uses [[ItSumFixedBindings]] as the workaround-pointer substitute.
   *
-  * The trait itself lives in the shared source set so that [[ItVarargsSharedSpec]] (also in shared/test) can reference the type without
+  * The trait itself lives in the shared source set so that `ItVarargsSharedSpec` (also in shared/test) can reference the type without
   * platform-specific source duplication. The codegen correctly rejects any attempt to generate a Native impl, that rejection is what makes
   * varargs an intentionally JVM+JS-only feature.
   */

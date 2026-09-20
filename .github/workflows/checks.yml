@@ -184,3 +184,13 @@ jobs:
         with:
           path: .doctest-cache
           key: doctest-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+
+      # Last, and after the cache save, because doctest has already compiled every module: the step pays
+      # for scaladoc alone (~6 min) rather than a second full build, and a broken link cannot cost the
+      # next run its doctest hits.
+      #
+      # JVM covers every shared source. JS and Wasm render no scaladoc at all. Native does, but
+      # `kyoNative / update` cannot resolve the aggregate's own dependencies, so a Native row would fail
+      # on that rather than on a link.
+      - name: Scaladoc links
+        run: sbt kyoJVM/doc

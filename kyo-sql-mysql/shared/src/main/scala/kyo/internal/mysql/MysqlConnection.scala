@@ -269,7 +269,7 @@ final class MysqlConnection(
       * subsequent statements. Connection-level errors (socket closed, panic) re-raise and abort the entire pipeline.
       *
       * MySQL does not support the PostgreSQL Sync-barrier batch-write protocol, so statements are executed one at a time in order using the
-      * extended (binary) protocol ([[MysqlPipelineExchange.runOnConnection]]).
+      * extended (binary) protocol (`MysqlPipelineExchange.runOnConnection`).
       *
       * @param stmts
       *   `(sql, params)` pairs in submission order
@@ -369,11 +369,11 @@ object MysqlConnection:
     /** Establishes a MySQL connection (plaintext or TLS).
       *
       * Sequence:
-      *   1. Connect via [[NetPlatform.transport]].
+      *   1. Connect via `NetPlatform.transport`.
       *   2. Build a plaintext [[MysqlChannel]].
-      *   3. Run [[HandshakeExchange]], reads HandshakeV10, optionally upgrades to TLS, sends HandshakeResponse41, handles auth.
-      *   4. Use the channel returned by [[HandshakeResult]] (may be TLS-wrapped).
-      *   5. Populate per-connection state from [[HandshakeResult]].
+      *   3. Run `HandshakeExchange`, reads HandshakeV10, optionally upgrades to TLS, sends HandshakeResponse41, handles auth.
+      *   4. Use the channel returned by [[kyo.internal.mysql.exchange.HandshakeResult]] (may be TLS-wrapped).
+      *   5. Populate per-connection state from [[kyo.internal.mysql.exchange.HandshakeResult]].
       *   6. Return a [[MysqlConnection]].
       *
       * @param host
@@ -385,7 +385,7 @@ object MysqlConnection:
       * @param password
       *   the credential to authenticate with, or [[Maybe.Absent]] when there is none. [[Maybe.Present]] with an empty string
       *   also arrives, from a URL whose userinfo ended in a bare `:`, and MySQL treats the two alike by design: every plugin
-      *   path in [[HandshakeExchange]] produces the same bytes for both, which is the zero-length auth response a genuinely
+      *   path in `HandshakeExchange` produces the same bytes for both, which is the zero-length auth response a genuinely
       *   passwordless account authenticates with.
       * @param db
       *   optional initial database

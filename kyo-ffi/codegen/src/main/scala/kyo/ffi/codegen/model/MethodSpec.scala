@@ -22,7 +22,7 @@ package kyo.ffi.codegen.model
   *   listed in [[params]]; it is synthesized by emitters as a trailing `args: Any*` on the generated method.
   * @param withError
   *   true when the binding method's Scala return type is `Ffi.Outcome[A]`. The emitter packs the C return value together with the captured
-  *   errno into an `Ffi.Outcome[A]` instead of throwing [[kyo.ffi.FfiErrno]] on non-zero errno. The type argument `A` is the C return width
+  *   errno into an `Ffi.Outcome[A]` instead of throwing `kyo.ffi.FfiErrno` on non-zero errno. The type argument `A` is the C return width
   *   the descriptor reads (carried in [[returnShape]]).
   */
 final case class MethodSpec(
@@ -83,7 +83,7 @@ object ReturnShape:
       * @param typeArgFqcn
       *   fully-qualified name of the phantom type argument (e.g. `"kyo.ffi.it.ItHandle"`).
       * @param nullable
-      *   when `false` (bare `Handle[A]` return), NULL from C throws [[kyo.ffi.FfiNullPointer]]; when `true` (`Maybe[Handle[A]]` return),
+      *   when `false` (bare `Handle[A]` return), NULL from C throws `kyo.ffi.FfiNullPointer`; when `true` (`Maybe[Handle[A]]` return),
       *   NULL maps to `Absent` and non-null maps to `Present(handle)`.
       */
     final case class HandleReturn(typeArgFqcn: String, nullable: Boolean = false) extends ReturnShape

@@ -13,9 +13,9 @@ import kyo.internal.NumberFormat
   * `fontFace`, `keyframes`); every builder returns a new `Stylesheet`, so it is safe to share and
   * compose with `++`. Render it with [[kyo.Stylesheet.render]] to a CSS string for a document
   * `<head>` (pass it as [[kyo.UI.PageHead.css]] to [[kyo.UI.runRenderPage]]) or inject it
-  * client-side with [[kyo.UI.runStylesheet]]. Declarations reuse [[kyo.Style]] verbatim, so the same
+  * client-side with `kyo.UI.runStylesheet`. Declarations reuse [[kyo.Style]] verbatim, so the same
   * value types (`Color`, `Length`, the pseudo-state nesting) apply; the selector targets elements
-  * that carry a matching [[kyo.UI.cssClass]] (or an `id`/`data-*` selector).
+  * that carry a matching `kyo.UI.cssClass` (or an `id`/`data-*` selector).
   *
   * Emission order is preserved (CSS is last-declaration-wins at equal specificity), so author
   * base rules before overrides and place `@media` blocks after the rules they refine.
@@ -29,7 +29,7 @@ import kyo.internal.NumberFormat
   *   [[kyo.Style.animation]] for the element-side `animation:` prop that references a `@keyframes`
   *   block by name
   * @see
-  *   [[kyo.UI.cssClass]] for the element-side class hook a class selector targets
+  *   `kyo.UI.cssClass` for the element-side class hook a class selector targets
   */
 final case class Stylesheet private[kyo] (entries: Chunk[Stylesheet.Entry]) derives CanEqual:
 

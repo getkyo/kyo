@@ -1304,7 +1304,7 @@ object Sql:
         enum Direction derives CanEqual:
             case Asc, Desc
 
-        /** Where absent values sort relative to present ones. [[Default]] takes the placement that treats an absent value as the largest,
+        /** Where absent values sort relative to present ones. `Default` takes the placement that treats an absent value as the largest,
           * resolved by [[OrderSpec.resolvedAbsent]] rather than left to the flavor.
           */
         enum AbsentPlacement derives CanEqual:
@@ -1498,7 +1498,7 @@ object Sql:
               *     query result.
               *   - [[SqlUnsupportedException]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry)
               *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
-              *     custom decoder via [[SqlCodec.of]].
+              *     custom decoder via `SqlCodec.of`.
               */
             inline def run(using ev: SqlSchema[A], frame: Frame): Chunk[A] < (Abort[SqlException] & DB) =
                 ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q, 'ev, 'frame) }

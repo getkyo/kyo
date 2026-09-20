@@ -85,7 +85,7 @@ instead of `Map`, `Span` instead of a raw `Array` field.
 
 ---
 
-## AllowUnsafe site list (INV-009)
+## AllowUnsafe site list
 
 `AllowUnsafe.embrace.danger` is absent from `shared/src/main`; every internal use
 of an unsafe operation there is supplied by an enclosing `Sync.Unsafe.defer` at
