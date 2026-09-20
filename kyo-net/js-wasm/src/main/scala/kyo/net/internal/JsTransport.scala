@@ -1168,6 +1168,11 @@ final private[kyo] class JsTransport private (
         // body ran on the caller's own stack, where such a throw reached the caller as a panic, and callers classify on that (kyo-sql's
         // TlsUpgrade maps it to a connect failure). Reproduce that; the owner hook armed on `promise` above then performs the release,
         // which is why nothing is destroyed here.
+        // Mark the handle upgrading BEFORE the detach closes inbound: a plaintext read the ReadPump pulled off the socket a moment ago can be
+        // parked on a full inbound channel, and inbound.close() fails that put with Closed, invoking JsIoDriver.onInboundClosedDuringRead. That
+        // hook salvages the bytes (the peer's first TLS flight) into leftover only while this flag is set, so afterDetach replays them into the
+        // handshake instead of the default dropping them and stranding it. Never reset: the upgrade wraps a fresh handle over the TLSSocket.
+        handle.upgrading = true
         jsConn.detachForUpgrade().onComplete { r =>
             try afterDetach(r.foldError(_.eval, _ => Absent))
             catch case t: Throwable => promise.completeDiscard(Result.panic(t))

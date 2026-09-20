@@ -91,6 +91,20 @@ final private[kyo] class JsIoDriver private (
         end if
     end isPeerClosed
 
+    /** STARTTLS handoff (JS override): the plaintext ReadPump pulled `bytes` off the socket but detachForUpgrade already closed the inbound
+      * channel, so these are the peer's first TLS flight (the ClientHello a server pulled a moment before detaching). Stage them as leftover so
+      * upgradeToTls's afterDetach, which drains the leftover queue and unshifts it into the socket ahead of the handshake, feeds them to the TLS
+      * engine. The [[kyo.net.internal.transport.IoDriver]] default drops them, which strands the handshake at its deadline; this is the JS
+      * counterpart of the NIO/io_uring/poller salvage. Guarded on `upgrading` so an ordinary teardown close still discards. Single event-loop
+      * carrier, so the plain enqueue is safe; the read routes to EITHER the channel (offer succeeds) OR here (offer fails Closed), never both, so
+      * no bytes are fed twice.
+      */
+    override def onInboundClosedDuringRead(handle: JsHandle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
+        if handle.upgrading then
+            val arr = bytes.toArrayUnsafe
+            handle.enqueueLeftover(arr, 0, arr.length)
+    end onInboundClosedDuringRead
+
     def awaitConnect(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         // JS connect is handled via Node.js 'connect' event callback, not via the driver
         promise.completeDiscard(Result.succeed(()))

@@ -22,6 +22,11 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
     var peerCloseGrace: Duration = Duration.Infinity
 
+    // Set true by JsTransport.upgradeToTls before it detaches this handle for a STARTTLS handshake, and read by JsIoDriver.onInboundClosedDuringRead
+    // so a plaintext read the pump pulled off the socket a moment before the detach is salvaged for the handshake rather than dropped. Never reset:
+    // the upgraded connection wraps a fresh JsHandle over the TLSSocket, so this handle is discarded whether the upgrade succeeds or fails.
+    var upgrading: Boolean = false
+
     // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
     // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
     // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
