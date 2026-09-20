@@ -69,4 +69,16 @@ class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
     test("an unknown compiler target makes no claim, rather than a wrong one") {
         error(triple = None, compilerTarget = None, wanted = Seq("linux-x86_64")) shouldBe None
     }
+
+    test("a Windows target delivers nothing, because a DLL with no import library cannot be linked") {
+        val why = KyoNativesNativePlugin.undeliverable("windows-x86_64").getOrElse(fail("expected a reason"))
+        why should include("windows-x86_64")
+        why should include("import library")
+        KyoNativesNativePlugin.undeliverable("windows-aarch64") shouldBe defined
+    }
+
+    test("every posix target delivers") {
+        Seq("darwin-aarch64", "darwin-x86_64", "linux-x86_64", "linux-aarch64", "linux-musl-x86_64", "linux-musl-aarch64")
+            .foreach(target => KyoNativesNativePlugin.undeliverable(target) shouldBe None)
+    }
 }

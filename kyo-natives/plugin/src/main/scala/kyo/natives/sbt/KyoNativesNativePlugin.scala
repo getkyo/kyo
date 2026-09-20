@@ -36,20 +36,27 @@ object KyoNativesNativePlugin extends AutoPlugin {
         // depend on itself. A build that cross-compiles by setting `targetTriple` names `kyoNativesTargets` too, and
         // `crossTargetCheck` fails the link when the two disagree.
         kyoNativesResolvedTargets := {
+            val log      = streams.value.log
             val explicit = kyoNativesTargets.value
             if (explicit.size > 1)
                 sys.error(s"[kyo-natives] a Native binary has one target; kyoNativesTargets names ${explicit.mkString(", ")}.")
-            explicit.headOption match {
-                case Some(named) => Seq(named)
+            val target = explicit.headOption match {
+                case some @ Some(_) => some
                 case None =>
                     val triple = Discover.targetTriple(Discover.clang())
-                    NativeTargets.ofTriple(triple) match {
-                        case Some(derived) => Seq(derived)
-                        case None =>
-                            streams.value.log.info(s"[kyo-natives] no target kyo publishes for matches $triple; delivering nothing")
-                            Nil
-                    }
+                    val derived = NativeTargets.ofTriple(triple)
+                    if (derived.isEmpty)
+                        log.info(s"[kyo-natives] no target kyo publishes for matches $triple; delivering nothing")
+                    derived
+            }
+            target.flatMap { t =>
+                undeliverable(t) match {
+                    case Some(why) =>
+                        log.info(s"[kyo-natives] $why; delivering nothing")
+                        None
+                    case None => Some(t)
                 }
+            }.toSeq
         },
         nativeConfig := {
             val base    = nativeConfig.value
@@ -71,6 +78,18 @@ object KyoNativesNativePlugin extends AutoPlugin {
         Compile / nativeLink := stageBeside((Compile / nativeLink).dependsOn(crossTargetCheck)).value,
         Test / nativeLink    := stageBeside((Test / nativeLink).dependsOn(crossTargetCheck)).value
     )
+
+    /** Why `target`'s libraries cannot reach a Scala Native link, or None when they can.
+      *
+      * A Windows release carries `<id>.dll` and no import library, and `-l<id>` against a bare DLL resolves nothing,
+      * so the delivery would end in a linker error naming a library the release does not publish in a linkable form.
+      * Saying so and delivering nothing leaves the binary in the state it is in on every other platform where a
+      * library is missing: it links, and the capability reports itself unavailable when it is used.
+      */
+    private[sbt] def undeliverable(target: String): Option[String] =
+        if (NativeTargets.osOf(target) == "windows")
+            Some(s"$target publishes a DLL and no import library, which a Native link cannot use")
+        else None
 
     /** Fails the build before the link when the target the binary is built for and the libraries about to be linked
       * into it disagree.

@@ -26,6 +26,7 @@ object KyoNativesJSPlugin extends AutoPlugin {
 
     import KyoNativesPlugin.autoImport._
     import KyoNativesPlugin.kyoNativesFetched
+    import KyoNativesPlugin.kyoNativesRequests
 
     object autoImport {
 
@@ -46,8 +47,15 @@ object KyoNativesJSPlugin extends AutoPlugin {
     override def projectSettings: Seq[Setting[_]] = Seq(
         kyoNativesKoffi       := true,
         kyoNativesMaterialize := materializeTask.value,
-        kyoNativesNodeEnv     := Map("NODE_PATH" -> (target.value / "node_modules").getAbsolutePath),
-        jsEnv                 := new NodeJSEnv(NodeJSEnv.Config().withEnv(kyoNativesNodeEnv.value)),
+        kyoNativesNodeEnv     := nodeEnvTask.value,
+        // Only for a project whose dependencies declare a library. A project that declares none runs on whatever
+        // `jsEnv` it already had, which is the one thing this must not take away from a build that enabled the
+        // plugin on a whole crossProject for the sake of one leg.
+        jsEnv := {
+            val env  = kyoNativesNodeEnv.value
+            val base = jsEnv.value
+            if (env.isEmpty) base else new NodeJSEnv(NodeJSEnv.Config().withEnv(env))
+        },
         // Hooked on linking rather than on `run` and `test` separately, so anything downstream of a linked output
         // (a bundler, a packaged application) finds the libraries too.
         Compile / fastLinkJS := (Compile / fastLinkJS).dependsOn(kyoNativesMaterialize).value,
@@ -56,22 +64,48 @@ object KyoNativesJSPlugin extends AutoPlugin {
         Test / fullLinkJS    := (Test / fullLinkJS).dependsOn(kyoNativesMaterialize).value
     )
 
+    /** The `NODE_PATH` a Node process needs to resolve the materialized package, or an empty map when this project
+      * delivers nothing.
+      *
+      * The directory is PREPENDED to the inherited `NODE_PATH` rather than written over it. `ExternalJSRun` overlays
+      * this map on the environment the Node process inherits, so a bare assignment takes away whatever the build or
+      * the developer's shell had pointed it at.
+      */
+    private def nodeEnvTask: Def.Initialize[Task[Map[String, String]]] = Def.task {
+        if (kyoNativesRequests.value.isEmpty) Map.empty[String, String]
+        else {
+            val dir       = (target.value / "node_modules").getAbsolutePath
+            val inherited = sys.env.getOrElse("NODE_PATH", "")
+            Map("NODE_PATH" -> (if (inherited.isEmpty) dir else dir + java.io.File.pathSeparator + inherited))
+        }
+    }
+
     private def materializeTask: Def.Initialize[Task[File]] = Def.task {
         val fetched    = kyoNativesFetched.value
         val base       = target.value
         val log        = streams.value.log
         val moduleName = name.value
-        if (kyoNativesKoffi.value && fetched.nonEmpty) KoffiBootstrap.install(base, moduleName, log)
-        val root = base / "node_modules" / "@kyo" / "ffi-native"
-        // The name has to be the one the runtime resolves, and `private` keeps an accidental `npm publish` from
-        // pushing a directory of someone else's binaries.
-        val manifest = """{"name":"@kyo/ffi-native","version":"0.0.0","private":true}"""
-        val pkg      = root / "package.json"
-        IO.createDirectory(root)
-        if (!pkg.exists() || IO.read(pkg) != manifest) IO.write(pkg, manifest)
+        val root       = base / "node_modules" / "@kyo" / "ffi-native"
+        if (fetched.nonEmpty) {
+            if (kyoNativesKoffi.value) KoffiBootstrap.install(base, moduleName, log)
+            // The name has to be the one the runtime resolves, and `private` keeps an accidental `npm publish` from
+            // pushing a directory of someone else's binaries.
+            val manifest = """{"name":"@kyo/ffi-native","version":"0.0.0","private":true}"""
+            val pkg      = root / "package.json"
+            IO.createDirectory(root)
+            if (!pkg.exists() || IO.read(pkg) != manifest) IO.write(pkg, manifest)
+        }
+        // The tree is rewritten to hold exactly what was fetched, not added to. koffi resolves by path and never
+        // consults the classpath, so a library left by an earlier build keeps answering `require.resolve` after the
+        // module that delivered it stopped, and the run then exercises a library this build never produced.
+        val wanted     = fetched.map { case (osArch, f) => root / "native" / osArch / f.library.getName }.toSet
+        val nativeRoot = root / "native"
+        if (nativeRoot.isDirectory) {
+            (nativeRoot ** "*").get.filter(f => f.isFile && !wanted.contains(f)).foreach(IO.delete)
+            (nativeRoot * "*").get.filter(d => d.isDirectory && IO.listFiles(d).isEmpty).foreach(IO.delete)
+        }
         fetched.foreach { case (osArch, f) =>
-            val dest = root / "native" / osArch / f.library.getName
-            IO.copyFile(f.library, dest, preserveLastModified = true)
+            IO.copyFile(f.library, root / "native" / osArch / f.library.getName, preserveLastModified = true)
         }
         root
     }
