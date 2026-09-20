@@ -29,7 +29,18 @@ On the JVM, that is the whole story: the JVM discovers the factory through `META
 
 ### Scala Native: a build-time precondition
 
-Scala Native's `ServiceLoader` only discovers providers named in a build-time allowlist; dead-code elimination drops the factory class entirely if nothing in the build references it. On every other platform, adding the dependency is sufficient. On Native, the downstream application's `build.sbt` must also register the provider explicitly:
+Scala Native's `ServiceLoader` only discovers providers named in a build-time allowlist; dead-code elimination drops the factory class entirely if nothing in the build references it. On every other platform, adding the dependency is sufficient. On Native, the provider also has to be enlisted for the link, which `kyo-natives-plugin` does from the same `META-INF/services` entry the JVM reads at run time:
+
+```
+// project/plugins.sbt
+addSbtPlugin("io.getkyo" % "kyo-natives-plugin" % kyoVersion)
+```
+```
+// the Native project
+.enablePlugins(KyoNativesPlugin)
+```
+
+`sbt show kyoNativesServiceProviders` lists what it enlisted. Without the plugin, register the provider explicitly:
 
 ```scala doctest:expect=skipped
 // build.sbt (Scala Native targets only)
@@ -40,7 +51,7 @@ nativeConfig ~= {
 }
 ```
 
-> **Caution:** without this line, kyo-stats-machine compiles and links cleanly on Native but never samples anything. There is no error, no warning, and no metric: the sampler simply never starts. This is the one platform where adding the library dependency is not enough by itself.
+> **Caution:** with neither the plugin nor that line, kyo-stats-machine compiles and links cleanly on Native but never samples anything. There is no error, no warning, and no metric: the sampler simply never starts. This is the one platform where adding the library dependency is not enough by itself.
 
 ## Turning it off, and changing the rate
 
@@ -253,7 +264,7 @@ The structural absences are deliberate, and each is the absence of a real host c
 | JVM | auto-loads via `META-INF/services`, no extra step |
 | Scala.js (Node) | auto-loads via `@JSExportTopLevel`; native calls go through a koffi-backed FFI binding; keep `MachineRegistration` referenced so the linker does not tree-shake it (see the Caution above) |
 | Scala.js (browser) | degrades: no koffi in a browser environment, so host reads are unavailable |
-| Scala Native | requires the `nativeConfig.withServiceProviders(...)` build line above; auto-loads identically to JVM/JS once declared |
+| Scala Native | requires the link-time enlistment above, from `kyo-natives-plugin` or by hand; auto-loads identically to JVM/JS once enlisted |
 | Wasm (Node) | auto-loads via `@JSExportTopLevel` like Scala.js; native calls go through the same koffi-backed FFI binding, linked as `ModuleKind.ESModule` (koffi is imported through a default `@JSImport`, which the ESModule interop needs to reach a CommonJS addon's members). Requires Node 24+. Keep `MachineRegistration` referenced so the linker does not tree-shake it |
 
 > **Note:** every row above where a family or platform is unsupported means the metric is simply absent from the exported set, structurally, not just by documentation. An OS with no PSI support never creates the PSI handles at all; a browser-JS build never attempts the koffi-backed reads. You will never see a fake zero standing in for "not available here." A metric's total absence from what your backend receives is the signal that the current host or platform does not support it.

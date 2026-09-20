@@ -2194,10 +2194,19 @@ def npmCommand: String =
 // runtime-correct name was not found here and the build silently fell back to the TLS stub.
 def hostOsArch: String = ffiHostOsArch
 
-// The OS targets kyo-net's BoringSSL shim is built and bundled for. Windows ships no BoringSSL native
-// by ruling (NIO + the JDK's TLS), so bundling it there packages a DLL that can only ever report
-// unavailable. Every consumer reaches it through a capability probe or a staged-bundle gate, so a
-// platform it is not declared for degrades to the JDK floor rather than failing.
+// The OS targets kyo-net's BoringSSL shim is built and bundled for. Every consumer reaches it through a
+// capability probe or a staged-bundle gate, so a platform it is not declared for degrades rather than
+// failing.
+//
+// Windows is excluded because nothing there needs it. The JVM registry falls to SslEngineProvider and
+// the JS one to NodeTlsProvider, both real TLS rather than a floor in name only, and the providers are
+// behaviorally aligned (see the servername rule in JsTransport). Scala Native is the one registry with
+// no such fallback, and it is also not a configuration kyo builds: both Windows CI poles run JVM and JS
+// only. A Windows BoringSSL would not serve it anyway without an import library beside the DLL, since
+// `-l<id>` against a bare DLL resolves nothing, which is why the delivery plugin refuses Windows.
+//
+// Reopening this means a Windows producer leg (build-boringssl.sh rejects cross-OS builds) plus import
+// libraries in the release, not just adding a token here.
 //
 // kyonet_posix_uring declares no osTargets. kyo_epoll.c and kyo_uring.c define every entry point on
 // every target, Windows included, so the binding resolves wherever the library loads and epoll's

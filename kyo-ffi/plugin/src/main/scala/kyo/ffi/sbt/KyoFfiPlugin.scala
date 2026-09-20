@@ -1061,12 +1061,17 @@ object KyoFfiPlugin extends AutoPlugin {
                 NativeSystemLibraries.readJars(cp).flatMap { declared =>
                     val probe    = NativeSystemLibraries.probeWith(cc, declared.system.headers, workDir / declared.id, log)
                     val resolved = NativeSystemLibraries.resolve(declared, targetOs, probe)
+                    val libs = declared.system.resolvedLinkLibs(targetOs)
                     resolved match {
                         case Some(r) => log.info(s"[kyo-ffi-plugin] ${r.id}: linking the system library (${r.linkFlags.mkString(" ")})")
+                        // An empty library list means the declaration names nothing for this OS, so nothing was probed.
+                        // Saying it "does not link" would send someone installing a package this target never uses.
+                        case None if libs.isEmpty =>
+                            log.info(s"[kyo-ffi-plugin] ${declared.id}: not declared for $targetOs; its shim compiles stubs.")
                         case None =>
                             log.info(
                                 s"[kyo-ffi-plugin] ${declared.id}: ${declared.system.headers.mkString(", ")} with " +
-                                    s"${declared.system.resolvedLinkLibs(targetOs).mkString(", ")} does not link on this machine; its shim compiles stubs."
+                                    s"${libs.mkString(", ")} does not link on this machine; its shim compiles stubs."
                             )
                     }
                     resolved

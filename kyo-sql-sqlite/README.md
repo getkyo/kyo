@@ -76,9 +76,11 @@ where the platforms differ.
 |---|---|
 | JVM | `ServiceLoader` reads the services entry. Nothing further. |
 | JS, Wasm | An exported initializer in this artifact calls `Backend.register` at module load, because linker dead-code elimination would drop an initializer nothing references. Nothing further. |
-| Native | Service providers are resolved at link time, so the application enlists the class itself. |
+| Native | Service providers are resolved at link time, so `kyo-natives-plugin` enlists the class for the link. |
 
-On Scala Native, add the factory to the link-time provider map:
+On Scala Native the plugin that delivers this module's SQLite library also enlists its factory, read from the same `META-INF/services` entry the JVM reads at run time, so `.enablePlugins(KyoNativesPlugin)` covers both and `sbt show kyoNativesServiceProviders` lists what it enlisted.
+
+Without the plugin, add the factory to the link-time provider map yourself:
 
 ```scala doctest:expect=skipped
 nativeConfig ~= { config =>

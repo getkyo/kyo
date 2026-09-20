@@ -3,6 +3,7 @@ package kyo.natives.sbt
 import kyo.ffi.sbt.FfiLibrary
 import kyo.ffi.sbt.NativeSystemLibraries
 import kyo.ffi.sbt.NativeTargets
+import kyo.ffi.sbt.ServiceProviders
 import sbt._
 import sbt.Keys._
 import scala.scalanative.build.Discover
@@ -11,7 +12,8 @@ import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
 
 /** The Scala Native half of [[KyoNativesPlugin]]: give the binary every native thing its kyo dependencies need.
   *
-  * Two separate needs, because a shim can sit over either kind of library and a module may have both.
+  * Three separate needs, because a shim can sit over either kind of library, a module may have both, and Scala Native
+  * resolves one more thing at link time that every other platform resolves at run time.
   *
   * A shim over a VENDORED library (BoringSSL, Aeron) needs the library kyo published. Scala Native has no runtime
   * loader, so it cannot be extracted and opened the way the JVM does it. Instead the artifact's C shim, which Scala
@@ -22,6 +24,11 @@ import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport._
   * A shim over a SYSTEM library (OpenSSL, liburing) needs the library on the machine doing the linking, so the
   * artifact carries only what to look for and this build probes for it. That probe has to run here rather than in the
   * producing module because `nativeConfig` is per-project and does not cross a dependency edge, while the C does.
+  *
+  * A SERVICE PROVIDER needs naming in the link-time allowlist, because Scala Native resolves `ServiceLoader` when it
+  * links and drops any class nothing references. A module whose provider is not enlisted links clean and never
+  * registers, with no error and no warning, so the allowlist is filled from what the jars already declare rather than
+  * left to each application to retype. See [[ServiceProviders]].
   *
   * The binary records `@rpath/lib<id>.dylib` (`\$ORIGIN` on linux) and the libraries are staged beside it, so a linked
   * binary runs from anywhere and deploys as a directory. That directory has to travel with it: a Native application
@@ -39,6 +46,15 @@ object KyoNativesNativePlugin extends AutoPlugin {
     object autoImport {
         val kyoNativesSystemLibraries = taskKey[Seq[NativeSystemLibraries.Resolved]](
             "System libraries this project's kyo dependencies declare, resolved against this machine."
+        )
+
+        val kyoNativesServiceProviders = taskKey[Map[String, Seq[String]]](
+            "Service providers the dependency jars declare, enlisted so Scala Native's link-time ServiceLoader finds them."
+        )
+
+        val kyoNativesEnlistServices = settingKey[Boolean](
+            "Whether to enlist the dependencies' declared service providers. On by default: it is what makes Native " +
+                "match the providers ServiceLoader would find on a JVM classpath. Turn it off to name the allowlist by hand."
         )
     }
 
@@ -74,19 +90,24 @@ object KyoNativesNativePlugin extends AutoPlugin {
                 }
             }.toSeq
         },
-        kyoNativesSystemLibraries := systemLibrariesTask.value,
+        kyoNativesEnlistServices   := true,
+        kyoNativesSystemLibraries  := systemLibrariesTask.value,
+        kyoNativesServiceProviders := serviceProvidersTask.value,
         nativeConfig := {
-            val base   = nativeConfig.value
-            val stages = Seq(deliveredFlags(kyoNativesFetched.value), systemFlags(kyoNativesSystemLibraries.value))
+            val base     = nativeConfig.value
+            val services = kyoNativesServiceProviders.value
+            val stages   = Seq(deliveredFlags(kyoNativesFetched.value), systemFlags(kyoNativesSystemLibraries.value))
             // Delivered and system libraries are independent: a module can declare both, either, or neither, and an
             // empty delivery says nothing about whether the machine has the system library this binary still needs.
-            stages.foldLeft(base) { case (config, (compile, link)) =>
+            val withFlags = stages.foldLeft(base) { case (config, (compile, link)) =>
                 if (compile.isEmpty && link.isEmpty) config
                 else
                     config
                         .withCompileOptions(config.compileOptions ++ compile)
                         .withLinkingOptions(config.linkingOptions ++ link)
             }
+            if (services.isEmpty) withFlags
+            else withFlags.withServiceProviders(ServiceProviders.merge(withFlags.serviceProviders, services))
         },
         Compile / nativeLink := stageBeside((Compile / nativeLink).dependsOn(crossTargetCheck)).value,
         Test / nativeLink    := stageBeside((Test / nativeLink).dependsOn(crossTargetCheck)).value
@@ -141,19 +162,43 @@ object KyoNativesNativePlugin extends AutoPlugin {
                 NativeSystemLibraries.readJars(cp).flatMap { declared =>
                     val probe    = NativeSystemLibraries.probeWith(clang.toString, declared.system.headers, workDir / declared.id, log)
                     val resolved = NativeSystemLibraries.resolve(declared, targetOs, probe)
+                    val libs = declared.system.resolvedLinkLibs(targetOs)
                     resolved match {
                         case Some(r) =>
                             log.info(s"[kyo-natives] ${r.id}: linking the system library (${r.linkFlags.mkString(" ")})")
+                        // An empty library list means the declaration names nothing for this OS, so nothing was
+                        // probed. Saying it "does not link" would send someone installing a package that would not
+                        // have been used on this target anyway.
+                        case None if libs.isEmpty =>
+                            log.info(s"[kyo-natives] ${declared.id}: not declared for $targetOs; its shim compiles stubs.")
                         case None =>
                             log.info(
                                 s"[kyo-natives] ${declared.id}: ${declared.system.headers.mkString(", ")} with " +
-                                    s"${declared.system.resolvedLinkLibs(targetOs).mkString(", ")} does not link on " +
-                                    "this machine; its shim compiles stubs."
+                                    s"${libs.mkString(", ")} does not link on this machine; its shim compiles stubs."
                             )
                     }
                     resolved
                 }
             }
+        }
+    }
+
+    /** Every service provider the dependency jars declare.
+      *
+      * Not filtered to kyo's own artifacts. On the JVM `ServiceLoader` finds every provider on the classpath, and the
+      * Native allowlist exists because the linker drops unreferenced classes, not because a narrower set was wanted.
+      * Filling it from the classpath is what makes the two platforms agree, and `kyoNativesEnlistServices := false`
+      * is for a build that would rather name the set itself.
+      */
+    private def serviceProvidersTask: Def.Initialize[Task[Map[String, Seq[String]]]] = Def.task {
+        val log = streams.value.log
+        if (!kyoNativesEnlistServices.value) Map.empty[String, Seq[String]]
+        else {
+            val declared = ServiceProviders.readJars((Compile / dependencyClasspath).value.map(_.data))
+            declared.toSeq.sortBy(_._1).foreach { case (iface, impls) =>
+                log.info(s"[kyo-natives] service provider $iface: ${impls.mkString(", ")}")
+            }
+            declared
         }
     }
 
