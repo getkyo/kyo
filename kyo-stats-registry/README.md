@@ -6,11 +6,13 @@ Everything in `kyo.stats.internal` is `Unsafe`: the methods take an `AllowUnsafe
 
 <!-- doctest:setup
 ```scala
-import java.time.Instant
 import kyo.stats.*
 import kyo.stats.internal.*
 val httpClientScope              = StatsRegistry.scope("kyo", "http", "client")
 def currentInFlightCount: Double = 0.0
+// The tracing surface takes epoch nanoseconds, so a caller supplies them from whatever clock it
+// already has. kyo's own Instant.systemNow is private to the library.
+def nowEpochNanos: Long          = java.lang.System.currentTimeMillis() * 1000000L
 ```
 -->
 
@@ -252,7 +254,6 @@ An exporter library plugs into the registry through a service-loader seam. Three
 Plugging an exporter into the registry happens through `ExporterFactory`, the SPI base class the ServiceLoader scans for. The default `traceExporter()` returns `None` (factory present, not opted in); override it to return `Some(exporter)`.
 
 ```scala
-import java.time.Instant
 // In package myapp.telemetry:
 import kyo.AllowUnsafe
 import kyo.stats.Attributes
@@ -267,7 +268,7 @@ class MyTraceExporter extends TraceExporter:
     def startSpan(
         scope: List[String],
         name: String,
-        now: Instant,
+        nowEpochNanos: Long,
         parent: Option[UnsafeTraceSpan] = None,
         attributes: Attributes = Attributes.empty
     )(implicit _au: AllowUnsafe): UnsafeTraceSpan = UnsafeTraceSpan.noop
@@ -284,14 +285,14 @@ myapp.telemetry.MyExporterFactory
 
 ### Implementing the exporter: `TraceExporter`
 
-Once the factory is wired, the exporter itself has one job: hand callers an `UnsafeTraceSpan`. `TraceExporter.startSpan(scope, name, now, parent?, attributes?)` is the one method to implement; the exporter does ID generation, batching, and shipping to the backend behind it.
+Once the factory is wired, the exporter itself has one job: hand callers an `UnsafeTraceSpan`. `TraceExporter.startSpan(scope, name, nowEpochNanos, parent?, attributes?)` is the one method to implement; the exporter does ID generation, batching, and shipping to the backend behind it.
 
 ```scala
 class MyTraceExporter extends TraceExporter:
     def startSpan(
         scope: List[String],
         name: String,
-        now: Instant,
+        nowEpochNanos: Long,
         parent: Option[UnsafeTraceSpan] = None,
         attributes: Attributes = Attributes.empty
     )(implicit _au: AllowUnsafe): UnsafeTraceSpan =
@@ -299,8 +300,8 @@ class MyTraceExporter extends TraceExporter:
 end MyTraceExporter
 
 class MyTraceSpan(scope: List[String], name: String) extends UnsafeTraceSpan:
-    def end(now: Instant)(implicit _au: AllowUnsafe): Unit                             = ()
-    def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe): Unit = ()
+    def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe): Unit                             = ()
+    def event(n: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe): Unit = ()
     def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit     = ()
 end MyTraceSpan
 ```
@@ -316,10 +317,10 @@ val exporter: TraceExporter = TraceExporter.get
 val span = exporter.startSpan(
     scope = List("kyo", "http", "client"),
     name = "GET /users",
-    now = Instant.now()
+    nowEpochNanos = nowEpochNanos
 )
 span.setStatus(UnsafeTraceSpan.Status.Ok)
-span.end(Instant.now())
+span.end(nowEpochNanos)
 ```
 
 > **Caution:** `TraceExporter.get` does classpath discovery on *every call*. It is not cached. Call it once at application startup, hold the result in a `val`, and pass that to anything that needs it.
@@ -337,15 +338,15 @@ val exporter: TraceExporter = TraceExporter.noop
 val span: UnsafeTraceSpan = exporter.startSpan(
     List("kyo", "http", "client"),
     "GET /users",
-    Instant.now()
+    nowEpochNanos
 )
 span.event(
     "cache-miss",
     Attributes.add("key", "user:42"),
-    Instant.now()
+    nowEpochNanos
 )
 span.setStatus(UnsafeTraceSpan.Status.Error("upstream timeout"))
-span.end(Instant.now())
+span.end(nowEpochNanos)
 ```
 
 The `Status` sealed type has three variants:
@@ -362,8 +363,8 @@ val err: UnsafeTraceSpan.Status   = UnsafeTraceSpan.Status.Error("upstream timeo
 class MyTraceSpan(name: String, parent: Option[UnsafeTraceSpan]) extends UnsafeTraceSpan with UnsafeTraceSpan.Propagatable:
     val traceId: String                                                                = generateTraceId()
     val spanId: String                                                                 = generateSpanId()
-    def end(now: Instant)(implicit _au: AllowUnsafe): Unit                             = ()
-    def event(n: String, a: Attributes, now: Instant)(implicit _au: AllowUnsafe): Unit = ()
+    def end(nowEpochNanos: Long)(implicit _au: AllowUnsafe): Unit                             = ()
+    def event(n: String, a: Attributes, nowEpochNanos: Long)(implicit _au: AllowUnsafe): Unit = ()
     def setStatus(status: UnsafeTraceSpan.Status)(implicit _au: AllowUnsafe): Unit     = ()
     private def generateTraceId()                                                      = "trace-1"
     private def generateSpanId()                                                       = "span-1"
@@ -446,7 +447,6 @@ The application-level consequence is small in practice: code that holds instrume
 A realistic instrumented module wires the registry, the instruments, and an exporter together at startup. The instruments are `val`s on the module object so the strong references survive for the lifetime of the process; the exporter is fetched once and reused.
 
 ```scala
-import java.time.Instant
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
 import kyo.stats.*
@@ -470,7 +470,7 @@ object HttpClientTelemetry:
         val span = exporter.startSpan(
             scope.path,
             s"$method $path",
-            Instant.now(),
+            nowEpochNanos,
             attributes = Attributes.empty
                 .add("http.method", method)
                 .add("http.path", path)
@@ -479,7 +479,7 @@ object HttpClientTelemetry:
             if statusOk then UnsafeTraceSpan.Status.Ok
             else UnsafeTraceSpan.Status.Error("non-2xx response")
         )
-        span.end(Instant.now())
+        span.end(nowEpochNanos)
     end recordRequest
 
     private def currentInFlightCount(): Double = 0.0
