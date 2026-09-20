@@ -61,6 +61,13 @@ object KyoNativesPlugin extends AutoPlugin {
       */
     private[sbt] val kyoNativesFetched = taskKey[Seq[(String, Delivery.Fetched)]]("Every library this project delivers, with its target.")
 
+    /** What the dependencies declare, before anything is resolved. This is what separates a build that asked for
+      * libraries from one that never asked: [[kyoNativesFetched]] is equally empty when a release carries no library
+      * for the target, which is the case where a misconfigured target most needs to be reported.
+      */
+    private[sbt] val kyoNativesRequests =
+        taskKey[Seq[(String, Delivery.Request)]]("Every library this project's dependencies declare, with the target it is wanted for.")
+
     override def projectSettings: Seq[Setting[_]] = Seq(
         kyoNativesTargets   := Nil,
         kyoNativesSource    := NativesSource.Auto,
@@ -71,6 +78,7 @@ object KyoNativesPlugin extends AutoPlugin {
             val explicit = kyoNativesTargets.value
             if (explicit.nonEmpty) explicit else Seq(NativeTargets.host)
         },
+        kyoNativesRequests  := requestsTask.value,
         kyoNativesFetched   := fetchTask.value,
         kyoNativesJars      := kyoNativesFetched.value.map(_._2.jar).distinct,
         kyoNativesLibraries := kyoNativesFetched.value.map(_._2.library).distinct,
@@ -91,12 +99,9 @@ object KyoNativesPlugin extends AutoPlugin {
         if (platform == Platform.Jvm) jars.map(Attributed.blank) else Nil
     }
 
-    private def fetchTask: Def.Initialize[Task[Seq[(String, Delivery.Fetched)]]] = Def.task {
-        val log      = streams.value.log
+    private def requestsTask: Def.Initialize[Task[Seq[(String, Delivery.Request)]]] = Def.task {
         val source   = kyoNativesSource.value
         val targets  = kyoNativesResolvedTargets.value
-        val depRes   = dependencyResolution.value
-        val outRoot  = kyoNativesDirectory.value
         val platform = Platform.of(thisProject.value.autoPlugins.map(_.label).toSet).declarationName
         val modules = update.value.configuration(Configurations.Compile).toSeq.flatMap(_.modules).flatMap { report =>
             report.artifacts.map { case (_, file) => report.module -> file }
@@ -109,25 +114,31 @@ object KyoNativesPlugin extends AutoPlugin {
                     s"[kyo-natives] unknown target(s): ${unsupported.mkString(", ")}. " +
                         s"Supported: ${NativeTargets.supported.mkString(", ")}."
                 )
-            targets.flatMap { osArch =>
-                val os = NativeTargets.osOf(osArch)
-                Delivery.requests(modules, osArch, platform).flatMap { request =>
-                    val fetched = Delivery.resolve(depRes, request.module, log).right.flatMap { jar =>
-                        Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
-                            .map(lib => Delivery.Fetched(request.libId, lib, jar))
-                            .toRight(s"${jar.getName} carries no ${request.libId} for $osArch")
-                    }
-                    fetched match {
-                        case Right(f) => Seq(osArch -> f)
-                        case Left(why) =>
-                            if (source == NativesSource.Jar)
-                                sys.error(s"[kyo-natives] $why. Set kyoNativesSource := NativesSource.Auto to build without it.")
-                            // A warning, not information: the build asked for this library by enabling the plugin, and
-                            // what it gets instead is the capability reporting itself unavailable at run time.
-                            log.warn(s"[kyo-natives] $why; building without it")
-                            Nil
-                    }
-                }
+            targets.flatMap(osArch => Delivery.requests(modules, osArch, platform).map(osArch -> _))
+        }
+    }
+
+    private def fetchTask: Def.Initialize[Task[Seq[(String, Delivery.Fetched)]]] = Def.task {
+        val log     = streams.value.log
+        val source  = kyoNativesSource.value
+        val depRes  = dependencyResolution.value
+        val outRoot = kyoNativesDirectory.value
+        kyoNativesRequests.value.flatMap { case (osArch, request) =>
+            val os = NativeTargets.osOf(osArch)
+            val fetched = Delivery.resolve(depRes, request.module, log).right.flatMap { jar =>
+                Delivery.unpack(jar, request.libId, osArch, os, outRoot / osArch)
+                    .map(lib => Delivery.Fetched(request.libId, lib, jar))
+                    .toRight(s"${jar.getName} carries no ${request.libId} for $osArch")
+            }
+            fetched match {
+                case Right(f) => Seq(osArch -> f)
+                case Left(why) =>
+                    if (source == NativesSource.Jar)
+                        sys.error(s"[kyo-natives] $why. Set kyoNativesSource := NativesSource.Auto to build without it.")
+                    // A warning, not information: the build asked for this library by enabling the plugin, and
+                    // what it gets instead is the capability reporting itself unavailable at run time.
+                    log.warn(s"[kyo-natives] $why; building without it")
+                    Nil
             }
         }
     }

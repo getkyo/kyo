@@ -5,43 +5,68 @@ import org.scalatest.matchers.should.Matchers
 
 /** Unit coverage for the cross-compilation guard.
   *
-  * The libraries a Native build links are chosen from the compiler's own target rather than from `nativeConfig`, which
-  * this plugin contributes to and so cannot read. A build that cross-compiles has to say its target twice, and these
-  * pin what happens when the two disagree: linking one pole's libraries into another pole's binary is the failure the
-  * guard exists to make loud.
+  * A build states the target its binary is for in two places, `nativeConfig.targetTriple` and `kyoNativesTargets`, and
+  * the delivery reads only the second. These pin every way the two can disagree, because each of them ends with
+  * another pole's libraries linked into the binary: a file-format error from the linker when the architectures differ,
+  * and a binary that loads and crashes when they do not, as glibc and musl do.
   */
 class KyoNativesNativePluginTest extends AnyFunSuite with Matchers {
 
-    private def error(triple: Option[String], targets: Seq[String], delivering: Boolean = true): Option[String] =
-        KyoNativesNativePlugin.crossTargetError(triple, targets, delivering)
+    private val darwin = Some("darwin-aarch64")
 
-    test("a host build, which sets no triple, has nothing to disagree about") {
-        error(None, Seq("darwin-aarch64")) shouldBe None
+    private def error(
+        triple: Option[String],
+        compilerTarget: Option[String] = darwin,
+        wanted: Seq[String] = Seq("darwin-aarch64"),
+        requested: Boolean = true
+    ): Option[String] =
+        KyoNativesNativePlugin.crossTargetError(triple, compilerTarget, wanted, requested)
+
+    test("a host build, which sets no triple and takes the compiler's target, agrees with itself") {
+        error(triple = None) shouldBe None
     }
 
-    test("a triple agreeing with the delivered target passes") {
-        error(Some("arm64-apple-darwin23.3.0"), Seq("darwin-aarch64")) shouldBe None
-        error(Some("x86_64-unknown-linux-musl"), Seq("linux-musl-x86_64")) shouldBe None
+    test("a triple agreeing with the wanted target passes") {
+        error(Some("arm64-apple-darwin23.3.0")) shouldBe None
+        error(Some("x86_64-unknown-linux-musl"), compilerTarget = Some("linux-musl-x86_64"), wanted = Seq("linux-musl-x86_64")) shouldBe None
     }
 
     test("a triple naming another pole is named, with both values and the fix") {
-        val message = error(Some("x86_64-unknown-linux-gnu"), Seq("darwin-aarch64")).getOrElse(fail("expected an error"))
+        val message = error(Some("x86_64-unknown-linux-gnu")).getOrElse(fail("expected an error"))
         message should include("linux-x86_64")
         message should include("darwin-aarch64")
         message should include("kyoNativesTargets")
     }
 
-    test("a triple kyo publishes nothing for fails while libraries are being delivered") {
-        val message = error(Some("riscv64-unknown-linux-gnu"), Seq("darwin-aarch64")).getOrElse(fail("expected an error"))
+    test("a triple kyo publishes nothing for fails, since the delivery matched the compiler instead") {
+        val message = error(Some("riscv64-unknown-linux-gnu")).getOrElse(fail("expected an error"))
         message should include("riscv64-unknown-linux-gnu")
         message should include("Disabled")
     }
 
-    test("that same triple is fine when nothing is being delivered, since nothing can be mislinked") {
-        error(Some("riscv64-unknown-linux-gnu"), Seq("darwin-aarch64"), delivering = false) shouldBe None
+    test("with no triple, a kyoNativesTargets the compiler does not build for is the same mistake") {
+        val message = error(triple = None, wanted = Seq("linux-x86_64")).getOrElse(fail("expected an error"))
+        message should include("linux-x86_64")
+        message should include("darwin-aarch64")
+        message should include("targetTriple")
+    }
+
+    test("a build whose dependencies declare no library can mislink nothing, whatever the targets say") {
+        error(Some("riscv64-unknown-linux-gnu"), requested = false) shouldBe None
+        error(triple = None, wanted = Seq("linux-x86_64"), requested = false) shouldBe None
+    }
+
+    test("a declared library nothing was found for still reports the disagreement") {
+        // The gate is the declaration, not the fetch: a release carrying nothing for the named pole leaves the same
+        // empty delivery as a correct build, and silence there hands back a binary missing the capability.
+        error(triple = None, wanted = Seq("linux-x86_64"), requested = true) shouldBe defined
     }
 
     test("no resolved target means no claim about what would be linked") {
-        error(Some("x86_64-unknown-linux-gnu"), Nil) shouldBe None
+        error(Some("x86_64-unknown-linux-gnu"), wanted = Nil) shouldBe None
+    }
+
+    test("an unknown compiler target makes no claim, rather than a wrong one") {
+        error(triple = None, compilerTarget = None, wanted = Seq("linux-x86_64")) shouldBe None
     }
 }

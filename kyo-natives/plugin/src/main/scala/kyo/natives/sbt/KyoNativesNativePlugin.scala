@@ -26,6 +26,7 @@ object KyoNativesNativePlugin extends AutoPlugin {
 
     import KyoNativesPlugin.autoImport._
     import KyoNativesPlugin.kyoNativesFetched
+    import KyoNativesPlugin.kyoNativesRequests
 
     override def projectSettings: Seq[Setting[_]] = Seq(
         // A binary is built for one target, so more than one is a contradiction rather than a wider delivery.
@@ -33,7 +34,7 @@ object KyoNativesNativePlugin extends AutoPlugin {
         // The target comes from the compiler rather than from `nativeConfig`, which would be the more direct source
         // and is not available: this plugin contributes TO `nativeConfig`, so reading it here would make the setting
         // depend on itself. A build that cross-compiles by setting `targetTriple` names `kyoNativesTargets` too, and
-        // the `nativeConfig` contribution below fails the build when the two disagree.
+        // `crossTargetCheck` fails the link when the two disagree.
         kyoNativesResolvedTargets := {
             val explicit = kyoNativesTargets.value
             if (explicit.size > 1)
@@ -53,8 +54,6 @@ object KyoNativesNativePlugin extends AutoPlugin {
         nativeConfig := {
             val base    = nativeConfig.value
             val fetched = kyoNativesFetched.value
-            val targets = kyoNativesResolvedTargets.value
-            crossTargetError(base.targetTriple, targets, fetched.nonEmpty).foreach(sys.error)
             if (fetched.isEmpty) base
             else {
                 val dirs    = fetched.map(_._2.library.getParentFile).distinct
@@ -69,46 +68,91 @@ object KyoNativesNativePlugin extends AutoPlugin {
                     .withLinkingOptions(base.linkingOptions ++ dirs.map("-L" + _.getAbsolutePath) ++ links ++ rpaths)
             }
         },
-        Compile / nativeLink := stageBeside(Compile / nativeLink).value,
-        Test / nativeLink    := stageBeside(Test / nativeLink).value
+        Compile / nativeLink := stageBeside((Compile / nativeLink).dependsOn(crossTargetCheck)).value,
+        Test / nativeLink    := stageBeside((Test / nativeLink).dependsOn(crossTargetCheck)).value
     )
 
-    /** The error a build gets when the triple it links for and the libraries it would link disagree, or None when they
-      * agree or there is nothing to disagree about.
+    /** Fails the build before the link when the target the binary is built for and the libraries about to be linked
+      * into it disagree.
       *
-      * The libraries are chosen from the compiler's own target, because reading `nativeConfig` here would make this
-      * plugin's contribution to it depend on itself. That leaves a build that cross-compiles by setting `targetTriple`
-      * to say so a second time through `kyoNativesTargets`, and this is what makes forgetting it an error rather than a
-      * binary linked against another pole's libraries.
-      *
-      * A triple naming a pole kyo publishes no natives for is the same failure wearing a different face: nothing
-      * matches it, so the delivered libraries are the host's, and linking those into a foreign binary is exactly what
-      * must not happen quietly.
+      * This runs at link time, not while building `nativeConfig`, because an auto-plugin's settings are applied before
+      * the project's own: inside this plugin's `nativeConfig :=`, `nativeConfig.value` is sbt-scala-native's default
+      * and an application's `withTargetTriple` has not been applied yet, so the triple read there is always empty. A
+      * task reads the finished setting instead, and `dependsOn` puts it ahead of the link, so the error arrives before
+      * the linker's own. Reading the finished config also covers a `withClang`, which the clang the target was derived
+      * from would otherwise ignore.
       */
-    private[sbt] def crossTargetError(triple: Option[String], targets: Seq[String], delivering: Boolean): Option[String] =
-        triple.flatMap { t =>
-            (NativeTargets.ofTriple(t), targets.headOption) match {
-                case (Some(fromTriple), Some(target)) if fromTriple != target =>
-                    Some(
-                        s"[kyo-natives] the target triple $t is $fromTriple, but the libraries were resolved for " +
-                            s"$target. Set kyoNativesTargets to $fromTriple."
-                    )
-                case (None, Some(target)) if delivering =>
-                    Some(
-                        s"[kyo-natives] the target triple $t is not a target kyo publishes natives for, so the " +
-                            s"libraries delivered are $target's and would be linked into a binary for another. " +
-                            "Set kyoNativesSource to NativesSource.Disabled to build without them."
-                    )
-                case _ => None
+    private def crossTargetCheck: Def.Initialize[Task[Unit]] = Def.task {
+        val config   = nativeConfig.value
+        val targets  = kyoNativesResolvedTargets.value
+        val requests = kyoNativesRequests.value
+        // The compiler the finished config names, which is the one that will run, rather than the one the delivery
+        // derived its target from.
+        val compilerTarget = NativeTargets.ofTriple(Discover.targetTriple(config.clang))
+        crossTargetError(config.targetTriple, compilerTarget, targets, requests.nonEmpty).foreach(sys.error)
+    }
+
+    /** The error a build gets when the target its binary is built for and the libraries it asks to have linked into it
+      * disagree, or None when they agree or the build asks for no libraries at all.
+      *
+      * Two ways to disagree, because a build states its target in two places and the delivery reads only one of them.
+      * `wanted` comes from `kyoNativesTargets` when set and from the compiler otherwise, so:
+      *
+      *   - a `targetTriple` naming a different pole than the libraries is a build that cross-compiles and did not name
+      *     `kyoNativesTargets`, or named the wrong one;
+      *   - a `targetTriple` naming a pole kyo publishes nothing for leaves the delivery matching nothing, so the
+      *     libraries are the compiler's and the binary is not;
+      *   - with no triple, `kyoNativesTargets` naming a pole the compiler does not build for is the same mistake
+      *     without the triple: the libraries are foreign to the binary.
+      *
+      * All three end the same way, a binary linked against another pole's libraries, which fails in the linker with a
+      * file-format error at best and loads and crashes at worst when the poles share an architecture, as glibc and musl
+      * do.
+      *
+      * `requested` is whether the dependencies declare any library, not whether one was found. A release that carries
+      * nothing for the named pole produces the same empty delivery as a correct build with nothing to deliver, and it
+      * is precisely the build that named an impossible pole which needs to be told so rather than quietly handed a
+      * binary missing the capability.
+      */
+    private[sbt] def crossTargetError(
+        triple: Option[String],
+        compilerTarget: Option[String],
+        wanted: Seq[String],
+        requested: Boolean
+    ): Option[String] =
+        if (!requested) None
+        else
+            wanted.headOption.flatMap { target =>
+                triple match {
+                    case Some(t) =>
+                        NativeTargets.ofTriple(t) match {
+                            case Some(fromTriple) if fromTriple != target =>
+                                Some(
+                                    s"[kyo-natives] the target triple $t is $fromTriple, but the libraries are " +
+                                        s"wanted for $target. Set kyoNativesTargets to $fromTriple."
+                                )
+                            case None =>
+                                Some(
+                                    s"[kyo-natives] the target triple $t is not a target kyo publishes natives for, " +
+                                        s"so the libraries wanted are $target's and would be linked into a binary " +
+                                        "for another. Set kyoNativesSource to NativesSource.Disabled to build without them."
+                                )
+                            case _ => None
+                        }
+                    case None =>
+                        compilerTarget.filter(_ != target).map { host =>
+                            s"[kyo-natives] kyoNativesTargets names $target, but the compiler builds for $host and no " +
+                                s"targetTriple says otherwise, so $target's libraries would be linked into a $host binary."
+                        }
+                }
             }
-        }
 
     /** Copies the libraries next to the binary `link` produced, so the directory it sits in is runnable as it stands.
       *
       * Without this the rpath resolves nothing and the first run fails in `dyld`, which is a poor way to learn that a
       * Native binary using kyo's natives travels with them.
       */
-    private def stageBeside(link: TaskKey[File]): Def.Initialize[Task[File]] = Def.task {
+    private def stageBeside(link: Def.Initialize[Task[File]]): Def.Initialize[Task[File]] = Def.task {
         val binary  = link.value
         val fetched = kyoNativesFetched.value
         fetched.foreach { case (_, f) =>

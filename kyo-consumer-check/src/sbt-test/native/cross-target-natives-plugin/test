@@ -1,0 +1,7 @@
+# The binary would be this host's and the libraries another pole's, so the link must fail and leave no binary.
+# Asserting no binary exists is what says the build stopped rather than produced one missing the capability.
+-> nativeLink
+$ exec sh -c 'set -eu; if find target -type f -perm -u+x -name consumer | grep -q .; then echo "a binary was produced for a target the libraries do not match"; exit 1; fi'
+# Delivery itself does not fail: it reports the pole it was pointed at, and it is linking that pole into this host's
+# binary that is refused.
+> kyoNativesReport
