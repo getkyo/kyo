@@ -24,10 +24,13 @@ import scala.annotation.tailrec
   */
 private[net] object CapabilityProbe:
 
-    /** The `<os>-<arch>` tag a [[CapabilityOutcome.NotBundled]] names, matching the tag the kyo-ffi loader searches its bundled resources
-      * under ("darwin-aarch64", "linux-x86_64", ...) so a reader can map the outcome onto the path that was missed. `os.arch` is read through
-      * `sys.props`, which resolves on the JVM and on Scala Native's property table; a runtime that publishes neither reports "unknown" rather
-      * than failing the probe, since this is diagnostic text and never a selection input.
+    /** The `<os>-<arch>` tag a [[CapabilityOutcome.NotBundled]] names when the load error carried none, matching the tag the kyo-ffi loader
+      * searches its bundled resources under ("darwin-aarch64", "linux-x86_64", ...) so a reader can map the outcome onto the path that was
+      * missed.
+      *
+      * A tag the loader supplied is preferred over this one, which is derived without knowing the libc flavour and so cannot tell a musl
+      * host from a glibc one. Diagnostic text and never a selection input, so an unresolved half reports "unknown" rather than failing the
+      * probe.
       */
     val platform: String =
         val os =
@@ -85,11 +88,11 @@ private[net] object CapabilityProbe:
             // object would derive and the glibc artifact that tag would recommend.
             case e: FfiLoadError.LibraryNotFound =>
                 CapabilityOutcome.NotBundled(e.libraryId, if e.platformTag.nonEmpty then e.platformTag else platform)
-            case e: FfiLoadError.AbiMismatch     => CapabilityOutcome.VersionTooOld(e.actual, e.expected)
-            case _: FfiLoadError.Unsupported     => CapabilityOutcome.UnsupportedOS
-            case e: FfiLoadError.ImplNotFound    => CapabilityOutcome.ProbeFailed(e)
-            case _: LinkageError                 => CapabilityOutcome.NotBundled(libraryIds.lastMaybe.getOrElse("unknown"), platform)
-            case other                           => CapabilityOutcome.ProbeFailed(other)
+            case e: FfiLoadError.AbiMismatch  => CapabilityOutcome.VersionTooOld(e.actual, e.expected)
+            case _: FfiLoadError.Unsupported  => CapabilityOutcome.UnsupportedOS
+            case e: FfiLoadError.ImplNotFound => CapabilityOutcome.ProbeFailed(e)
+            case _: LinkageError              => CapabilityOutcome.NotBundled(libraryIds.lastMaybe.getOrElse("unknown"), platform)
+            case other                        => CapabilityOutcome.ProbeFailed(other)
 
     /** Peel the class-initialization wrappers off a throwable so the declared load error underneath is reachable. Recursive because a
       * binding whose initializer touches another binding produces a chain of them.

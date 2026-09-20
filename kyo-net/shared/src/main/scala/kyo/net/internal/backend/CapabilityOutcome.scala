@@ -61,9 +61,9 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** One line for the selection report and for the terminal exception's cause. */
     def describe: String = this match
-        case Available                => "available"
-        case UnsupportedOS            => "not applicable to this OS/runtime"
-        case Unavailable(reason)      => s"unavailable ($reason)"
+        case Available           => "available"
+        case UnsupportedOS       => "not applicable to this OS/runtime"
+        case Unavailable(reason) => s"unavailable ($reason)"
         // The remedy differs by runtime, and naming the wrong one costs the reader the same hours as naming none:
         // a classifier artifact is a dependency-resolution fact and there is no classpath on Node, where the
         // library is found by an operator path or an npm package instead.
