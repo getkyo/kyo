@@ -824,13 +824,16 @@ object Async extends AsyncPlatformSpecific:
         useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     abstract class JoinInput[A]:
-        def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
-
-        /** The awaiting call site. Carried here because the link against the awaited promise is made by the
-          * scheduler, while the frame worth reporting is the one that asked to wait: linking against a promise
-          * whose awaiter has already died raises `Interrupted(frame)` on it, and that should name the await.
+        /** Hands over the awaited promise, already linked to be interrupted with `task`.
+          *
+          * The link is made HERE rather than by the caller so the promise cannot be obtained without it: a joiner that
+          * skipped the link would leave the awaited promise holding a waiter that nothing ever reclaims.
+          *
+          * `release` is the registration `task` is about to make on the returned promise, [[Absent]] when it will make
+          * none. The link carries it so that interrupting `task` takes it back off the promise; without that, a task
+          * that dies parked on a promise which never completes stays reachable from it forever.
           */
-        def frame: Frame
+        def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A]
     end JoinInput
     sealed trait Join extends ArrowEffect[JoinInput, Result[Nothing, *]]
 
@@ -841,12 +844,10 @@ object Async extends AsyncPlatformSpecific:
     private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(
         using joinFrame: Frame
     ): B < (S & Async) =
-        // Hands the awaited promise over WITHOUT linking it. The link carries the resume callback the joiner
-        // registers on `v`, so it can only be made once that callback exists, which is inside IOTask's join
-        // handling. Linking before the promise's state is read stays the invariant; it just happens there.
         val input = new JoinInput[A]:
-            def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] = v
-            def frame: Frame                                  = joinFrame
+            def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A] =
+                task.interrupts(v, release)(using joinFrame)
+                v
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
 

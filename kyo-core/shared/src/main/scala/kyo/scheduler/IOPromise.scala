@@ -66,15 +66,15 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         state.isInstanceOf[Pending[?, ?]]
 
     final def interrupts(other: IOPromise[?, ?])(using frame: Frame): Unit =
-        interrupts(other, null)
+        interrupts(other, Absent)
 
     /** Links `other` to be interrupted when this promise is, optionally reclaiming a registration made on `other`.
       *
-      * `release`, when given, is a callback registered on `other` by whoever is awaiting it. Interrupting the awaiter
+      * `release`, when present, is a callback registered on `other` by whoever is awaiting it. Interrupting the awaiter
       * cascades into `other` first, because that is what may complete `other` and deliver the awaiter its final
       * wakeup; only then is the callback reclaimed, which is a no-op if the wakeup already consumed it.
       */
-    final def interrupts(other: IOPromise[?, ?], release: AnyRef)(using frame: Frame): Unit =
+    final def interrupts(other: IOPromise[?, ?], release: Maybe[AnyRef])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -108,6 +108,12 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
 
     final def removeInterrupt(other: IOPromise[?, ?])(using frame: Frame): Unit =
         remove(other)
+
+    /** Drops a callback registered with [[onComplete]]. Typed at the callback rather than at [[remove]]'s bare
+      * identity, so a caller cannot pass something that was never registered as one.
+      */
+    final def removeComplete(f: Result[E, A] => Any): Unit =
+        remove(f)
 
     def preInterrupt(): Boolean = true
 
@@ -355,9 +361,9 @@ private[kyo] object IOPromise:
                 end run
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
-            interrupts(p, null)
+            interrupts(p, Absent)
 
-        final def interrupts(p: IOPromise[?, ?], release: AnyRef): Pending[E, A] =
+        final def interrupts(p: IOPromise[?, ?], release: Maybe[AnyRef]): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(error: Error[E]) =
                     val ex =
@@ -369,7 +375,7 @@ private[kyo] object IOPromise:
                     // Ordered after the cascade on purpose: interrupting `p` may complete it, and that completion is
                     // what delivers the final wakeup to whoever registered `release`. Reclaiming first would cut that
                     // wakeup off; reclaiming after is a no-op once it has been consumed.
-                    if release ne null then p.remove(release)
+                    release.foreach(p.remove)
                     self
                 end interrupt
                 // A completed promise can never be interrupted again, so a link to one can never do anything and is
@@ -377,8 +383,10 @@ private[kyo] object IOPromise:
                 // chance to collect links whose target has since finished, and the walk has to run to the end to
                 // find them: the requested key is typically the newest registration and so sits at the head, while
                 // the dead links are behind it.
+                // Matches either identity the link was made under: the awaited promise, or the registration it
+                // carries. The awaiting task reclaims by the latter, because the callback is what it holds.
                 def remove(key: AnyRef) =
-                    if (key eq p) || p.done() then self.remove(key)
+                    if (key eq p) || release.exists(_ eq key) || p.done() then self.remove(key)
                     else self.remove(key).interrupts(p, release)
                 def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
