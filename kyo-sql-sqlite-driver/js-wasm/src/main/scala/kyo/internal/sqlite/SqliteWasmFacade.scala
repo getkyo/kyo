@@ -41,7 +41,7 @@ object SqliteWasmFacade:
             fns.foreach { fn =>
                 calls.bySymbol.get(fn.cSymbol) match
                     case Some(impl) => bag.updateDynamic(fn.scalaName)(withAsync(impl, fn.args.size))
-                    case None =>
+                    case None       =>
                         throw new UnsupportedOperationException(
                             s"The WebAssembly transport has no implementation for '${fn.cSymbol}'. Every symbol a " +
                                 "binding names must be either a raw export of the module or one of the kyo_sqlite3_* " +

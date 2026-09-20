@@ -47,7 +47,7 @@ class GuardCloseRaceTest extends Test:
 
             val closeStarted  = new CountDownLatch(1)
             val closeReturned = new AtomicBoolean(false)
-            val r: Runnable = () =>
+            val r: Runnable   = () =>
                 closeStarted.countDown()
                 // 10-minute drain policy, not the production 5s default, so endCallback() below cannot race the drain deadline under load.
                 discard(core.closeWithPolicy(10L * 60L * 1000L * 1000L * 1000L))
@@ -68,7 +68,7 @@ class GuardCloseRaceTest extends Test:
 
         "close() is idempotent, second call returns AlreadyClosed and does not re-run teardown" in {
             val teardowns = new AtomicInteger(0)
-            val core = new GuardCore(
+            val core      = new GuardCore(
                 () => discard(teardowns.incrementAndGet()),
                 () => ()
             )
@@ -121,7 +121,7 @@ class GuardCloseRaceTest extends Test:
 
         "unsafeRetainRetainedSlot sets the guardCore back-reference on the TaggedCallback" in {
             Ffi.Guard.use { g =>
-                val native = g.asInstanceOf[NativeGuard]
+                val native    = g.asInstanceOf[NativeGuard]
                 val (slot, _) = CallbackRegistry.claimRetainedSlot_I_I(
                     native.guardToken,
                     "kyo.ffi.internal.Spec",
@@ -139,8 +139,8 @@ class GuardCloseRaceTest extends Test:
         }
 
         "after close, the bound guardCore reports callbacks as refused" in {
-            val g      = Ffi.Guard.open()
-            val native = g.asInstanceOf[NativeGuard]
+            val g         = Ffi.Guard.open()
+            val native    = g.asInstanceOf[NativeGuard]
             val (slot, _) = CallbackRegistry.claimRetainedSlot_I_I(
                 native.guardToken,
                 "kyo.ffi.internal.Spec",

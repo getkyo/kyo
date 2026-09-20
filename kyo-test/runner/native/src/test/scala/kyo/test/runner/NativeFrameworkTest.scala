@@ -34,7 +34,7 @@ end NativeNextParallelSuite
 // ── Test infrastructure ──────────────────────────────────────────────────────────────────────────
 
 class NativeCapturingEventHandler extends EventHandler:
-    private val _events = new java.util.concurrent.CopyOnWriteArrayList[Event]()
+    private val _events        = new java.util.concurrent.CopyOnWriteArrayList[Event]()
     def handle(e: Event): Unit =
         _events.add(e)
         ()

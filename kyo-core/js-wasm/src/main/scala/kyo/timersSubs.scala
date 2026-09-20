@@ -11,7 +11,7 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
         _cancelled = true
         super.cancel()
     def isCancelled(): Boolean = _cancelled
-    def run(): Unit =
+    def run(): Unit            =
         _done = true
         try
             val _ = r

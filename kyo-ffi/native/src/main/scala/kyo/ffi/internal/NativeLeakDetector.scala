@@ -174,7 +174,7 @@ private[internal] object NativeLeakDetector:
     def unregister(token: GuardLeakToken): Unit =
         token.weakRef match
             case null => ()
-            case ref =>
+            case ref  =>
                 discard(live.remove(ref))
     end unregister
 
@@ -239,7 +239,7 @@ private[internal] object NativeLeakDetector:
     private[internal] def testForceLeak(token: GuardLeakToken): Int =
         token.weakRef match
             case null => 0
-            case ref =>
+            case ref  =>
                 if live.remove(ref, token) then
                     try java.lang.System.err.println(FfiErrors.leakWarning(token.frame.show))
                     catch case _: Throwable => ()
@@ -264,7 +264,7 @@ private[internal] object NativeLeakDetector:
         daemonStopped.set(true)
         daemonThread match
             case null => ()
-            case t =>
+            case t    =>
                 t.interrupt()
                 try t.join(1000L)
                 catch case _: Throwable => ()

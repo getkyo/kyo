@@ -48,7 +48,7 @@ class CallbackRegistryConcurrencyTest extends Test:
             val ts: Array[Thread] = new Array[Thread](threads)
             var ti                = 0
             while ti < threads do
-                val idx = ti
+                val idx         = ti
                 val r: Runnable = () =>
                     try
                         start.await()
@@ -103,7 +103,7 @@ class CallbackRegistryConcurrencyTest extends Test:
 
             var ti = 0
             while ti < threads do
-                val idx = ti
+                val idx         = ti
                 val r: Runnable = () =>
                     try
                         start.await()
@@ -210,7 +210,7 @@ class CallbackRegistryConcurrencyTest extends Test:
 
                 @volatile var blockerResult: AnyRef | Null = null
                 val blockerStart                           = new CountDownLatch(1)
-                val r: Runnable = () =>
+                val r: Runnable                            = () =>
                     try
                         blockerStart.countDown()
                         val (idx, _) = CallbackRegistry.claimRetainedSlot_P_U(

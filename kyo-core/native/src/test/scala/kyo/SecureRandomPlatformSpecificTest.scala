@@ -106,7 +106,7 @@ class SecureRandomPlatformSpecificTest extends kyo.test.Test[Any]:
         // The Windows arm is driven through the fill seam: this build runs on POSIX, so the live BCrypt path is only reachable on a
         // windows-x64 runner, while the status mapping is pinned here.
         final class RecordingFill(payload: Array[Byte], status: Int = 0) extends SecureRandom.WindowsFill:
-            var calls = 0
+            var calls                          = 0
             def fill(target: Array[Byte]): Int =
                 calls += 1
                 if status == 0 then java.lang.System.arraycopy(payload, 0, target, 0, target.length)

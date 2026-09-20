@@ -28,7 +28,7 @@ class SleepDescriptorTest extends AnyFreeSpec with NonImplicitAssertions {
         val entered  = new AtomicBoolean(false)
         val proceed  = new AtomicBoolean(false)
         val threadId = new AtomicLong(0L)
-        val thread = new Thread((() => {
+        val thread   = new Thread((() => {
             threadId.set(ThreadUserTime.currentThreadId())
             entered.set(true)
             // Spin, don't park, on the barrier: the wait allocates no descriptor, so the baseline captures everything

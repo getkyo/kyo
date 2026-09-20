@@ -20,9 +20,9 @@ class BackendPlatformSpecificTest extends Test:
     end StubIdiom
 
     final private class StubBackend(canonical: String) extends Backend:
-        def scheme: String       = canonical
-        def aliases: Set[String] = Set.empty
-        def dialect: Idiom       = StubIdiom
+        def scheme: String                                                                                      = canonical
+        def aliases: Set[String]                                                                                = Set.empty
+        def dialect: Idiom                                                                                      = StubIdiom
         def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
             Abort.panic[SqlException](new UnsupportedOperationException("the stub backend opens nothing"))
     end StubBackend

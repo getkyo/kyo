@@ -14,7 +14,7 @@ import scala.scalanative.reflect.Reflect
 private[runner] object InstantiatePlatform:
 
     def newInstance(suite: Class[? <: TestBase[?]]): TestBase[?] =
-        val fqn = suite.getName
+        val fqn      = suite.getName
         val instance =
             Reflect
                 .lookupInstantiatableClass(fqn)
@@ -29,7 +29,7 @@ private[runner] object InstantiatePlatform:
                 .newInstance()
         instance match
             case t: TestBase[?] => t
-            case other =>
+            case other          =>
                 throw new ClassCastException(
                     s"kyo-test: reflectively instantiated '$fqn' but it is not a kyo.test.internal.TestBase: ${other.getClass.getName}"
                 )

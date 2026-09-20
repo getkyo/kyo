@@ -104,7 +104,7 @@ private[kyo] object NodeLineReader:
     /** Decode a line's bytes as UTF-8, dropping one trailing `\r` so CRLF input reads the same as LF input. */
     private def decode(bytes: js.Dynamic): String =
         val size = length(bytes)
-        val end =
+        val end  =
             if size > 0 && bytes.applyDynamic("readUInt8")(size - 1).asInstanceOf[Int] == Return then size - 1
             else size
         bytes.applyDynamic("toString")("utf8", 0, end).asInstanceOf[String]

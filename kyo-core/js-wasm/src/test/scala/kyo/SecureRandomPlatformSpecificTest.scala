@@ -152,7 +152,7 @@ class SecureRandomPlatformSpecificTest extends kyo.test.Test[Any]:
         "closes even when the body inside it fails" in {
             Sync.defer {
                 val before = sjs.typeOf(sjs.Dynamic.global.selectDynamic("crypto"))
-                val seen =
+                val seen   =
                     try
                         withoutCryptoGlobal {
                             throw new IllegalStateException(sjs.typeOf(sjs.Dynamic.global.selectDynamic("crypto")))

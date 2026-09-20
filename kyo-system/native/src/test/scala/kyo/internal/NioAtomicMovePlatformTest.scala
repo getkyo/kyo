@@ -56,7 +56,7 @@ class NioAtomicMovePlatformTest extends kyo.test.Test[Any]:
                 _            <- Scope.ensure(Sync.defer(cleanup(fixture)))
                 _            <- Sync.defer(Files.setPosixFilePermissions(fixture.lockedDirectory, java.util.Set.of()))
                 inaccessible <- Sync.defer(!Files.exists(fixture.source, LinkOption.NOFOLLOW_LINKS))
-                result <- Abort.run[FileSystemException] {
+                result       <- Abort.run[FileSystemException] {
                     Path.run(Path.of(fixture.source).move(Path.of(fixture.target), Path.MoveOptions(atomicity = Path.Atomicity.Required)))
                 }
             yield

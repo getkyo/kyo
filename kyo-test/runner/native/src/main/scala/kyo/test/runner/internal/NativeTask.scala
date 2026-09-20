@@ -58,7 +58,7 @@ final private[internal] class NativeTask(
     // The class is registered because kyo.test.Test carries @EnableReflectiveInstantiation via
     // kyo.test.internal.KyoTestReflect.
     private def runSuite(config: RunConfig): TestReport =
-        val fqn = taskDef.fullyQualifiedName()
+        val fqn          = taskDef.fullyQualifiedName()
         val runtimeClass = Reflect
             .lookupInstantiatableClass(fqn)
             .getOrElse(
