@@ -638,17 +638,31 @@ Example of correct structure:
 
 #### Inline Comments
 
-Methods typically have short comments to aid understanding when they're more complex. Comments appear in these situations:
+**The default is no comment.** Code that needs no explanation gets none. The list below is a closed set of exceptions, not an invitation to explain. A comment is a liability: the code moves and the comment does not.
 
-1. **Method-level clarity** — a brief comment on what a non-trivial method does, especially when the name alone isn't enough
-2. **Phase markers in multi-step methods** — brief labels marking logical sections within a method body (`// extract path params`, `// combine inputs`, `// map errors`). Help readers scan without reading every line. One line per phase, not a paragraph. Comments must add understanding — don't restate what the function name already says (`// process completed transfers` before `processCompletedTransfers()` is noise).
-3. **Navigational comments in large methods (30+ lines)** — longer methods benefit from slightly more comments even when individual lines are self-evident, because readers lose context over many lines. These act as signposts helping someone skim the method's structure without reading every line.
-4. **Race conditions / concurrency hazards** — explain the interleaving
-5. **Bit-packing / encoding schemes** — diagram the layout
-6. **Known limitations / TODOs** — describe what's missing and why
-7. **Non-obvious algorithmic choices** — explain *why*, not *what*
+A comment is warranted only as an answer to one of these:
 
-Quality bar: every comment should pass the test "would removing this make the code harder to understand?" If the answer is no, consider deleting it.
+1. **Non-obvious choices**: why this shape and not the obvious one.
+2. **Load-bearing invariants**: what breaks if this changes, the ordering that must hold, why something stays that a reader would otherwise delete or simplify.
+3. **External facts the types cannot carry**: a JVM inlining budget, a runtime flag, a protocol requirement.
+4. **Measured results**, stated as the number.
+5. **Race conditions and concurrency hazards**: the interleaving, which carrier owns what.
+6. **Bit-packing and encoding schemes**: diagram the layout.
+7. **Phase markers in multi-step methods**: one line per phase naming the phase (`// extract path params`, `// map errors`), never restating a call. `// process completed transfers` above `processCompletedTransfers()` is noise.
+8. **Navigational signposts in large methods (30+ lines)** with non-linear control flow, so a reader can skim the structure.
+9. **Required markers**: `// Unsafe:` at a bridging site, and the audit comments individual modules require at a declared exception.
+
+**Placement.** Categories 7 and 8 live only inside a method body. Never put a navigational or phase comment on a top-level declaration, a build setting, a field, or an import block: those have no structure to navigate.
+
+**Three kill tests, applied to every comment before it ships:**
+
+- **Grep test**: is the content recoverable by grepping the identifier below it? Then it is a tautology. Delete it.
+- **Sync test**: does it name anything nothing keeps in sync (test classes, call sites, file lists, counts)? It becomes false on the next rename and nothing will catch it. State the constraint, never the inventory.
+- **Decision test**: would removing it change what a maintainer does? If no, delete it.
+
+**Two banned shapes.** The *development diary*: "previously", "used to", "this was changed because", "after the review", phase or campaign codes, any change-relative wording. History belongs in the commit message. The *quick-to-stale tautology*: restates the line below it, or enumerates the tests, classes or files that use the thing. It says what the code already said, and then rots.
+
+**Say what the thing is, not what it does.** A comment on a type or member says what it is and why it has that shape, not what its methods do. A scaladoc on a difference says what the difference is, not which caller has it.
 
 ### File Organization
 
