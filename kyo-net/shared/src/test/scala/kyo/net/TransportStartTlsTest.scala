@@ -406,4 +406,69 @@ class TransportStartTlsTest extends Test:
         }
     }
 
+    /** A server that upgrades only AFTER the peer's first TLS flight (the ClientHello) has already landed in the plaintext inbound channel, so the
+      * upgrade's replay path (preRead) is guaranteed non-empty. This is the ordinary STARTTLS shape (a fast client sends its ClientHello the instant
+      * it sees `R`) made deterministic by waiting on `inbound.size()`. `serverTls.handshakeTimeout` is expected to be lowered so a dropped replay
+      * surfaces as a fast timeout rather than the 30s default.
+      */
+    private def startTlsEchoServerAfterStaged(transport: Transport, serverTls: NetTlsConfig)(using
+        Frame
+    ): Listener < (Async & Abort[NetException]) =
+        transport.listen("127.0.0.1", 0, 128) { serverConn =>
+            discard(Sync.Unsafe.evalOrThrow {
+                Fiber.initUnscoped {
+                    Abort.run[Closed | NetException] {
+                        serverConn.inbound.safe.take.flatMap { _ =>
+                            serverConn.outbound.safe.put(upgradeReady).andThen {
+                                // Wait, bounded by the caller's handshake deadline, for the ClientHello to land in the plaintext channel before the
+                                // detach, so the replay the upgrade must feed to the engine is non-empty.
+                                Loop(()) { _ =>
+                                    Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1)).map { staged =>
+                                        if staged >= 1 then Loop.done(())
+                                        else Async.sleep(1.milli).andThen(Loop.continue(()))
+                                    }
+                                }.andThen {
+                                    transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                        Loop.foreach {
+                                            tlsConn.inbound.safe.take.flatMap { data =>
+                                                tlsConn.outbound.safe.put(data).andThen(Loop.continue)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }.unit
+                }
+            })
+        }.safe.get
+
+    "a STARTTLS server upgrading after the peer's first flight is already staged still round-trips (afterDetach replay-drop regression)" -
+        eachBackendTls {
+            (transport, serverTls, clientTls) =>
+                val fastFail = 5.seconds
+                val srvCfg   = serverTls.copy(handshakeTimeout = fastFail)
+                val cli      = clientTls.copy(sniHostname = Present("localhost"), handshakeTimeout = fastFail)
+                startTlsEchoServerAfterStaged(transport, srvCfg).map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        Abort.run[NetException | Closed](startTlsClient(
+                            transport,
+                            listener.port,
+                            cli,
+                            "staged-flight".getBytes("UTF-8")
+                        )).map { r =>
+                            listener.close()
+                            r match
+                                case Result.Success(echoed) =>
+                                    assert(new String(echoed, "UTF-8") == "staged-flight")
+                                case other =>
+                                    fail(
+                                        s"upgrade with a pre-staged ClientHello did not round-trip (afterDetach dropped the staged replay?): $other"
+                                    )
+                            end match
+                        }
+                    }
+                }
+        }
+
 end TransportStartTlsTest

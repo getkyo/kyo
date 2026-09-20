@@ -1006,6 +1006,14 @@ final private[kyo] class JsTransport private (
                 return ()
             end if
 
+            // Detach the plaintext "data" listener with removeListener, not just removeAllListeners: it is the ONLY removal that
+            // clears Node's internal kDataListening flag. Left stale, updateReadableListening re-resumes the raw socket on the
+            // next tick and flows the unshifted flight to no listener. Remove the remaining listeners afterward; the TLSSocket
+            // constructor below re-registers its own "close"/"error" on the raw socket, so a later removeAllListeners would strip
+            // them. Both must precede the unshift and the constructor.
+            discard(socket.removeListener("data", handle.dataListener))
+            discard(socket.removeAllListeners())
+
             // Push pre-read bytes and any peer-close-probe-staged leftover back into the socket (unshift) so the TLS engine sees them first. Order:
             // channel-drained preRead is older than the listener-stashed leftover, so preRead precedes it; draining leftover here also fixes its pre-existing silent drop at upgrade.
             var replay: Chunk[Array[Byte]] = preRead match
@@ -1035,16 +1043,12 @@ final private[kyo] class JsTransport private (
                 discard(socket.unshift(nodeBuffer))
             end if
 
-            // Remove the JsHandle's permanent listeners from the plaintext socket. They were registered
-            // by JsHandle.init and would intercept TLS handshake bytes if left in place after the
-            // TLSSocket takes ownership of the underlying socket's data stream.
-            discard(socket.removeAllListeners())
-
-            // The underlying socket was paused by detachForUpgrade. Resume it so the TLS layer can
-            // read the handshake bytes (ClientHello / ServerHello). The TLS layer manages its own
-            // internal flow; we will pause the TLSSocket's application-data stream after handshake.
-            discard(socket.resume())
-
+            // No socket.resume() here. The socket stays paused (non-flowing) until the TLSSocket constructor below wraps it:
+            // tls_wrap.wrap makes the TLSWrap the TCP handle's sole stream listener and its queued initRead reads the whole raw
+            // buffer (the unshifted flight plus any kernel bytes) straight into the engine, then drives the handle itself. A raw
+            // resume() before that handoff flows the flight as "data" to no listener and discards it, stranding the handshake to
+            // its deadline (the STARTTLS handoff drop); with kDataListening cleared above, the socket also stays non-flowing on
+            // its own at the next tick.
             val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
 
             // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a connected one
@@ -1168,6 +1172,11 @@ final private[kyo] class JsTransport private (
         // body ran on the caller's own stack, where such a throw reached the caller as a panic, and callers classify on that (kyo-sql's
         // TlsUpgrade maps it to a connect failure). Reproduce that; the owner hook armed on `promise` above then performs the release,
         // which is why nothing is destroyed here.
+        // Mark the handle upgrading BEFORE the detach closes inbound: a plaintext read the ReadPump pulled off the socket a moment ago can be
+        // parked on a full inbound channel, and inbound.close() fails that put with Closed, invoking JsIoDriver.onInboundClosedDuringRead. That
+        // hook salvages the bytes (the peer's first TLS flight) into leftover only while this flag is set, so afterDetach replays them into the
+        // handshake instead of the default dropping them and stranding it. Never reset: the upgrade wraps a fresh handle over the TLSSocket.
+        handle.upgrading = true
         jsConn.detachForUpgrade().onComplete { r =>
             try afterDetach(r.foldError(_.eval, _ => Absent))
             catch case t: Throwable => promise.completeDiscard(Result.panic(t))
