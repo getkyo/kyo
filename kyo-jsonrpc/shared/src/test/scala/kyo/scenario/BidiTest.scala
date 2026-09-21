@@ -142,16 +142,18 @@ class BidiTest extends JsonRpcTest:
             (req, _) =>
                 Fiber.Promise.init[Unit, Any].map { holdP =>
                     Fiber.Promise.init[Unit, Any].map { doneP =>
-                        Sync.defer {
-                            handlerReady.set(Present(holdP))(using AllowUnsafe.embrace.danger)
-                            handlerDone.set(Present(doneP))(using AllowUnsafe.embrace.danger)
-                        }.andThen(
-                            Sync.ensure(
-                                Sync.defer {
-                                    // Unsafe: Promise.Unsafe.completeUnitDiscard from Sync.ensure finalizer; signals test that handler fiber has exited.
-                                    doneP.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                                }
-                            )(holdP.get.andThen(EchoResp(req.text)))
+                        // Readiness is published from inside the ensure body, after the finalizer is registered: a
+                        // cancel gated on handlerReady then always interrupts a fiber whose finalizer completes doneP.
+                        Sync.ensure(
+                            Sync.defer {
+                                // Unsafe: Promise.Unsafe.completeUnitDiscard from Sync.ensure finalizer; signals test that handler fiber has exited.
+                                doneP.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                            }
+                        )(
+                            Sync.defer {
+                                handlerReady.set(Present(holdP))(using AllowUnsafe.embrace.danger)
+                                handlerDone.set(Present(doneP))(using AllowUnsafe.embrace.danger)
+                            }.andThen(holdP.get.andThen(EchoResp(req.text)))
                         )
                     }
                 }

@@ -6,45 +6,34 @@ import kyo.*
 
 private[kyo] object CallEngine:
 
-    // refresh: when this call is the first in flight (prev == 0), install a fresh drain signal.
-    private def refresh(
-        prev: Int,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]]
-    )(using Frame): Unit < Async =
-        if prev == 0 then Fiber.Promise.init[Unit, Any].map(drainSignal.set)
-        else Kyo.unit
+    // Counts the call as in flight (for awaitDrain and for close(gracePeriod)) until the cleanup below runs.
+    private def trackCall(outbound: WorkTracker, work: WorkTracker)(using Frame): Unit < Sync =
+        // Unsafe: tracker updates are atomic CAS loops with no suspension
+        Sync.Unsafe.defer {
+            outbound.acquire()
+            work.acquire()
+        }
 
-    // inFlightCleanup (callEffect variant): decrement in-flight, complete the CURRENT drain signal when
-    // reaching zero, and poll idSignal to clean callerRegistry on request completion.
-    //
-    // The completion reads drainSignal fresh (drainSignal.get) rather than a snapshot captured at call start.
-    // A concurrent call's `getAndIncrement` and its `refresh` are not atomic, so two calls starting together
-    // can capture different drain promises (the second may capture the pre-refresh promise). Completing a stale
-    // captured snapshot would complete a promise no waiter holds, leaving awaitDrain (which reads drainSignal
-    // fresh) parked forever on the promise that was actually installed. Reading drainSignal at the moment
-    // inFlight hits zero completes exactly the promise active for the just-drained period, which is the one
-    // awaitDrain observes. A subsequent 0->1 refresh can only run after this decrement, so it cannot install a
-    // newer promise before this completion.
+    // callEffectInFlightCleanup: release the call's in-flight units and poll idSignal to clean callerRegistry on request completion.
     private def callEffectInFlightCleanup(
-        inFlight: AtomicInt,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
+        outbound: WorkTracker,
+        work: WorkTracker,
         idSignal: Promise.Unsafe[JsonRpcId, Any],
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo]
     )(using Frame): Unit < Sync =
-        inFlight.decrementAndGet.map { newCount =>
-            (if newCount == 0 then drainSignal.get.map(_.completeUnitDiscard) else Kyo.unit).andThen {
-                // Unsafe: poll idSignal to clean callerRegistry on request completion
-                Sync.Unsafe.defer {
-                    idSignal.poll() match
-                        case Maybe.Present(Result.Success(id)) =>
-                            // Catch-all: release any cancel still waiting on requestEnqueued (e.g. the send was
-                            // interrupted before it could signal) as the call's registry entry is removed.
-                            Maybe(callerRegistry.remove(id)).foreach { info =>
-                                info.requestEnqueued.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                            }
-                        case _ => ()
-                }
-            }
+        // Unsafe: tracker release and idSignal poll to clean callerRegistry on request completion
+        Sync.Unsafe.defer {
+            outbound.release()
+            work.release()
+            idSignal.poll() match
+                case Maybe.Present(Result.Success(id)) =>
+                    // Catch-all: release any cancel still waiting on requestEnqueued (e.g. the send was
+                    // interrupted before it could signal) as the call's registry entry is removed.
+                    Maybe(callerRegistry.remove(id)).foreach { info =>
+                        info.requestEnqueued.unsafe.completeUnitDiscard()
+                    }
+                case _ => ()
+            end match
         }
 
     // raceResult: race the abort signal against the exchange round-trip, decoding the result to Out.
@@ -79,8 +68,8 @@ private[kyo] object CallEngine:
         params: In,
         extras: JsonRpcExtrasEncoder,
         meter: Maybe[Meter],
-        inFlight: AtomicInt,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
+        outbound: WorkTracker,
+        work: WorkTracker,
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg],
         exchange: Exchange[OutboundReq, Structure.Value, Nothing, JsonRpcError],
@@ -93,50 +82,48 @@ private[kyo] object CallEngine:
                     val idSignal      = Promise.Unsafe.init[JsonRpcId, Any]()
                     val encodedParams = Present(Structure.encode[In](params))
                     val req           = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
-                    inFlight.getAndIncrement.map { prev =>
-                        refresh(prev, drainSignal).andThen {
-                            Sync.ensure(callEffectInFlightCleanup(inFlight, drainSignal, idSignal, callerRegistry)) {
-                                val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
-                                    raceResult[Out](abortSignal, req, exchange)
-                                if config.requestTimeout == Duration.Infinity then
-                                    // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
-                                    // raceResult is caught here (not by an outer Abort.run that would discard the
-                                    // Sync.ensure cleanup continuation), then re-raise after cleanup runs.
-                                    Abort.run[JsonRpcError | Closed](raced).map {
-                                        case Result.Success(v) => v
-                                        case Result.Failure(e) => Abort.fail(e)
-                                        case Result.Panic(t)   => Abort.panic(t)
-                                    }
-                                else
-                                    Abort.run[Timeout](Async.timeout(config.requestTimeout)(raced)).map {
-                                        case Result.Success(v) => v
-                                        case Result.Failure(_) =>
-                                            // Timeout fired: enqueue cancel notification, then fail with the policy-determined error.
-                                            // Do NOT await abortSignal here: raceFirst's cleanup has already interrupted
-                                            // the abortSignal promise with Panic(Interrupted), so awaiting it would panic.
-                                            val abortError = config.cancellation match
-                                                case Present(p) =>
-                                                    p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
-                                                case Absent => JsonRpcCustomError(-32800, "Request cancelled")
-                                            // Unsafe: read idSignal to find the id for cancel notification
-                                            Sync.Unsafe.defer {
-                                                idSignal.poll() match
-                                                    case Maybe.Present(Result.Success(rawId)) =>
-                                                        val id = rawId.eval
-                                                        CancellationEngine.handleTimeout(
-                                                            id,
-                                                            Absent,
-                                                            config.cancellation,
-                                                            callerRegistry,
-                                                            writerChannel
-                                                        ).andThen(Abort.fail[JsonRpcError](abortError))
-                                                    case _ =>
-                                                        Abort.fail[JsonRpcError](abortError)
-                                            }
-                                        case Result.Panic(t) => Abort.panic(t)
-                                    }
-                                end if
-                            }
+                    trackCall(outbound, work).map { _ =>
+                        Sync.ensure(callEffectInFlightCleanup(outbound, work, idSignal, callerRegistry)) {
+                            val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
+                                raceResult[Out](abortSignal, req, exchange)
+                            if config.requestTimeout == Duration.Infinity then
+                                // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
+                                // raceResult is caught here (not by an outer Abort.run that would discard the
+                                // Sync.ensure cleanup continuation), then re-raise after cleanup runs.
+                                Abort.run[JsonRpcError | Closed](raced).map {
+                                    case Result.Success(v) => v
+                                    case Result.Failure(e) => Abort.fail(e)
+                                    case Result.Panic(t)   => Abort.panic(t)
+                                }
+                            else
+                                Abort.run[Timeout](Async.timeout(config.requestTimeout)(raced)).map {
+                                    case Result.Success(v) => v
+                                    case Result.Failure(_) =>
+                                        // Timeout fired: enqueue cancel notification, then fail with the policy-determined error.
+                                        // Do NOT await abortSignal here: raceFirst's cleanup has already interrupted
+                                        // the abortSignal promise with Panic(Interrupted), so awaiting it would panic.
+                                        val abortError = config.cancellation match
+                                            case Present(p) =>
+                                                p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                            case Absent => JsonRpcCustomError(-32800, "Request cancelled")
+                                        // Unsafe: read idSignal to find the id for cancel notification
+                                        Sync.Unsafe.defer {
+                                            idSignal.poll() match
+                                                case Maybe.Present(Result.Success(rawId)) =>
+                                                    val id = rawId.eval
+                                                    CancellationEngine.handleTimeout(
+                                                        id,
+                                                        Absent,
+                                                        config.cancellation,
+                                                        callerRegistry,
+                                                        writerChannel
+                                                    ).andThen(Abort.fail[JsonRpcError](abortError))
+                                                case _ =>
+                                                    Abort.fail[JsonRpcError](abortError)
+                                        }
+                                    case Result.Panic(t) => Abort.panic(t)
+                                }
+                            end if
                         }
                     }
                 }
@@ -183,8 +170,8 @@ private[kyo] object CallEngine:
         extras: JsonRpcExtrasEncoder,
         // AtomicLong.Unsafe: mutable deadline cell shared between call and monitor fibers
         deadlineRef: Maybe[AtomicLong.Unsafe],
-        inFlight: AtomicInt,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
+        outbound: WorkTracker,
+        work: WorkTracker,
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg],
         exchange: Exchange[OutboundReq, Structure.Value, Nothing, JsonRpcError],
@@ -197,110 +184,108 @@ private[kyo] object CallEngine:
         val idPromise                                                = idSignalUnsafe.safe
         val callEffect: Out < (Async & Abort[JsonRpcError | Closed]) =
             Fiber.Promise.init[JsonRpcError, Any].map { abortSignal =>
-                inFlight.getAndIncrement.map { prev =>
-                    refresh(prev, drainSignal).andThen {
-                        Sync.ensure(callEffectInFlightCleanup(inFlight, drainSignal, idSignal, callerRegistry)) {
-                            val req = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
-                            val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
-                                raceResult[Out](abortSignal, req, exchange)
-                            if config.requestTimeout == Duration.Infinity then
-                                // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
-                                // raceResult is caught here (not by an outer Abort.run that would discard the
-                                // Sync.ensure cleanup continuation), then re-raise after cleanup runs.
-                                Abort.run[JsonRpcError | Closed](raced).map {
-                                    case Result.Success(v) => v
-                                    case Result.Failure(e) => Abort.fail(e)
-                                    case Result.Panic(t)   => Abort.panic(t)
-                                }
-                            else if config.progressResetsTimeout && deadlineRef.isDefined then
-                                // Progress-reset-timeout: a monitor fiber polls deadlineAt (AtomicLong epoch millis)
-                                // every requestTimeout/10 and fires timeoutSignal when the deadline passes.
-                                // Progress notifications extend deadlineAt by requestTimeout each time they arrive.
-                                // There is ONE outer race: abortSignal vs exchange vs timeoutSignal.
-                                val dref = deadlineRef.get
-                                // timeoutSignal: fired by monitor fiber when deadline passes without a progress reset.
-                                // Carries Unit so the outer race arm can call handleTimeout and then fail.
-                                Fiber.Promise.init[Unit, Any].map { timeoutSignal =>
-                                    val abortError = config.cancellation match
-                                        case Present(p) => p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
-                                        case Absent     => JsonRpcCustomError(-32800, "Request cancelled")
-                                    // Poll interval: requestTimeout * 0.1, minimum 10ms
-                                    val pollInterval = (config.requestTimeout * 0.1).max(10.millis)
-                                    // Capture the ambient clock once for the monitor fiber, which inherits it across the fork.
-                                    Clock.use(clock => Fiber.initUnscoped(monitorLoop(pollInterval, dref, timeoutSignal, clock))).map {
-                                        monitorFiber =>
-                                            // Three-way race: abort signal, exchange result, timeout signal.
-                                            // On any arm winning, Sync.ensure cleans up the monitor fiber.
-                                            Sync.ensure(
-                                                // Unsafe: interrupt monitor fiber when the call completes (any outcome)
-                                                Sync.Unsafe.defer {
-                                                    // fiber interrupt cleans up monitor or writer or handler fiber from outside its scheduler; no safe equivalent in Fiber public API
-                                                    monitorFiber.unsafe.interruptDiscard(
-                                                        Result.Panic(Interrupted(frame))
-                                                    )(using AllowUnsafe.embrace.danger)
-                                                }
-                                            ) {
-                                                Abort.run[JsonRpcError | Closed](
-                                                    Async.raceFirst[JsonRpcError | Closed, Out, Any](
-                                                        // timeoutSignal arm: deadline expired, run cancel then fail
-                                                        timeoutSignal.get.andThen {
-                                                            // Unsafe: read idSignal to find the id for cancel notification
-                                                            Sync.Unsafe.defer {
-                                                                idSignal.poll() match
-                                                                    case Maybe.Present(Result.Success(rawId)) =>
-                                                                        Present(rawId.eval: JsonRpcId)
-                                                                    case _ => Absent
-                                                            }.map { (idOpt: Maybe[JsonRpcId]) =>
-                                                                idOpt match
-                                                                    case Present(id) =>
-                                                                        CancellationEngine.handleTimeout(
-                                                                            id,
-                                                                            Absent,
-                                                                            config.cancellation,
-                                                                            callerRegistry,
-                                                                            writerChannel
-                                                                        ).andThen(Abort.fail[JsonRpcError](abortError))
-                                                                    case _ =>
-                                                                        Abort.fail[JsonRpcError](abortError)
-                                                            }
-                                                        },
-                                                        raced
-                                                    )
-                                                ).map {
-                                                    case Result.Success(v) => v
-                                                    case Result.Failure(e) => Abort.fail(e)
-                                                    case Result.Panic(t)   => Abort.panic(t)
-                                                }
+                trackCall(outbound, work).map { _ =>
+                    Sync.ensure(callEffectInFlightCleanup(outbound, work, idSignal, callerRegistry)) {
+                        val req = OutboundReq(method, encodedParams, idSignal, abortSignal, extras)
+                        val raced: Out < (Async & Abort[JsonRpcError | Closed]) =
+                            raceResult[Out](abortSignal, req, exchange)
+                        if config.requestTimeout == Duration.Infinity then
+                            // Wrap raceResult with Abort.run inside Sync.ensure so that Abort.fail from
+                            // raceResult is caught here (not by an outer Abort.run that would discard the
+                            // Sync.ensure cleanup continuation), then re-raise after cleanup runs.
+                            Abort.run[JsonRpcError | Closed](raced).map {
+                                case Result.Success(v) => v
+                                case Result.Failure(e) => Abort.fail(e)
+                                case Result.Panic(t)   => Abort.panic(t)
+                            }
+                        else if config.progressResetsTimeout && deadlineRef.isDefined then
+                            // Progress-reset-timeout: a monitor fiber polls deadlineAt (AtomicLong epoch millis)
+                            // every requestTimeout/10 and fires timeoutSignal when the deadline passes.
+                            // Progress notifications extend deadlineAt by requestTimeout each time they arrive.
+                            // There is ONE outer race: abortSignal vs exchange vs timeoutSignal.
+                            val dref = deadlineRef.get
+                            // timeoutSignal: fired by monitor fiber when deadline passes without a progress reset.
+                            // Carries Unit so the outer race arm can call handleTimeout and then fail.
+                            Fiber.Promise.init[Unit, Any].map { timeoutSignal =>
+                                val abortError = config.cancellation match
+                                    case Present(p) => p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                    case Absent     => JsonRpcCustomError(-32800, "Request cancelled")
+                                // Poll interval: requestTimeout * 0.1, minimum 10ms
+                                val pollInterval = (config.requestTimeout * 0.1).max(10.millis)
+                                // Capture the ambient clock once for the monitor fiber, which inherits it across the fork.
+                                Clock.use(clock => Fiber.initUnscoped(monitorLoop(pollInterval, dref, timeoutSignal, clock))).map {
+                                    monitorFiber =>
+                                        // Three-way race: abort signal, exchange result, timeout signal.
+                                        // On any arm winning, Sync.ensure cleans up the monitor fiber.
+                                        Sync.ensure(
+                                            // Unsafe: interrupt monitor fiber when the call completes (any outcome)
+                                            Sync.Unsafe.defer {
+                                                // fiber interrupt cleans up monitor or writer or handler fiber from outside its scheduler; no safe equivalent in Fiber public API
+                                                monitorFiber.unsafe.interruptDiscard(
+                                                    Result.Panic(Interrupted(frame))
+                                                )(using AllowUnsafe.embrace.danger)
                                             }
-                                    }
-                                }
-                            else
-                                Abort.run[Timeout](Async.timeout(config.requestTimeout)(raced)).map {
-                                    case Result.Success(v) => v
-                                    case Result.Failure(_) =>
-                                        val abortError = config.cancellation match
-                                            case Present(p) =>
-                                                p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
-                                            case Absent => JsonRpcCustomError(-32800, "Request cancelled")
-                                        // Unsafe: read idSignal to find the id for cancel notification
-                                        Sync.Unsafe.defer {
-                                            idSignal.poll() match
-                                                case Maybe.Present(Result.Success(rawId)) =>
-                                                    val id = rawId.eval
-                                                    CancellationEngine.handleTimeout(
-                                                        id,
-                                                        Absent,
-                                                        config.cancellation,
-                                                        callerRegistry,
-                                                        writerChannel
-                                                    ).andThen(Abort.fail[JsonRpcError](abortError))
-                                                case _ =>
-                                                    Abort.fail[JsonRpcError](abortError)
+                                        ) {
+                                            Abort.run[JsonRpcError | Closed](
+                                                Async.raceFirst[JsonRpcError | Closed, Out, Any](
+                                                    // timeoutSignal arm: deadline expired, run cancel then fail
+                                                    timeoutSignal.get.andThen {
+                                                        // Unsafe: read idSignal to find the id for cancel notification
+                                                        Sync.Unsafe.defer {
+                                                            idSignal.poll() match
+                                                                case Maybe.Present(Result.Success(rawId)) =>
+                                                                    Present(rawId.eval: JsonRpcId)
+                                                                case _ => Absent
+                                                        }.map { (idOpt: Maybe[JsonRpcId]) =>
+                                                            idOpt match
+                                                                case Present(id) =>
+                                                                    CancellationEngine.handleTimeout(
+                                                                        id,
+                                                                        Absent,
+                                                                        config.cancellation,
+                                                                        callerRegistry,
+                                                                        writerChannel
+                                                                    ).andThen(Abort.fail[JsonRpcError](abortError))
+                                                                case _ =>
+                                                                    Abort.fail[JsonRpcError](abortError)
+                                                        }
+                                                    },
+                                                    raced
+                                                )
+                                            ).map {
+                                                case Result.Success(v) => v
+                                                case Result.Failure(e) => Abort.fail(e)
+                                                case Result.Panic(t)   => Abort.panic(t)
+                                            }
                                         }
-                                    case Result.Panic(t) => Abort.panic(t)
                                 }
-                            end if
-                        }
+                            }
+                        else
+                            Abort.run[Timeout](Async.timeout(config.requestTimeout)(raced)).map {
+                                case Result.Success(v) => v
+                                case Result.Failure(_) =>
+                                    val abortError = config.cancellation match
+                                        case Present(p) =>
+                                            p.cancelledError.getOrElse(JsonRpcCustomError(-32800, "Request cancelled"))
+                                        case Absent => JsonRpcCustomError(-32800, "Request cancelled")
+                                    // Unsafe: read idSignal to find the id for cancel notification
+                                    Sync.Unsafe.defer {
+                                        idSignal.poll() match
+                                            case Maybe.Present(Result.Success(rawId)) =>
+                                                val id = rawId.eval
+                                                CancellationEngine.handleTimeout(
+                                                    id,
+                                                    Absent,
+                                                    config.cancellation,
+                                                    callerRegistry,
+                                                    writerChannel
+                                                ).andThen(Abort.fail[JsonRpcError](abortError))
+                                            case _ =>
+                                                Abort.fail[JsonRpcError](abortError)
+                                    }
+                                case Result.Panic(t) => Abort.panic(t)
+                            }
+                        end if
                     }
                 }
             }
@@ -317,7 +302,7 @@ private[kyo] object CallEngine:
         val encodedParams = Present(Structure.encode[In](params))
         extras.resolve(sentinelId).map { extrasVal =>
             val env = JsonRpcNotification(method, encodedParams, extrasVal)
-            writerChannel.put(WriterMsg.SendEnvelope(env))
+            WriterMsg.related(env).map(writerChannel.put)
         }
     end notifyEffect
 
@@ -331,7 +316,7 @@ private[kyo] object CallEngine:
         Sync.defer(Structure.encode[In](params)).map { encodedParams =>
             extras.resolve(id).map { extrasVal =>
                 val env = JsonRpcRequest(id, method, Present(encodedParams), extrasVal)
-                writerChannel.put(WriterMsg.SendEnvelope(env))
+                WriterMsg.related(env).map(writerChannel.put)
             }
         }
     end sendUnmatchedEffect
@@ -341,8 +326,8 @@ private[kyo] object CallEngine:
         params: In,
         extras: JsonRpcExtrasEncoder,
         meter: Maybe[Meter],
-        inFlight: AtomicInt,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
+        outbound: WorkTracker,
+        work: WorkTracker,
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg],
         exchange: Exchange[OutboundReq, Structure.Value, Nothing, JsonRpcError],
@@ -398,8 +383,8 @@ private[kyo] object CallEngine:
                                             Present(stampedParams),
                                             extras,
                                             deadlineRef,
-                                            inFlight,
-                                            drainSignal,
+                                            outbound,
+                                            work,
                                             callerRegistry,
                                             writerChannel,
                                             exchange,
@@ -454,8 +439,8 @@ private[kyo] object CallEngine:
         params: In,
         extras: JsonRpcExtrasEncoder,
         meter: Maybe[Meter],
-        inFlight: AtomicInt,
-        drainSignal: AtomicRef[Fiber.Promise[Unit, Any]],
+        outbound: WorkTracker,
+        work: WorkTracker,
         callerRegistry: ConcurrentHashMap[JsonRpcId, CallerInfo],
         writerChannel: Channel[WriterMsg],
         exchange: Exchange[OutboundReq, Structure.Value, Nothing, JsonRpcError],
@@ -493,8 +478,8 @@ private[kyo] object CallEngine:
                                             Present(stampedParams),
                                             extras,
                                             Absent,
-                                            inFlight,
-                                            drainSignal,
+                                            outbound,
+                                            work,
                                             callerRegistry,
                                             writerChannel,
                                             exchange,

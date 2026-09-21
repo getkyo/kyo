@@ -72,7 +72,7 @@ private[kyo] object CancellationEngine:
                             end if
         }
 
-    private def extractCancelId(
+    private[kyo] def extractCancelId(
         policy: JsonRpcCancellationPolicy,
         params: Maybe[Structure.Value]
     )(using Frame): Maybe[JsonRpcId] < Sync =
@@ -80,63 +80,12 @@ private[kyo] object CancellationEngine:
             case Absent      => Absent
             case Present(sv) => policy.decodeParams(sv)
 
-    /** Test-accessible alias for extractCancelId. */
+    /** Test-accessible alias for extractCancelId. The inbound pipeline decodes a peer's cancel with the same policy function. */
     private[kyo] def extractCancelIdForTest(
         policy: JsonRpcCancellationPolicy,
         params: Maybe[Structure.Value]
     )(using Frame): Maybe[JsonRpcId] < Sync =
         extractCancelId(policy, params)
-
-    /** Handles an incoming cancel notification from the remote peer.
-      * Called from the reader fiber's decode callback (Sync-only context).
-      * Uses CAS on `pendingInbound` to transition Running -> Cancelled and interrupts the
-      * handler fiber when the policy does not expect a reply for cancelled requests.
-      */
-    def handleInboundCancel(
-        env: JsonRpcNotification,
-        policy: JsonRpcCancellationPolicy,
-        pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry]
-    )(using Frame): Unit < Sync =
-        extractCancelId(policy, env.params).map {
-            case Absent =>
-                Log.warn(s"kyo-jsonrpc: inbound cancel notification missing id, dropping")
-            case Present(id) =>
-                Sync.defer {
-                    Maybe(pendingInbound.get(id)) match
-                        case Absent =>
-                            // Log.live unsafe-warn inside deferred-sync block; no safe Log equivalent within Sync
-                            // format: off
-                            discard(Log.live.unsafe.warn(s"kyo-jsonrpc: inbound cancel for unknown id $id, dropping")(using summon[Frame], AllowUnsafe.embrace.danger))
-                            // format: on
-                        case Present(running: InboundEntry.Running) =>
-                            val cancelled = InboundEntry.Cancelled(running.method)
-                            if pendingInbound.replace(id, running, cancelled) then
-                                // CAS-won path completes promise from outside originating fiber; no safe equivalent in Promise public API
-                                running.cancelled.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
-                                if !policy.expectReplyForCancelledRequest then
-                                    // interrupt monitor/cleanup fiber from outside its scheduler; no safe equivalent in Fiber public API
-                                    running.handler.unsafe.interruptDiscard(
-                                        Result.Panic(Interrupted(summon[Frame]))
-                                    )(using AllowUnsafe.embrace.danger)
-                                end if
-                            else
-                                // CAS lost: handler transitioned to Replying before we got here
-                                Maybe(pendingInbound.get(id)) match
-                                    case Present(r: InboundEntry.Replying) =>
-                                        // suppress-flag access from Sync-only Exchange callback; no safe Atomic equivalent inside Sync block
-                                        r.suppress.unsafe.set(true)(using AllowUnsafe.embrace.danger)
-                                    case _ => ()
-                                end match
-                            end if
-                        case Present(r: InboundEntry.Replying) =>
-                            // Cancel arrived after handler completed; set suppress so writer drops the reply
-                            // suppress-flag access from Sync-only Exchange callback; no safe Atomic equivalent inside Sync block
-                            r.suppress.unsafe.set(true)(using AllowUnsafe.embrace.danger)
-                        case Present(_: InboundEntry.Cancelled) =>
-                            // Idempotent: already cancelled
-                            ()
-                }
-        }
 
     /** Builds and enqueues the outbound cancel notification for a call we issued.
       * The caller is responsible for the absent-check on `callerRegistry` and the
@@ -156,7 +105,7 @@ private[kyo] object CancellationEngine:
         info.requestEnqueued.get.andThen {
             policy.encodeParams(id, reason).map { params =>
                 val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), info.extras)
-                writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
+                WriterMsg.related(cancelEnv).map(writerChannel.put)
             }
         }
 

@@ -82,28 +82,51 @@ object JsonRpcRoute:
 
     /** Per-request context supplied to every [[JsonRpcRoute]] handler by the framework.
       *
-      * Provides access to:
-      *  - `cancelled`: a `Fiber.Promise` that is completed when the peer sends a cancellation for
-      *    the current request.
+      * The context is the handler's view of the one inbound message it is answering: who asked, what
+      * extra data came with the message, whether the peer has given up on it, and a way to send
+      * notifications that belong to it while it runs.
+      *
+      *  - `cancelled`: a `Fiber.Promise` completed when the request is cancelled: by the peer's
+      *    cancellation notification or by the handler closing.
       *  - `requestId`: the JSON-RPC id of the incoming request, or `Absent` for notifications.
-      *  - `extras`: protocol-specific extra fields from the incoming envelope, if any.
+      *  - `extras`: protocol-specific top-level fields of the incoming envelope, if any.
+      *  - `meta`: the `_meta` member of the incoming `params` object, if any (the request metadata
+      *    slot MCP uses).
       *  - `progress`: reports a progress notification back to the caller via the notification method
       *    configured on the active [[JsonRpcProgressPolicy]].
+      *  - `notify`: sends any other notification tied to this request.
+      *
+      * Note: `progress` and `notify` are no-ops once the request has settled or been cancelled, so a
+      * notification never follows the reply it belongs to.
       *
       * @see [[JsonRpcRoute]]
       * @see [[JsonRpcProgressPolicy]]
       */
-    // Smart-constructor pattern; framework creates instances via forTest or JsonRpcEndpointImpl.
+    // Smart-constructor pattern; the framework creates instances via forTest or the inbound pipeline.
     final class Context private[kyo] (
         val cancelled: Fiber.Promise[Unit, Sync],
         val requestId: Maybe[JsonRpcId],
         val extras: Maybe[Structure.Value],
-        private[kyo] val progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
+        val meta: Maybe[Structure.Value],
+        private[kyo] val progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])],
+        private[kyo] val notificationSink: Maybe[JsonRpcNotification => Unit < (Async & Abort[Closed])]
     ):
+        /** Reports a progress value to the caller through the configured [[JsonRpcProgressPolicy]]; a no-op without a policy or a progress
+          * token on the request.
+          */
         def progress(value: Structure.Value)(using Frame): Unit < (Async & Abort[Closed]) =
             progressSink match
                 case Present(sink) => sink(value)
                 case Absent        => Sync.defer(())
+
+        /** Sends a notification tied to this request, stamped with the request's envelope extras. */
+        def notify[In: Schema](method: String, params: In)(using Frame): Unit < (Async & Abort[Closed]) =
+            notificationSink match
+                case Present(sink) =>
+                    Sync.defer(Structure.encode[In](params)).map { encoded =>
+                        sink(JsonRpcNotification(method, Present(encoded), extras))
+                    }
+                case Absent => Sync.defer(())
     end Context
 
     object Context:
@@ -113,7 +136,21 @@ object JsonRpcRoute:
             requestId: Maybe[JsonRpcId],
             extras: Maybe[Structure.Value],
             progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])]
-        ): Context = new Context(cancelled, requestId, extras, progressSink)
+        ): Context = new Context(cancelled, requestId, extras, Absent, progressSink, Absent)
+
+        // test-only construction escape hatch carrying every field
+        private[kyo] def forTest(
+            cancelled: Fiber.Promise[Unit, Sync],
+            requestId: Maybe[JsonRpcId],
+            extras: Maybe[Structure.Value],
+            meta: Maybe[Structure.Value],
+            progressSink: Maybe[Structure.Value => Unit < (Async & Abort[Closed])],
+            notificationSink: Maybe[JsonRpcNotification => Unit < (Async & Abort[Closed])]
+        ): Context = new Context(cancelled, requestId, extras, meta, progressSink, notificationSink)
+
+        /** The `_meta` member of a `params` object, if present. */
+        private[kyo] def metaOf(params: Maybe[Structure.Value]): Maybe[Structure.Value] =
+            params.flatMap(JsonRpcProgressPolicy.field(_, "_meta"))
     end Context
 
     /** Constructs a request route whose closure aborts only with user-domain errors `E` or with
@@ -190,10 +227,11 @@ object JsonRpcRoute:
     end applyMappingsAtBoundary
 
     /** Dispatches `params` to the named route in `routes`. Returns Absent for unknown route.
-      * Internal helper for non-engine consumers (one-shot stdio loop, HTTP POST endpoints,
-      * custom routers); keeps `JsonRpcRoute.handle` private[kyo]. For Notification kind the
-      * inner result is `Structure.Value.Null` after the handler completes.
-      * Use `JsonRpcHandler.Unsafe.dispatch` for engine-level route dispatch.
+      * A bare route lookup that keeps `JsonRpcRoute.handle` private[kyo]: it applies no gate,
+      * unknown-method policy, in-flight registration, cancellation or response mapping. For
+      * Notification kind the inner result is `Structure.Value.Null` after the handler completes.
+      * To answer an inbound envelope with the full semantics a `JsonRpcHandler` applies (an HTTP
+      * POST endpoint, for instance), use `kyo.internal.engine.InboundPipeline`.
       */
     private[kyo] def dispatch(
         name: String,

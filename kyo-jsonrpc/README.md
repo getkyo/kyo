@@ -46,7 +46,7 @@ val program: AddResp < (Async & Scope & Abort[JsonRpcError | Closed]) =
 end program
 ```
 
-The handler closes automatically when the scope exits. The dispatch fiber is interrupted, in-flight responses fail with `Closed`, and the transport's `close` runs.
+The handler closes automatically when the scope exits. Running route handlers are cancelled, pending calls fail, output already accepted is written, and the transport's `close` runs; [Closing with a grace period](#closing-with-a-grace-period) has the details.
 
 ### Scoped vs unscoped lifecycle
 
@@ -110,12 +110,14 @@ A notification handler that runs for a long time therefore delays the notificati
 
 ### The per-request context
 
-Each route handler receives the decoded request value and a `JsonRpcRoute.Context`. The context exposes four fields:
+Each route handler receives the decoded request value and a `JsonRpcRoute.Context`, its view of the one inbound message it is answering. The context exposes:
 
-- `cancelled`: a `Fiber.Promise[Unit, Sync]` that completes when the peer cancels this request. Race it against your work to abort cleanly.
+- `cancelled`: a `Fiber.Promise[Unit, Sync]` that completes when the request is cancelled: by the peer's cancellation notification or by the handler closing. Race it against your work to abort cleanly.
 - `requestId`: the JSON-RPC id of the inbound request, `Absent` for notifications.
 - `extras`: protocol-specific extra fields from the inbound envelope, if any.
+- `meta`: the `_meta` member of the inbound `params` object, `Absent` when `params` is not an object or has no `_meta`. This is the request-metadata slot MCP uses.
 - `progress(value)`: reports a progress notification back to the caller, using whichever method name the active `JsonRpcProgressPolicy` specifies.
+- `notify(method, params)`: sends any other notification that belongs to this request (a log line, a status update), stamped with the request's envelope extras.
 
 ```scala
 val cancellable = JsonRpcRoute.request[Job, AddResp]("doJob") { (job, ctx) =>
@@ -124,7 +126,18 @@ val cancellable = JsonRpcRoute.request[Job, AddResp]("doJob") { (job, ctx) =>
 }
 ```
 
+A handler that reports what it is doing while it runs sends notifications through the context rather than through the handler value, so they are tied to the request:
+
+```scala
+val chatty = JsonRpcRoute.request[Job, AddResp]("chattyJob") { (job, ctx) =>
+    val traceId = ctx.meta.flatMap(meta => JsonRpcProgressPolicy.field(meta, "traceId"))
+    Abort.run[Closed](ctx.notify("log", LogMsg(s"starting ${job.name}, trace $traceId"))).andThen(AddResp(0))
+}
+```
+
 `ctx.progress(value)` is a no-op when no progress policy is set on the handler's `Config`; the handler does not error and the caller sees nothing. Set a policy on `Config` before wiring routes that emit progress.
+
+> **Note:** `progress` and `notify` go out on the same writer as the reply, so a notification a handler sends before it returns reaches the peer before that handler's reply. Both become no-ops once the request has been answered or cancelled, so a request-scoped notification never follows its reply.
 
 ### Domain errors and `.error[E2]`
 
@@ -230,7 +243,13 @@ val drainSlowly: Unit < (Async & Scope) =
 end drainSlowly
 ```
 
-The no-arg `close` is identical to `closeNow`: zero grace period, in-flight requests fail with `Closed`. The `close(gracePeriod)` variant waits up to `gracePeriod` for in-flight requests to drain before forcing.
+The no-arg `close` is identical to `closeNow`: zero grace period. The `close(gracePeriod)` variant first waits up to `gracePeriod` for in-flight work to finish: both the calls this handler issued and the requests and notifications its routes are handling.
+
+When the waiting is over, the close stops what remains in this order. Route handlers still running are cancelled (their `ctx.cancelled` completes) and interrupted, and pending calls fail with `JsonRpcLifecycleError` (stage `Close`); a call issued after that fails with `Closed`. Output that was accepted before the close is then written: replies already produced and notifications `notify` already returned for. Only after that does the transport close.
+
+> **Caution:** because accepted output is written before the transport closes, a close waits on the transport's `send`. A transport whose `send` parks while the peer is alive but not reading holds the close until the peer reads or goes away. Every built-in transport fails a parked `send` with `Closed` once its peer is gone.
+
+> **Note:** `close(gracePeriod)` called from inside one of the handler's own route handlers waits for that handler too, so it lasts the whole grace period. Fork the close there, or use `closeNow`.
 
 ### Progress-bearing requests
 
@@ -266,11 +285,11 @@ The handler only forwards progress to the caller when a `JsonRpcProgressPolicy` 
 
 ## Transports
 
-`JsonRpcTransport` is the envelope-level seam between the handler and the underlying I/O. The trait has three methods (`send`, `incoming`, `close`); the companion ships factories for the four shapes a JSON-RPC peer typically needs: paired in-memory channels for tests, line-delimited stdio for CLI-style servers, Unix domain sockets for local-machine IPC, and WebSocket via the sibling `kyo-jsonrpc-http` subproject.
+`JsonRpcTransport` is the envelope-level seam between the handler and the underlying I/O. The trait has three methods (`send`, `incoming`, `close`); the companion ships factories for the shapes a JSON-RPC peer typically needs: paired in-memory channels for tests, line-delimited stdio for CLI-style servers, a spawned child process for talking to such a server, Unix domain sockets for local-machine IPC, and WebSocket via the sibling `kyo-jsonrpc-http` subproject.
 
 ### In-memory pairs (testing)
 
-`JsonRpcTransport.inMemory` returns a pair of cross-wired transports. `a.send` arrives on `b.incoming` and vice versa. `close` on either end terminates both streams.
+`JsonRpcTransport.inMemory` returns a pair of cross-wired transports. `a.send` arrives on `b.incoming` and vice versa. `close` on either end ends both streams: the closing end's `incoming` ends at once, and the other end's `incoming` ends after it has read the envelopes already sent to it, the way a socket delivers the bytes it accepted before its peer closed.
 
 ```scala
 val paired: Unit < (Async & Scope) =
@@ -302,6 +321,27 @@ The framer and codec default to `JsonRpcFramer.lineDelimited` and the strict `Sc
 
 > **Caution:** `lineDelimited.parse` skips empty lines and does not flush a partial line at EOF. Bytes sent without a trailing newline are silently dropped when the peer closes its stdout. Always terminate frames with `\n` and flush before closing.
 
+### Subprocesses (talking to a stdio server)
+
+The other side of a stdio server is the process that launches it. `JsonRpcTransport.subprocess(command)` spawns the child described by a kyo-system `Command` and speaks JSON-RPC over the child's stdin and stdout, one envelope per line by default:
+
+```scala
+val languageServer: AddResp < (Async & Scope & Abort[CommandException | JsonRpcError | Closed]) =
+    for
+        transport <- JsonRpcTransport.subprocess(Command("my-rpc-server", "--stdio"))
+        handler   <- JsonRpcHandler.init(transport)
+        resp      <- handler.call[AddReq, AddResp]("add", AddReq(2, 3))
+    yield resp
+```
+
+The command runs with the three settings the protocol depends on forced: stdin piped, stdout piped, and stderr kept apart from stdout. Everything else (working directory, environment, where stderr goes) is taken from the `Command` as given. Each call spawns a fresh child, so starting over is calling `subprocess` again with the same `Command`.
+
+The returned `JsonRpcTransport.Subprocess` adds two members. `process` is the child's `Process`, for its pid and exit status. `stderr` streams what the child writes to stderr. The child's stderr is drained from the moment it starts, so a chatty child never stalls on a full pipe whether or not anyone reads it; while nobody reads, the most recent 256 chunks are kept.
+
+When the child exits on its own, `incoming` ends, calls still waiting on the handler fail with `Closed`, and a later `send` fails with `Closed`. Closing the transport, which the enclosing `Scope` does when it ends, stops the child in steps: stdin is closed and the child gets `closeGracePeriod` (2 seconds by default) to exit on its own; a child still running is asked to terminate (SIGTERM on Unix) and gets another `closeGracePeriod`; a child still running after that is killed. The waits are measured against the ambient `Clock`, so tests drive them with `Clock.withTimeControl`. `subprocessUnscoped` is the variant whose close the caller owns.
+
+For a server that frames messages with `Content-Length` headers (LSP, DAP, BSP), pass `framer = JsonRpcFramer.contentLength`.
+
 ### Unix domain sockets
 
 `JsonRpcTransport.unixDomain(path)` binds a `ServerSocketChannel` using `StandardProtocolFamily.UNIX`, registers a `Scope` cleanup that closes the channel and deletes the socket file, and exposes the connection as a `JsonRpcTransport`.
@@ -328,7 +368,7 @@ val lspServer: Unit < (Async & Scope) =
     }
 ```
 
-> **Caution:** `contentLengthStdio` is a cross-platform factory built over the platform kyo-net transport's stdio connection. Stdio is process-global: one stdio transport per process, so a second `contentLengthStdio()` call (or a `JsonRpcTransport.stdio()` byte-stream claim) in the same process aborts `NetStdioAlreadyOpenException`. To frame Content-Length messages over an arbitrary byte-stream pair (for example a spawned subprocess's pipes) rather than process stdio, implement the `JsonRpcWireTransport` seam and pass it to `fromWire` with `JsonRpcFramer.contentLength`.
+> **Caution:** `contentLengthStdio` is a cross-platform factory built over the platform kyo-net transport's stdio connection. Stdio is process-global: one stdio transport per process, so a second `contentLengthStdio()` call (or a `JsonRpcTransport.stdio()` byte-stream claim) in the same process aborts `NetStdioAlreadyOpenException`. To frame Content-Length messages over a spawned child's pipes rather than process stdio, use `JsonRpcTransport.subprocess(command, framer = JsonRpcFramer.contentLength)`; for any other byte-stream pair, implement the `JsonRpcWireTransport` seam and pass it to `fromWire` with `JsonRpcFramer.contentLength`.
 
 ### WebSocket (kyo-jsonrpc-http)
 
@@ -602,11 +642,11 @@ Extensions on `JsonRpcId`: `fold(ifLong, ifString)`, `isLong`, `isString`, `toLo
 
 ## Low-level API
 
-For library authors building higher-level protocols on top of JSON-RPC (kyo-mcp, kyo-lsp, custom dialect adapters), three surfaces sit under the safe API.
+For library authors building higher-level protocols on top of JSON-RPC (kyo-mcp, kyo-lsp, custom dialect adapters), four surfaces sit under the safe API.
 
 ### `JsonRpcHandler.Unsafe`
 
-`JsonRpcHandler` is an opaque alias for `JsonRpcHandler.Unsafe`. Every safe extension method on the handler wraps a parallel `Unsafe` method that returns a `Fiber.Unsafe[...]` directly; the safe tier composes them through `Sync.Unsafe.defer(... .safe.get)`. Access the unsafe view via `handler.unsafe`:
+`JsonRpcHandler` is an opaque alias for `JsonRpcHandler.Unsafe`. Every safe extension method on the handler has a parallel `Unsafe` method that returns a `Fiber.Unsafe[...]` directly. The safe tier runs the same operations on the calling fiber, so they see its `Local` values (the `Clock`, the `Log`); an `Unsafe` method starts its operation on a fresh fiber instead. Access the unsafe view via `handler.unsafe`:
 
 ```scala
 val rawCall: Fiber.Unsafe[AddResp, Abort[JsonRpcError | Closed]] < (Async & Scope) =
@@ -636,9 +676,24 @@ Protocol-author modules that build *indirection routes* (a single wire-level rou
 
 Without `applyMappingsAtBoundary`, a user `Abort.fail(MyError(...))` raised inside an indirection route falls through the wire-level route's empty mapping list and becomes `JsonRpcInternalError(-32603)` instead of the registered code.
 
+### `InboundPipeline`
+
+Every inbound request and notification a handler receives goes through one pipeline, `kyo.internal.engine.InboundPipeline` (`private[kyo]`, documented for protocol authors). For each envelope it applies, in order: the cancellation intercept (a cancel notification cancels its target and goes no further, except for the policy's protected methods), the message gate, the unknown-method policy, the in-flight registration (an id already in flight is answered with `JsonRpcInvalidRequestError` and runs no handler), the construction of the handler's `Context`, and the handler itself. The handler's result becomes the response: its value, a `Halt`'s response verbatim, a `JsonRpcError`, or `JsonRpcHandlerPanicError` for a panic. A cancellation that races the reply is settled per request, so a suppressed reply is never written.
+
+The pipeline has no transport of its own, which is what lets a protocol module answer one envelope at a time outside a long-lived connection (an HTTP POST, for instance) with exactly the semantics a `JsonRpcHandler` has:
+
+```scala
+// Inside a protocol module in the kyo package:
+//   val pipeline = internal.engine.InboundPipeline.init(routes, config)
+//   val env      = new internal.engine.InboundPipeline.Environment(emit = sendToThisResponseStream, isLive = streamStillOpen)
+//   pipeline.dispatch(request, env)  // Outcome.Reply(response) | Outcome.NoReply | Outcome.Violation(maybeResponse)
+```
+
+The `Environment` says where notifications tied to the request go (`progress` and `notify` use it) and whether the peer can still receive them. `dispatch` waits for the handler and returns what to send back; interrupting the fiber that called `dispatch` cancels the request, completing its `ctx.cancelled` and interrupting its handler. `admit` is the non-waiting form the handler engine uses from its reader fiber: it registers and starts the handler, then reports the reply decision through a callback.
+
 ### `JsonRpcRoute.Context.forTest`
 
-`JsonRpcRoute.Context.forTest(cancelled, requestId, extras, progressSink)` is a `private[kyo]` constructor used by route-handler unit tests inside the kyo packages. It exposes the four `Context` fields directly so a test can pass a fresh `Fiber.Promise[Unit, Sync]`, an explicit `requestId`, ad-hoc `extras`, and a captured progress sink without spinning up a transport. External code cannot call it; protocol-author modules that live in the `kyo` package may.
+`JsonRpcRoute.Context.forTest(cancelled, requestId, extras, progressSink)` is a `private[kyo]` constructor used by route-handler unit tests inside the kyo packages. It takes the `Context` fields directly so a test can pass a fresh `Fiber.Promise[Unit, Sync]`, an explicit `requestId`, ad-hoc `extras`, and a captured progress sink without spinning up a transport; `meta` is `Absent` and `notify` is a no-op. The six-argument form, `forTest(cancelled, requestId, extras, meta, progressSink, notificationSink)`, also sets `meta` and captures what `notify` sends. External code cannot call either; protocol-author modules that live in the `kyo` package may.
 
 ## Cross-platform behavior
 
@@ -650,10 +705,11 @@ The shared API compiles and runs on JVM, JavaScript, and Scala Native. The cross
 | `JsonRpcTransport.inMemory` | yes | yes | yes |
 | `JsonRpcTransport.stdio` | yes | yes | yes |
 | `JsonRpcTransport.fromWire` + custom `JsonRpcWireTransport` | yes | yes | yes |
+| `JsonRpcTransport.subprocess` | yes | yes (Node) | yes |
 | `JsonRpcTransport.unixDomain` | yes | yes (Node) | yes |
 | `JsonRpcTransport.contentLengthStdio` | yes | yes (Node) | yes |
 | `JsonRpcHttpTransport.webSocket` (separate subproject) | yes | yes | yes |
 
-`unixDomain` and `contentLengthStdio` are cross-platform: both run over the platform kyo-net transport, which backs JS and Wasm with Node's `net`/stdio APIs. That means a Node.js runtime is required on JS/Wasm; a browser has no sockets or process stdio. Stdio is also process-global: only one stdio transport (`contentLengthStdio` or a `stdio()` byte-stream claim) may be open per process, and a second one aborts `NetStdioAlreadyOpenException`.
+`subprocess` spawns through kyo-system's `Command`, which uses `java.lang.Process` on the JVM and Native and Node's `child_process` on JS and Wasm. `unixDomain` and `contentLengthStdio` are cross-platform: both run over the platform kyo-net transport, which backs JS and Wasm with Node's `net`/stdio APIs. That means a Node.js runtime is required on JS/Wasm; a browser has no sockets or process stdio. Stdio is also process-global: only one stdio transport (`contentLengthStdio` or a `stdio()` byte-stream claim) may be open per process, and a second one aborts `NetStdioAlreadyOpenException`.
 
 The WebSocket transport requires the `kyo-jsonrpc-http` subproject, which depends on `kyo-http`. It compiles for all three platforms.

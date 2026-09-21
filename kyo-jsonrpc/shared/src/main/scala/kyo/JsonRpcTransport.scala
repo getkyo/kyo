@@ -18,6 +18,7 @@ import kyo.net.NetPlatform
   *  - [[JsonRpcTransport.contentLengthStdio]]: Content-Length-framed stdio transport for LSP, DAP,
   *    BSP, and other header-framed JSON-RPC protocols.
   *  - [[JsonRpcTransport.unixDomain]]: Unix-domain-socket transport.
+  *  - [[JsonRpcTransport.subprocess]]: a spawned child process's stdin and stdout, for talking to a stdio server.
   *
   * @see [[JsonRpcHandler]]
   */
@@ -32,6 +33,16 @@ trait JsonRpcTransport:
       * dropped.
       */
     def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError])
+
+    /** Sends `env`, naming the inbound request it belongs to when a handler sent it while answering one.
+      *
+      * A notification a handler emits, or a request it makes of the peer, belongs to the inbound request that handler is
+      * answering. A transport that carries each request's exchange on a channel of its own, as MCP's Streamable HTTP does
+      * with a response stream per request, delivers such a message on that request's channel; every other transport
+      * ignores the relation, which is what this default does.
+      */
+    def send(env: JsonRpcEnvelope, relatedTo: Maybe[JsonRpcId])(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
+        send(env)
     def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]
     def close(using Frame): Unit < Async
 end JsonRpcTransport
@@ -41,7 +52,8 @@ object JsonRpcTransport:
     /** Pair of cross-wired in-memory transports for tests.
       *
       * Returns (a, b) where a.send -> b.incoming and b.send -> a.incoming.
-      * close on either end terminates both incoming streams.
+      * close on either end ends both incoming streams: the closing end's at once, and the other end's once it has read
+      * the envelopes already sent to it.
       */
     def inMemory(capacity: Int)(using Frame): (JsonRpcTransport, JsonRpcTransport) < Sync =
         for
@@ -71,13 +83,19 @@ object JsonRpcTransport:
 
     /** Line-delimited stdio transport for CLI-style RPC servers. Reads `Console.readLine`
       * and writes `Console.printLine`. EOF on stdin closes `incoming`. One envelope per line.
+      *
+      * The console it uses is the one ambient here, captured now and kept: the protocol channel has to stay the
+      * channel whatever an enclosing scope later rebinds `Console` to, which is what lets [[stdioWith]] divert
+      * application output without diverting the protocol along with it.
       */
     def stdio(
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
     )(using Frame): JsonRpcTransport < (Async & Scope) =
-        Sync.defer(new internal.transport.StdioWireTransport).map { wire =>
-            fromWire(wire, framer, codec)
+        Console.use { channel =>
+            Sync.defer(new internal.transport.StdioWireTransport(channel)).map { wire =>
+                fromWire(wire, framer, codec)
+            }
         }
 
     /** [[stdio]] with the process's own streams protected for the duration of `f`.
@@ -153,6 +171,80 @@ object JsonRpcTransport:
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         internal.transport.UdsBackend.connect(sockPath, framer, codec)
 
+    /** A transport to a JSON-RPC peer running as a child process, speaking over the child's stdin and stdout.
+      *
+      * The command is spawned with the three settings the protocol depends on forced: stdin piped, stdout piped, and stderr kept apart
+      * from stdout. Every other setting (arguments, working directory, environment, where stderr goes) is taken from `command` as given.
+      * Each call spawns a fresh child, so a caller that needs to start over calls it again with the same `Command`.
+      *
+      * Envelopes are framed with `framer` (one JSON object per line by default) and encoded with `codec`, exactly as [[fromWire]] does
+      * for any byte stream. The child's stderr is drained from spawn, so a child that writes a lot of diagnostics never stalls on a full
+      * pipe; [[Subprocess.stderr]] streams it, keeping the most recent output when nobody reads it for a while.
+      *
+      * When the child exits on its own, `incoming` ends, so a [[JsonRpcHandler]] over this transport fails its pending calls with
+      * `Closed`, and a later `send` fails with `Closed`.
+      *
+      * Closing ends the child in steps: stdin is closed and the child gets `closeGracePeriod` to exit; if it is still running it is asked
+      * to terminate (SIGTERM on Unix) and gets another `closeGracePeriod`; if it is still running it is killed. The waits are measured
+      * against the ambient `Clock`. The enclosing `Scope` closes the transport when it ends.
+      *
+      * Works wherever kyo-system can spawn processes: JVM, Native, and JS/Wasm on Node.js.
+      *
+      * {{{
+      * Scope.run {
+      *     for
+      *         transport <- JsonRpcTransport.subprocess(Command("my-language-server", "--stdio"))
+      *         handler   <- JsonRpcHandler.init(transport)
+      *         result    <- handler.call[Ping, Pong]("ping", Ping())
+      *     yield result
+      * }
+      * }}}
+      *
+      * @param command          the child to spawn
+      * @param framer           byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
+      * @param codec            envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`
+      * @param closeGracePeriod how long each close step waits for the child to exit before escalating
+      * @see [[subprocessUnscoped]] for a transport whose close the caller owns
+      */
+    def subprocess(
+        command: Command,
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        closeGracePeriod: Duration = 2.seconds
+    )(using Frame): Subprocess < (Sync & Scope & Abort[CommandException]) =
+        Scope.acquireRelease(subprocessUnscoped(command, framer, codec, closeGracePeriod))(_.close)
+
+    /** [[subprocess]] without registering the close with any `Scope`: the caller owns the child and must call `close`. */
+    def subprocessUnscoped(
+        command: Command,
+        framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        closeGracePeriod: Duration = 2.seconds
+    )(using Frame): Subprocess < (Sync & Abort[CommandException]) =
+        internal.transport.SubprocessTransport.init(command, framer, codec, closeGracePeriod)
+
+    /** A [[JsonRpcTransport]] to a child process, returned by [[subprocess]] and [[subprocessUnscoped]].
+      *
+      * `send` and `incoming` carry envelopes over the child's stdin and stdout; `close` ends the child, escalating from closing
+      * stdin to a termination request to a kill, each step bounded by the grace period the transport was created with.
+      *
+      * On top of the transport operations it exposes the child itself, for its pid and exit status, and the child's stderr,
+      * which is the usual place a stdio server reports what went wrong. Reading stderr is optional: it is drained whether or not
+      * anyone reads it.
+      *
+      * @see [[JsonRpcTransport.subprocess]]
+      */
+    abstract class Subprocess extends JsonRpcTransport:
+
+        /** The spawned child. Terminate it through `close`, which escalates, rather than through the process directly. */
+        def process: Process
+
+        /** The child's stderr, from spawn until the child closes it. It ends once the child's stderr is closed and what was buffered has
+          * been read. At most the most recent 256 chunks are kept while nobody reads. Single consumer.
+          */
+        def stderr(using Frame): Stream[Byte, Async]
+    end Subprocess
+
     /** Content-Length-framed stdio transport for JSON-RPC (LSP, DAP, BSP).
       *
       * Reads `Content-Length: N\r\n\r\n<N bytes>` frames from process stdin and writes matching frames to process stdout,
@@ -163,9 +255,9 @@ object JsonRpcTransport:
       * Stdio is process-global: one stdio transport per process. A second `contentLengthStdio()` (or a
       * [[JsonRpcTransport.stdio]] byte-stream claim) in the same process aborts [[kyo.net.NetStdioAlreadyOpenException]].
       *
-      * To frame Content-Length messages over an arbitrary byte-stream pair (for example a spawned subprocess's pipes)
-      * rather than process stdio, implement the [[JsonRpcWireTransport]] seam and pass it to [[fromWire]] with
-      * [[JsonRpcFramer.contentLength]].
+      * To frame Content-Length messages over a spawned child's pipes rather than process stdio, use [[subprocess]] with
+      * [[JsonRpcFramer.contentLength]]; for any other byte-stream pair, implement the [[JsonRpcWireTransport]] seam and
+      * pass it to [[fromWire]] with [[JsonRpcFramer.contentLength]].
       *
       * @param framer framing strategy; defaults to [[JsonRpcFramer.contentLength]]
       * @param codec  envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`

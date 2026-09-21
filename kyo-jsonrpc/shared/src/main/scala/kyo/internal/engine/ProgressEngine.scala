@@ -76,14 +76,17 @@ private[kyo] object ProgressEngine:
       * Returns Absent when no token is found in params or no progress policy is configured.
       * Must be called inside an unsafe-deferred block (AllowUnsafe in scope).
       * The closure captures a per-invocation monotonicity ref (per-invocation, not global).
+      *
+      * `emit` delivers a notification tied to the request; `isLive` is consulted before every emission, and a value
+      * reported while it is false is dropped, which is how progress stops once the request has settled or been cancelled.
+      * A `Closed` from `emit` is absorbed: the request's peer is gone, so there is nobody to report progress to.
       */
     def buildProgressSink(
-        id: JsonRpcId,
         params: Maybe[Structure.Value],
         extras: Maybe[Structure.Value],
         progressPolicy: Maybe[JsonRpcProgressPolicy],
-        pendingInbound: ConcurrentHashMap[JsonRpcId, InboundEntry],
-        writerChannel: Channel[WriterMsg]
+        emit: JsonRpcNotification => Unit < (Async & Abort[Closed]),
+        isLive: Boolean < Sync
     )(using frame: Frame, allow: AllowUnsafe): Maybe[Structure.Value => Unit < (Async & Abort[Closed])] =
         progressPolicy match
             case Absent          => Absent
@@ -106,16 +109,16 @@ private[kyo] object ProgressEngine:
                         val monoMutex                                               = Sync.Unsafe.evalOrThrow(Meter.initMutexUnscoped)
                         val sink: Structure.Value => Unit < (Async & Abort[Closed]) =
                             value =>
-                                Sync.defer(Maybe(pendingInbound.get(id))).map {
-                                    case Present(_: InboundEntry.Running) =>
-                                        def emit(): Unit < (Async & Abort[Closed]) =
+                                isLive.map {
+                                    case true =>
+                                        def emitValue(): Unit < (Async & Abort[Closed]) =
                                             policy.encodeProgressParams(token, value).map { encoded =>
                                                 val env = JsonRpcNotification(
                                                     policy.progressMethod,
                                                     Present(encoded),
                                                     extras
                                                 )
-                                                Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).unit
+                                                Abort.run[Closed](emit(env)).unit
                                             }
                                         if policy.enforceMonotonic then
                                             val newPct: Maybe[BigDecimal] =
@@ -130,19 +133,19 @@ private[kyo] object ProgressEngine:
                                                         )
                                                     case _ => Absent
                                             newPct match
-                                                case Absent          => emit()
+                                                case Absent          => emitValue()
                                                 case Present(newVal) =>
                                                     monoMutex.run {
                                                         monoRef.get.map {
                                                             case Present(prev) if newVal <= prev => Kyo.unit
-                                                            case _ => monoRef.set(Present(newVal)).andThen(emit())
+                                                            case _ => monoRef.set(Present(newVal)).andThen(emitValue())
                                                         }
                                                     }
                                             end match
                                         else
-                                            emit()
+                                            emitValue()
                                         end if
-                                    case _ => Kyo.unit
+                                    case false => Kyo.unit
                                 }
                         Present(sink)
                 end match

@@ -35,6 +35,68 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             inner.close
     end CountingTransport
 
+    // A transport that records the inbound request each outbound message was sent for.
+    private class RelatingTransport(inner: JsonRpcTransport, val sent: AtomicRef.Unsafe[Chunk[(String, Maybe[JsonRpcId])]])
+        extends JsonRpcTransport:
+
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = send(env, Absent)
+
+        override def send(env: JsonRpcEnvelope, relatedTo: Maybe[JsonRpcId])(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
+            val label = env match
+                case r: JsonRpcRequest      => s"request ${r.method}"
+                case n: JsonRpcNotification => s"notification ${n.method}"
+                case _: JsonRpcResponse     => "response"
+                case _                      => "malformed"
+            Sync.defer(discard(sent.updateAndGet(_ :+ (label -> relatedTo))(using AllowUnsafe.embrace.danger))).andThen(inner.send(env))
+        end send
+
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] = inner.incoming
+
+        def close(using Frame): Unit < Async = inner.close
+    end RelatingTransport
+
+    "a message a handler sends while answering a request reaches the transport related to that request" in {
+        // Unsafe: recording shared with the transport's writer fiber.
+        val sent = AtomicRef.Unsafe.init(Chunk.empty[(String, Maybe[JsonRpcId])])(using AllowUnsafe.embrace.danger)
+        val ask  = JsonRpcRoute.request[LogMsg, LogMsg]("ask")((msg, _) => LogMsg(msg.text + "!"))
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            Fiber.Promise.init[JsonRpcHandler, Any].map { answering =>
+                val work = JsonRpcRoute.request[AddReq, AddResp]("work") { (req, ctx) =>
+                    for
+                        _       <- ctx.notify("working", LogMsg("started"))
+                        handler <- answering.get
+                        _       <- handler.notify("progressed", LogMsg("half"))
+                        _       <- handler.call[LogMsg, LogMsg]("ask", LogMsg("sure"))
+                    yield AddResp(req.a + req.b)
+                }
+                JsonRpcHandler.init(ta, Seq(ask)).map { a =>
+                    JsonRpcHandler.init(new RelatingTransport(tb, sent), Seq(work)).map { b =>
+                        answering.completeDiscard(Result.succeed(b))
+                            .andThen(a.call[AddReq, AddResp]("work", AddReq(1, 2)))
+                            .andThen(b.notify("idle", LogMsg("done")))
+                            .andThen(assertEventually(Sync.defer(sent.get()(using AllowUnsafe.embrace.danger).size == 5)))
+                            .andThen {
+                                val recorded = sent.get()(using AllowUnsafe.embrace.danger)
+                                val related  = recorded.filter(_._2.isDefined).map(_._1)
+                                assert(
+                                    recorded.flatMap(_._2.toChunk).distinct.size == 1,
+                                    s"one request is named, the one answered: $recorded"
+                                )
+                                assert(
+                                    related == Chunk("notification working", "notification progressed", "request ask"),
+                                    s"messages sent while answering 'work' carry its id: $recorded"
+                                )
+                                assert(
+                                    recorded.filter(_._2.isEmpty).map(_._1) == Chunk("response", "notification idle"),
+                                    s"the reply and a message sent outside a request carry none: $recorded"
+                                )
+                            }
+                    }
+                }
+            }
+        }
+    }
+
     "call add handler returns correct result" in {
         val addMethod = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
@@ -859,6 +921,158 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     a.sendUnmatched("noop", (), JsonRpcId.Num(1)).andThen(a.awaitDrain).map(_ => succeed)
                 }
             }
+        }
+    }
+
+    "a request reusing an in-flight id is rejected and its handler never runs" in {
+        // Two requests with the same id are written directly on the wire while the first is still running. The second
+        // must be answered with InvalidRequest (-32600) without starting a handler; the first then completes normally.
+        for
+            entries   <- AtomicInt.init(0)
+            gate      <- Latch.init(1)
+            entered   <- Latch.init(1)
+            second    <- Latch.init(1)
+            collected <- Channel.init[JsonRpcEnvelope](8)
+            slow = JsonRpcRoute.request[AddReq, AddResp]("slow") { (req, _) =>
+                entries.incrementAndGet.map { n =>
+                    (if n == 1 then entered.release else second.release).andThen(gate.await).andThen(AddResp(req.a + req.b))
+                }
+            }
+            (ta, tb) <- JsonRpcTransport.inMemory
+            _        <- JsonRpcHandler.init(tb, Seq(slow))
+            _        <- Fiber.initUnscoped(ta.incoming.foreach(env => collected.put(env)))
+            params = Present(Structure.encode(AddReq(1, 2)))
+            _ <- ta.send(JsonRpcRequest(JsonRpcId(7L), "slow", params, Absent))
+            _ <- entered.await
+            _ <- ta.send(JsonRpcRequest(JsonRpcId(7L), "slow", params, Absent))
+            // Either the duplicate is answered, or its handler starts (the defect).
+            outcome <- Async.race(
+                second.await.andThen(Absent: Maybe[JsonRpcEnvelope]),
+                collected.take.map(env => Present(env): Maybe[JsonRpcEnvelope])
+            )
+            _      <- gate.release
+            result <- collected.take
+            count  <- entries.get
+        yield
+            outcome match
+                case Present(JsonRpcResponse(id, Absent, Present(err), _)) =>
+                    assert(id == JsonRpcId(7L) && err.code == -32600, s"expected InvalidRequest for id 7, got $outcome")
+                case other => fail(s"a request reusing an in-flight id was not rejected: $other")
+            end match
+            assert(count == 1, s"expected one handler run, got $count")
+            result match
+                case JsonRpcResponse(id, Present(value), Absent, _) =>
+                    assert(id == JsonRpcId(7L) && Structure.decode[AddResp](value) == Result.Success(AddResp(3)))
+                case other => fail(s"expected the first request's result, got $other")
+            end match
+        end for
+    }
+
+    "awaitDrain waits for a call counted in flight" in {
+        // A call counts as in flight from its first step. awaitDrain issued while it is counted must wait for it: the waiter
+        // parking on the drain is the barrier, and only the release lets it return. The count is driven directly on the
+        // engine's outbound tracker to pin that moment exactly.
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                val impl = a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl]
+                import AllowUnsafe.embrace.danger
+                for
+                    _        <- Sync.defer(impl.outbound.acquire())
+                    waiter   <- Fiber.initUnscoped(a.awaitDrain)
+                    _        <- assertEventually(Sync.defer(impl.outbound.idleWaiters() > 0))
+                    returned <- waiter.done
+                    _        <- Sync.defer(impl.outbound.release())
+                    _        <- waiter.get
+                yield assert(!returned, "awaitDrain returned while a call was counted in flight")
+                end for
+            }
+        }
+    }
+
+    "request context" - {
+
+        def rawAdd(id: Long, params: Structure.Value): JsonRpcRequest = JsonRpcRequest(JsonRpcId.Num(id), "add", Present(params), Absent)
+
+        "a handler's ctx.notify is written to the peer ahead of the reply, stamped with the request's extras" in {
+            val extras = Structure.Value.Record(Chunk("session" -> Structure.Value.Str("s1")))
+            val route  = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, ctx) =>
+                ctx.notify("log", LogMsg("adding")).andThen(AddResp(req.a + req.b))
+            }
+            // The default codec drops non-standard envelope fields; the lenient one carries them as extras.
+            val lenientConfig = JsonRpcHandler.Config(codec = JsonRpcEnvelope.lenientSchema)
+            for
+                (ta, tb) <- JsonRpcTransport.inMemory
+                _        <- JsonRpcHandler.init(tb, Seq(route), lenientConfig)
+                _        <- Abort.run[Closed](ta.send(JsonRpcRequest(
+                    JsonRpcId.Num(1L),
+                    "add",
+                    Present(Structure.encode(AddReq(2, 3))),
+                    Present(extras)
+                )))
+                written <- Abort.run[Closed](ta.incoming.take(2).run)
+            yield assert(
+                written == Result.succeed(Chunk(
+                    JsonRpcNotification("log", Present(Structure.encode(LogMsg("adding"))), Present(extras)),
+                    JsonRpcResponse(JsonRpcId.Num(1L), Present(Structure.encode(AddResp(5))), Absent, Present(extras))
+                )),
+                s"unexpected output: $written"
+            )
+            end for
+        }
+
+        "a handler sees the request params' _meta as ctx.meta" in {
+            val meta = Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Str("t1")))
+            for
+                captured <- AtomicRef.init[Maybe[Structure.Value]](Absent)
+                route = JsonRpcRoute.request[AddReq, AddResp]("add")((req, ctx) => captured.set(ctx.meta).andThen(AddResp(req.a + req.b)))
+                (a, _) <- mkEndpoints(Seq.empty, Seq(route))
+                params = Structure.Value.Record(Chunk(
+                    "a"     -> Structure.Value.Integer(1L),
+                    "b"     -> Structure.Value.Integer(2L),
+                    "_meta" -> meta
+                ))
+                resp <- a.call[Structure.Value, AddResp]("add", params)
+                seen <- captured.get
+            yield
+                assert(resp == AddResp(3))
+                assert(seen == Present(meta))
+            end for
+        }
+
+        "ctx.notify after the request was answered writes nothing" in {
+            for
+                captured <- AtomicRef.init[Maybe[JsonRpcRoute.Context]](Absent)
+                route =
+                    JsonRpcRoute.request[AddReq, AddResp]("add")((req, ctx) => captured.set(Present(ctx)).andThen(AddResp(req.a + req.b)))
+                (ta, tb) <- JsonRpcTransport.inMemory
+                _        <- JsonRpcHandler.init(tb, Seq(route))
+                _        <- Abort.run[Closed](ta.send(rawAdd(1, Structure.encode(AddReq(1, 1)))))
+                answered <- Abort.run[Closed](ta.incoming.take(1).run)
+                ctx      <- captured.get
+                _        <- ctx match
+                    case Present(c) => Abort.run[Closed](c.notify("log", LogMsg("too late")))
+                    case Absent     => Kyo.unit
+                // Anything the late notify wrote was queued before request 2 arrives, so it would be read ahead of reply 2.
+                _    <- Abort.run[Closed](ta.send(rawAdd(2, Structure.encode(AddReq(2, 2)))))
+                next <- Abort.run[Closed](ta.incoming.take(1).run)
+            yield
+                assert(answered == Result.succeed(Chunk(JsonRpcResponse(
+                    JsonRpcId.Num(1L),
+                    Present(Structure.encode(AddResp(2))),
+                    Absent,
+                    Absent
+                ))))
+                assert(ctx.nonEmpty)
+                assert(
+                    next == Result.succeed(Chunk(JsonRpcResponse(
+                        JsonRpcId.Num(2L),
+                        Present(Structure.encode(AddResp(4))),
+                        Absent,
+                        Absent
+                    ))),
+                    s"a notification followed its reply: $next"
+                )
+            end for
         }
     }
 

@@ -58,23 +58,36 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(ok.code == -32050)
     }
 
-    "JsonRpcError.fromWire maps standard codes to typed leaves" in {
-        val p = JsonRpcError.fromWire(-32700, "Parse error", Absent)
-        assert(p.isInstanceOf[JsonRpcParseError])
-        assert(p.code == -32700)
-        val ir = JsonRpcError.fromWire(-32600, "Invalid Request", Absent)
-        assert(ir.isInstanceOf[JsonRpcInvalidRequestError])
-        val mn = JsonRpcError.fromWire(-32601, "Method not found", Absent)
-        assert(mn.isInstanceOf[JsonRpcMethodNotFoundError])
-        val ip = JsonRpcError.fromWire(-32602, "Invalid params", Absent)
-        assert(ip.isInstanceOf[JsonRpcInvalidParamsError])
-        val ie = JsonRpcError.fromWire(-32603, "Internal error", Absent)
-        assert(ie.isInstanceOf[JsonRpcInternalError])
+    "JsonRpcError.fromWire keeps the peer's code" in {
+        assert(JsonRpcError.fromWire(-32700, "Parse error", Absent).code == -32700)
+        assert(JsonRpcError.fromWire(-32600, "Invalid Request", Absent).code == -32600)
+        assert(JsonRpcError.fromWire(-32601, "Method not found", Absent).code == -32601)
+        assert(JsonRpcError.fromWire(-32602, "Invalid params", Absent).code == -32602)
+        assert(JsonRpcError.fromWire(-32603, "Internal error", Absent).code == -32603)
         val impl = JsonRpcError.fromWire(-32050, "Server error", Absent)
         assert(impl.isInstanceOf[JsonRpcImplementationError])
+        assert(impl.code == -32050)
         val custom = JsonRpcError.fromWire(409, "Conflict", Absent)
         assert(custom.isInstanceOf[JsonRpcCustomError])
         assert(custom.code == 409)
+    }
+
+    // The standard codes used to map to their local leaves, which build their message from fields a
+    // receiver does not have. A peer that explained itself had the explanation replaced by a
+    // fabricated one, and "Available methods: (none)" is false as well as vague.
+    "JsonRpcError.fromWire keeps what the peer actually said" in {
+        val explained = "Method 'sampling/createMessage' requires client capability 'sampling' which was not advertised."
+        assert(JsonRpcError.fromWire(-32601, explained, Absent).message == explained)
+        assert(JsonRpcError.fromWire(-32602, "field 'sql' must not be empty", Absent).message == "field 'sql' must not be empty")
+        assert(JsonRpcError.fromWire(-32700, "unexpected end of input at 41", Absent).message == "unexpected end of input at 41")
+        assert(JsonRpcError.fromWire(-32603, "the backend timed out", Absent).message == "the backend timed out")
+        assert(JsonRpcError.fromWire(-32600, "id must be a string or a number", Absent).message == "id must be a string or a number")
+    }
+
+    "JsonRpcError.fromWire keeps the peer's data" in {
+        val data = Present(Structure.Value.Record(Chunk("requiredCapabilities" -> Structure.Value.Str("sampling"))))
+        assert(JsonRpcError.fromWire(-32601, "nope", data).data == data)
+        assert(JsonRpcError.fromWire(-32602, "nope", data).data == data)
     }
 
     "subcategory traits are correctly assigned" in {
@@ -93,12 +106,14 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(JsonRpcCustomError(409, "Conflict").isInstanceOf[JsonRpcApplicationFailure])
     }
 
+    // A local leaf encodes to its triple and decodes back to the same triple. It does not decode back
+    // to the same leaf, and should not: the receiver has none of the fields the leaf is built from.
     "Schema[JsonRpcError] wire round-trip via fromWire" in {
-        val err     = JsonRpcMethodNotFoundError("subscribe", Chunk.empty)
+        val err     = JsonRpcMethodNotFoundError("subscribe", Chunk("ping", "tools/list"))
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("decode failed"))
         assert(decoded.code == -32601)
-        assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
+        assert(decoded.message == err.message, s"the message must survive the round trip; got: ${decoded.message}")
     }
 
     "Schema[JsonRpcError] round-trips code/message/data triple" in {

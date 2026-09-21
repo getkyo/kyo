@@ -34,14 +34,14 @@ object JsonRpcHandler:
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
-            Sync.Unsafe.defer(self.call[In, Out](method, params, extras).safe.get)
+            self.callEffect[In, Out](method, params, extras)
 
         def notify[In: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.Unsafe.defer(self.notify[In](method, params, extras).safe.get)
+            self.notifyEffect[In](method, params, extras)
 
         def sendUnmatched[In: Schema](
             method: String,
@@ -49,14 +49,14 @@ object JsonRpcHandler:
             id: JsonRpcId,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.Unsafe.defer(self.sendUnmatched[In](method, params, id, extras).safe.get)
+            self.sendUnmatchedEffect[In](method, params, id, extras)
 
         def callWithProgress[In: Schema, Out: Schema](
             method: String,
             params: In,
             extras: JsonRpcExtrasEncoder = JsonRpcExtrasEncoder.empty
         )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
-            Sync.Unsafe.defer(self.callWithProgress[In, Out](method, params, extras).safe.get)
+            self.callWithProgressEffect[In, Out](method, params, extras)
 
         def callPartialResults[In: Schema, T: Schema: Tag](
             method: String,
@@ -71,25 +71,41 @@ object JsonRpcHandler:
             Sync.Unsafe.defer(self.subscribeProgress(token))
 
         def unsubscribeProgress(token: Structure.Value)(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.unsubscribeProgress(token).safe.get)
+            self.unsubscribeProgressEffect(token)
 
+        /** Asks the peer to stop a call this handler issued, by sending the configured cancellation notification. */
         def cancel(id: JsonRpcId, reason: Maybe[String] = Absent)(using Frame): Unit < (Async & Abort[Closed]) =
-            Sync.Unsafe.defer(self.cancel(id, reason).safe.get)
+            self.cancelEffect(id, reason)
 
+        /** Waits until the calls this handler issued have settled. */
         def awaitDrain(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.awaitDrain.safe.get)
+            self.awaitDrainEffect
 
-        /** Closes the handler immediately without draining in-flight requests. */
+        /** Closes the handler immediately. Identical to `close(Duration.Zero)`. */
         def close(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
+            Async.mask(self.closeEffect(Duration.Zero))
 
-        /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
+        /** Closes the handler, waiting up to `gracePeriod` for in-flight work to finish before stopping what remains.
+          *
+          * In-flight work is both the calls this handler issued and the requests and notifications its routes are handling.
+          * When the grace period ends, running route handlers are cancelled (their `ctx.cancelled` completes) and interrupted,
+          * and pending calls fail with `JsonRpcLifecycleError`. Output accepted before that point is still written: replies
+          * already produced, and notifications already accepted by `notify`.
+          *
+          * WARNING: called from inside one of this handler's own route handlers, the wait includes that handler, so it lasts
+          * the whole grace period. Fork the close there, or use `closeNow`.
+          */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
+            // Masked: a close that has started runs to completion even if the caller is interrupted, for instance a route handler
+            // that closes its own handler and is then cancelled by that close.
+            Async.mask(self.closeEffect(gracePeriod))
 
-        /** Closes the handler immediately without draining in-flight requests. Identical to `close(Duration.Zero)`. */
+        /** Closes the handler without waiting for in-flight work: running route handlers are cancelled and interrupted, and
+          * pending calls fail. Output accepted before the close (produced replies, notifications `notify` accepted) is still
+          * written before the transport closes. Identical to `close(Duration.Zero)`.
+          */
         def closeNow(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
+            Async.mask(self.closeEffect(Duration.Zero))
 
         /** Returns the underlying unsafe handler instance. */
         def unsafe: Unsafe = self
@@ -153,6 +169,44 @@ object JsonRpcHandler:
 
         /** Returns the safe opaque-type wrapper for this unsafe handler instance. */
         final def safe: JsonRpcHandler = this
+
+        // --- Effectful forms, run by the safe tier on the calling fiber ---
+        //
+        // The Fiber.Unsafe methods above start their work on a carrier with an empty context, so a caller's Clock, Log or
+        // trace bindings would not reach it. The safe tier runs these instead, inside the caller's own computation.
+
+        private[kyo] def callEffect[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcExtrasEncoder
+        )(using Frame): Out < (Async & Abort[JsonRpcError | Closed])
+
+        private[kyo] def notifyEffect[In: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcExtrasEncoder
+        )(using Frame): Unit < (Async & Abort[Closed])
+
+        private[kyo] def sendUnmatchedEffect[In: Schema](
+            method: String,
+            params: In,
+            id: JsonRpcId,
+            extras: JsonRpcExtrasEncoder
+        )(using Frame): Unit < (Async & Abort[Closed])
+
+        private[kyo] def callWithProgressEffect[In: Schema, Out: Schema](
+            method: String,
+            params: In,
+            extras: JsonRpcExtrasEncoder
+        )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed])
+
+        private[kyo] def unsubscribeProgressEffect(token: Structure.Value)(using Frame): Unit < Async
+
+        private[kyo] def cancelEffect(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed])
+
+        private[kyo] def awaitDrainEffect(using Frame): Unit < Async
+
+        private[kyo] def closeEffect(gracePeriod: Duration)(using Frame): Unit < Async
     end Unsafe
 
     /** Represents an in-flight request that supports progress reporting.

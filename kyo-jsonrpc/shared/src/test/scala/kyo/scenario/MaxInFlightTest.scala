@@ -186,8 +186,9 @@ class MaxInFlightTest extends JsonRpcTest:
                                 endpointA.call[PingReq, PingResp]("ping", PingReq(0))
                             )
                         ).map { callFib =>
-                            // Advance the fake clock past requestTimeout to fire the timeout arm.
-                            control.advance(200.millis).andThen {
+                            // Once the call has armed its requestTimeout on the controlled clock, advance past it to fire the
+                            // timeout arm. Advancing before the call arms would move the clock under a deadline not yet set.
+                            control.awaitPendingSleepers(1).andThen(control.advance(200.millis)).andThen {
                                 callFib.get.map {
                                     case Result.Failure(e: JsonRpcError) =>
                                         assert(e.code == -32800, s"expected cancelled code -32800, got ${e.code}")
@@ -202,9 +203,12 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in {
+        // Completed when the request reaches B's route, which proves A has issued it under its id. A cancel is sent only for a
+        // request that was issued: a timeout that fires before the call has its id has nothing on the wire to cancel.
+        val entered = Fiber.Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger).safe
         val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
-            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
+            entered.completeUnitDiscard.andThen(Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) })
         }
 
         // cancelMethod="$/cancelRequest", expectReply=true
@@ -248,9 +252,10 @@ class MaxInFlightTest extends JsonRpcTest:
                                     endpointA.call[PingReq, PingResp]("ping", PingReq(0))
                                 )
                             ).map { callFib =>
-                                // Advance the fake clock past requestTimeout to fire the timeout arm, then
-                                // wait for the call to resolve with a failure.
-                                control.advance(200.millis).andThen {
+                                // Once the request has reached B and the call has armed its requestTimeout on the controlled clock,
+                                // advance past it to fire the timeout arm, then wait for the call to resolve with a failure. Both
+                                // barriers park on promises rather than on the controlled clock.
+                                entered.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(200.millis)).andThen {
                                     callFib.get.map {
                                         case Result.Failure(_: JsonRpcError) => ()
                                         case other                           => fail(s"expected failure, got $other")
@@ -275,9 +280,12 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires with cancellation = Absent: no cancel notification sent" in {
+        // Completed when the request reaches B's route, so the timeout fires for a request that was issued, the case where a
+        // cancel notification would otherwise be sent.
+        val entered = Fiber.Promise.Unsafe.init[Unit, Any]()(using AllowUnsafe.embrace.danger).safe
         val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
-            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
+            entered.completeUnitDiscard.andThen(Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) })
         }
 
         val cfg = JsonRpcHandler.Config(
@@ -295,10 +303,10 @@ class MaxInFlightTest extends JsonRpcTest:
                                 endpointA.call[PingReq, PingResp]("ping", PingReq(0))
                             )
                         ).map { callFib =>
-                            // Advance the fake clock past requestTimeout to fire the timeout arm. With
-                            // cancellation = Absent, no cancel notification is ever enqueued; once the call
-                            // fiber has resolved the timeout path has fully run, so the count is final.
-                            control.advance(200.millis).andThen {
+                            // Once the request has reached B and the call has armed its requestTimeout on the controlled clock,
+                            // advance past it to fire the timeout arm. With cancellation = Absent, no cancel notification is ever
+                            // enqueued; once the call fiber has resolved the timeout path has fully run, so the count is final.
+                            entered.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(200.millis)).andThen {
                                 callFib.get.map { result =>
                                     val cancelNotifications =
                                         capA.sentList.count {
@@ -361,36 +369,12 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "progressResetsTimeout = true: progress notifications reset the deadline" in {
-        case class ProgressMsg(pct: Int) derives Schema, CanEqual
-
-        // The handler sends 4 progress notifications at 1.5s intervals (total ~6s), each resetting the deadline. requestTimeout is 5s: without
-        // progressResetsTimeout the initial 5s deadline fires before the ~6s handler completes, so a broken reset surfaces as a timeout failure
-        // here, while a working reset keeps the deadline ahead of the handler.
-        // deviation: this leaf cannot use virtual time. The deadline is reset by the CALLER when a progress notification arrives across the
-        // in-memory transport, a cross-endpoint hand-off with no sleep to fence, so a Clock.withTimeControl advancer races virtual time past the
-        // deadline before the reset settles (empirically the call is cancelled). Instead the timers are a coupled system widened together: the
-        // 1.5s cadence stays far below the 5s deadline so resets always win, and the 5s deadline stays far below the handler's ~6s total so a
-        // broken reset always times out, with several seconds of absolute slack so CI scheduling jitter cannot close the first gap.
-        val longTask = JsonRpcRoute.request[PingReq, PingResp]("longTask") { (req, ctx) =>
-            val progressValue = Structure.Value.Record(Chunk("pct" -> Structure.Value.Integer(25L)))
-            Async.sleep(1500.millis).andThen {
-                Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                    Async.sleep(1500.millis).andThen {
-                        Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                            Async.sleep(1500.millis).andThen {
-                                Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                                    Async.sleep(1500.millis).andThen {
-                                        Abort.run[Closed](ctx.progress(progressValue)).andThen {
-                                            PingResp(req.n)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // requestTimeout is 5s under a controlled clock. The call runs 4s, receives one progress notification, and runs 4s more: 8s in total,
+        // past the initial 5s deadline but inside the 9s deadline the progress reset set. A broken reset times the call out at 5s.
+        // Barriers: the route releases `entered` when the request arrives; the timeout monitor's pending sleep shows it is armed (and, after an
+        // advance, that it checked the deadline and kept waiting); the caller seeing the progress value shows the reset ran, because the
+        // engine resets the deadline before publishing the value.
+        val progressValue = Structure.Value.Record(Chunk("pct" -> Structure.Value.Integer(25L)))
 
         // cancelMethod="$/cancelRequest", expectReply=true; progressMethod="$/progress", workDoneToken style
         case class CancelByIdParamsB(id: JsonRpcId) derives Schema, CanEqual
@@ -422,27 +406,44 @@ class MaxInFlightTest extends JsonRpcTest:
             progressResetsTimeout = true
         )
 
-        JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(longTask), cfg).map { _ =>
-                    // callWithProgress so that progress notifications are received and fire the heartbeat
-                    endpointA.callWithProgress[PingReq, PingResp]("longTask", PingReq(42)).map { pending =>
-                        // Drain the progress stream so it doesn't back-pressure the handler
-                        Fiber.initUnscoped(
-                            Abort.run[Closed](pending.progress.discard)
-                        ).andThen {
-                            Abort.run[JsonRpcError | Closed](pending.result).map {
-                                case Result.Success(resp) =>
-                                    assert(resp == PingResp(42), s"expected PingResp(42), got $resp")
-                                case Result.Failure(e: JsonRpcError) =>
-                                    fail(s"call timed out or failed: ${e.message} (code ${e.code})")
-                                case other =>
-                                    fail(s"unexpected result: $other")
-                            }
-                        }
-                    }
+        Clock.withTimeControl { control =>
+            for
+                entered      <- Latch.init(1)
+                sendProgress <- Latch.init(1)
+                reply        <- Latch.init(1)
+                progressSeen <- Latch.init(1)
+                callEnded    <- Fiber.Promise.init[Unit, Any]
+                longTask = JsonRpcRoute.request[PingReq, PingResp]("longTask") { (req, ctx) =>
+                    entered.release
+                        .andThen(sendProgress.await)
+                        .andThen(Abort.run[Closed](ctx.progress(progressValue)))
+                        .andThen(reply.await)
+                        .andThen(PingResp(req.n))
                 }
-            }
+                (ta, tb) <- JsonRpcTransport.inMemory
+                a        <- JsonRpcHandler.init(ta, Seq.empty, cfg)
+                _        <- JsonRpcHandler.init(tb, Seq(longTask), cfg)
+                pending  <- a.callWithProgress[PingReq, PingResp]("longTask", PingReq(42))
+                _        <- Fiber.initUnscoped(pending.progress.foreach(_ => progressSeen.release))
+                result   <- Fiber.initUnscoped(
+                    Sync.ensure(callEnded.completeUnitDiscard)(Abort.run[JsonRpcError | Closed](pending.result))
+                )
+                _ <- entered.await
+                _ <- control.awaitPendingSleepers(1)
+                _ <- control.advance(4.seconds)
+                _ <- control.awaitPendingSleepers(1)
+                _ <- sendProgress.release
+                _ <- progressSeen.await
+                _ <- control.advance(4.seconds)
+                // Either the monitor checks the reset deadline and waits again, or it times the call out. The race waits on `callEnded`,
+                // not on `result`, because the losing arm is interrupted.
+                stillWaiting <- Async.race(control.awaitPendingSleepers(1).andThen(true), callEnded.get.andThen(false))
+                _            <- reply.release
+                outcome      <- result.get
+            yield
+                assert(stillWaiting, s"the call ended at its initial deadline although progress reset it: $outcome")
+                assert(outcome == Result.Success(PingResp(42)), s"expected PingResp(42), got $outcome")
+            end for
         }
     }
 

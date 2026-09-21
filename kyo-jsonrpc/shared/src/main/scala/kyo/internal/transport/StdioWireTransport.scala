@@ -10,12 +10,19 @@ import kyo.*
   * application, which reading the real fds 0/1 through kyo-net's stdio would not allow. It carries no socket, fd, or byte pump, so kyo-net
   * remains the single network stack.
   */
-final private[kyo] class StdioWireTransport extends JsonRpcWireTransport:
+/** @param channel
+  *   the console this transport reads and writes the protocol on, captured when it was built rather than resolved at
+  *   each call. `JsonRpcTransport.stdioWith` rebinds `Console` for the body it runs, so that application writes land
+  *   on stderr and application reads fail instead of stealing protocol bytes; that body is also where this transport's
+  *   own dispatch runs, so resolving dynamically would divert the protocol itself. Reads would fail on the first line
+  *   and end `incoming`, and every response would be written to stderr, which is a server that answers nothing.
+  */
+final private[kyo] class StdioWireTransport(channel: Console) extends JsonRpcWireTransport:
 
     def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
         val line    = new String(bytes.toArray, "UTF-8")
         val trimmed = if line.endsWith("\n") then line.dropRight(1) else line
-        Console.printLine(trimmed)
+        Console.let(channel)(Console.printLine(trimmed))
     end send
 
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
@@ -26,7 +33,7 @@ final private[kyo] class StdioWireTransport extends JsonRpcWireTransport:
         // accumulate to fill the default chunk, or stdin closes.
         Stream.unfold[Unit, Chunk[Byte], Async & Abort[Closed]]((), chunkSize = 1) { _ =>
             // EOFException from Console.readLine signals stream end; absorbed into Absent to close the stream
-            Abort.run[java.io.IOException](Console.readLine).map {
+            Abort.run[java.io.IOException](Console.let(channel)(Console.readLine)).map {
                 case Result.Failure(_)    => Maybe.Absent
                 case Result.Panic(_)      => Maybe.Absent
                 case Result.Success(line) =>

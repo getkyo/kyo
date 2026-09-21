@@ -269,6 +269,44 @@ class JsonRpcTransportTest extends JsonRpcTest:
                 }
             }
         }
+
+        // The two leaves the rest of this block does not cover: the transport it hands out has to keep working
+        // inside it. The diversion is the whole of what `stdioWith` does, and this transport reaches the channel
+        // through the same `Console` it diverts, so the body it protects is also the body it runs in.
+        //
+        // What that costs, when it costs anything: the transport reads through `Console.readLine`, which the
+        // diverted console fails by design, so `incoming` ends on its first read and the server answers nothing at
+        // all. A stdio server written the way this method's own documentation recommends is silent.
+
+        "the transport it hands out still reads the protocol channel" in {
+            val request = """{"jsonrpc":"2.0","method":"ping"}"""
+            Console.withIn(List(request)) {
+                Scope.run {
+                    JsonRpcTransport.stdioWith() { transport =>
+                        Abort.run[Closed](transport.incoming.take(1).run)
+                    }
+                }
+            }.map {
+                case Result.Success(chunk) if chunk.size == 1 =>
+                    chunk.head match
+                        case JsonRpcNotification(method, _, _) => assert(method == "ping")
+                        case other                             => fail(s"unexpected envelope: $other")
+                case other => fail(s"the transport read nothing from the channel: $other")
+            }
+        }
+
+        "the transport it hands out still writes the protocol channel" in {
+            Console.withOut {
+                Scope.run {
+                    JsonRpcTransport.stdioWith() { transport =>
+                        Abort.run[Closed](transport.send(JsonRpcNotification("ping", Absent, Absent)))
+                    }
+                }
+            }.map { (out, _) =>
+                assert(out.stdOut.contains("ping"), s"the envelope must reach stdout; got stdout=${out.stdOut} stderr=${out.stdErr}")
+                assert(!out.stdErr.contains("ping"), s"the envelope must not be diverted; got stderr=${out.stdErr}")
+            }
+        }
     }
 
 end JsonRpcTransportTest

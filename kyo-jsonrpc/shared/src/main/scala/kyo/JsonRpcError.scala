@@ -41,19 +41,23 @@ sealed abstract class JsonRpcError(
 end JsonRpcError
 
 object JsonRpcError:
-    /** Wire decoder: maps known error codes back to specific leaf types; unknown codes become [[JsonRpcCustomError]].
+    /** Wire decoder: reconstructs an error a peer sent, preserving its code, message and data.
       *
-      * Used by the codec when deserializing an `error` field from a JSON-RPC response envelope. Codes in the
-      * implementation-defined range (-32099 to -32000) are mapped to [[JsonRpcImplementationError]]; all other
-      * unknown codes become [[JsonRpcCustomError]].
+      * Used by the codec when deserializing an `error` field from a JSON-RPC response envelope.
+      *
+      * The standard codes used to map to their local leaves, and that threw the peer's message away:
+      * those leaves build their message from fields the receiver does not have, so a `-32601` that
+      * said "requires client capability 'sampling'" was rebuilt as "Method not found:
+      * '[wire-received]'. Available methods: (none)", which is not merely vaguer but false. A local
+      * `JsonRpcMethodNotFoundError` is a statement about THIS engine's route table; a received one is
+      * a statement the peer made, and the only honest thing to do with it is keep it verbatim.
+      *
+      * The code still discriminates, on [[JsonRpcError.code]], which every leaf carries. What changes
+      * is that a decoded error is an application-level fact about the peer's answer rather than one of
+      * this engine's own dispatch failures.
       */
     def fromWire(code: Int, message: String, data: Maybe[Structure.Value])(using Frame): JsonRpcError =
         code match
-            case -32700 => JsonRpcParseError("[wire-received]", 0, JsonRpcParseError.Reason.TrailingContent)
-            case -32600 => JsonRpcInvalidRequestError(data.getOrElse(Structure.Value.Null), Chunk.empty)
-            case -32601 => JsonRpcMethodNotFoundError("[wire-received]", Chunk.empty)
-            case -32602 => JsonRpcInvalidParamsError("[wire-received]", data, Chunk.empty)
-            case -32603 => JsonRpcInternalError(JsonRpcInternalError.Operation.Other, new RuntimeException(message))
             case c if c >= -32099 && c <= -32000 => JsonRpcImplementationError(c, message, data)
             case _                               => JsonRpcCustomError(code, message, data)
 
