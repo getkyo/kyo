@@ -18,10 +18,10 @@ class SiteAppHeapTest extends WebsiteTest:
     override def config =
         super.config.sequential.leakCheckSockets(false).leakCheckFileDescriptors(false)
 
-    private val idleWindow = 120.seconds
+    private val idleWindow = 20.seconds
 
-    // A noise budget, not an allowance: a page leaking 8.8 MB/min grows ~17.6 MB across the window.
-    private val growthBudget = 6L * 1024 * 1024
+    // Measured across this window: 0.06 MB on a page that does not leak, 3.0 MB on one leaking 8.8 MB/min.
+    private val growthBudget = 1L * 1024 * 1024
 
     // First paint, the bundle's mount and its deferred index fetch must finish before the baseline sample.
     private val settleDelay = 10.seconds
@@ -64,8 +64,8 @@ class SiteAppHeapTest extends WebsiteTest:
                         )
                         assert(
                             growth < growthBudget,
-                            s"an idle docs tab retained ${growth / 1048576} MB more after ${idleWindow.show} " +
-                                s"(${first.used / 1048576} MB -> ${last.used / 1048576} MB), " +
+                            s"an idle docs tab retained ${growth / 1024} KB more after ${idleWindow.show} " +
+                                s"(${first.used / 1024} KB -> ${last.used / 1024} KB), " +
                                 s"DOM unchanged at ${first.domNodes} nodes"
                         )
                     end for
