@@ -803,31 +803,25 @@ object Channel:
             end poll
 
             def drainUpTo(max: Int)(using AllowUnsafe, Frame) =
-                // Same shape as `drain`, same reason: an empty ring read does not mean the channel holds nothing, because a value handed
-                // back into a full ring is parked as a put until a flush moves it in.
                 @tailrec
-                def loop(current: Chunk[A], i: Int, flushed: Boolean): Result[Closed, Chunk[A]] =
+                def loop(current: Chunk[A], i: Int): Result[Closed, Chunk[A]] =
                     if i == 0 then Result.Success(current)
                     else
                         while batchInProgress.get() do ()
                         val next = queue.drainUpTo(i)
                         next match
                             case Result.Success(c) =>
-                                if c.isEmpty then
-                                    if flushed then Result.Success(current)
-                                    else
-                                        flush()
-                                        loop(current, i, true)
+                                if c.isEmpty then Result.Success(current)
                                 else
                                     flush()
-                                    loop(current.concat(c), i - c.length, false)
+                                    loop(current.concat(c), i - c.length)
                             case _ if current.nonEmpty => Result.Success(current)
                             case other                 => other
                         end match
                     end if
                 end loop
 
-                loop(Chunk.empty, max, false)
+                loop(Chunk.empty, max)
             end drainUpTo
 
             /** Keeps a value no taker consumed in the channel: in the ring if it accepts writes, held as a placeholder put for a later
@@ -857,29 +851,21 @@ object Channel:
                 flush()
 
             def drain()(using AllowUnsafe, Frame) =
-                // An empty ring is not an empty channel. A value handed back into a full ring is parked as a put, and `flush` is the only
-                // thing that moves one in, so returning on the first empty read leaves a parked value invisible to this drain and to every
-                // later one: each of them takes the same early return and never reaches a flush. `flushed` bounds the extra look to one per
-                // empty read, so a flush that transfers nothing ends the loop instead of spinning on it.
                 @tailrec
-                def loop(current: Chunk[A], flushed: Boolean): Result[Closed, Chunk[A]] =
+                def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
                     val next = queue.drain()
                     next match
                         case Result.Success(c) =>
-                            if c.isEmpty then
-                                if flushed then Result.Success(current)
-                                else
-                                    flush()
-                                    loop(current, true)
+                            if c.isEmpty then Result.Success(current)
                             else
                                 flush()
-                                loop(current.concat(c), false)
+                                loop(current.concat(c))
                         case _ if current.nonEmpty => Result.Success(current)
                         case other                 => other
                     end match
                 end loop
 
-                loop(Chunk.empty, false)
+                loop(Chunk.empty)
             end drain
 
             def close()(using Frame, AllowUnsafe) =
