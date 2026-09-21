@@ -739,8 +739,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
 
             "dynamic" - {
-                "broadcasted in unison".notJs in {
-                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                "broadcasted gives every element to the run that starts the original and a suffix to the rest" in {
                     {
                         Channel.initWith[Maybe[Int]](1024): channel =>
                             val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
@@ -753,9 +752,16 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                                     Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
                                                 ).andThen:
                                                     runFiber.get.map: resultChunks =>
+                                                        // A run subscribes as it starts and the original starts with the first
+                                                        // subscription, so a run that gets there later can only have missed a
+                                                        // prefix. Unison across concurrent runs is broadcastDynamic's guarantee,
+                                                        // not this one.
+                                                        val all = Chunk.from(0 to 10)
+                                                        assert(resultChunks.size == 10, resultChunks.toString)
+                                                        assert(resultChunks.contains(all), resultChunks.toString)
                                                         assert(
-                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
-                                                                resultChunks.head == (0 to 10)
+                                                            resultChunks.forall(c => c == all.drop(all.size - c.size)),
+                                                            resultChunks.toString
                                                         )
                     }
                 }
@@ -775,26 +781,22 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison".notJs in {
-                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
-                    {
-                        Channel.initWith[Maybe[Int]](1024): channel =>
-                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                            lazyStream.broadcastDynamic().map: streamHub =>
-                                Latch.initWith(10): latch =>
+                "broadcastDynamic in unison" in {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcastDynamic().map: streamHub =>
+                            // Subscribing listens; running is what starts the original. Taking all ten subscriptions first is
+                            // what makes the unison exact, since nothing can be published while a listener is still missing.
+                            Kyo.foreach(1 to 10)(_ => streamHub.subscribe).map: streams =>
+                                Fiber.initUnscoped(Async.foreach(streams)(_.run)).map: runFiber =>
                                     Fiber.initUnscoped(
-                                        Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
-                                    ).map: runFiber =>
-                                        latch.await.andThen:
-                                            Fiber.initUnscoped(
-                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                            ).andThen:
-                                                runFiber.get.map: resultChunks =>
-                                                    assert(
-                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
-                                                            resultChunks.head == (0 to 10)
-                                                    )
-                    }
+                                        Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                    ).andThen:
+                                        runFiber.get.map: resultChunks =>
+                                            assert(
+                                                resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
+                                                    resultChunks.head == (0 to 10)
+                                            )
                 }
 
                 "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in {
