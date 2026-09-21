@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Sql.*
+import kyo.internal.SqliteTempDatabase
 
 /** [[SqliteAttach]] makes a schema-qualified name resolve on every connection in the pool.
   *
@@ -8,24 +9,31 @@ import kyo.Sql.*
   * connection that served it, leaving the next statement on a different connection to answer "no such table" for a name that worked a
   * moment earlier.
   *
-  * A file-backed main database, not `:memory:`: SQLite gives every CONNECTION its own private in-memory database, so a pool of them would
-  * share no tables and these leaves would be measuring the wrong thing.
+  * File-backed databases, not `:memory:`: SQLite gives every CONNECTION its own private in-memory database, so a pool of them would share
+  * no tables and these leaves would be measuring the wrong thing. That is also what confines them to the platforms with a filesystem.
   */
 class SqliteAttachTest extends Test:
 
     case class Invoice(note: String) derives SqlSchema
 
-    private def tempDir(using Frame): java.nio.file.Path < Sync =
-        Sync.defer(java.nio.file.Files.createTempDirectory("kyo-sqlite-attach"))
+    /** A throwaway database file, deleted with its WAL sidecars when the scope exits.
+      *
+      * Cancels where there is no filesystem to hold one, which is the same reachability the SQLite conformance descriptor reports, rather
+      * than failing as though the attachment were broken.
+      */
+    private def tempDatabase(using Frame): String < (Sync & Scope) =
+        assume(SqliteTempDatabase.available, "this platform has no filesystem, so an attached database has nowhere to live")
+        Scope.acquireRelease(Sync.defer(SqliteTempDatabase.create()))(path => Sync.defer(SqliteTempDatabase.delete(path)))
+    end tempDatabase
 
     "a qualified read resolves on every pooled connection" in {
         Scope.run {
-            tempDir.map { dir =>
-                val main   = dir.resolve("main.db").toString
-                val aux    = dir.resolve("aux.db").toString
-                val config = SqlConfig.default.maxConnections(4).minConnections(4)
+            for
+                main <- tempDatabase
+                aux  <- tempDatabase
+                config = SqlConfig.default.maxConnections(4).minConnections(4)
                     .extension(SqliteAttach(Map("aux" -> aux)))
-                SqlClient.init(s"sqlite://$main", config).map { client =>
+                result <- SqlClient.init(s"sqlite://$main", config).map { client =>
                     DB.run(client) {
                         for
                             _ <- client.executeRaw("""CREATE TABLE "aux"."invoice" (note TEXT)""")
@@ -40,15 +48,14 @@ class SqliteAttachTest extends Test:
                         end for
                     }
                 }
-            }
+            yield result
         }
     }
 
     "the main database is reachable by name without any attachment" in {
         // `main` always exists, so qualification needs no configuration to reach the database the URL opened.
         Scope.run {
-            tempDir.map { dir =>
-                val main = dir.resolve("main.db").toString
+            tempDatabase.map { main =>
                 SqlClient.init(s"sqlite://$main", SqlConfig.default.maxConnections(2)).map { client =>
                     DB.run(client) {
                         for
@@ -65,11 +72,11 @@ class SqliteAttachTest extends Test:
 
     "the same table name in two schemas is two tables" in {
         Scope.run {
-            tempDir.map { dir =>
-                val main   = dir.resolve("main.db").toString
-                val aux    = dir.resolve("aux.db").toString
-                val config = SqlConfig.default.maxConnections(2).extension(SqliteAttach(Map("aux" -> aux)))
-                SqlClient.init(s"sqlite://$main", config).map { client =>
+            for
+                main <- tempDatabase
+                aux  <- tempDatabase
+                config = SqlConfig.default.maxConnections(2).extension(SqliteAttach(Map("aux" -> aux)))
+                result <- SqlClient.init(s"sqlite://$main", config).map { client =>
                     DB.run(client) {
                         for
                             _     <- client.executeRaw("CREATE TABLE invoice (note TEXT)")
@@ -84,24 +91,23 @@ class SqliteAttachTest extends Test:
                         end for
                     }
                 }
-            }
+            yield result
         }
     }
 
     "a database that cannot be attached fails the connection rather than opening it half configured" in {
         // Leaving the connection in the pool with a schema missing is the worse outcome: the pool would hold
         // connections disagreeing about which schemas exist, and which one a statement got would decide whether
-        // it worked. A directory is not a database, so SQLite refuses to attach it.
+        // it worked. The path below names a directory that does not exist, which SQLite cannot open.
         //
         // `minConnections = 1` is what makes this observable at `init`: with no warm-up the pool opens nothing
         // until a statement asks for a connection, so the refusal would arrive at the first query instead.
         Scope.run {
-            tempDir.map { dir =>
-                val main   = dir.resolve("main.db").toString
+            tempDatabase.map { main =>
                 val config = SqlConfig.default
                     .maxConnections(1)
                     .minConnections(1)
-                    .extension(SqliteAttach(Map("aux" -> dir.toString)))
+                    .extension(SqliteAttach(Map("aux" -> s"$main-absent/aux.db")))
                 Abort.run[SqlException](SqlClient.init(s"sqlite://$main", config)).map { result =>
                     assert(result.isFailure, s"opening with an unattachable database must fail, got $result")
                 }
