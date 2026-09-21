@@ -218,6 +218,25 @@ The last row is the one that is not about spelling, and it is the widest: the en
 
 Hence the rule that a text-protocol value is **parsed and re-rendered** rather than handed back. It looks redundant and is not: parsing is what makes the answer independent of how the connection happens to be configured. When you meet a new setting of this kind, the options are to pin it at connect or to normalize what it produced, and doing neither is the bug.
 
+### The prepared-statement cache is a claim about the server, and it needs maintaining
+
+A cache hit skips Parse/Describe and binds the handle directly, which asserts that the server still holds it. Nothing about holding the entry makes that true, and when it stops being true the entry survives the failure, so the SQL fails for the life of the connection rather than once. Worse, the failure does not land on whoever caused it: `reset` takes a lease of its own, so the scrubbed session goes back to the pool and the next borrower pays.
+
+Two mechanisms, and they cover different causes.
+
+- **Drop the cache exactly where the scrub releases the statements**, which is narrower than it sounds and is the part that is easy to get wrong. `DISCARD ALL` includes `DEALLOCATE ALL` and `COM_RESET_CONNECTION` releases prepared statements, so after either one the server holds none of them. But a scrub that FAILED released nothing: `DiscardAll` runs `PreventInTransactionBlock` first, so a `DISCARD ALL` inside a block is refused before it touches a statement. Dropping there strands every statement the server still holds, because their names go with the cache, and the next call registers a second set beside them. So drop once the scrub has RETURNED, not on both edges. On MySQL the drop has to sit between `COM_RESET_CONNECTION` and the `SET` pin that follows it, because only the first of those releases anything and the pin can fail on its own. Drop by replacing the whole cache, never entry by entry: the eviction hook queues a close per entry, and the statements are already gone.
+
+  The edge this leaves uncovered is an interrupt or an expired read bound between the scrub executing and its reply being read: the cache then outlives the statements. That is what the re-prepare below repairs on PostgreSQL, and what the reclaim's destroy covers on MySQL. A driver without a re-prepare would have to close that edge some other way.
+- **Re-prepare once when the server complains**, for the causes the driver never sees, an external pooler's reset query or DDL invalidating a plan. PostgreSQL-only: on the MySQL lineage the scrub is the whole cause, so once the cache is dropped where the scrub releases the statements, the only one left is an external pooler. The decision is about cause, not testability; a stub connection fed an `ERR 1243` packet would reach the code either way.
+
+Three constraints bind any retry of this kind:
+
+1. **Match the RAISE SITE, not the SQLSTATE.** A retry is safe only because the condition is raised before the portal exists, which is a property of the C routine that raised it. PostgreSQL's `42804` shares a plausible-looking shape and is raised during re-analysis, which runs for statements SPI created too, so it can fire after rows have already gone to the client.
+2. **Gate on the server's own transaction status**, read off the `ReadyForQuery` status byte. PostgreSQL aborts the whole block on a statement error, so a retry inside a failed block answers `25P02` and the caller reads that in place of what happened. The adapter's `transactionOpen` flag is NOT that gate: a caller who opened the block with `executeRaw("BEGIN")` never touched the adapter's transaction methods.
+3. **Re-binding must be idempotent**, which holds because every bound parameter re-encodes from the value it holds. It is a stated requirement on `SqlCodec.Writer`, since a user-supplied encoder over a mutable value could break it and the failure is invisible: the bytes are wrong only on the attempt nobody sees.
+
+Where recovery would change what the caller observes, report instead. The PostgreSQL pipeline is the case: its batch goes out as one write and the server skips only to the failed slot's own `Sync`, so the later slots have already run by the time the client learns slot i was stale. It drops the entry and surfaces the error, so the next call heals.
+
 ## What the driver cannot fix: the caller's own DDL
 
 Some behavior is decided by how a column was declared, and kyo-sql generates no DDL. Those are real divergences that no driver change reaches, and the honest handling is to say so rather than let the conformance suite imply they are solved.

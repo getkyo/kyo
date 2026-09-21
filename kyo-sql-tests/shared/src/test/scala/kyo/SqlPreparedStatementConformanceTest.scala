@@ -24,6 +24,14 @@ class SqlPreparedStatementConformanceTest extends SqlBackendTest:
     // start with an empty cache and neither reuse nor eviction would be observable.
     private val singleConn = SqlConfig(maxConnections = 1, minConnections = 1)
 
+    // The reset leaf reads a counter, so it needs instruments no other suite shares: a `Metrics` does not own its
+    // instruments, it asks the `Stat` registry for them by scope path and the registry memoizes.
+    private val resetConn = singleConn.copy(
+        preparedStatementCacheSize = 16,
+        metricsEnabled = true,
+        metricsScope = Present("kyo.sql.prepared-statement-conformance")
+    )
+
     "a reused parameterised statement re-binds fresh parameters on each run" - {
         forEachBackend(singleConn.copy(preparedStatementCacheSize = 16)) { (backend, client, _) =>
             val bigint = backend.columnType(SqlTestBackend.ColumnType.BigInt)
@@ -80,6 +88,47 @@ class SqlPreparedStatementConformanceTest extends SqlBackendTest:
                 }
                 assert(reEvicted == 101L, s"an evicted statement must re-prepare transparently and return 101, got $reEvicted")
                 assert(stillCached == 100L + n, s"a still-cached statement must return ${100L + n}, got $stillCached")
+            end for
+        }
+    }
+
+    "a cached statement still resolves after the session it was prepared on is reset" - {
+        forEachBackend(resetConn) { (backend, client, _) =>
+            val bigint = backend.columnType(SqlTestBackend.ColumnType.BigInt)
+            val m      = client.runtime.pool.metrics
+            for
+                // Resolve the server version first, so its own internal lease lands in the setup rather than the
+                // measured window.
+                _ <- client.serverVersion
+                _ <- client.executeRaw(s"CREATE TABLE ps_reset (id $bigint PRIMARY KEY, amount $bigint NOT NULL)")
+                _ <- client.executeRaw("INSERT INTO ps_reset VALUES (1, 101), (2, 102)")
+                // Caches the statement against the session the single-connection pool keeps handing out.
+                before <- client.query(sql"SELECT amount FROM ps_reset WHERE id = ${1L}").flatMap(oneLong)
+                // Zero the baseline; `Counter.get` is a destructive read.
+                _ <- m.preparedStatementsReprepared.get
+                // A scrub releases every server-side statement on the engines that have them, and runs on a lease
+                // of its own, so the session returns to the pool and the next borrower meets the dead handle.
+                // Here that borrower is this same test.
+                _     <- client.reset
+                after <- client.query(sql"SELECT amount FROM ps_reset WHERE id = ${1L}").flatMap(oneLong)
+                // Read before the later queries, so it counts that one statement and no other.
+                reprepares <- m.preparedStatementsReprepared.get
+                // A second time, to catch a cache that healed by accident rather than by dropping the entry.
+                other <- client.query(sql"SELECT amount FROM ps_reset WHERE id = ${2L}").flatMap(oneLong)
+                again <- client.query(sql"SELECT amount FROM ps_reset WHERE id = ${1L}").flatMap(oneLong)
+            yield
+                assert(before == 101L, s"the statement must return 101 before the reset, got $before")
+                assert(after == 101L, s"the same statement must still return 101 after the reset, got $after")
+                assert(other == 102L, s"a second statement must return 102 on the reset session, got $other")
+                assert(again == 101L, s"the re-prepared statement must stay usable, got $again")
+                // The rows alone do not say WHY they are right. On an engine that recovers from the server's
+                // complaint, a cache the reset failed to drop still answers correctly, one wasted round trip and
+                // one counted re-prepare later. Dropping the entry makes that query an ordinary miss, so the
+                // counter is what separates the fix from the fallback.
+                assert(
+                    reprepares == 0L,
+                    s"the reset must drop the entry, leaving the next query a plain cache miss; it was recovered from instead ($reprepares)"
+                )
             end for
         }
     }

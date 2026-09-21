@@ -123,8 +123,22 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
     def ping(using Frame): Unit < (Async & Abort[SqlException]) =
         tracked(underlying.ping)
 
+    /** `DISCARD ALL` scrubs the session, and the cache is dropped with it so this connection's record matches.
+      *
+      * `DISCARD ALL` includes `DEALLOCATE ALL`, so a surviving entry would Bind a name that is gone and answer `26000` for that SQL from
+      * then on. This runs on its own lease, so the caller who pays is the next borrower.
+      *
+      * Dropped only once the scrub has RETURNED, because a `DISCARD ALL` that failed deallocated nothing: `DiscardAll` runs
+      * `PreventInTransactionBlock` first, so `25001` fires before it touches a statement. Dropping the cache there would strand every
+      * statement the server still holds, since their names go with it, for the life of the connection.
+      *
+      * The edges this does not cover are the ones where the scrub ran but its reply never arrived, an interrupt or an expired read bound,
+      * and the narrow case of a step after `DropAllPreparedStatements` raising. The cache then survives statements that are gone. All three
+      * leave the session idle, since `DISCARD ALL` cannot run inside a block, so the first stale hit is repaired by the re-prepare in
+      * [[kyo.internal.postgres.exchange.ExtendedQueryExchange]] and counted.
+      */
     def resetSession(using Frame): Unit < (Async & Abort[SqlException]) =
-        tracked(underlying.simpleExecute("DISCARD ALL").unit)
+        tracked(underlying.simpleExecute("DISCARD ALL").unit).andThen(underlying.discardPreparedStatements)
 
     def acquireAdvisoryLock(key: Long, timeout: Maybe[Duration])(using Frame): Unit < (Async & Abort[SqlException]) =
         // `pg_advisory_lock` blocks until the lock is granted and takes no timeout argument, so a caller's
@@ -181,6 +195,8 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
     // Unsafe: closes without suspending, for callers that cannot park (pool discard callbacks).
     def closeNow(using Frame, AllowUnsafe): Unit = Sync.Unsafe.evalOrThrow(underlying.close)
 
+    override private[kyo] def takeReprepares()(using AllowUnsafe): Long = underlying.takeReprepareCount()
+
     // --- Internals ---
 
     /** Reads forward to the next `ReadyForQuery`, which is where every Postgres command ends.
@@ -195,14 +211,12 @@ final private[kyo] class PostgresSqlConnection private[postgres] (
       */
     private def drainToReadyForQuery(using Frame): Boolean < (Async & Abort[SqlException]) =
         underlying.drainToReadyForQuery.flatMap { rfq =>
-            underlying.transactionStatus.set(rfq.status).andThen {
-                Sync.Unsafe.defer {
-                    requestInFlight.set(false)
-                    // 'I' is idle, 'T' is in a transaction, 'E' is a failed transaction. The latter two
-                    // both mean a transaction is still open and owed a rollback.
-                    transactionOpen.set(rfq.status != 'I'.toByte)
-                    true
-                }
+            Sync.Unsafe.defer {
+                requestInFlight.set(false)
+                // 'T' is in a transaction and 'E' is a failed transaction; both mean a transaction is
+                // still open and owed a rollback.
+                transactionOpen.set(rfq.status != ReadyForQuery.Idle)
+                true
             }
         }
 
