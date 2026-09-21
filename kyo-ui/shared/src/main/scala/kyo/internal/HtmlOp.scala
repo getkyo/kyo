@@ -18,6 +18,15 @@ private[kyo] object HtmlOp:
       */
     final case class SessionReady() extends HtmlOp derives Schema
 
+    /** The whole view, for a client that was not served a rendered page.
+      *
+      * A page from `UI.runHandlers` arrives rendered, with the comment anchors every later `ReplaceRange` is addressed
+      * against, and the session sends only what changes from then on. A view mounted on MCP Apps arrives as a generic
+      * shell the host may cache, with no session and nothing rendered, so the first thing its session sends is the
+      * document: without it the client has no anchors and every later op would be addressed at nothing.
+      */
+    final case class Mount(html: String, css: String) extends HtmlOp derives Schema
+
     // --- Rendering operations ---
 
     case class Replace(path: Seq[String], html: String)     extends HtmlOp derives Schema

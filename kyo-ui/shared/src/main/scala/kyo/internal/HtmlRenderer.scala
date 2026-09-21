@@ -157,17 +157,32 @@ private[kyo] object HtmlRenderer:
     private def openSvgRegion(path: Seq[String]): String =
         s"""<g data-kyo-path="${pathAttr(path)}" data-kyo-reactive>"""
 
-    /** Wrap body HTML in a full page with inline JS client. */
-    def renderPage(title: String, body: String, css: String, basePath: String): String =
+    /** Wrap body HTML in a full page with inline JS client.
+      *
+      * `transport` says how that client reaches its session. It defaults to the WebSocket at `basePath/_kyo/ws`, which
+      * is what `UI.runHandlers` serves; a view rendered for an MCP Apps host passes the bridge instead, since the
+      * sandbox it runs in allows no network of its own.
+      *
+      * One inline `<script>` and one inline `<style>`, and nothing loaded from anywhere, which is also all the MCP Apps
+      * default policy allows.
+      */
+    def renderPage(
+        title: String,
+        body: String,
+        css: String,
+        basePath: String,
+        transport: String = UIClientTransport.sameOriginSocket,
+        head: String = ""
+    ): String =
         s"""<!DOCTYPE html>
            |<html>
            |<head>
            |<meta charset="UTF-8">
-           |<title>${esc(title)}</title>
+           |<title>${esc(title)}</title>$head
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(jsStr(basePath))}</script>
+           |<script>${clientJs(jsStr(basePath), transport)}</script>
            |</body>
            |</html>""".stripMargin
 
@@ -1152,9 +1167,16 @@ private[kyo] object HtmlRenderer:
           |}
           |var __kyoRanges=kyoRangeScan(document.body);
           |window.addEventListener("pagehide",function(){if(__kyoRanges){__kyoRanges.clear();__kyoRanges=null;}});
-          |function kyoClientError(error){if(window.console&&console.error)console.error(error);}""".stripMargin
+          |// What went wrong, on the document element as well as in the console. A view in a host's sandbox has a console
+          |// nobody is looking at: it renders inside an iframe with no way to open devtools on it, so an op that could not
+          |// be applied is invisible and the view simply stops changing. Written to the element so a page can show it and a
+          |// test can read it.
+          |function kyoClientError(error){
+          |  if(window.console&&console.error)console.error(error);
+          |  try{document.documentElement.setAttribute("data-kyo-error",String((error&&error.message)||error));}catch(ignored){}
+          |}""".stripMargin
 
-    private def clientJs(basePath: String): String =
+    private def clientJs(basePath: String, transport: String): String =
         s"""(function(){
            |var base="$basePath";
            |var __q=[];
@@ -1166,9 +1188,9 @@ private[kyo] object HtmlRenderer:
            |  try{t.setSelectionRange(s,e);}catch(er){if(er.name!=="InvalidStateError")throw er;}}
            |$reactiveRangesJs
            |${DragClientJs.script(basePath)}
-           |var ws=null,__wsRetries=0,__wsGone=false,__live=false;
-           |// Read-only test hook on the current socket; it follows each reconnect.
-           |Object.defineProperty(window,"__kyoWs",{get:function(){return ws;},configurable:true});
+           |${UIClientTransport.socketJs}
+           |${UIClientTransport.appsJs}
+           |var __tp=null,__live=false;
            |var __dragRt=null,__dragCleanup=null;
            |// One call site on purpose. The runtime wires document-level capture listeners and a pagehide listener that only its cleanup
            |// removes, so it must be installed once per session and never over a live one; the guard at the open handler is what keeps
@@ -1178,69 +1200,59 @@ private[kyo] object HtmlRenderer:
            |  __dragCleanup=__dragRt.cleanup;
            |}
            |kyoInstallDrag();
-           |// A session is one socket, and reconnecting is not optional bookkeeping. post() buffers into __q whenever the session is not
-           |// live, and __q has exactly one drain point, so a page that never reconnects silently stops delivering every later
-           |// interaction while still looking healthy: the click reaches the document, nothing reaches the server, and the failure only
-           |// surfaces much later as an assertion against state that never arrived. The refusal that forced this is a connect denied for
-           |// want of buffer space (Windows WSAENOBUFS), which is transient, so backing off and retrying is what rides it out.
+           |// LIVE means a frame has ARRIVED, not that a link opened. Completing an upgrade, or a handshake, proves the transport is up
+           |// and nothing more: a server can accept and then end the session at once, during a restart window, and draining on open
+           |// would empty the buffer into a connection nobody reads, losing exactly the events this exists to preserve. Every session
+           |// announces itself with SessionReady before it renders, so this resolves even for a tree that is entirely const and never
+           |// renders.
            |//
-           |// LIVE means a frame has ARRIVED, not that the socket opened. Completing the upgrade proves the transport is up and nothing
-           |// more: a server can accept and then end the session at once, during a restart window, and draining on open would empty the
-           |// buffer into a connection nobody reads, losing exactly the events this exists to preserve. Every session announces itself
-           |// with SessionReady before it renders, so this resolves even for a tree that is entirely const and never renders. It is also
-           |// what makes the backoff real: resetting the counter on open would let an accept-then-close loop redial forever at the
-           |// shortest interval, which is the opposite of backing off.
-           |function kyoConnect(){
-           |  if(__wsGone)return;
-           |  // Never dial while one is already dialing or open. Two paths can call in at once: a page becomes eligible for the
-           |  // back/forward cache precisely when its socket is down, which is precisely when a retry is pending, so a restore
-           |  // races the resumed timer. The loser of that race would be superseded immediately and never closed, leaving a live
-           |  // connection with a session attached whose frames are all dropped.
-           |  if(ws&&ws.readyState<2)return;
-           |  __live=false;
-           |  var sock=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
-           |  ws=sock;
-           |  // Each handler serves ONE socket and stands down once a newer one has replaced it, closing itself on the way out so
-           |  // a superseded connection is torn down instead of lingering with a server session attached.
-           |  sock.onopen=function(){
-           |    if(sock!==ws){sock.close();return;}
-           |    if(!__dragCleanup)kyoInstallDrag();
-           |  };
-           |  sock.onmessage=function(e){
-           |    if(sock!==ws){sock.close();return;}
-           |    if(!__live){__live=true;__wsRetries=0;var pending=__q;__q=[];for(var i=0;i<pending.length;i++)sock.send(pending[i]);}
-           |    kyoOnMessage(e);
-           |  };
-           |  // A connect that never completes reports here and then closes, so recovery is driven from onclose alone;
-           |  // this handler exists so the failure does not surface as an unhandled error.
-           |  sock.onerror=function(){};
-           |  sock.onclose=function(){
-           |    if(sock!==ws)return;
-           |    __live=false;
-           |    if(__dragCleanup){__dragCleanup();__dragCleanup=null;}
-           |    if(__wsGone)return;
-           |    // Capped exponential backoff: quick enough that a transient refusal recovers within a page's useful
-           |    // lifetime, slow enough not to hammer a server that is genuinely down. Jittered to 50-100% of each step
-           |    // so pages dropped together by a server restart do not all redial at the same instant.
-           |    var wait=Math.min(250*Math.pow(2,__wsRetries),5000);
-           |    __wsRetries++;
-           |    setTimeout(kyoConnect,wait*(0.5+Math.random()*0.5));
-           |  };
+           |// post() buffers into __q whenever the session is not live, and __q has exactly one drain point, which is here: a transport
+           |// that never comes back silently stops delivering every later interaction while still looking healthy, so the click reaches
+           |// the document, nothing reaches the server, and the failure surfaces much later as an assertion against state that never
+           |// arrived.
+           |function kyoAccept(){
+           |  if(__live)return;
+           |  __live=true;var pending=__q;__q=[];for(var i=0;i<pending.length;i++)__tp.write(pending[i]);
            |}
+           |// A transport that carries text hands it over as it arrived; one that already parsed it, because its frames
+           |// come inside a reply it had to read anyway, hands over the op. Both prove a session is reading.
+           |function kyoArrive(text){kyoAccept();kyoDispatchOp(JSON.parse(text));}
+           |function kyoApply(op){kyoAccept();kyoDispatchOp(op);}
+           |// Whether anything is carrying the session, on the document element so the page can see it. A view that has lost its
+           |// link goes on showing whatever it last rendered, which is indistinguishable from a view that is simply idle; this is
+           |// what lets it say which it is, and it sits beside the theme every transport already puts here.
+           |function kyoLink(state){document.documentElement.setAttribute("data-kyo-link",state);}
+           |// Which transport is carrying the session, for a view that has more than one it could be on. The page cannot work
+           |// this out: a session reached over tool calls and the same session reached over a socket render identically, which
+           |// is the whole point of the seam, so the transport is the only thing that can say which it is.
+           |function kyoCarrier(name){document.documentElement.setAttribute("data-kyo-transport",name);}
+           |// The link is usable again. The drag runtime wires document-level listeners that only its cleanup removes, so it is
+           |// installed once per link and never over a live one; the guard here is what keeps that true across reconnects.
+           |function kyoAttached(){kyoLink("up");if(!__dragCleanup)kyoInstallDrag();}
+           |// The link is gone. Nothing is live until a frame arrives on the next one.
+           |function kyoDetached(){__live=false;kyoLink("down");if(__dragCleanup){__dragCleanup();__dragCleanup=null;}}
+           |__tp=$transport;
            |// A page being torn down is not a lost connection: stop redialing so an unloading page does not keep calling the server it is
-           |// leaving. A page becomes eligible for the back/forward cache precisely when its socket is DOWN, since an open one usually
-           |// blocks it, so a restored page has to redial and rebuild the range map the hide path cleared, or it returns permanently
+           |// leaving. A page becomes eligible for the back/forward cache precisely when its link is DOWN, since an open socket usually
+           |// blocks it, so a restored page has to start again and rebuild the range map the hide path cleared, or it returns permanently
            |// inert, which is the exact failure this reconnect exists to prevent.
-           |window.addEventListener("pagehide",function(){__wsGone=true;});
+           |window.addEventListener("pagehide",function(){__tp.suspend();});
            |window.addEventListener("pageshow",function(e){
            |  if(!e.persisted)return;
            |  if(!__kyoRanges)__kyoRanges=kyoRangeScan(document.body);
-           |  __wsGone=false;__wsRetries=0;kyoConnect();
+           |  __tp.resume();
            |});
-           |kyoConnect();
-           |function kyoOnMessage(e){
-           |  var op=JSON.parse(e.data);
-           |  if(op.ResolveDrag){
+           |__tp.open();
+           |function kyoDispatchOp(op){
+           |  if(op.Mount){
+           |    // The css first, so nothing paints unstyled between the two writes, and the range map is rebuilt from the
+           |    // document this put there: every later op is addressed against anchors that did not exist until now.
+           |    if(op.Mount.css){var ms=document.createElement("style");ms.textContent=op.Mount.css;document.head.appendChild(ms);}
+           |    if(__kyoRanges)__kyoRanges.clear();
+           |    document.body.innerHTML=op.Mount.html;
+           |    __kyoRanges=kyoRangeScan(document.body);
+           |    applyJsProps(document.body);ba(document.body);sweepFocusAuto();
+           |  }else if(op.ResolveDrag){
            |    try{__dragRt.resolve(op.ResolveDrag.sessionId,op.ResolveDrag.decision);}catch(error){kyoClientError(error);}
            |  }else if(op.ReadDropFile||op.ReadDropDirectory||op.CancelDropRead){
            |    try{__dragRt.serveDropRead(op);}catch(error){kyoClientError(error);}
@@ -1304,15 +1316,13 @@ private[kyo] object HtmlRenderer:
            |  }
            |  return false;
            |}
-           |// Send each event over the session's WebSocket. ws.send preserves send order on one socket, so the
-           |// explicit fetch-queue serialization is no longer needed. Events raised before the session is live are
-           |// buffered in __q and flushed when its first frame arrives, which every reconnect reaches. Both an absent
-           |// socket and an open-but-unanswered one take the buffer, so nothing is handed to a connection that has
-           |// not proven a session is reading it.
+           |// Send each event over the session's transport, which preserves the order it takes them in. Events raised
+           |// before the session is live are buffered in __q and flushed when its first frame arrives, which every
+           |// reconnect reaches. A transport that cannot take one right now says so, and it goes to the buffer too, so
+           |// nothing is handed to a link that has not proven a session is reading it.
            |function post(b){
            |  var m=JSON.stringify(b);
-           |  if(ws&&__live&&ws.readyState===1)ws.send(m);
-           |  else __q.push(m);
+           |  if(!(__live&&__tp&&__tp.write(m)))__q.push(m);
            |}
            |function pa(el){
            |  var p=el.getAttribute("data-kyo-path");

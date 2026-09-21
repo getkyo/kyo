@@ -848,14 +848,19 @@ class HtmlRendererTest extends UITest:
             val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
             assert(page.contains("__q=[]"))
             assert(page.contains("__q.push"))
-            // Deliverability is the session having answered, not merely the socket being open. A server can complete the
-            // upgrade and end the session at once, and handing the buffer to that connection loses every event in it.
-            assert(page.contains("__live&&ws.readyState===1"))
+            // Deliverability is the session having answered and the transport taking it, not merely a link being open. A
+            // server can complete an upgrade and end the session at once, and handing the buffer to that connection loses
+            // every event in it. Both halves are asked here because either one alone would buffer nothing.
+            assert(page.contains("if(!(__live&&__tp&&__tp.write(m)))__q.push(m)"))
             // The buffer is taken by value and replaced before anything is sent, so an event raised during the drain lands
             // in the fresh buffer rather than being dropped by the clear that follows.
             assert(page.contains("var pending=__q;__q=[]"))
+            // Live once, and only once: a second frame must not drain a buffer that is already empty and republish it.
+            assert(page.contains("if(__live)return;"))
             // The one place the drain is reached: a frame arriving, which every session guarantees by announcing itself.
-            assert(page.contains("if(!__live){__live=true"))
+            // Both entry points go through it, whether the transport hands over text or an op it had already parsed.
+            assert(page.contains("function kyoArrive(text){kyoAccept();"))
+            assert(page.contains("function kyoApply(op){kyoAccept();"))
             // Only one socket may be dialing or open at a time. A back/forward-cache restore races the retry it left pending,
             // and without this the loser is superseded but never closed, leaving a live connection whose session is stranded.
             // Asserted structurally because a bfcache restore is not drivable from the browser harness.

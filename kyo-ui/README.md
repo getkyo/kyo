@@ -102,7 +102,7 @@ div.onClickSelf(Console.printLine("background"))(
 )
 ```
 
-By default an event bubbles through the tree: every ancestor that declared a handler for the event's type fires, innermost first. `.stopPropagation(true)` makes an element *consume* the events it handles — when the dispatch walk reaches an element that both carries the flag and declared a handler for the arriving type, handlers on elements above it do not fire. It only consumes the types that element actually handles; other types pass through. Typical use is nested overlays, where an Escape should close just the innermost layer. Focus and blur never bubble, so the flag does not apply to them.
+By default an event bubbles through the tree: every ancestor that declared a handler for the event's type fires, innermost first. `.stopPropagation(true)` makes an element *consume* the events it handles: when the dispatch walk reaches an element that both carries the flag and declared a handler for the arriving type, handlers on elements above it do not fire. It only consumes the types that element actually handles; other types pass through. Typical use is nested overlays, where an Escape should close just the innermost layer. Focus and blur never bubble, so the flag does not apply to them.
 
 > **Note:** `onClick`, `onClickSelf`, `onFocus`, `onBlur`, and `Form.onSubmit` each available as a by-name `=> Any < Async` action or as a typed handler receiving `MouseEvent` or `KeyboardEvent`. `onKeyDown` and `onKeyUp` take a `KeyboardEvent => Any < Async`; the function shape is required because the handler receives the key. Per-input change handlers take `String => Any < Async`, `Boolean => Any < Async`, or `Double => Any < Async`.
 
@@ -1328,6 +1328,24 @@ val server: Unit < (Async & Scope & Abort[HttpBindException]) =
 ```
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
+
+### What is carrying the session
+
+A page cannot work out how it is reached. A session carried over a WebSocket and the same session carried some other way render identically, which is the point: the transport is a seam, and everything above it is written once. So the client runtime states it, on the document element, where a page can style against it and a test can read it.
+
+| Attribute | Values | What it says |
+|---|---|---|
+| `data-kyo-link` | `up`, `down` | Whether anything is carrying the session. `down` from the moment a link is lost until a frame arrives on the next one. |
+| `data-kyo-transport` | `socket`, `host` | Which transport is carrying it. `host` only arises under [kyo-mcp-ui](../kyo-mcp-ui), where a view reaches its session through the host that rendered it. |
+| `data-kyo-error` | the message | The last op the runtime could not apply. Set alongside the console, because a view inside a host's sandbox has a console nobody can open. |
+
+A page that wants to say it is showing something stale can do it in CSS alone:
+
+```css
+[data-kyo-link="down"] .status::after { content: "reconnecting"; }
+```
+
+None of the three is required reading. A page that ignores them behaves exactly as before; they exist so that a page which has stopped being current can say so, rather than going quiet and looking merely idle.
 
 ### `UI.runRender(ui)`
 
