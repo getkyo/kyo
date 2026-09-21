@@ -1037,8 +1037,8 @@ object SqlClient:
       *
       * Metric names:
       *   - Counters: `connections_acquired`, `connections_released`, `connections_discarded`, `queries_executed`, `queries_failed`,
-      *     `retries_attempted`, `leases_acquired`, `cancels_fired`, `cancels_timed_out`, `transactions_committed`,
-      *     `transactions_rolled_back`.
+      *     `retries_attempted`, `prepared_statements_reprepared`, `leases_acquired`, `cancels_fired`, `cancels_timed_out`,
+      *     `transactions_committed`, `transactions_rolled_back`.
       *   - Histograms: `query_duration_ms`, `pool_acquire_wait_ms`, `lease_acquire_latency_ms`.
       *   - Gauges: `leases_in_flight`.
       *
@@ -1087,6 +1087,14 @@ object SqlClient:
 
         private val _retriesAttempted: Counter =
             if metricsEnabled then stat.initCounter("retries_attempted", "Number of retry attempts made")
+            else Metrics.noopCounter
+
+        private val _preparedStatementsReprepared: Counter =
+            if metricsEnabled then
+                stat.initCounter(
+                    "prepared_statements_reprepared",
+                    "Number of cached prepared statements parsed again because the server no longer held them"
+                )
             else Metrics.noopCounter
 
         private val _leasesAcquired: Counter =
@@ -1142,12 +1150,15 @@ object SqlClient:
 
         // --- Instrument accessors ---
 
-        def connectionsAcquired: Counter     = _connectionsAcquired
-        def connectionsReleased: Counter     = _connectionsReleased
-        def connectionsDiscarded: Counter    = _connectionsDiscarded
-        def queriesExecuted: Counter         = _queriesExecuted
-        def queriesFailed: Counter           = _queriesFailed
-        def retriesAttempted: Counter        = _retriesAttempted
+        def connectionsAcquired: Counter  = _connectionsAcquired
+        def connectionsReleased: Counter  = _connectionsReleased
+        def connectionsDiscarded: Counter = _connectionsDiscarded
+        def queriesExecuted: Counter      = _queriesExecuted
+        def queriesFailed: Counter        = _queriesFailed
+        def retriesAttempted: Counter     = _retriesAttempted
+
+        def preparedStatementsReprepared: Counter = _preparedStatementsReprepared
+
         def leasesAcquired: Counter          = _leasesAcquired
         def cancelsFired: Counter            = _cancelsFired
         def cancelsTimedOut: Counter         = _cancelsTimedOut
@@ -1183,6 +1194,10 @@ object SqlClient:
         /** Increments `retries_attempted`. */
         def recordRetry(using Frame): Unit < Sync =
             _retriesAttempted.inc
+
+        /** Adds `count` to `prepared_statements_reprepared`, skipping the instrument entirely when a lease re-prepared nothing. */
+        def recordReprepares(count: Long)(using Frame): Unit < Sync =
+            if count == 0L then () else _preparedStatementsReprepared.add(count)
 
         /** Records `waitMs` in `pool_acquire_wait_ms`. */
         def recordPoolAcquireWait(waitMs: Long)(using Frame): Unit < Sync =

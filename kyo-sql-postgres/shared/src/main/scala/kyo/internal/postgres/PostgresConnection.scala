@@ -21,13 +21,12 @@ import kyo.net.NetTlsConfig
   *   - [[parameters]], server parameters received during startup and via in-session `ParameterStatus` messages (e.g. `server_version`,
   *     `client_encoding`).
   *   - [[processId]] / [[secretKey]], from [[BackendKeyData]], used to issue a [[CancelRequest]] on a separate connection.
-  *   - [[transactionStatus]], last-seen [[ReadyForQuery]] status byte (`'I'`/`'T'`/`'E'`).
   *   - [[notifications]], a bounded [[Channel]] into which async [[NotificationResponse]] messages are deposited. Its only reader is the
   *     dedicated listener stream's pump-and-emit pair, so notifications are a dedicated-connection feature by construction: on a pooled
   *     session (a caller-issued `LISTEN` through the statement API) deposits land in a buffer nobody reads and are discarded, bounded by
   *     the channel's capacity. The buffer still exists on every connection because the dedicated path needs it during its own statement
   *     windows: a `NOTIFY` racing the `LISTEN` exchange itself is deposited here and delivered once the pump starts.
-  *   - [[preparedStmts]], per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
+  *   - [[preparedStmtsRef]], per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
   *
   * All public methods are safe (no [[AllowUnsafe]]). A single [[PostgresConnection]] must NOT be used concurrently, the caller is
   * responsible for ensuring serial access (the connection pool enforces this via acquire/release semantics).
@@ -37,9 +36,12 @@ final class PostgresConnection(
     val parameters: AtomicRef[Map[String, String]],
     val processId: Int,
     val secretKey: Int,
-    val transactionStatus: AtomicRef[Byte],
     val notifications: Channel[NotificationResponse],
-    private[postgres] val preparedStmts: Cache[String, PreparedStmt],
+    // Behind a ref so a session scrub can drop every entry at once, by swapping rather than emptying.
+    // See `discardPreparedStatements`.
+    private[postgres] val preparedStmtsRef: AtomicRef[Cache[String, PreparedStmt]],
+    private[postgres] val stmtCacheSize: Int,
+    private[postgres] val stmtCacheTtl: Duration,
     private[kyo] val pendingCloses: AtomicRef[Chunk[String]],
     // Per-connection monotonic counter used to synthesise a UNIQUE server-side prepared statement
     // name on every `Parse`. Keying stmt names on `s_$hash` alone would collide with a still-live
@@ -67,6 +69,10 @@ final class PostgresConnection(
     def simpleExecute(sql: String)(using Frame): Long < (Async & Abort[SqlException]) =
         SimpleQueryExchange.run(channel, sql, processId.toLong, updateParam, sendNotification).map { case (_, count) => count }
 
+    // Unsafe: the pool harvests the count at the lease's exit, from a callback that runs in the connection ring's own
+    // AllowUnsafe context and cannot suspend.
+    private[postgres] def takeReprepareCount()(using AllowUnsafe): Long = channel.takeReprepares()
+
     /** Sends a minimal empty simple-query (`;`) and waits for the server's [[ReadyForQuery]].
       *
       * Postgres has no dedicated PING command; an empty simple-query is the cheapest round-trip, the server replies with
@@ -86,16 +92,18 @@ final class PostgresConnection(
       *   parameter values, one per placeholder, in order
       */
     def extendedQuery(sql: String, params: Chunk[BoundParam[?]])(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(ExtendedQueryExchange.query(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            sql,
-            params,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        cacheForRequest.flatMap { stmts =>
+            ExtendedQueryExchange.query(
+                channel,
+                stmts,
+                stmtCounter,
+                sql,
+                params,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     /** Streams rows from a parameterised query using the Postgres portal protocol.
       *
@@ -118,10 +126,10 @@ final class PostgresConnection(
         batchSize: Int
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream:
-            drainPendingCloses.andThen(
+            cacheForRequest.flatMap { stmts =>
                 StreamQueryExchange.stream(
                     channel,
-                    preparedStmts,
+                    stmts,
                     stmtCounter,
                     sql,
                     params,
@@ -130,7 +138,7 @@ final class PostgresConnection(
                     updateParam,
                     sendNotification
                 ).emit
-            )
+            }
 
     /** Executes a parameterised DML statement using the extended protocol and returns the number of affected rows.
       *
@@ -140,16 +148,18 @@ final class PostgresConnection(
       *   parameter values, one per placeholder, in order
       */
     def extendedExecute(sql: String, params: Chunk[BoundParam[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(ExtendedQueryExchange.execute(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            sql,
-            params,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        cacheForRequest.flatMap { stmts =>
+            ExtendedQueryExchange.execute(
+                channel,
+                stmts,
+                stmtCounter,
+                sql,
+                params,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     /** Runs an extended INSERT and returns an [[SqlClient.InsertOutcome]].
       *
@@ -224,15 +234,17 @@ final class PostgresConnection(
     def pipelined(
         stmts: Chunk[(String, Chunk[BoundParam[?]])]
     )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(PipelineExchange.prepare(
-            channel,
-            preparedStmts,
-            stmtCounter,
-            stmts,
-            processId.toLong,
-            updateParam,
-            sendNotification
-        ))
+        cacheForRequest.flatMap { cache =>
+            PipelineExchange.prepare(
+                channel,
+                cache,
+                stmtCounter,
+                stmts,
+                processId.toLong,
+                updateParam,
+                sendNotification
+            )
+        }
 
     // --- Transaction control ---
 
@@ -312,6 +324,31 @@ final class PostgresConnection(
         // Unsafe: kyo-net Connection.close is unsafe-tier; closes the socket without suspending.
         Sync.Unsafe.defer(channel.conn.close())
 
+    /** Drops this connection's record of its server-side prepared statements, for a caller that has just deallocated them all.
+      *
+      * The whole cache is replaced rather than emptied entry by entry: emptying fires the eviction hook per entry and queues a `Close 'S'`
+      * for a statement the server already dropped. `pendingCloses` goes with it, for the same reason.
+      */
+    private[postgres] def discardPreparedStatements(using Frame): Unit < Sync =
+        PostgresConnection.mkStmtCache(pendingCloses, stmtCacheSize, stmtCacheTtl).flatMap { fresh =>
+            preparedStmtsRef.set(fresh).andThen(pendingCloses.set(Chunk.empty))
+        }
+
+    /** The cache this request binds against, reconciled first with what the session did to the statements behind it.
+      *
+      * A caller can deallocate every statement through `executeRaw` without going near [[kyo.SqlClient.reset]], and the channel reports
+      * that from the command tag. Dropping the cache here rather than leaving it to the stale-statement retry is the difference between
+      * the next statement being an ordinary miss and it paying a dead Bind and a re-parse, once for every entry the cache still named.
+      *
+      * The discard precedes the drain and makes it a no-op, which is the point: those names are already gone server-side, so sending
+      * `Close 'S'` for them buys nothing.
+      */
+    private def cacheForRequest(using Frame): Cache[String, PreparedStmt] < (Async & Abort[SqlException]) =
+        channel.takeDeallocatedAll.flatMap { deallocated =>
+            val reconcile: Unit < Sync = if deallocated then discardPreparedStatements else ()
+            reconcile.andThen(drainPendingCloses).andThen(preparedStmtsRef.get)
+        }
+
     /** Sends `Close 'S' <name>` for each name accumulated in [[pendingCloses]] since the last drain, clearing the queue.
       *
       * Called at the start of every extended-protocol request so evicted server-side prepared statements are released before the next
@@ -353,11 +390,8 @@ final class PostgresConnection(
                 case ParameterStatus(n, v)   => updateParam(n, v).andThen(drainCloseResponses(0))
                 case n: NotificationResponse => sendNotification(n).andThen(drainCloseResponses(0))
                 case NoticeResponse(_)       => drainCloseResponses(0)
-                case ErrorResponse(fields)   =>
-                    // Routed like every sibling read loop: through the curated, truncated server-error path, never
-                    // other.toString, whose raw Detail field can carry actual row values.
-                    Abort.fail(ServerErrors.mkServerError(fields, Absent, 0, Present(processId.toLong)))
-                case other =>
+                case ErrorResponse(fields)   => failAfterSync(fields)
+                case other                   =>
                     Abort.fail(SqlConnectionUnexpectedMessageException("waiting for ReadyForQuery", "ReadyForQuery", other.toString))
             }
         else
@@ -367,13 +401,31 @@ final class PostgresConnection(
                 case ParameterStatus(n, v)   => updateParam(n, v).andThen(drainCloseResponses(remaining))
                 case n: NotificationResponse => sendNotification(n).andThen(drainCloseResponses(remaining))
                 case NoticeResponse(_)       => drainCloseResponses(remaining)
-                case ErrorResponse(fields)   =>
-                    Abort.fail(ServerErrors.mkServerError(fields, Absent, 0, Present(processId.toLong)))
-                case other =>
+                case ErrorResponse(fields)   => failAfterSync(fields)
+                case other                   =>
                     Abort.fail(SqlConnectionUnexpectedMessageException("Close drain", "CloseComplete / ReadyForQuery", other.toString))
             }
         end if
     end drainCloseResponses
+
+    /** Fails with the server error in `fields` after reading the `ReadyForQuery` the trailing `Sync` still produces.
+      *
+      * A `Sync` is answered whether or not the messages before it errored, so failing the moment the `ErrorResponse` arrives leaves that
+      * `ReadyForQuery` on the wire and the next request reads it as the answer to its own `Sync`, one message behind for the life of the
+      * connection.
+      *
+      * A failure in the drain WINS over the server error, which reads backwards and is not. The server error is non-fatal, so surfacing it
+      * tells the pool this session is idle and fit to lend; if the drain failed, the `ReadyForQuery` is still coming and the next borrower
+      * reads it as its own. Only a drain failure carries a type the pool destroys the connection for, and a read bound that expired is the
+      * case that matters, since it leaves the socket open and the session otherwise poolable.
+      *
+      * Routed through the curated server-error path like every sibling read loop, never `other.toString`, whose Detail field can carry row
+      * values.
+      */
+    private def failAfterSync(fields: Chunk[(Byte, String)])(using Frame): Unit < (Async & Abort[SqlException]) =
+        val error = ServerErrors.mkServerError(fields, Absent, 0, Present(processId.toLong))
+        drainToReadyForQuery.andThen(Abort.fail(error))
+    end failAfterSync
 
     private def sqlHasReturning(sql: String): Boolean =
         // Trailing-whitespace-tolerant detection of the auto-emitted RETURNING clause.
@@ -647,19 +699,20 @@ object PostgresConnection:
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         for
             params      <- AtomicRef.init(result.parameters)
-            txStatus    <- AtomicRef.init('I'.toByte)
             notifChan   <- Channel.initUnscoped[NotificationResponse](128)
             closesRef   <- AtomicRef.init(Chunk.empty[String])
             stmtCounter <- AtomicLong.init(0L)
             stmtCache   <- PostgresConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
+            stmtRef     <- AtomicRef.init(stmtCache)
         yield new PostgresConnection(
             channel,
             params,
             result.processId,
             result.secretKey,
-            txStatus,
             notifChan,
-            stmtCache,
+            stmtRef,
+            preparedStmtCacheSize,
+            ttl,
             closesRef,
             stmtCounter
         )
