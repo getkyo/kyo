@@ -3662,7 +3662,7 @@ lazy val `kyo-website` =
                 .exclude("com.lihaoyi", "sourcecode_2.13"),
             // The JVM tests serve the real browser bundle. Referenced by project id: `kyo-website-bundle`
             // depends on this project, so naming its val here would make this val recursive.
-            Test / test    := (Test / test).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).value,
+            Test / test     := (Test / test).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).value,
             Test / testOnly := (Test / testOnly).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).evaluated
         )
         .jsSettings(
