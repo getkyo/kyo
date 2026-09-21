@@ -11,7 +11,11 @@ import kyo.*
   *
   * The rule followed here is the one [[kyo.internal.mysql.exchange.MysqlErrors]] already states for MySQL's own `HY000` cases:
   * classification reads the error NUMBER, and the server's own SQLSTATE is relayed untouched rather than rewritten to something the server
-  * never sent. The numbers are MySQL's own, which Dolt reuses faithfully; only the state is generic.
+  * never sent.
+  *
+  * The numbers above are MySQL's own, but Dolt does not always reuse them: for a prepared statement the server no longer holds it answers
+  * `2014 statement ID is not found from record` where MySQL answers `1243 Unknown prepared statement handler`. So a number belongs in the
+  * sets below only once it has been observed from a Dolt server, never because MySQL is documented to send it.
   */
 private[kyo] object DoltErrors:
 

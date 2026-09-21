@@ -284,6 +284,10 @@ final case class BackendKeyData(processId: Int, secretKey: Int) extends BackendM
   */
 final case class ReadyForQuery(status: Byte) extends BackendMessage
 
+object ReadyForQuery:
+    /** No transaction block open. The other two values are `'T'` open and `'E'` open and failed. */
+    val Idle: Byte = 'I'.toByte
+
 /** Describes the columns of a query result.
   *
   * Wire: 'T' | Int32(len) | Int16(numFields) | [FieldDescription]*

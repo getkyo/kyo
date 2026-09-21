@@ -30,7 +30,7 @@ import kyo.net.NetTlsConfig
   *   - `serverVersion`, server version string (e.g. "8.0.34")
   *   - `charset`, negotiated charset number
   *   - `statusFlags`, last-seen server status flags
-  *   - `preparedStmts`, per-connection LRU cache of server-side prepared statements
+  *   - `preparedStmtsRef`, per-connection LRU cache of server-side prepared statements
   *
   * All public methods are safe. A single [[MysqlConnection]] must NOT be used concurrently, the caller ensures serial access.
   */
@@ -41,9 +41,24 @@ final class MysqlConnection(
     val serverVersion: AtomicRef[String],
     val charset: AtomicRef[Int],
     val statusFlags: AtomicRef[Int],
-    private[mysql] val preparedStmts: Cache[String, MysqlPreparedStmt],
+    // Behind a ref so a session scrub can drop every entry at once, by swapping rather than emptying.
+    // See `discardPreparedStatements`.
+    private[mysql] val preparedStmtsRef: AtomicRef[Cache[String, MysqlPreparedStmt]],
+    private[mysql] val stmtCacheSize: Int,
+    private[mysql] val stmtCacheTtl: Duration,
     private[kyo] val pendingCloses: AtomicRef[Chunk[Int]]
 ):
+
+    /** Drops this connection's record of its server-side prepared statements, for a caller that has just released them all.
+      *
+      * The whole cache is replaced rather than emptied entry by entry: emptying fires the eviction hook per entry and queues a
+      * `COM_STMT_CLOSE` for an id the server already dropped. `pendingCloses` goes with it, for the same reason.
+      */
+    private[mysql] def discardPreparedStatements(using Frame): Unit < Sync =
+        MysqlConnection.mkStmtCache(pendingCloses, stmtCacheSize, stmtCacheTtl).flatMap { fresh =>
+            preparedStmtsRef.set(fresh).andThen(pendingCloses.set(Chunk.empty))
+        }
+
     /** Executes `sql` using the simple-query (text) protocol and returns all result rows. */
     def simpleQuery(sql: String)(using Frame): Chunk[MysqlRow] < (Async & Abort[SqlException]) =
         withCapsAndId { (deprecateEof, cid) =>
@@ -61,7 +76,7 @@ final class MysqlConnection(
 
     /** Executes a parameterised query using the extended (binary) protocol and returns all result rows.
       *
-      * Prepares the statement on first use (caches it in [[preparedStmts]]) then binds parameters via [[ComStmtExecute]] with binary
+      * Prepares the statement on first use (caches it in [[preparedStmtsRef]]) then binds parameters via [[ComStmtExecute]] with binary
       * encoding. BinaryResultsetRow packets are decoded per-column using the column type metadata from [[StmtPrepareOk]].
       *
       * @param sql
@@ -72,9 +87,11 @@ final class MysqlConnection(
     def extendedQuery(sql: String, params: Chunk[BoundMysqlParam[?]])(using
         Frame
     ): Chunk[MysqlRow] < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(withCapsAndId { (deprecateEof, cid) =>
-            ExtendedQueryExchange.query(channel, preparedStmts, sql, params, deprecateEof, cid)
-        })
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
+            withCapsAndId { (deprecateEof, cid) =>
+                ExtendedQueryExchange.query(channel, stmts, sql, params, deprecateEof, cid)
+            }
+        }
 
     /** Executes a parameterised DML statement using the extended (binary) protocol and returns affected rows.
       *
@@ -86,9 +103,11 @@ final class MysqlConnection(
     def extendedExecute(sql: String, params: Chunk[BoundMysqlParam[?]])(using
         Frame
     ): Long < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(withCapsAndId { (deprecateEof, cid) =>
-            ExtendedQueryExchange.execute(channel, preparedStmts, sql, params, deprecateEof, cid)
-        })
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
+            withCapsAndId { (deprecateEof, cid) =>
+                ExtendedQueryExchange.execute(channel, stmts, sql, params, deprecateEof, cid)
+            }
+        }
 
     /** Runs an extended INSERT and returns an [[SqlClient.InsertOutcome]] derived from the server's OK packet.
       *
@@ -101,19 +120,21 @@ final class MysqlConnection(
     def extendedExecuteInsert(sql: String, params: Chunk[BoundMysqlParam[?]])(using
         Frame
     ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
-        drainPendingCloses.andThen(withCapsAndId { (deprecateEof, cid) =>
-            ExtendedQueryExchange.executeInsert(channel, preparedStmts, sql, params, deprecateEof, cid).flatMap {
-                // MySQL cannot report GeneratedKey.NoAutoKey: lastInsertId == 0 is ambiguous between "no
-                // auto-increment column" and "caller supplied the key", so this reports Unavailable where the
-                // PostgreSQL path distinguishes the two.
-                case (affected, lastInsertId) =>
-                    val key =
-                        if lastInsertId == 0L then SqlClient.InsertOutcome.GeneratedKey.Unavailable
-                        else SqlClient.InsertOutcome.GeneratedKey.Value(lastInsertId)
-                    MysqlConnection.raiseSuppressedFailure(this, sql, cid)
-                        .andThen(SqlClient.InsertOutcome(affected, key))
+        drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
+            withCapsAndId { (deprecateEof, cid) =>
+                ExtendedQueryExchange.executeInsert(channel, stmts, sql, params, deprecateEof, cid).flatMap {
+                    // MySQL cannot report GeneratedKey.NoAutoKey: lastInsertId == 0 is ambiguous between "no
+                    // auto-increment column" and "caller supplied the key", so this reports Unavailable where the
+                    // PostgreSQL path distinguishes the two.
+                    case (affected, lastInsertId) =>
+                        val key =
+                            if lastInsertId == 0L then SqlClient.InsertOutcome.GeneratedKey.Unavailable
+                            else SqlClient.InsertOutcome.GeneratedKey.Value(lastInsertId)
+                        MysqlConnection.raiseSuppressedFailure(this, sql, cid)
+                            .andThen(SqlClient.InsertOutcome(affected, key))
+                }
             }
-        })
+        }
 
     /** Streams rows from a parameterised query using per-row wire reads (approach 2, no cursor).
       *
@@ -146,11 +167,11 @@ final class MysqlConnection(
         onCleanBoundary: Unit < Sync = ()
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope & Sync] =
         Stream:
-            drainPendingCloses.andThen(
+            drainPendingCloses.andThen(preparedStmtsRef.get).flatMap { stmts =>
                 withCapsAndId { (deprecateEof, cid) =>
-                    StreamQueryExchange.stream(channel, preparedStmts, sql, params, deprecateEof, cid, escalate, onCleanBoundary).emit
+                    StreamQueryExchange.stream(channel, stmts, sql, params, deprecateEof, cid, escalate, onCleanBoundary).emit
                 }
-            )
+            }
 
     /** Executes a `LOAD DATA LOCAL INFILE` statement, streaming `data` bytes to the server.
       *
@@ -204,9 +225,15 @@ final class MysqlConnection(
       * A reset restores handshake-negotiated state but discards everything set by a statement, and the time-zone pin is set by a statement.
       * Sending the reset alone leaves a connection that looks healthy and reads every later `TIMESTAMP` against whatever zone the server
       * defaults to, wrong by that offset with nothing raised, so the two are not separable here.
+      *
+      * The cache is dropped BETWEEN the two, which is the only correct place for it. The server releases every prepared statement at the
+      * reset itself, so keying the drop on the outcome of this whole method would keep a cache of dead ids whenever the pin that follows
+      * fails: an ordinary `SET`, whose typed failure leaves the session poolable.
       */
     def resetConnection()(using Frame): Unit < (Async & Abort[SqlException]) =
-        ResetConnectionExchange.run(channel).andThen(MysqlConnection.pinSessionState(this))
+        ResetConnectionExchange.run(channel)
+            .andThen(discardPreparedStatements)
+            .andThen(MysqlConnection.pinSessionState(this))
 
     // --- Transaction methods ---
 
@@ -520,6 +547,7 @@ object MysqlConnection:
             statusRef  <- AtomicRef.init(result.statusFlags)
             closesRef  <- AtomicRef.init(Chunk.empty[Int])
             stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
+            stmtRef    <- AtomicRef.init(stmtCache)
         yield new MysqlConnection(
             channel,
             connIdRef,
@@ -527,7 +555,9 @@ object MysqlConnection:
             versionRef,
             charsetRef,
             statusRef,
-            stmtCache,
+            stmtRef,
+            preparedStmtCacheSize,
+            ttl,
             closesRef
         )
         end for
@@ -582,6 +612,7 @@ object MysqlConnection:
                 statusRef  <- AtomicRef.init(0)
                 closesRef  <- AtomicRef.init(Chunk.empty[Int])
                 stmtCache  <- MysqlConnection.mkStmtCache(closesRef, 8, Duration.Zero)
+                stmtRef    <- AtomicRef.init(stmtCache)
             yield new MysqlConnection(
                 channel,
                 connIdRef,
@@ -589,7 +620,9 @@ object MysqlConnection:
                 versionRef,
                 charsetRef,
                 statusRef,
-                stmtCache,
+                stmtRef,
+                8,
+                Duration.Zero,
                 closesRef
             )
             end for
