@@ -325,15 +325,12 @@ private[kyo] object CdpBackend:
             }
         }
 
-    /** Reads the JS heap occupancy of the session's isolate. */
     private[kyo] def getHeapUsage(backend: CdpBackend)(using
         Frame
     ): GetHeapUsageResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, GetHeapUsageResult]("Runtime.getHeapUsage", CdpNoParams())
 
-    /** Runs a full, blocking GC. The reply is sent after the collection finishes, so a heap read issued
-      * afterwards sees the post-collection occupancy.
-      */
+    // The reply is sent after the collection finishes.
     private[kyo] def collectGarbage(backend: CdpBackend)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, Unit]("HeapProfiler.collectGarbage", CdpNoParams())
 

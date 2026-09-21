@@ -824,14 +824,8 @@ object Async extends AsyncPlatformSpecific:
         useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     abstract class JoinInput[A]:
-        /** Hands over the awaited promise, already linked to be interrupted with `task`.
-          *
-          * The link is made HERE rather than by the caller so the promise cannot be obtained without it: a joiner that
-          * skipped the link would leave the awaited promise holding a waiter that nothing ever reclaims.
-          *
-          * `release` is the registration `task` is about to make on the returned promise, [[Absent]] when it will make
-          * none. The link carries it so that interrupting `task` takes it back off the promise; without that, a task
-          * that dies parked on a promise which never completes stays reachable from it forever.
+        /** Returns the awaited promise, already linked to be interrupted with `task`. `release` is the callback `task`
+          * will register on it, carried by the link so an interrupt can take it back.
           */
         def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A]
     end JoinInput

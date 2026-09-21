@@ -2,22 +2,11 @@ package kyo.website
 
 import kyo.*
 
-/** Emits the real site and serves it over localhost, so a browser leaf drives exactly what a reader loads.
-  *
-  * The site comes from the live repository through the same two calls the deploy runs, `WebsiteContent.fromRepo` then
-  * `WebsiteGenerator.emit`, and carries the real `fullLinkJS` bundle discovered under `kyo-website-bundle`'s target tree.
-  * Nothing is stubbed: a leaf measuring the mounted SPA needs the module count the live README produces, because the
-  * docs sidebar renders one reactive region per module and per-region behavior is what such a leaf is measuring.
-  *
-  * The build wires `kyo-website-bundle`'s `fullLinkJS` ahead of this module's JVM test scope, so `main.js` is present by
-  * the time [[serve]] looks for it; a missing bundle is a build-wiring failure and fails the leaf rather than degrading
-  * it to a page with no SPA.
+/** Emits the site from the live repository with the real `fullLinkJS` bundle and serves it over localhost. Nothing is
+  * stubbed: the docs sidebar renders one reactive region per module, so only the real content gives the real count.
   */
 private[website] object ServedSite:
 
-    /** The version the emitted site is served under. `latest = true` puts the docs at `/latest/<module>/`, the route a
-      * reader actually lands on.
-      */
     private val version = WebsiteVersion("v1.0.0", "1.0.0", latest = true)
 
     private val contentTypes: Map[String, String] = Map(
@@ -33,9 +22,7 @@ private[website] object ServedSite:
         "txt"  -> "text/plain; charset=utf-8"
     )
 
-    /** `.js` must resolve to `text/javascript`: a browser refuses a `<script type="module">` served as
-      * `application/octet-stream`, and the whole SPA would silently never mount.
-      */
+    // A browser refuses a `<script type="module">` served as `application/octet-stream`, and the SPA never mounts.
     private def contentTypeOf(key: String): String =
         val ext = key.lastIndexOf('.') match
             case -1 => ""
@@ -43,9 +30,7 @@ private[website] object ServedSite:
         contentTypes.getOrElse(ext, "application/octet-stream")
     end contentTypeOf
 
-    /** Emits the site into a scoped temp directory, serves it on an OS-assigned localhost port, and runs `f` with the
-      * base URL (no trailing slash). The server and the temp directory are released when the enclosing `Scope` closes.
-      */
+    /** Runs `f` with the base URL, no trailing slash. */
     def serve[A, S](f: String => A < (Async & S))(using
         Frame
     ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException] & S) =
@@ -63,9 +48,7 @@ private[website] object ServedSite:
             result <- f(s"http://localhost:${server.port}")
         yield result
 
-    /** Every regular file under `root`, keyed by its forward-slash path relative to `root`. Read once up front so a
-      * measurement leaf never has the filesystem in its sampling window.
-      */
+    // Read once up front so the filesystem is never inside a measurement window.
     private def loadDir(root: Path)(using Frame): Map[String, Span[Byte]] < (Async & Abort[FileSystemException]) =
         val depth = root.parts.size
         Path.runReadOnly(
@@ -80,9 +63,7 @@ private[website] object ServedSite:
         )
     end loadDir
 
-    /** Resolves a request path the way GitHub Pages serves the emitted tree: `/` and any trailing-slash path map to that
-      * directory's `index.html`, and an extension-less path falls back to `<path>/index.html`.
-      */
+    // Resolves the way GitHub Pages does: a directory path maps to its `index.html`.
     private def resolve(rawPath: String, store: Map[String, Span[Byte]]): Maybe[(String, Span[Byte])] =
         val clean      = rawPath.takeWhile(_ != '?').stripPrefix("/")
         val candidates =
@@ -100,9 +81,7 @@ private[website] object ServedSite:
                 HttpResponse.notFound(Span.from(s"Not found: $rawPath".getBytes("UTF-8")))
                     .setHeader("Content-Type", "text/plain; charset=utf-8")
 
-    /** The repository root: the nearest ancestor of the working directory holding `build.sbt`. Mirrors the walk
-      * `WebsiteMain` does, because a forked test's working directory is the module directory, not the root.
-      */
+    // A forked test's working directory is the module directory, not the repository root.
     private def repoRoot(using Frame): Path < (Sync & Abort[FileSystemException]) =
         def loop(dir: Path): Path < (Sync & Abort[FileSystemException] & PathRead) = (dir / "build.sbt").exists.map {
             case true  => dir
@@ -114,9 +93,6 @@ private[website] object ServedSite:
         Path.runReadOnly(loop(Path(java.lang.System.getProperty("user.dir").nn)))
     end repoRoot
 
-    /** The `fullLinkJS` output directory holding `main.js`, discovered under `kyo-website-bundle/js/target/scala-*`
-      * exactly as `WebsiteMain` discovers it when the deploy passes no `--bundle-dir`.
-      */
     private def bundleDir(root: Path)(using Frame): Path < (Sync & Abort[FileSystemException]) =
         val targetDir = root / "kyo-website-bundle" / "js" / "target"
         Path.runReadOnly {

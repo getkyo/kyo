@@ -849,27 +849,39 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!p2.done())
         }
 
-        "walks a long chain without a frame per registration" in {
-            // A promise awaited by many fibers holds one registration per waiter, and a removal has to walk
-            // past every one of them to reach the end. The walk must cost no stack: a frame per link puts the
-            // ceiling at whatever the platform's thread stack happens to be, which is a different number on
-            // every leg. Sized well past any of them.
-            val depth = 100000
-            val p     = new IOPromise[Nothing, Int]()
-            val links = Array.fill(depth)(new IOPromise[Nothing, Int]())
-            links.foreach(p.interrupts(_))
+        "a wide fan-out costs no stack to unlink from" in {
+            // One link per forked child, then the join link on top. Sized past any platform's thread stack.
+            val width    = 100000
+            val p        = new IOPromise[Nothing, Int]()
+            val children = Array.fill(width)(new IOPromise[Nothing, Int]())
+            children.foreach(p.interrupts(_))
 
-            p.remove(links(0))
+            val awaited = new IOPromise[Nothing, Int]()
+            p.interrupts(awaited)
+            assert(p.remove(awaited))
+
+            children.foreach(c => assert(c.complete(Result.succeed(1))))
+            val next = new IOPromise[Nothing, Int]()
+            p.interrupts(next)
+            assert(p.waiters() == 1)
 
             assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(!links(0).done())
-            assert(links(depth - 1).done())
+            assert(next.done())
+        }
+
+        "links to completed promises are dropped as new links are made" in {
+            val p = new IOPromise[Nothing, Int]()
+            (1 to 100).foreach { _ =>
+                val child = new IOPromise[Nothing, Int]()
+                p.interrupts(child)
+                assert(child.complete(Result.succeed(1)))
+            }
+            val live = new IOPromise[Nothing, Int]()
+            p.interrupts(live)
+            assert(p.waiters() == 1)
         }
 
         "remove with become" in {
-            // A link made on `p1` before `p1.become(p2)` lives on in the half of `p2`'s chain the merge carries as
-            // its tail. Removing it through `p1` has to reach it there: the caller unlinked `p3`, so interrupting
-            // `p2` must leave `p3` alone.
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
@@ -896,10 +908,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "an interrupt on a masked await wakes the awaiter itself" in {
-            // A mask refuses interruption, so the cascade cannot complete the awaited promise and cannot fire the
-            // awaiter's callback that way. Leaving the callback registered leaks it on a promise that may never
-            // complete; taking it off without firing it strands the awaiter. The link has to do both: take it
-            // off, and fire it with the interrupt.
             val awaited = new IOPromise[Nothing, Int]()
             val masked  = awaited.mask()
             val awaiter = new IOPromise[Nothing, Int]()
@@ -948,9 +956,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "remove reaches a registration merged in by become" in {
-            // A waiter registered on `p1` before `p1.become(p2)` sits in the half of `p2`'s chain that the
-            // merge carries as its tail. It must still be removable, and removable through `p1`.
-            val p1                              = new IOPromise[Nothing, Int]()
+            val p1                             = new IOPromise[Nothing, Int]()
             val p2                              = new IOPromise[Nothing, Int]()
             val f: Result[Nothing, Int] => Unit = _ => ()
             p1.onComplete(f)

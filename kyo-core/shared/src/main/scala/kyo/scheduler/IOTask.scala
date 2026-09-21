@@ -83,26 +83,16 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                         [C] =>
                             (joinInput, cont) =>
                                 locally {
-                                    // The registration this task is about to make on the awaited promise. It names
-                                    // ITSELF as the key it is removed under, rather than the promise, so it can be
-                                    // built before the promise is in hand: that is what lets the link below be made
-                                    // inside joinInput, where it cannot be skipped.
                                     val resume: Result[Any, C] => Any =
                                         new (Result[Any, C] => Any):
                                             self =>
                                             def apply(r: Result[Any, C]): Any =
-                                                // The one removal that cannot be typed: `self` is a callback on the
-                                                // AWAITED promise being dropped from the link on THIS task, so no
-                                                // signature here can name its type.
                                                 discard(IOTask.this.remove(self))
                                                 curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
                                                 Scheduler.get.schedule(IOTask.this)
                                             end apply
-                                    // Invoking joinInput links the awaited promise against THIS task, carrying
-                                    // `resume` so an interrupt that cannot complete the awaited promise fires it
-                                    // itself, and does so before we read the promise's state (see Async.useResult).
-                                    // The awaited promise's error type is opaque here and only `resume` consumes it,
-                                    // so it is bound once for the registration calls below.
+                                    // Invoking joinInput registers the interrupt cascade link on THIS IOTask
+                                    // before we read the promise's state (see Async.useResult).
                                     val input = joinInput(this, Present(resume)).asInstanceOf[IOPromise[Any, C]]
                                     input.poll() match
                                         case null =>
@@ -115,12 +105,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                         case Absent =>
                                             curr = nullResult
                                             input.onComplete(resume)
-                                            // An interrupt that landed while this task was registering already fired
-                                            // the link, which found nothing to take over. This task is still running,
-                                            // so `run` sees the interrupt and finishes it; only the registration must
-                                            // not be left behind. Both the link's read of this task's state and the
-                                            // interrupt's write of it are volatile, so if the link ran too early then
-                                            // that write precedes this read.
+                                            // An interrupt that landed before `resume` was registered fired the link
+                                            // with nothing to remove; `run` handles the interrupt from here.
                                             if !isPending() then discard(input.remove(resume))
                                             nullResult
                                     end match
@@ -192,9 +178,8 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     // runs no user code and cannot reintroduce the Sync.ensure finalizer-drop reverted in 33bb29bd94.
     // Bypasses the Safepoint via dispatchFirst: by the time this runs the fiber's promise is already
     // complete (interrupt), so the preempt flag is set and handleFirst would short-circuit before
-    // reaching the matcher. Invoking joinInput links the awaited promise against this already-settled
-    // task, which is what propagates the interrupt to it. `Absent`: this task never reached the park,
-    // so it registered nothing on that promise and the link has nothing to reclaim.
+    // reaching the matcher. Invoking joinInput registers the cascade link on this IOTask so the
+    // interrupt propagates to the awaited promise.
     private def ensureInterrupt(remainder: A < (Ctx & Async & Abort[E]))(using Safepoint): Unit =
         ArrowEffect.dispatchFirst(Tag[Async.Join], remainder.asInstanceOf[Any < Async.Join]) {
             [C] => joinInput => discard(joinInput(this, Absent))

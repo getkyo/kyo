@@ -68,13 +68,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     final def interrupts(other: IOPromise[?, ?])(using frame: Frame): Unit =
         interrupts(other, Absent)
 
-    /** Links `other` to be interrupted when this promise is, optionally taking over a registration made on `other`.
-      *
-      * `release`, when present, is a callback registered on `other` by whoever is awaiting it, and it is that
-      * awaiter's only way back. Interrupting the awaiter cascades into `other`; where the cascade lands, completing
-      * `other` fires the callback and nothing more is needed. Where it does not land, because `other` is masked or
-      * already done, the link takes the callback off `other` and fires it with the interrupt itself, so the awaiter
-      * is woken on the same path either way and holds no registration on a promise it has stopped waiting for.
+    /** `release` is the awaiter's callback on `other`. If `other` refuses the interrupt (masked), the link removes the
+      * callback from it and fires it with the interrupt.
       */
     final def interrupts[E2, A2](other: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
@@ -90,26 +85,18 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     end interrupts
 
     /** Drops the registration made under `key`, matched by reference: the promise given to [[interrupts]], or the
-      * function given to [[onComplete]] / [[onInterrupt]]. Returns whether it was there to drop.
+      * function given to [[onComplete]] / [[onInterrupt]].
       *
-      * The result is what makes a handoff safe: the registration is removed under the same CAS that completion goes
-      * through, so `true` means the caller now owns a callback that this promise will never fire, and `false` means
-      * either the promise already fired it or nobody registered it. A caller that fires the callback itself does so
-      * only on `true`, and it can never fire twice.
-      *
-      * The two arms of `key` do not reduce to one. A join link carries a callback belonging to the promise being
-      * AWAITED rather than to the one holding the link, so no type parameterized by the holder covers both.
-      *
-      * A registration that is never dropped is what makes a waiter permanent. A promise that stays pending keeps every
-      * registration reachable, and a completion callback holds the whole computation waiting on it, so a waiter that
-      * goes away before the promise completes has to take its registration with it.
+      * Returns whether it was there. The drop shares completion's CAS, so `true` means this promise will never fire
+      * that callback and the caller may fire it exactly once.
       */
     final def remove(key: IOPromise[?, ?] | Function1[?, ?]): Boolean =
         @tailrec def removeLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !p.holds(key) then false
-                    else if !promise.compareAndSet(p, p.remove(key)) then removeLoop(promise)
+                    val next = p.remove(key)
+                    if next eq p then false
+                    else if !promise.compareAndSet(p, next) then removeLoop(promise)
                     else true
                 case l: Linked[E, A] @unchecked =>
                     removeLoop(l.p)
@@ -336,89 +323,29 @@ private[kyo] object IOPromise:
     sealed abstract class Pending[E, A]:
         self =>
 
+        def waiters: Int
         def interrupt(v: Error[E]): Pending[E, A]
+
+        /** Costs a frame per node walked, so it stops at the first match; the registration being dropped is normally
+          * the newest, at the head. Returns `this`, not a copy, when nothing matched.
+          */
+        def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
-        /** The rest of the chain this node sits in front of, `Empty` at the end of it.
-          *
-          * Every traversal here is over a chain whose length is the number of waiters a promise has, which a fan-out
-          * makes arbitrarily long. Exposing the link lets the traversals below be loops rather than one frame per
-          * registration, so none of them is bounded by the platform's thread stack.
-          */
-        def next: Pending[E, A]
-
-        /** Whether this node alone is the registration made under `key`, matched by identity: the promise for
-          * `interrupts`, the function for `onComplete` and `onInterrupt`. A merged node answers for the half of the
-          * chain that [[next]] does not reach.
-          */
-        def matches(key: IOPromise[?, ?] | Function1[?, ?]): Boolean
-
-        /** Puts this node's registration back in front of `rest`, or returns `rest` alone to drop it.
-          *
-          * Dropped when the node [[matches]] `key`, and when the node is a link that can no longer fire, which is the
-          * only chance a long-lived promise gets to collect those.
-          */
-        def rebuild(rest: Pending[E, A], key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
-
-        /** What this node alone contributes to [[waiters]], excluding the chain behind it. */
-        protected def selfWaiters: Int = 1
-
-        final def waiters: Int =
-            @tailrec def waitersLoop(p: Pending[E, A], acc: Int): Int =
-                if p eq Pending.Empty then acc
-                else waitersLoop(p.next, acc + p.selfWaiters)
-            waitersLoop(this, 0)
-        end waiters
-
-        final def holds(key: IOPromise[?, ?] | Function1[?, ?]): Boolean =
-            @tailrec def holdsLoop(p: Pending[E, A]): Boolean =
-                if p eq Pending.Empty then false
-                else p.matches(key) || holdsLoop(p.next)
-            holdsLoop(this)
-        end holds
-
-        /** Rebuilds this chain without the registration made under `key`.
-          *
-          * Runs to the end rather than stopping at the first match: the requested key is typically the newest
-          * registration and so sits at the head, while links whose target has since completed sit behind it and are
-          * collected on the same walk. The walk is two loops over an array rather than a recursion, so a fan-out
-          * that registers ten thousand waiters costs no stack.
-          */
-        final def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A] =
-            if next eq Pending.Empty then rebuild(Pending[E, A](), key)
-            else
-                var n = 0
-                var p = this
-                while p ne Pending.Empty do
-                    n += 1
-                    p = p.next
-                val nodes = new Array[AnyRef](n)
-                var i     = 0
-                p = this
-                while p ne Pending.Empty do
-                    nodes(i) = p
-                    i += 1
-                    p = p.next
-                end while
-                // Rebuilt from the end of the chain back to the head, so the original order is kept.
-                var rest = Pending[E, A]()
-                i = n - 1
-                while i >= 0 do
-                    rest = nodes(i).asInstanceOf[Pending[E, A]].rebuild(rest, key)
-                    i -= 1
-                rest
-        end remove
+        /** The rest of the chain if this node is a link to a completed promise, else this node. */
+        def dropIfDead: Pending[E, A] = this
 
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
-                def next: Pending[E, A]        = self
+                def waiters: Int               = self.waiters + 1
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def matches(key: IOPromise[?, ?] | Function1[?, ?])                      = key eq f
-                def rebuild(rest: Pending[E, A], key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if key eq f then rest
-                    else rest.onComplete(f)
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    if key eq f then self
+                    else
+                        val rest = self.remove(key)
+                        if rest eq self then this else rest.onComplete(f)
                 def run(v: Result[E, A]) =
                     eval(discard(f(v.asInstanceOf[Result[E, A]])))
                     self
@@ -428,44 +355,49 @@ private[kyo] object IOPromise:
             interrupts(p, Absent)
 
         final def interrupts[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
-            new Pending[E, A]:
-                def interrupt(error: Error[E]) =
-                    val ex =
-                        error match
-                            case error: Result.Panic => error
-                            case _                   => interruptPanic
+            // Without this a long-lived fiber keeps a link per child it ever forked.
+            @tailrec def live(chain: Pending[E, A]): Pending[E, A] =
+                val next = chain.dropIfDead
+                if next eq chain then chain else live(next)
+            val base = live(this)
+            if base ne this then base.interrupts(p, release)
+            else
+                new Pending[E, A]:
+                    def interrupt(error: Error[E]) =
+                        val ex =
+                            error match
+                                case error: Result.Panic => error
+                                case _                   => interruptPanic
 
-                    // A cascade that lands completes `p`, and completing `p` is what fires `release` and wakes the
-                    // awaiter. A cascade that does not land, because `p` is masked or already done, fires nothing,
-                    // so the link fires `release` itself with the interrupt, on the same path completion would
-                    // have used. `remove` is true only if the registration was still on `p`, which is what keeps
-                    // this from firing a callback that completion got to first.
-                    if !p.interrupt(ex) then
-                        release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
-                    self
-                end interrupt
-                // Matches either identity the link was made under: the awaited promise, or the registration it
-                // carries. The awaiting task reclaims by the latter, because the callback is what it holds.
-                def matches(key: IOPromise[?, ?] | Function1[?, ?]) = (key eq p) || release.exists(_ eq key)
-                // A completed promise can never be interrupted again, so a link to one can never do anything and is
-                // dropped on sight.
-                def rebuild(rest: Pending[E, A], key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if matches(key) || p.done() then rest
-                    else rest.interrupts(p, release)
-                def next: Pending[E, A]  = self
-                def run(v: Result[E, A]) =
-                    self
+                        // A masked `p` refuses the interrupt and fires nothing, so the awaiter is woken here.
+                        // `remove` is false if completion already fired `release`.
+                        if !p.interrupt(ex) then
+                            release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
+                        self
+                    end interrupt
+                    def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                        if (key eq p) || release.exists(_ eq key) then self
+                        else
+                            val rest = self.remove(key)
+                            if rest eq self then this else rest.interrupts(p, release)
+                    override def dropIfDead  = if p.done() then self else this
+                    def waiters: Int         = self.waiters + 1
+                    def run(v: Result[E, A]) =
+                        self
+            end if
+        end interrupts
 
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def matches(key: IOPromise[?, ?] | Function1[?, ?])                      = key eq f
-                def rebuild(rest: Pending[E, A], key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if key eq f then rest
-                    else rest.onInterrupt(f)
-                def next: Pending[E, A]  = self
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    if key eq f then self
+                    else
+                        val rest = self.remove(key)
+                        if rest eq self then this else rest.onInterrupt(f)
+                def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
 
@@ -481,16 +413,18 @@ private[kyo] object IOPromise:
                     case _ if (p eq Pending.Empty) => tail
                     case p: Pending[E, A]          => interruptLoop(p.interrupt(error), error)
 
-            // A merged node fronts two chains: `self`, which `next` walks, and `tail`, which it answers for itself.
-            // Nesting is bounded by how many promises became one another, never by how many waiters they have.
             new Pending[E, A]:
-                def next: Pending[E, A]                                                  = self
-                override protected def selfWaiters: Int                                  = tail.waiters
-                def interrupt(error: Error[E])                                           = interruptLoop(self, error)
-                def matches(key: IOPromise[?, ?] | Function1[?, ?])                      = tail.holds(key)
-                def rebuild(rest: Pending[E, A], key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if tail.holds(key) then rest.merge(tail.remove(key))
-                    else rest.merge(tail)
+                def waiters: Int               = self.waiters + tail.waiters
+                def interrupt(error: Error[E]) = interruptLoop(self, error)
+                // `tail` holds what was registered on a promise before it became this one.
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    val head = self.remove(key)
+                    if head ne self then head.merge(tail)
+                    else
+                        val rest = tail.remove(key)
+                        if rest eq tail then this else self.merge(rest)
+                    end if
+                end remove
                 def run(v: Result[E, A]) = runLoop(self, v)
             end new
         end merge
@@ -518,12 +452,10 @@ private[kyo] object IOPromise:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
-            def next: Pending[Nothing, Nothing]                                                  = this
-            override protected def selfWaiters: Int                                              = 0
-            def interrupt(v: Error[Nothing])                                                     = this
-            def matches(key: IOPromise[?, ?] | Function1[?, ?])                                  = false
-            def rebuild(rest: Pending[Nothing, Nothing], key: IOPromise[?, ?] | Function1[?, ?]) = rest
-            def run(v: Result[Nothing, Nothing])                                                 = this
+            def waiters: Int                                   = 0
+            def interrupt(v: Error[Nothing])                   = this
+            def remove(key: IOPromise[?, ?] | Function1[?, ?]) = this
+            def run(v: Result[Nothing, Nothing])               = this
         end Empty
     end Pending
 
