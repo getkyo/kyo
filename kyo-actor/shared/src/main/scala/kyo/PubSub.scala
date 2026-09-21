@@ -92,9 +92,11 @@ object PubSub:
                 closed.get.map {
                     case true  => Abort.fail(Closed("PubSub", frame))
                     case false =>
-                        state.updateAndGet(_ + subscriber).andThen {
-                            Scope.ensure(state.updateAndGet(_ - subscriber).unit)
-                        }
+                        // Registered BEFORE the add, for the same reason as the linearized form: an interrupt between the
+                        // two would otherwise strand a subscriber nothing removes. Removal from a set is idempotent, so
+                        // the reverse order costs nothing.
+                        Scope.ensure(state.updateAndGet(_ - subscriber).unit)
+                            .andThen(state.updateAndGet(_ + subscriber).unit)
                 }
             def subscriberCount(using Frame): Int < (Async & Abort[Closed]) = state.get.map(_.size)
             def close(using Frame): Unit < Sync                             = closed.set(true).andThen(state.set(Set.empty))
@@ -205,9 +207,11 @@ object PubSub:
                     actor.ask(Command.Publish(value, _))
 
                 def subscribe(subscriber: Subject[A])(using Frame): Unit < (Async & Abort[Closed] & Scope) =
-                    actor.ask(Command.Subscribe(subscriber, _)).andThen {
-                        Scope.ensure(Abort.run[Closed](actor.ask(Command.Unsubscribe(subscriber, _))).unit)
-                    }
+                    // The removal is registered BEFORE the add commits. Registering it after leaves a window in which an
+                    // interrupt strands a subscriber the actor holds and nothing will ever remove. Registering it first is
+                    // safe in the other direction: an unsubscribe for a subscriber that was never added is a no-op.
+                    Scope.ensure(Abort.run[Closed](actor.ask(Command.Unsubscribe(subscriber, _))).unit)
+                        .andThen(actor.ask(Command.Subscribe(subscriber, _)))
 
                 def subscriberCount(using Frame): Int < (Async & Abort[Closed]) =
                     actor.ask(Command.Count(_))
