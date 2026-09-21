@@ -12,7 +12,7 @@ import kyo.internal.postgres.exchange.*
   * Container-backed leaves run against the per-fork-JVM shared PostgreSQL container with a fresh schema per test (via
   * [[SqlSharedContainers.withFreshSchema]]). Pure unit-test leaves do not touch any container.
   */
-class PostgresConnectionTest extends SqlContainerTest:
+class PostgresConnectionIntegrationTest extends SqlContainerTest:
 
     /** Thread-safe synchronous log sink for capturing log entries in tests. */
     private class TestLogSink extends Log.Unsafe:
@@ -509,4 +509,4 @@ class PostgresConnectionTest extends SqlContainerTest:
         }
     }
 
-end PostgresConnectionTest
+end PostgresConnectionIntegrationTest
