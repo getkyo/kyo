@@ -237,15 +237,15 @@ class ZStreamsTest extends kyo.test.Test[Any]:
             }
         }
         "interruption propagates to kyo stream" in runZIO {
-            import java.util.concurrent.atomic.AtomicBoolean
-
-            // State flag that should be set when Kyo stream is interrupted/completed
-            val streamFinalized = new AtomicBoolean(false)
+            // A barrier rather than a flag to poll: the finalizer trips it, and the ZIO side awaits it. An interrupt
+            // spawns the kyo scope's drain without waiting for it, so the finalizer runs strictly after
+            // `fiber.interrupt` has returned and a read taken there is reading too early.
+            val streamFinalized = scala.concurrent.Promise[Unit]()
 
             val kyoStream: Stream[Int, Abort[Nothing] & Async] = Stream {
                 Scope.run {
                     Scope.ensure {
-                        streamFinalized.set(true)
+                        discard(streamFinalized.trySuccess(()))
                     }.andThen {
                         Stream.unfold(0, chunkSize = 1) { n =>
                             // Emit one element (its own chunk) then park until interrupted, so the stream is in flight when the
@@ -265,16 +265,17 @@ class ZStreamsTest extends kyo.test.Test[Any]:
                 // finalizer, so the interrupt cannot land before the finalizer is in place.
                 fiber <- zioStream.tap(_ => started.succeed(())).take(5).runCollect.fork
                 // Verify initial state is false
-                _ = assert(!streamFinalized.get())
-                _ <- started.await
-                // fiber.interrupt awaits teardown and ZIOs.run interrupt-and-awaits the bridged kyo computation, so the
-                // kyo Scope finalizer has run once it returns.
+                _      = assert(!streamFinalized.isCompleted)
+                _      <- started.await
                 result <- fiber.interrupt
+                // Awaited, not read: a finalizer that was registered trips this, and one that was never registered
+                // leaves it untripped, which the leaf timeout reports.
+                _ <- ZIO.fromFuture(_ => streamFinalized.future)
             yield
                 // Verify ZIO interruption was received
                 assert(result.isInterrupted)
                 // Verify Kyo stream received the interruption signal and finalized
-                assert(streamFinalized.get())
+                assert(streamFinalized.isCompleted)
             end for
         }
         "concurrent stream consumption" in runZIO {

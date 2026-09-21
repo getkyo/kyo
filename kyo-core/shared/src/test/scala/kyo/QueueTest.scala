@@ -1050,10 +1050,12 @@ class QueueTest extends kyo.test.Test[Any]:
         }
     }
 
-    // `close` joins the fiber that settles the in-flight offers before it returns the backlog. An interrupt landing on
-    // that join discards the backlog and the queue still closes; the latch places the
-    // interrupt after the close began, so a round never interrupts a close that has not started.
-    "an interrupted close still closes the queue" in {
+    // The latch cannot place the interrupt after the close began: `andThen` polls the safepoint between the release
+    // and the step that builds `q.close`, so a round that is preempted there interrupts a close that never started.
+    // What the queue does guarantee is that there is no third state, because `close` claims the backlog and moves
+    // the state to Draining as its first instruction: either the body never ran and the queue is untouched, or it
+    // committed and no interrupt undoes it.
+    "an interrupted close either never ran or fully committed" in {
         val rounds = 100
         Loop.indexed { i =>
             if i >= rounds then Loop.done(succeed)
@@ -1066,13 +1068,29 @@ class QueueTest extends kyo.test.Test[Any]:
                     _       <- started.await
                     _       <- closer.interrupt
                     _       <- closer.getResult
-                    closed  <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(q.closed)))
+                    closed  <- q.closed
                     p       <- Abort.run[Closed](q.poll)
                 yield
-                    assert(closed.isSuccess, s"round $i: the queue did not close after its close was interrupted")
-                    assert(p.isFailure, s"round $i: a poll after the interrupted close was served: $p")
+                    // The closer has settled, so these two reads see one state rather than a transition.
+                    if closed then assert(p.isFailure, s"round $i: the queue is closed but a poll was served: $p")
+                    else assert(p == Result.succeed(Maybe(1)), s"round $i: the close never ran but the queue lost its head: $p")
                     Loop.continue
         }
+    }
+
+    // The committed half of the pair above, made deterministic: `q.closed` only reports true once the close's first
+    // instruction landed, so an interrupt requested after it reaches the drain rather than the commit. The scaladoc's
+    // guarantee for that is that the backlog is discarded and the queue still closes.
+    "a close interrupted after it committed leaves the queue closed" in {
+        for
+            q      <- Queue.Unbounded.init[Int]()
+            _      <- Kyo.foreachDiscard(1 to 8)(q.add)
+            closer <- Fiber.initUnscoped(q.close)
+            _      <- assertEventually(q.closed)
+            _      <- closer.interrupt
+            _      <- closer.getResult
+            p      <- Abort.run[Closed](q.poll)
+        yield assert(p.isFailure, s"a poll after the committed close was served: $p")
     }
 
 end QueueTest
