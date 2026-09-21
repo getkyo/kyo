@@ -46,6 +46,10 @@ object StartupExchange:
       *   what the session should call itself, or [[Absent]] for [[defaultApplicationName]]. Reaches
       *   `pg_stat_activity.application_name`, which is what makes a connection identifiable in server-side diagnostics, so a value the caller
       *   asked for has to arrive here rather than being replaced by the driver's own name.
+      * @param searchPath
+      *   the `search_path` the session starts on, already in the parameter's comma-separated form, or [[Absent]] to send none. Sending it
+      *   in the startup packet rather than as a `SET` is what makes it the session's DEFAULT: a later `DISCARD ALL` restores a parameter to
+      *   its startup value.
       */
     def run(
         channel: PostgresChannel,
@@ -54,7 +58,8 @@ object StartupExchange:
         password: Maybe[String],
         certHashOverride: Maybe[Maybe[Span[Byte]]],
         mechanismCapture: Maybe[AtomicRef[String]],
-        applicationName: Maybe[String] = Absent
+        applicationName: Maybe[String] = Absent,
+        searchPath: Maybe[String] = Absent
     )(using Frame): StartupResult < (Async & Abort[SqlException]) =
         // `TimeZone` and `DateStyle` are pinned for the reason `client_encoding` is: each decides how the server
         // spells a value the driver has to read back, and a session that inherits the server's default leaves the
@@ -69,6 +74,10 @@ object StartupExchange:
         // none means different things per deployment. Both implement all four, so this is session state the driver
         // owes an answer for. READ COMMITTED rather than the stricter level, which here is snapshot isolation and can
         // abort with a serialization failure the caller must retry.
+        //
+        // `search_path` is the one entry the caller may omit, and omitting it is not the same as sending a default.
+        // A startup parameter is a SESSION setting, so it outranks `postgresql.conf`, `ALTER DATABASE` and
+        // `ALTER ROLE` alike; sending one the caller did not ask for would override a deployment's own answer.
         val params = Chunk(
             ("user", user),
             ("database", db),
@@ -77,7 +86,7 @@ object StartupExchange:
             ("TimeZone", "UTC"),
             ("DateStyle", "ISO"),
             ("default_transaction_isolation", "read committed")
-        )
+        ) ++ searchPath.map(value => ("search_path", value))
         val startupMarshaller = channel.marshallers.startupMessage
         channel.send(StartupMessage(params))(using startupMarshaller).andThen {
             authenticate(channel, user, password, certHashOverride, mechanismCapture).flatMap { _ =>
