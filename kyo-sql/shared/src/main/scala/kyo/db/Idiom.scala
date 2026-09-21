@@ -81,7 +81,7 @@ abstract class Idiom:
 
     /** Quotes `ident` in this flavor's identifier syntax, escaping any embedded quote character.
       *
-      * Reached through [[Idiom.Ctx.quoted]] and [[Idiom.Ctx.appendQuoted]] at every position a name is emitted, so this one answer covers
+      * Reached through `Idiom.Ctx.quoted` and `Idiom.Ctx.appendQuoted` at every position a name is emitted, so this one answer covers
       * tables, columns, aliases, and CTE names alike.
       */
     def quoteIdent(ident: String): String

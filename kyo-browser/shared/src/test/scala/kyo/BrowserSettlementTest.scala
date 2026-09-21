@@ -30,10 +30,10 @@ class BrowserSettlementTest extends BrowserTest:
                 Abort.run[BrowserNavigationException] {
                     Browser.goto("http://kyo-transport-failure.invalid/")
                 }.map {
-                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                    case Result.Failure(ex: BrowserNavigationTransportFailedException) =>
                         assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
                     case other =>
-                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
+                        fail(s"Expected Result.Failure(BrowserNavigationTransportFailedException) but got $other")
                 }
             }
         }
@@ -48,10 +48,10 @@ class BrowserSettlementTest extends BrowserTest:
                 Abort.run[BrowserNavigationException] {
                     Browser.goto("http://kyo-transport-failure.invalid/", failOnHttpError = false)
                 }.map {
-                    case Result.Failure(ex: BrowserNavigationFailedException) =>
+                    case Result.Failure(ex: BrowserNavigationTransportFailedException) =>
                         assert(ex.url.startsWith("chrome-error://"), s"Expected a chrome-error URL but got '${ex.url}'")
                     case other =>
-                        fail(s"Expected Result.Failure(BrowserNavigationFailedException) but got $other")
+                        fail(s"Expected Result.Failure(BrowserNavigationTransportFailedException) but got $other")
                 }
             }
         }

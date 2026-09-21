@@ -7,7 +7,7 @@ import sbt.testing.SubclassFingerprint
 
 /** Scala Native test-interface Framework entry point for kyo-test.
   *
-  * Structurally identical to [[SbtFramework]] on JVM and [[JsFramework]] on Scala.js. The scala-native-test-interface re-uses the same
+  * Structurally identical to `SbtFramework` on JVM and `JsFramework` on Scala.js. The scala-native-test-interface re-uses the same
   * `sbt.testing` package; fingerprint matching and runner creation are identical.
   *
   * The Scala Native `TestAdapter` loads this class by name from `Test / testFrameworks`, via
@@ -18,7 +18,7 @@ import sbt.testing.SubclassFingerprint
   *
   * Native-specific behaviour:
   *   - Parallelism is kept at 1 by default (our test fixture is single-threaded for simplicity, matching the plan).
-  *   - [[NativeTask.execute]] blocks via `Await.result` (Native supports real threads, unlike JS).
+  *   - `NativeTask.execute` blocks via `Await.result` (Native supports real threads, unlike JS).
   *   - [[slaveRunner]] is required by the Scala Native test bridge; kyo-test does not use distributed execution, so it delegates to
   *     [[runner]].
   */

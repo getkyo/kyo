@@ -513,7 +513,7 @@ object ContainerPredef:
           *   - `--performance-schema=OFF`: the performance_schema engine reserves ~350MB of shared memory at boot.
           *   - `--innodb-log-file-size=32M`: default is 48MB per log file × 2 files; 32M × 2 keeps the redo log lean.
           *
-          * Users who need a production-shaped MySQL can compose their own args via [[serverArgs]] on top of these.
+          * Users who need a production-shaped MySQL can compose their own args via `serverArgs` on top of these.
           */
         val defaultServerArgs: Chunk[String] = Chunk(
             "--innodb-buffer-pool-size=64M",
@@ -573,7 +573,7 @@ object ContainerPredef:
       * through the `dolt sql` CLI against the same data directory, and only afterwards waits on the server process. The port accepts and
       * answers throughout that window, so a query probe calls the container ready while initialisation is still in flight. A client that
       * starts working in that window races the entrypoint's queries, and one that fails takes `mysql_error` and with it `exit 1`, which
-      * kills the container out from under the run. The probe therefore waits for [[initCompletedMarker]], the file the entrypoint itself
+      * kills the container out from under the run. The probe therefore waits for [[Dolt.initCompletedMarker]], the file the entrypoint itself
       * touches when its initialisation is done.
       *
       * @see

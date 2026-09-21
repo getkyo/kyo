@@ -27,15 +27,23 @@ abstract class UITest extends kyo.test.Test[Any]:
     private val retrySchedule: Schedule =
         Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
 
+    /** The transient-browser-infrastructure failures a fresh attempt rides out. Retry selects by this union, so assertion failures and every
+      * other BrowserException propagate immediately and are never masked.
+      *
+      * `BrowserNavigationTransportFailedException` means Chrome never reached the server: the page request failed below HTTP, which on a
+      * Windows runner is a WSAENOBUFS (error 10055) socket failure under load. It belongs here for the same reason a dropped CDP connection
+      * does, and it is a separate type from `BrowserNavigationFailedException` precisely so naming it here cannot also retry an HTTP 404.
+      */
+    private[kyo] type TransientBrowserFailure =
+        BrowserConnectionLostException | BrowserSetupFailedException | BrowserNavigationTransportFailedException
+
     /** The transient-browser-failure retry that [[withUI]] applies, for leaves that must bind their own server and so cannot go through it.
-      * Retry selects the two infrastructure failure types by their union, so assertion failures and every other BrowserException propagate
-      * immediately and are never masked. Without this a hand-rolled-server leaf turns a dropped CDP connection into a red where every sibling
-      * suite rides it out.
+      * Without this a hand-rolled-server leaf turns a dropped CDP connection into a red where every sibling suite rides it out.
       */
     private[kyo] def withBrowserRetry[A, S](f: A < (Async & Abort[BrowserException] & S))(using
         Frame
     ): A < (Async & Abort[BrowserException] & S) =
-        Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule)(f)
+        Retry[TransientBrowserFailure](retrySchedule)(f)
 
     /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). Keep in sync with kyo-browser's BrowserTest. */
     private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
@@ -73,10 +81,10 @@ abstract class UITest extends kyo.test.Test[Any]:
         // Emulation.setFocusEmulationEnabled(true) on each tab attach, which forces Chrome to dispatch focus events
         // regardless of tab foregrounding.
         //
-        // Retry is scoped to the two transient browser-infrastructure failure types: a dropped CDP connection and a
-        // Chrome process that failed to launch. Retry[E] only retries E-typed failures, so assertion failures and every
-        // other BrowserException propagate immediately and are never masked.
-        Retry[BrowserConnectionLostException | BrowserSetupFailedException](retrySchedule) {
+        // Retry is scoped to TransientBrowserFailure. Retry[E] only retries E-typed failures, so assertion failures and
+        // every other BrowserException propagate immediately and are never masked. Shared with withBrowserRetry so a
+        // type added to the union cannot reach one path and miss the other.
+        Retry[TransientBrowserFailure](retrySchedule) {
             cancelOnUnsupportedPlatform {
                 for
                     uiTree <- ui

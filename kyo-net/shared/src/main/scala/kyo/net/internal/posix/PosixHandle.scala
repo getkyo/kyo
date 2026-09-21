@@ -632,9 +632,9 @@ private[net] object PosixHandle:
       * different carriers; this one state, swung by CAS, gives them mutual exclusion. Two separate `@volatile` slots with an independent
       * check-then-act on each would let the two sides interleave and strand the bytes (the handshake parks a waiter while the reap has already
       * staged the carryover, so neither fulfils the other and the upgrade hangs). Exactly one transition wins each side's CAS, so the bytes always meet the waiter:
-      *   - [[Idle]]: neither side has acted yet.
-      *   - [[Carryover]]: the reap delivered the stale recv's bytes before the handshake parked; the handshake's next read consumes them.
-      *   - [[Waiter]]: the handshake parked before the reap delivered; the reap fulfils this fiber-parking promise with the bytes.
+      *   - [[UpgradeHandoff.Idle]]: neither side has acted yet.
+      *   - [[UpgradeHandoff.Carryover]]: the reap delivered the stale recv's bytes before the handshake parked; the handshake's next read consumes them.
+      *   - [[UpgradeHandoff.Waiter]]: the handshake parked before the reap delivered; the reap fulfils this fiber-parking promise with the bytes.
       */
     private[posix] enum UpgradeHandoff derives CanEqual:
         case Idle

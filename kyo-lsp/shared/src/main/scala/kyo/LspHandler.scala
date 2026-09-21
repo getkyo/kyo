@@ -13,13 +13,13 @@ import scala.annotation.nowarn
   *
   * Construct values via the namespaced factory companions:
   *
-  *   - [[LspHandler.textDocument]]      ; 38+ server-handled textDocument/X endpoints
-  *   - [[LspHandler.workspace]]         ; workspace/X endpoints (mixed direction)
-  *   - [[LspHandler.notebookDocument]]  ; notebookDocument/X endpoints
-  *   - [[LspHandler.window]]            ; window/X client-handled reverse-direction endpoints
-  *   - [[LspHandler.client]]            ; client/X reverse-direction endpoints
-  *   - [[LspHandler.custom]]            ; arbitrary server-handled extension method
-  *   - [[LspHandler.customClient]]      ; arbitrary client-handled extension method
+  *   - `LspHandler.textDocument`      ; 38+ server-handled textDocument/X endpoints
+  *   - `LspHandler.workspace`         ; workspace/X endpoints (mixed direction)
+  *   - `LspHandler.notebookDocument`  ; notebookDocument/X endpoints
+  *   - `LspHandler.window`            ; window/X client-handled reverse-direction endpoints
+  *   - `LspHandler.client`            ; client/X reverse-direction endpoints
+  *   - `LspHandler.custom`            ; arbitrary server-handled extension method
+  *   - `LspHandler.customClient`      ; arbitrary client-handled extension method
   *
   * Domain-error mappings are added with `.error[E2](code, message)`, mirroring `JsonRpcRoute.error`.
   *
@@ -221,7 +221,7 @@ object LspHandler:
 
     object LspDocument:
 
-        /** Opaque URI for a text document. Use [[parse]] to construct; the engine uses [[fromWire]].
+        /** Opaque URI for a text document. Use `parse` to construct; the engine uses `fromWire`.
           *
           * Validation: non-empty, not all-whitespace. Mirrors `McpResourceUri` shape.
           */

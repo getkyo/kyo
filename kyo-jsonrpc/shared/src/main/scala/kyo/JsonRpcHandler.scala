@@ -12,12 +12,12 @@ import kyo.Sync
   * Obtain an instance via [[JsonRpcHandler.init]], which starts the inbound dispatch loop and
   * attaches the outbound sender. Calling code interacts with the peer through the typed extension
   * methods on this type:
-  *  - [[call]]: send a request and await the typed response.
-  *  - [[notify]]: send a fire-and-forget notification.
-  *  - [[callWithProgress]]: send a request and receive incremental progress notifications.
-  *  - [[callPartialResults]]: send a request and stream partial results as a `Stream[T, ...]`.
-  *  - [[cancel]]: send a cancellation notification for an in-flight request.
-  *  - [[close]] / [[closeNow]]: tear down the handler.
+  *  - `call`: send a request and await the typed response.
+  *  - `notify`: send a fire-and-forget notification.
+  *  - `callWithProgress`: send a request and receive incremental progress notifications.
+  *  - `callPartialResults`: send a request and stream partial results as a `Stream[T, ...]`.
+  *  - `cancel`: send a cancellation notification for an in-flight request.
+  *  - `close` / `closeNow`: tear down the handler.
   *
   * The handler is `Scope`-managed; it closes automatically when the enclosing `Scope` exits.
   *

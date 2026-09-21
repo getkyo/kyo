@@ -13,7 +13,7 @@ import kyo.*
   *
   * Zero-cost: an opaque alias over `Long`, packed `(fd << 32) | generation`. The generation comes
   * from a process-lifetime monotonic counter, so two handles for the same fd over time never share
-  * an id. The fd is the high 32 bits (so [[fd]] is a shift) and the generation the low 32 bits.
+  * an id. The fd is the high 32 bits (so `fd` is a shift) and the generation the low 32 bits.
   *
   * The generation occupies 32 bits and wraps after 2^32 allocations in one process, so the
   * distinctness guarantee is stable within a 2^32 window of handle allocations rather than

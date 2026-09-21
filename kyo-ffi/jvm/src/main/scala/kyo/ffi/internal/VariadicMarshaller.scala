@@ -20,7 +20,7 @@ import kyo.ffi.FfiLoadError
   *   - `java.lang.Integer` / boxed Scala `Int` → `JAVA_INT`
   *   - `java.lang.Long` / boxed Scala `Long` → `JAVA_LONG`
   *   - `java.lang.Double` / boxed Scala `Double` → `JAVA_DOUBLE`
-  *   - `String` → UTF-8 [[MemorySegment]] allocated in the supplied scratch
+  *   - `String` → UTF-8 `MemorySegment` allocated in the supplied scratch
   *   - `Buffer[A]` → the buffer's backing `MemorySegment` (zero-copy borrow)
   *
   * Any other runtime type raises [[FfiLoadError.Unsupported]] naming the binding + method + runtime class; the user either casts to a supported boxed

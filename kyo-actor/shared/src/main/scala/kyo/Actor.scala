@@ -86,7 +86,7 @@ sealed abstract class Actor[+E, A, B](
             }
         }
 
-    /** Sends a request to a [[respond]] actor and awaits the reply, strand-safe via the lifecycle-aware [[ask]].
+    /** Sends a request to a `respond` actor and awaits the reply, strand-safe via the lifecycle-aware [[ask]].
       *
       * Available only when the actor's message type `A` is an `Ask[Req, Resp]` envelope, witnessed by the `A =:= Actor.Ask[Req, Resp]`
       * evidence. It builds the envelope, wiring the framework's reply `Subject`, and delegates to the member `ask`. For
@@ -610,7 +610,7 @@ object Actor:
             }
         }
 
-    /** Envelope for a framework-owned request/reply actor created with [[respond]].
+    /** Envelope for a framework-owned request/reply actor created with `respond`.
       *
       * @param request
       *   The request payload
@@ -641,7 +641,7 @@ object Actor:
 
     /** Runs the actor as a stateful request/reply loop, threading `State` across requests.
       *
-      * The stateful analogue of [[respond]]: the handler receives each request with the current state and returns the reply plus the next
+      * The stateful analogue of `respond`: the handler receives each request with the current state and returns the reply plus the next
       * state; the framework sends the reply (so it cannot be forgotten) and continues with the next state. This gives the request/reply loop
       * local state and access to effects between requests without reaching for `Var`. The actor processes one request at a time in FIFO order
       * and runs until its mailbox closes. For early termination or to observe a final result, use [[receiveLoop]] with a manual reply via the

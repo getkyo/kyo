@@ -1403,7 +1403,7 @@ object PostgresDecoder:
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =
             SqlValue.Float4(float4.read(format, bytes, columnOid))
 
-    /** A `float8`. See [[float4Text]] for why the text form is parsed rather than handed back. */
+    /** A `float8`. See [[float4Value]] for why the text form is parsed rather than handed back. */
     val float8Value: PostgresDecoder[SqlValue] = new PostgresDecoder[SqlValue]:
         val oids: Set[Int]                                                                        = Set(OID_FLOAT8)
         def read(format: Format, bytes: Span[Byte], columnOid: Int)(using frame: Frame): SqlValue =

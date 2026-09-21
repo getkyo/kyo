@@ -188,7 +188,7 @@ object UI:
       * @see
       *   [[kyo.UI.Ast.RawHtml]] for the AST node this factory returns
       * @see
-      *   [[kyo.UI.text]] for the safe alternative that HTML-escapes its argument
+      *   `kyo.UI.text` for the safe alternative that HTML-escapes its argument
       */
     def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
 
@@ -527,7 +527,7 @@ object UI:
       * validation boundary: any client can submit any value, and server-side checks still apply.
       *
       * @see
-      *   [[kyo.UI.ConstrainedInput.inputFilter]] for the setter
+      *   `kyo.UI.ConstrainedInput.inputFilter` for the setter
       */
     enum InputFilter derives CanEqual:
         case Digits                 // "digits"
