@@ -167,6 +167,60 @@ object Scope:
                 .handle(Sync.ensure(finalizer.close))
         }
 
+    /** Runs `v` under a scope that releases only if `v` does not reach its end, for an acquisition whose value the
+      * caller is meant to own.
+      *
+      * An `initUnscoped`-style entry point has a gap no registration closes: the resource exists from partway through
+      * the acquisition, but the owner is the caller, who cannot register anything until the value reaches them. Using
+      * [[run]] for the acquisition would close the resource at the end of it, which is the opposite of handing it
+      * over. Registering nothing leaves an acquisition abandoned partway holding whatever it had opened.
+      *
+      * This covers the second case without causing the first: registrations made inside are run on a failure and
+      * never on a clean end, so the value leaves with them still armed and nobody to fire them.
+      *
+      * An abandonment is covered: a body interrupted while parked unwinds through the backstop, which closes what it
+      * had registered.
+      *
+      * The scope is a root even when one encloses it. A child would be closed by the enclosing scope, which is the
+      * same resource released under a caller that was handed it to keep.
+      *
+      * What remains uncovered is the caller's own first step: the value is handed over with nothing registered
+      * against it, so an interrupt landing there abandons it. That is inherent to returning an unowned resource, and
+      * it is why the scoped entry points exist.
+      */
+    private[kyo] def runUnowned[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
+        // Unsafe: the finalizer and the handover flag are allocated and read outside an effect, as `run` does for
+        // its own finalizer. `defer` supplies the capability to its body, so the grant stays inside the block.
+        Sync.Unsafe.defer {
+            val finalizer = Finalizer.Unsafe.init(1)
+            // Whether the value reached the step that delivers it. The backstop below runs on every ending, and
+            // `Absent` does not identify one: a clean end carries it, and so does a remainder dropped with nothing
+            // recorded against it. Closing on `Absent` would release the value on its way out; not closing on it
+            // would leave a dropped acquisition holding everything it had opened. This flag is the difference, and
+            // it is set in the delivering step so no step separates the two.
+            val delivered = AtomicBoolean.Unsafe.init(false)
+            ContextEffect.handle(
+                Tag[Scope],
+                derive = (_: Maybe[Finalizer]) => finalizer,
+                fork = (parent: Finalizer) => parent.forked,
+                join = (parent: Finalizer, _: Finalizer, _: Finalizer) => parent
+            )(v)
+                .handle(Abort.run[Any])
+                .map { result =>
+                    result.error match
+                        case Present(error) =>
+                            finalizer
+                                .close(Present(error))
+                                .andThen(finalizer.await)
+                                .andThen(Abort.get(result.asInstanceOf[Result[Nothing, A]]))
+                        case Absent =>
+                            delivered.set(true)
+                            Abort.get(result.asInstanceOf[Result[Nothing, A]])
+                }
+                .handle(Sync.ensure(error => if delivered.get() then Kyo.unit else finalizer.close(error)))
+        }
+    end runUnowned
+
     /** The finalizers registered against one scope, run in reverse registration order when it closes. A nested run
       * joins as a child through [[addChild]], so inner resources release before outer.
       */
