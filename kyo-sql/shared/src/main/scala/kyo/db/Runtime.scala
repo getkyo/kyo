@@ -73,21 +73,7 @@ final class Runtime[C <: Connection] private[kyo] (
       *   how long in-flight work has to finish; [[kyo.Duration.Zero]] closes immediately
       */
     private[kyo] def close(gracePeriod: Duration)(using Frame): Unit < Async =
-        // The compare-and-set that commits this caller to closing and the ring extraction are ONE unsafe step, so a
-        // stop cannot mark the carrier closed with the ring left open (which the idempotent flag would make permanent).
-        // The logger is captured before the extract so `closeDrain` installs its force-close with no poll after it.
-        Log.use { logger =>
-            Sync.Unsafe.defer {
-                if closedRef.unsafe.compareAndSet(false, true) then Present(pool.closeExtract())
-                else Absent
-            }.ensureMap { extracted =>
-                // `Present`'s extractor is not provably exhaustive over the opaque `Maybe`, and -Werror rejects it, so this
-                // matches `Absent` and reads the winner's connections with `get`.
-                extracted match
-                    case Absent => ()
-                    case _      => pool.closeDrain(extracted.get, logger, gracePeriod)
-            }
-        }
+        Runtime.closeOnce(pool, closedRef, gracePeriod)
 
     /** Whether [[close]] has been called on this carrier.
       *
@@ -142,6 +128,30 @@ end Runtime
 /** Companion of [[Runtime]]: the assembly a backend calls to build one. */
 object Runtime:
 
+    /** Closes `pool` if this caller is the one that elects itself to, and does nothing if another already did.
+      *
+      * The compare-and-set that commits this caller to closing and the ring extraction are ONE unsafe step, so a stop cannot mark the
+      * carrier closed with the ring left open (which the idempotent flag would make permanent). The logger is captured before the extract
+      * so `closeDrain` installs its force-close with no poll after it.
+      */
+    private def closeOnce[C <: Connection](
+        pool: SqlConnectionPool[C],
+        closedRef: AtomicBoolean,
+        gracePeriod: Duration
+    )(using Frame): Unit < Async =
+        Log.use { logger =>
+            Sync.Unsafe.defer {
+                if closedRef.unsafe.compareAndSet(false, true) then Present(pool.closeExtract())
+                else Absent
+            }.ensureMap { extracted =>
+                // `Present`'s extractor is not provably exhaustive over the opaque `Maybe`, and -Werror rejects it, so this
+                // matches `Absent` and reads the winner's connections with `get`.
+                extracted match
+                    case Absent => ()
+                    case _      => pool.closeDrain(extracted.get, logger, gracePeriod)
+            }
+        }
+
     /** Assembles a carrier for `url` under `config`.
       *
       * In order: the URL's own declarations are merged under `config`, which fails typed when a TLS mode demands a CA certificate the URL
@@ -166,13 +176,21 @@ object Runtime:
         url: SqlConfig.Url,
         config: SqlConfig,
         connections: Connection.Factory[C]
-    )(using Frame): Runtime[C] < (Async & Abort[SqlException]) =
+    )(using Frame): Runtime[C] < (Async & Abort[SqlException] & Scope) =
         url.toConfig(config).map { merged =>
-            // Unsafe: SqlConnectionPool.init allocates the lock-free ring and requires AllowUnsafe; it opens no socket,
-            // so assembly stays a pure allocation until warm-up.
-            Sync.Unsafe.defer(SqlConnectionPool.init[C](merged, connections, url.options.connectTimeout, summon[Frame]))
-                .map { pool =>
-                    AtomicBoolean.init(false).map { closedRef =>
+            AtomicBoolean.init(false).map { closedRef =>
+                // Unsafe: SqlConnectionPool.init allocates the lock-free ring and requires AllowUnsafe; it opens no socket,
+                // so assembly stays a pure allocation until warm-up.
+                //
+                // `acquireRelease` registers the release as the pool's value arrives, with nothing schedulable between the
+                // two. A step later is not equivalent: the allocation already spawns the idle reaper and registers
+                // diagnostics, so a stop landing in between abandons those with nobody to close them. It is unconditional
+                // rather than error-only because a registration made in a forked fiber lands on the origin scope, which is
+                // what lets `Async.timeout` and `Async.race` slip past an error-only net.
+                Scope.acquireRelease(
+                    Sync.Unsafe.defer(SqlConnectionPool.init[C](merged, connections, url.options.connectTimeout, summon[Frame]))
+                )(closeOnce(_, closedRef, merged.closeGrace))
+                    .map { pool =>
                         AtomicRef.init(Maybe.empty[Idiom.ServerVersion]).map { serverVersionRef =>
                             // The clamp lives here so each backend does not carry its own copy.
                             val warmCount = merged.minConnections.min(merged.maxConnections)
@@ -180,14 +198,15 @@ object Runtime:
                                 Scope.ensure { error =>
                                     // Any failure edge closes the pool immediately, so a partial warm-up leaves no
                                     // descriptor open and no pool unreferenced; a clean assembly hands the pool to
-                                    // the returned carrier untouched.
-                                    if error.isDefined then pool.closeAll(Duration.Zero)
+                                    // the returned carrier untouched. Through `closeOnce` so this and the release
+                                    // registered above elect one closer between them rather than both draining.
+                                    if error.isDefined then closeOnce(pool, closedRef, Duration.Zero)
                                     else ()
                                 }.andThen(pool.warmUp(url.address, url.password, warmCount, merged))
                             }.andThen(new Runtime[C](url, merged, pool, closedRef, serverVersionRef))
                         }
                     }
-                }
+            }
         }
 
 end Runtime
