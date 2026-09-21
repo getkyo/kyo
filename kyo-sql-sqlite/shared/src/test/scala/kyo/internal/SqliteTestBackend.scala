@@ -122,6 +122,13 @@ class SqliteTestBackend extends SqlTestBackend:
     /** One statement API, so `query` and `simpleQuery` compile to the same prepare-and-step path and cannot disagree. */
     def protocolAgreementCases: Chunk[(String, String, String)] = Chunk.empty
 
+    /** SQLite resolves an unqualified name against `main`, the database the connection was opened on. */
+    override def defaultSchemaName(schema: SqlTestBackend.Schema): String = "main"
+
+    // `secondSchema` stays Absent, the inherited answer: SQLite's other schemas are ATTACHed per CONNECTION, so a
+    // statement run on one pooled connection provisions that connection alone. Reaching a second schema from a whole
+    // pool is a connect-time concern rather than a statement, and is covered where that connect-time attach lives.
+
     def tableNotFoundSqlState: String   = SqliteErrors.UndefinedTableState
     def uniqueViolationSqlState: String = SqliteErrors.UniqueState
 

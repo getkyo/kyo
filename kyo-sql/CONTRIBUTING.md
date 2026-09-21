@@ -256,6 +256,22 @@ Measured, and the obvious guess about its blast radius is wrong. Rows with a pre
 
 So when a behavior turns out to be schema-decided: pin it in the descriptor so the battery is honest, and document it for callers. Do not describe it as fixed, and do not let a conformance leaf passing on a pinned fixture stand in for a guarantee the driver does not make.
 
+## What a schema is, per engine
+
+A statement can qualify a table with a schema, and every engine renders that the same way: the two names quoted separately with a period between them, through `kyo.db.Idiom.qualifiedTable`. The default hook is correct everywhere, so no dialect overrides it. What the engines disagree about is what the qualifier NAMES, and the disagreement decides where a second schema comes from:
+
+| lineage | backends | a schema is | reaching a second one |
+|---|---|---|---|
+| PostgreSQL | `kyo-sql-postgres` | a schema inside the database | `CREATE SCHEMA`; every session sees it |
+| MySQL | `kyo-sql-mysql`, `kyo-sql-dolt` | a database on the server | `CREATE DATABASE`; every session sees it |
+| SQLite | `kyo-sql-sqlite`, `kyo-sql-doltlite` | `main`, `temp`, or an attached database | `ATTACH`, which is **per connection** |
+
+The last row is the one that shapes code. A server holds its schemas in the database, so one statement provisions them for a whole pool. The SQLite lineage attaches per connection, so a statement run through the pool configures the one connection that served it and leaves the rest answering "no such table" for a name that just worked. That is why attachment is a connect-time extension (`SqliteAttach`) rather than something a caller runs, and why `SqlTestBackend.secondSchema` answers `Absent` on that lineage: the conformance leaves that need two schemas cannot provision them there through a statement.
+
+The two Dolt backends sit in different rows. `DoltDialect extends MysqlDialect` and `DoltLiteDialect extends SqliteDialect`: they share the `Dolt` version-control API and nothing about schemas, so a claim that holds for one of them says nothing about the other.
+
+**A schema belongs in the statement, not in the session.** `SET search_path` and `USE` are per connection, so under a pool they reach one session and leave the others resolving elsewhere; because the same table name usually exists in both schemas, the result is wrong rows rather than an error. A rendered qualifier cannot fail that way. The session-level settings that remain (`PostgresConfig.searchPath`) exist for the text the renderer never sees, `sql"..."`, `executeRaw` and migrations, and they are part of the pool's identity: `SqlConnectionPool.Endpoint` keys on the config's extensions so two search paths never share connections.
+
 ## Testing
 
 - **Compile-green is not runtime-green.** A change to codec, bind, decode, render, or protocol behavior is unvalidated until it has round-tripped through real servers. Run the container suites and read the result; see the root guide's rule on container-backed tests.

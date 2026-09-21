@@ -233,6 +233,16 @@ class SqliteDialectRenderingTest extends Test:
         assert(sql.indexOf(" WHERE 1") < sql.indexOf("ON CONFLICT"), s"the tautology must precede the conflict clause: $sql")
     }
 
+    // This arm writes the target table itself rather than delegating to the baseline, so it is the one place a
+    // schema can go missing while every other INSERT shape keeps it. Losing it here means the row lands in whatever
+    // schema the connection resolves to, which on an attached database is a different file.
+    "an upsert fed by a SELECT keeps the target's schema" in {
+        val base = Sql.insert[Person](schemaName = "app", tableName = "person")
+            .fromSelect(_.id, _.name, _.age, _.deptId)(Sql.from[Person]("s"))
+        val sql = sqlText(base.onConflictDoNothing(_.id))
+        assert(sql.startsWith("INSERT INTO \"app\".\"person\" ("), sql)
+    }
+
     "the wrapper holds for a fed query that already carries its own WHERE" in {
         val fed = Sql.from[Person]("s").where(c => c.s.age >= 18)
         val sql = sqlText(Sql.insert[Person].fromSelect(_.id, _.name, _.age, _.deptId)(fed).onConflictDoNothing(_.id))

@@ -935,6 +935,18 @@ private[kyo] object SqlConnectionPool:
       * `tls` participates rather than a boolean, because `verify-full` against one CA is not interchangeable with `verify-full` against another,
       * and `kyo.net.NetTlsConfig` is a case class deriving `CanEqual`, so structural equality is already the right comparison.
       *
+      * `extensions` participates for the same reason encryption does, one step further out. A backend's own config can decide what a session
+      * IS, not merely how it behaves once open: PostgreSQL's `searchPath` reaches the startup packet, so two connections opened under
+      * different values resolve an unqualified name to different tables. Keying on the whole chunk rather than on any one backend's field
+      * keeps that true for the next such setting without this file learning any engine's vocabulary, and an [[SqlConfig.Extension]] is
+      * required to be a final case class, so structural equality is already the right comparison.
+      *
+      * It does mean a setting that is NOT connection-defining, a timeout consulted after the handshake, partitions the ring too, as does
+      * attaching the same extensions in a different order, since a `Chunk` compares as a sequence. Both cost idle retention and never
+      * correctness, the same trade the TLS fields make, and both err in the safe direction: an engine adding a connection-defining setting
+      * is covered without anyone remembering to come here, where the reverse would lend a session configured one way to a caller asking for
+      * another and answer wrong rows rather than an error.
+      *
       * The cost is that one address can own several ring buckets, so idle RETENTION per address can exceed `maxConnections` while concurrency
       * cannot. `getOrCreateSlotChan` carries that asymmetry and both of its causes; this is the second one. A client with one config, which is the
       * ordinary case, has exactly one bucket and is unaffected.
@@ -942,14 +954,15 @@ private[kyo] object SqlConnectionPool:
     private[kyo] case class Endpoint(
         address: SqlConfig.Address,
         tlsMode: TlsMode,
-        tls: Maybe[NetTlsConfig]
+        tls: Maybe[NetTlsConfig],
+        extensions: Chunk[SqlConfig.Extension]
     ) derives CanEqual
 
     private[kyo] object Endpoint:
         // Keyed on the ADDRESS rather than on a resolved network endpoint. It was only ever a key, never read as one,
         // and an address is the one coordinate every engine has: an embedded one has a path and no host or port.
         def apply(address: SqlConfig.Address, config: SqlConfig): Endpoint =
-            Endpoint(address, config.tlsMode, config.tls)
+            Endpoint(address, config.tlsMode, config.tls, config.extensions)
     end Endpoint
 
     /** Builds a pool around a fresh [[ConnectionPool]] for the connection type `factory` opens.

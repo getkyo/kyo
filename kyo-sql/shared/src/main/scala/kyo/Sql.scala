@@ -66,6 +66,9 @@ object Sql:
       * An explicit alias overrides the derived one (`Sql.from[Invoice]("i")` reads as `r.i.total`), and a table name beside it
       * overrides the `T`-derived table (`Sql.from[Invoice]("i", "invoice_ledger")`). A self-join needs two distinct record keys, so at
       * least one side of it aliases explicitly.
+      *
+      * A third form qualifies the table with a schema, `Sql.from[Invoice](alias = "i", schemaName = "app", tableName = "invoice")`, and
+      * names the table alongside it: an overload taking a schema alone would have the signature of the one taking a table name alone.
       */
     transparent inline def from[T](using m: scala.deriving.Mirror.ProductOf[T], f: Fields[T]) =
         kyo.internal.SqlMacros.validateDerivedAlias[T]
@@ -74,6 +77,7 @@ object Sql:
         Table[T, F0](
             kyo.internal.SqlAstInternal.buildColumns[T, N0](scala.compiletime.constValue[N0]).asInstanceOf[Record[F0]],
             scala.compiletime.constValue[N0],
+            Maybe.empty,
             kyo.internal.SqlMacros.tableName[T],
             kyo.internal.SqlMacros.columnNames[T]
         )
@@ -113,6 +117,7 @@ object Sql:
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
         Insert.Builder[T, Sql.RecordF[cols.type]](
             cols,
+            Maybe.empty,
             kyo.internal.SqlMacros.tableName[T],
             kyo.internal.SqlMacros.columnNames[T],
             kyo.internal.SqlMacros.autoKey[T]
@@ -127,6 +132,27 @@ object Sql:
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
         Insert.Builder[T, Sql.RecordF[cols.type]](
             cols,
+            Maybe.empty,
+            tableName,
+            kyo.internal.SqlMacros.columnNames[T],
+            kyo.internal.SqlMacros.autoKey[T]
+        )
+    end insert
+
+    /** INSERT into a table named in a schema, rendering `INSERT INTO "app"."invoice"`. Name the arguments, since two identifier strings in
+      * a row are transposable when written positionally:
+      *
+      * {{{
+      * Sql.insert[Invoice](schemaName = "app", tableName = "invoice")
+      * }}}
+      *
+      * Both names are literals folded into the static render. Another body copy, for the reason the sibling overloads carry.
+      */
+    transparent inline def insert[T](inline schemaName: String, inline tableName: String)(using f: Fields[T]) =
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Insert.Builder[T, Sql.RecordF[cols.type]](
+            cols,
+            Maybe(schemaName),
             tableName,
             kyo.internal.SqlMacros.columnNames[T],
             kyo.internal.SqlMacros.autoKey[T]
@@ -136,26 +162,46 @@ object Sql:
     /** UPDATE entry point, table name derived from `T`'s case-class label. */
     transparent inline def update[T](using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Update.Builder[T, Sql.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T], Chunk.empty)
+        Update.Builder[T, Sql.RecordF[cols.type]](cols, Maybe.empty, kyo.internal.SqlMacros.tableName[T], Chunk.empty)
 
     /** UPDATE into an explicitly named table, overriding the `T`-derived default (a copy, not a delegation: transparent inline overloads
       * cannot delegate).
       */
     transparent inline def update[T](inline tableName: String)(using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Update.Builder[T, Sql.RecordF[cols.type]](cols, tableName, Chunk.empty)
+        Update.Builder[T, Sql.RecordF[cols.type]](cols, Maybe.empty, tableName, Chunk.empty)
+
+    /** UPDATE a table named in a schema, rendering `UPDATE "app"."invoice"`. Name the arguments:
+      *
+      * {{{
+      * Sql.update[Invoice](schemaName = "app", tableName = "invoice")
+      * }}}
+      */
+    transparent inline def update[T](inline schemaName: String, inline tableName: String)(using f: Fields[T]) =
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Update.Builder[T, Sql.RecordF[cols.type]](cols, Maybe(schemaName), tableName, Chunk.empty)
 
     /** DELETE entry point, table name derived from `T`'s case-class label. */
     transparent inline def delete[T](using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Delete.Builder[T, Sql.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        Delete.Builder[T, Sql.RecordF[cols.type]](cols, Maybe.empty, kyo.internal.SqlMacros.tableName[T])
 
     /** DELETE from an explicitly named table, overriding the `T`-derived default (a copy, not a delegation: transparent inline overloads
       * cannot delegate).
       */
     transparent inline def delete[T](inline tableName: String)(using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
-        Delete.Builder[T, Sql.RecordF[cols.type]](cols, tableName)
+        Delete.Builder[T, Sql.RecordF[cols.type]](cols, Maybe.empty, tableName)
+
+    /** DELETE from a table named in a schema, rendering `DELETE FROM "app"."invoice"`. Name the arguments:
+      *
+      * {{{
+      * Sql.delete[Invoice](schemaName = "app", tableName = "invoice")
+      * }}}
+      */
+    transparent inline def delete[T](inline schemaName: String, inline tableName: String)(using f: Fields[T]) =
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Delete.Builder[T, Sql.RecordF[cols.type]](cols, Maybe(schemaName), tableName)
 
     // --- CTE (WITH) entry points ---
 
@@ -1747,10 +1793,16 @@ object Sql:
       * the explicit `SELECT` projection for an implicit-projection (`SELECT *`-shaped) query, a literal `Chunk[String]` that lifts via
       * `FromExpr.derived` with zero reflection. It is the reliable Schema-field-order source: the `columns` `Record`'s `Dict` does not
       * preserve declaration order (it reverses for ≤8 fields and is hash-ordered above), so the renderer must not derive order from it.
+      *
+      * `schemaName` names the schema the table lives in, and [[Absent]] leaves the name unqualified for the server to resolve. It has no
+      * default value, for the reason [[Update.Builder]]'s `sets` has none: a default reaches the compile-time render as a call to the
+      * synthetic accessor the compiler generates for it, whose body that render cannot see, and one unreadable field makes the whole
+      * statement unfoldable.
       */
     final case class Table[T, F](
         columns: Record[F],
         alias: String,
+        schemaName: Maybe[String],
         tableName: String,
         columnNames: Chunk[String]
     ) extends From[T, F]:
@@ -1764,6 +1816,7 @@ object Sql:
             Table[T, RecordF[cols.type]](
                 cols,
                 alias,
+                Maybe.empty,
                 kyo.internal.SqlMacros.tableName[T],
                 kyo.internal.SqlMacros.columnNames[T]
             )
@@ -1777,6 +1830,32 @@ object Sql:
             Table[T, RecordF[cols.type]](
                 cols,
                 alias,
+                Maybe.empty,
+                tableName,
+                kyo.internal.SqlMacros.columnNames[T]
+            )
+        end apply
+
+        /** An explicit alias, schema and table name, rendering `"app"."invoice"`. Name the arguments, since three identifier strings in a
+          * row are transposable when written positionally:
+          *
+          * {{{
+          * Sql.from[Invoice](alias = "i", schemaName = "app", tableName = "invoice")
+          * }}}
+          *
+          * Both names are literals folded directly into the static render, so a statement built this way stays on the `.runStatic` path.
+          * Another body copy, for the widening reason the sibling overloads carry.
+          */
+        transparent inline def apply[N <: String & Singleton](
+            alias: N,
+            inline schemaName: String,
+            inline tableName: String
+        )(using f: Fields[T]) =
+            val cols = kyo.internal.SqlAstInternal.buildColumns[T, N](alias)
+            Table[T, RecordF[cols.type]](
+                cols,
+                alias,
+                Maybe(schemaName),
                 tableName,
                 kyo.internal.SqlMacros.columnNames[T]
             )
@@ -2233,6 +2312,7 @@ object Sql:
       */
     final case class Insert[T, F](
         columns: Record[F],
+        schemaName: Maybe[String],
         tableName: String,
         columnNames: Chunk[String],
         source: Insert.Source[T, F],
@@ -2256,6 +2336,7 @@ object Sql:
         inline def onConflictDoNothing(inline targets: (Record[F] => Column[? <: String, ?])*): Insert[T, F] =
             Insert[T, F](
                 columns,
+                schemaName,
                 tableName,
                 columnNames,
                 source,
@@ -2339,6 +2420,7 @@ object Sql:
                 inline def apply(inline sets: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
                     Insert[T, F](
                         insert.columns,
+                        insert.schemaName,
                         insert.tableName,
                         insert.columnNames,
                         insert.source,
@@ -2375,13 +2457,15 @@ object Sql:
                 }
         end extension
 
-        /** The accumulating half of an INSERT: the table's columns, its name, its column names, and the detected auto-key.
+        /** The accumulating half of an INSERT: the table's columns, its schema and name, its column names, and the detected auto-key.
           *
-          * `autoKey` has no default, for the reason [[Update.Builder]]'s `sets` does not: a default reaches the compile-time render as a call
-          * to a synthetic accessor whose body it cannot see, and one unreadable field makes the statement unfoldable.
+          * Neither `schemaName` nor `autoKey` has a default, for the reason [[Update.Builder]]'s `sets` does not: a default reaches the
+          * compile-time render as a call to a synthetic accessor whose body it cannot see, and one unreadable field makes the statement
+          * unfoldable.
           */
         final case class Builder[T, F](
             columns: Record[F],
+            schemaName: Maybe[String],
             tableName: String,
             columnNames: Chunk[String],
             autoKey: Maybe[String]
@@ -2394,6 +2478,7 @@ object Sql:
             inline def values(inline rows: T*): Insert[T, F] =
                 Insert[T, F](
                     columns,
+                    schemaName,
                     tableName,
                     columnNames,
                     Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
@@ -2406,6 +2491,7 @@ object Sql:
             inline def values(inline rows: Seq[T]): Insert[T, F] =
                 Insert[T, F](
                     columns,
+                    schemaName,
                     tableName,
                     columnNames,
                     Insert.Values(kyo.internal.SqlMacros.rowValues[T](rows)),
@@ -2417,6 +2503,7 @@ object Sql:
             inline def partialValues(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Insert[T, F] =
                 Insert[T, F](
                     columns,
+                    schemaName,
                     tableName,
                     columnNames,
                     Insert.PartialValues(Chunk.from(specs.map(_(columns)))),
@@ -2428,6 +2515,7 @@ object Sql:
             inline def fromSelect[B](inline cols: (Record[F] => Column[? <: String, ?])*)(inline query: Query[B]): Insert[T, F] =
                 Insert[T, F](
                     columns,
+                    schemaName,
                     tableName,
                     columnNames,
                     Insert.FromSelect(Chunk.from(cols.map(_(columns))), query),
@@ -2474,6 +2562,7 @@ object Sql:
 
     final case class Update[T, F](
         columns: Record[F],
+        schemaName: Maybe[String],
         tableName: String,
         sets: Chunk[SetSpec[?, ?]],
         whereClause: Maybe[Term[Boolean]],
@@ -2513,14 +2602,15 @@ object Sql:
           */
         final case class Builder[T, F](
             columns: Record[F],
+            schemaName: Maybe[String],
             tableName: String,
             sets: Chunk[SetSpec[?, ?]]
         ):
             inline def set(inline specs: (Record[F] => SetSpec[? <: String, ?])*): Builder[T, F] =
                 copy(sets = sets ++ Chunk.from(specs.map(_(columns))))
             inline def where(inline predicate: Record[F] => Term[Boolean]): Update[T, F] =
-                Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe.empty)
-            inline def build: Update[T, F] = Update[T, F](columns, tableName, sets, Maybe.empty, Maybe.empty)
+                Update[T, F](columns, schemaName, tableName, sets, Maybe(predicate(columns)), Maybe.empty)
+            inline def build: Update[T, F] = Update[T, F](columns, schemaName, tableName, sets, Maybe.empty, Maybe.empty)
 
             /** Ask for the rows the statement changed, one column.
               *
@@ -2528,26 +2618,27 @@ object Sql:
               * a caller cannot reach is worse than not having the method.
               */
             inline def returning[N <: String & Singleton, V](inline col: Record[F] => Column[N, V]): ReturningBuilder[T, F, V] =
-                ReturningBuilder(columns, tableName, sets, Chunk(col(columns)))
+                ReturningBuilder(columns, schemaName, tableName, sets, Chunk(col(columns)))
 
             /** Ask for the rows the statement changed, several columns, typed as the tuple they were asked for. */
             @targetName("returningTuple")
             inline def returning[Tup <: Tuple, Vs <: Tuple](inline cols: Record[F] => Tup)(using
                 ev: IsTupleOfReturned.Aux[Tup, Vs]
             ): ReturningBuilder[T, F, Vs] =
-                ReturningBuilder(columns, tableName, sets, ev.toChunk(cols(columns)))
+                ReturningBuilder(columns, schemaName, tableName, sets, ev.toChunk(cols(columns)))
         end Builder
 
         final case class ReturningBuilder[T, F, A](
             columns: Record[F],
+            schemaName: Maybe[String],
             tableName: String,
             sets: Chunk[SetSpec[?, ?]],
             returningCols: Chunk[Column[?, ?]]
         ):
             inline def where(inline predicate: Record[F] => Term[Boolean]): Returning[T, F, A] =
-                Returning[T, F, A](Update[T, F](columns, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols)))
+                Returning[T, F, A](Update[T, F](columns, schemaName, tableName, sets, Maybe(predicate(columns)), Maybe(returningCols)))
             inline def build: Returning[T, F, A] =
-                Returning[T, F, A](Update[T, F](columns, tableName, sets, Maybe.empty, Maybe(returningCols)))
+                Returning[T, F, A](Update[T, F](columns, schemaName, tableName, sets, Maybe.empty, Maybe(returningCols)))
         end ReturningBuilder
 
         /** An UPDATE that answers the rows it changed rather than how many.
@@ -2585,6 +2676,7 @@ object Sql:
 
     final case class Delete[T, F](
         columns: Record[F],
+        schemaName: Maybe[String],
         tableName: String,
         whereClause: Maybe[Term[Boolean]],
         returning: Maybe[Chunk[Column[?, ?]]]
@@ -2617,33 +2709,35 @@ object Sql:
 
         final case class Builder[T, F](
             columns: Record[F],
+            schemaName: Maybe[String],
             tableName: String
         ):
             inline def where(inline predicate: Record[F] => Term[Boolean]): Delete[T, F] =
-                Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe.empty)
-            inline def build: Delete[T, F] = Delete[T, F](columns, tableName, Maybe.empty, Maybe.empty)
+                Delete[T, F](columns, schemaName, tableName, Maybe(predicate(columns)), Maybe.empty)
+            inline def build: Delete[T, F] = Delete[T, F](columns, schemaName, tableName, Maybe.empty, Maybe.empty)
 
             /** Ask for the rows the statement removed, one column. See [[Update.Builder.returning]]. */
             inline def returning[N <: String & Singleton, V](inline col: Record[F] => Column[N, V]): ReturningBuilder[T, F, V] =
-                ReturningBuilder(columns, tableName, Chunk(col(columns)))
+                ReturningBuilder(columns, schemaName, tableName, Chunk(col(columns)))
 
             /** Ask for the rows the statement removed, several columns, typed as the tuple they were asked for. */
             @targetName("returningTuple")
             inline def returning[Tup <: Tuple, Vs <: Tuple](inline cols: Record[F] => Tup)(using
                 ev: IsTupleOfReturned.Aux[Tup, Vs]
             ): ReturningBuilder[T, F, Vs] =
-                ReturningBuilder(columns, tableName, ev.toChunk(cols(columns)))
+                ReturningBuilder(columns, schemaName, tableName, ev.toChunk(cols(columns)))
         end Builder
 
         final case class ReturningBuilder[T, F, A](
             columns: Record[F],
+            schemaName: Maybe[String],
             tableName: String,
             returningCols: Chunk[Column[?, ?]]
         ):
             inline def where(inline predicate: Record[F] => Term[Boolean]): Returning[T, F, A] =
-                Returning[T, F, A](Delete[T, F](columns, tableName, Maybe(predicate(columns)), Maybe(returningCols)))
+                Returning[T, F, A](Delete[T, F](columns, schemaName, tableName, Maybe(predicate(columns)), Maybe(returningCols)))
             inline def build: Returning[T, F, A] =
-                Returning[T, F, A](Delete[T, F](columns, tableName, Maybe.empty, Maybe(returningCols)))
+                Returning[T, F, A](Delete[T, F](columns, schemaName, tableName, Maybe.empty, Maybe(returningCols)))
         end ReturningBuilder
 
         /** A DELETE that answers the rows it removed rather than how many. See [[Update.Returning]]. */

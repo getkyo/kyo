@@ -253,6 +253,65 @@ val sameCustomer: Chunk[(Long, Long)] < (Abort[SqlException] & DB) =
         .run
 ```
 
+### Naming a schema
+
+A table in a schema names it beside the table, on each of the four statement kinds:
+
+```scala
+transparent inline def invoices =
+    Sql.from[Invoice](alias = "i", schemaName = "app", tableName = "invoice")
+
+Sql.insert[Invoice](schemaName = "app", tableName = "invoice")
+Sql.update[Invoice](schemaName = "app", tableName = "invoice")
+Sql.delete[Invoice](schemaName = "app", tableName = "invoice")
+```
+
+Name the arguments. `Sql.from`'s schema form takes three identifier strings in a row, and transposing two of
+them is a mistake the compiler cannot see. Named arguments may be written in any order and the statement
+still folds at compile time.
+
+Qualifying names the table too. Like any explicitly named table, it is sent as written, so name the source
+once with a `transparent inline def` rather than repeating both names at every call site.
+
+The schema renders as its own quoted identifier, `"app"."invoice"`, so it reaches the wire as two names
+rather than one. Writing it into the table name instead does not work: `Sql.from[Invoice]("i",
+"app.invoice")` quotes the whole string as a single identifier and the server answers that no relation by
+that name exists.
+
+The schema travels in the statement, not in the session. That is what makes it reliable under a connection
+pool: `SET search_path` or `USE` reaches whichever connection served it, leaving every other connection in
+the pool resolving somewhere else, and since the same table name usually exists in both schemas the result
+is wrong rows rather than an error.
+
+Two schemas can meet in one statement, which is what a session default cannot express:
+
+```scala
+val billing: Chunk[(BigDecimal, String)] < (Abort[SqlException] & DB) =
+    Sql.from[Invoice](alias = "i", schemaName = "app", tableName = "invoice")
+        .innerJoin(Sql.from[Customer](alias = "c", schemaName = "crm", tableName = "customer"))
+        .on(j => j.i.customerId == j.c.id)
+        .select(j => (j.i.total, j.c.email))
+        .run
+```
+
+A schema chosen at run time works on `.run` and `.runDynamic` but not on `.runStatic`, for the reason any
+runtime value does not: the compile-time render cannot read it. See [Static queries](#static-queries).
+
+Each engine means something slightly different by a schema, and the qualified form reaches all of them:
+PostgreSQL a schema inside the database, MySQL and Dolt a database on the server, SQLite and DoltLite an
+attached database. On the last two, `main` is always reachable and a second database has to be attached when
+the connection opens, since `ATTACH` run as a statement would reach one pooled connection only:
+
+```scala doctest:expect=skipped
+val config = SqlConfig.default.extension(SqliteAttach(Map("archive" -> "/var/db/archive.sqlite")))
+```
+
+Statements that never reach the renderer, `sql"..."` fragments, `executeRaw` and migrations, carry whatever
+names they were written with. On PostgreSQL a session default for those is
+`PostgresConfig(searchPath = Chunk("app", "public"))`, sent when each connection starts up so every
+connection in the pool agrees. A deployment that can set `ALTER ROLE <user> SET search_path = app` on the
+server needs nothing from the driver at all.
+
 ### Raw SQL composes into typed queries
 
 A fragment, a column reference, and a typed query are the same kind of AST node, so the two forms embed in
@@ -387,6 +446,13 @@ Keeping a statement on the static path takes two habits beyond constructing at t
 method cannot be resolved statically and sends the render to run time, and write `.runStatic` where the
 build should fail if a refactor breaks the compile-time render, because `.run` falls back silently and
 reports nothing.
+
+The same rule decides what a [schema](#naming-a-schema) may be. A literal schema name folds, and so does one
+behind a `final val` or an `inline def`; a name computed at run time, a schema per request being the case
+that wants one, cannot, so those statements belong on `.run` or `.runDynamic`. There is no third option
+here: a schema the compile-time render cannot read is a schema the folded SQL would have to leave out, and a
+statement that reached a different table depending on which terminal ran it would be worse than one that
+renders at run time.
 
 A `SqlNaming` given is found by ordinary implicit search **where the statement is constructed**, so where it
 is declared decides which queries it reaches. Top level of the file, or an object the queries are written
