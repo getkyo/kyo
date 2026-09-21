@@ -845,18 +845,39 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     private def lockedOn[A, S](conn: Connection, meter: Meter, key: Long, timeout: Maybe[Duration])(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
-        self.serialised(meter)(conn.acquireAdvisoryLock(key, timeout)).andThen {
-            Scope.run {
-                // The release is a scope finalizer so it fires on every exit edge, interruption included: the
-                // pool's reclaim knows nothing about advisory locks, so an unreleased lock would ride the pooled
-                // session to its next borrower. Its own failure is swallowed so a failed unlock cannot replace
-                // what `body` reported.
-                Scope.ensure(Abort.run[SqlException](self.serialised(meter)(conn.releaseAdvisoryLock(key))).unit).andThen {
+        Scope.run {
+            // The release is a scope finalizer so it fires on every exit edge, interruption included: the
+            // pool's reclaim knows nothing about advisory locks, so an unreleased lock would ride the pooled
+            // session to its next borrower.
+            //
+            // Registered BEFORE the acquire, because an interrupt can land on the acquire's own exchange after
+            // the server granted the lock, and a grant this fiber never saw is still a grant. Unlocking a key
+            // the session does not hold is what both engines answer false to, so covering that edge costs one
+            // round trip and nothing else.
+            Scope.ensure(self.unlocking(conn, meter, key)).andThen {
+                self.serialised(meter)(conn.acquireAdvisoryLock(key, timeout)).andThen {
                     SqlClient.lockLocal.let(Present(SqlClient.LockContext(self, conn, meter)))(body)
                 }
             }
         }
     end lockedOn
+
+    /** Frees `key` on `conn` at the end of a locked section, by unlocking an idle session and by closing one that is not.
+      *
+      * A session whose exchange is still in flight is one an interrupt abandoned mid-response, and writing the unlock there would read the
+      * abandoned statement's response as its own and leave its real one queued: the desync the pool's reclaim takes such care to avoid, and
+      * one the next borrower of that pooled session would be the first to see. Closing the socket instead frees the lock with the session,
+      * since both engines scope an advisory lock to the session that took it, and makes [[kyo.internal.client.SqlConnectionPool]]'s exit
+      * decision destroy the connection rather than reclaim it, because a session with a lock nothing can release is not one to lend out.
+      *
+      * The unlock's own failure is swallowed so a failed unlock cannot replace what the locked body reported.
+      */
+    private def unlocking(conn: Connection, meter: Meter, key: Long)(using Frame): Unit < Async =
+        // Unsafe: `inFlight` and `closeNow` are the non-suspending forms the connection answers from state it holds.
+        Sync.Unsafe.defer(conn.inFlight).flatMap {
+            case true  => Sync.Unsafe.defer(conn.closeNow)
+            case false => Abort.run[SqlException](self.serialised(meter)(conn.releaseAdvisoryLock(key))).unit
+        }
 
 end SqlClient
 
