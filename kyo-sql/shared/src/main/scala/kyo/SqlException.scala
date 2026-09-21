@@ -425,6 +425,16 @@ final case class SqlConnectionInvalidTypeNameException(typeNames: Chunk[String])
         s"Invalid type name(s) for pre-registration: ${typeNames.mkString(", ")}"
     )
 
+/** A configured session search path names something that is not a schema name.
+  *
+  * Raised before the startup packet is written, so the caller reads which entry is wrong. Sent as it stands, an empty entry reaches the
+  * server as a zero-length delimited identifier, and the server answers a FATAL that names neither the setting nor the position.
+  */
+final case class SqlConnectionInvalidSearchPathException(searchPath: Chunk[String])(using Frame)
+    extends SqlConnectionException(
+        s"Invalid search path entry in: ${searchPath.map(e => s"'$e'").mkString(", ")}"
+    )
+
 /** Resetting a pooled connection failed with a server ErrorResponse. */
 final case class SqlConnectionResetFailedException(errorCode: Int, errorMessage: String)(using Frame)
     extends SqlConnectionException(

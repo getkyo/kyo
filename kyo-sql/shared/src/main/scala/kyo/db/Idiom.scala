@@ -310,9 +310,28 @@ abstract class Idiom:
             case ag: Sql.Aggregate.Call[?] => aggregateCall(ctx, ag)
             case q: Sql.Query[?]           => ctx.append("("); query(ctx, q); ctx.append(")")
 
+    /** Renders a table name, qualified by its schema when the statement named one: `"app"."invoice"`, each part quoted separately.
+      *
+      * The two parts must be quoted apart. [[quoteIdent]] escapes an identifier as a unit, so a single `"app.invoice"` names one relation
+      * whose name contains a period, and the server answers that no such relation exists.
+      *
+      * They must also ARRIVE here separate. An identifier may legitimately contain a period, which is what quoting exists to permit, so
+      * splitting a name on one here would reinterpret such a table as a qualification of something else.
+      *
+      * PostgreSQL, MySQL and SQLite all accept a dot-separated pair of quoted identifiers wherever a table name belongs, so no shipped
+      * dialect overrides this.
+      */
+    def qualifiedTable(ctx: Idiom.Ctx, schemaName: Maybe[String], tableName: String): Unit =
+        schemaName.foreach { schema =>
+            ctx.appendQuoted(schema)
+            ctx.append(".")
+        }
+        ctx.appendQuoted(tableName)
+    end qualifiedTable
+
     /** Renders a table in FROM position: its quoted name followed by its quoted alias. */
     def table(ctx: Idiom.Ctx, t: Sql.Table[?, ?]): Unit =
-        ctx.appendQuoted(t.tableName)
+        qualifiedTable(ctx, t.schemaName, t.tableName)
         ctx.append(" ")
         ctx.appendQuoted(t.alias)
     end table
@@ -568,7 +587,7 @@ abstract class Idiom:
       */
     def insert(ctx: Idiom.Ctx, i: Sql.Insert[?, ?]): Unit =
         ctx.append(insertKeyword(i.onConflict))
-        ctx.appendQuoted(i.tableName)
+        qualifiedTable(ctx, i.schemaName, i.tableName)
         i.source match
             case v: Sql.Insert.Values[?, ?]         => insertValues(ctx, i, v)
             case pv: Sql.Insert.PartialValues[?, ?] => insertPartialValues(ctx, i, pv)
@@ -592,7 +611,7 @@ abstract class Idiom:
     /** Renders an `UPDATE`: the quoted table, the `SET` list through [[assignment]], then the optional `WHERE` and [[returning]]. */
     def update(ctx: Idiom.Ctx, u: Sql.Update[?, ?]): Unit =
         ctx.append("UPDATE ")
-        ctx.appendQuoted(u.tableName)
+        qualifiedTable(ctx, u.schemaName, u.tableName)
         ctx.append(" SET ")
         ctx.joinWith(", ")(u.sets)(spec => assignment(ctx, spec))
         u.whereClause.foreach { w =>
@@ -605,7 +624,7 @@ abstract class Idiom:
     /** Renders a `DELETE FROM`: the quoted table, then the optional `WHERE` and [[returning]]. */
     def delete(ctx: Idiom.Ctx, d: Sql.Delete[?, ?]): Unit =
         ctx.append("DELETE FROM ")
-        ctx.appendQuoted(d.tableName)
+        qualifiedTable(ctx, d.schemaName, d.tableName)
         d.whereClause.foreach { w =>
             ctx.append(" WHERE ")
             term(ctx, w)

@@ -163,6 +163,26 @@ final class MysqlTestBackend extends SqlTestBackend:
         ("BIT(64)", "b'" + ("1" * 64) + "'", "18446744073709551615")
     )
 
+    override def hasSecondSchema: Boolean = true
+
+    /** A second schema on MySQL is a second DATABASE, named after the leaf's own so concurrent leaves cannot collide.
+      *
+      * The name is fixed here rather than taken from the caller because the leaf connects as the restricted `test` user, which holds no
+      * global `CREATE`. [[MysqlTestBackend.secondSchemaName]] is what provisioning grants that user rights over, so this name and that
+      * grant have to agree.
+      *
+      * It also lives OUTSIDE the per-leaf database the harness drops, so the leaf owns removing it; left behind it would accumulate on the
+      * shared container.
+      */
+    override def secondSchema(schema: SqlTestBackend.Schema): Maybe[SqlTestBackend.SecondSchema] =
+        val name = MysqlTestBackend.secondSchemaName(schema.database)
+        Present(SqlTestBackend.SecondSchema(
+            name,
+            Chunk(s"CREATE DATABASE ${quoteIdent(name)}"),
+            Chunk(s"DROP DATABASE IF EXISTS ${quoteIdent(name)}")
+        ))
+    end secondSchema
+
     def tableNotFoundSqlState: String = "42S02"
 
     def uniqueViolationSqlState: String = "23000"
@@ -254,6 +274,13 @@ final class MysqlTestBackend extends SqlTestBackend:
             // makes every schema this fixture hands out mean the same thing.
             _ <- admin.simpleExecute(s"CREATE DATABASE `$schema` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci")
             _ <- admin.simpleExecute(s"GRANT ALL ON `$schema`.* TO '${predefCfg.username}'@'%'")
+            // Rights over the companion database a schema-qualification leaf creates. Granted unconditionally
+            // because MySQL grants on a database that does not exist yet, and database-level CREATE is what lets
+            // the restricted user create that database itself; the leaf connects as that user and holds no global
+            // CREATE. Dropped below whether or not any leaf used it.
+            secondSchema = MysqlTestBackend.secondSchemaName(schema)
+            _ <- admin.simpleExecute(s"GRANT ALL ON `$secondSchema`.* TO '${predefCfg.username}'@'%'")
+            _ <- Scope.ensure(Abort.run(admin.simpleExecute(s"DROP DATABASE IF EXISTS `$secondSchema`")).unit)
             // The eviction suite counts this connection's server-side statements through
             // `performance_schema.prepared_statements_instances` and `sys.ps_thread_id`. The entrypoint's MYSQL_USER
             // lacks the privilege to READ either even once the engine is on (1142 on the table, 1370 on the routine),
@@ -287,4 +314,17 @@ final class MysqlTestBackend extends SqlTestBackend:
         end for
     end withFreshSchemaBody
 
+end MysqlTestBackend
+
+object MysqlTestBackend:
+
+    /** The companion database a schema-qualification leaf uses, beside the per-leaf one named `database`.
+      *
+      * One rule in one place: provisioning grants the restricted user rights over this name, and
+      * [[MysqlTestBackend.secondSchema]] hands the same name to the leaf. The two disagreeing would leave the leaf refused for want of a
+      * privilege, which reads as a driver failure rather than a harness one.
+      *
+      * MySQL's identifier ceiling is 64 bytes, so the suffix is short and the base is already well inside it.
+      */
+    private[internal] def secondSchemaName(database: String): String = s"${database}_second"
 end MysqlTestBackend
