@@ -23,6 +23,7 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-logging-slf4j] `kyo.SLF4JLog`: bridge `Log` to SLF4J 2.0 API
 - [kyo-system] `Stream.writeTo` and `Stream.writeLinesTo`: `append` and `createFolders` parameters, matching the `Path` write methods. `append = true` adds to the end of an existing file and leaves that file in place when the stream fails.
 - [kyo-system] `FileWriteStalledException(path, remaining)`: a `FileWriteException` reporting a write that consumed none of the bytes it was offered, with the unwritten count as a `ByteSize`
+- [kyo-sql-postgres] `PostgresConfig.searchPath`: the schemas an unqualified name resolves against, sent in the startup packet so every pooled connection agrees and `SqlClient.reset` restores it. An empty entry is refused before the connection is opened, with `SqlConnectionInvalidSearchPathException`.
 
 ### Removed
 
@@ -31,6 +32,7 @@ All breaking API changes to this project will be documented in this file.
 
 ### Changed
 
+- [kyo-sql] Connection pool identity now includes the config's `SqlConfig.Extension` values, so two configs differing only in a backend setting do not share pooled connections. Idle retention per address can exceed `maxConnections` where it could not before; concurrency still cannot.
 - [kyo-schema] `Schema.dictSchema`: non-String-key `Dict` now serializes each entry as a two-field `key`/`value` record (the same form `mapSchema` uses) instead of a bare two-element array. BREAKING: previously-serialized MsgPack bytes for a non-String-key `Dict` cannot be read by the new code. MsgPack was the only codec that decoded the old form; the other six failed to decode and Protobuf silently emitted corrupt bytes.
 - [kyo-schema] `Schema.dictSchema` and `Schema.stringDictSchema`: a case class field holding an empty `Dict` now decodes on Protobuf instead of failing with `MissingFieldException`, matching the `Map` givens
 - [kyo-core] `Fiber.init`: use `Scope` effect to guarantee termination of forked fiber

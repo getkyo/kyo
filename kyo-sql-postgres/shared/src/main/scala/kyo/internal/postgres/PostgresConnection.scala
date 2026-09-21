@@ -471,7 +471,8 @@ object PostgresConnection:
         preparedStmtCacheSize: Int,
         preparedStmtTtl: Duration,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(host, port, t => onConnectPanic(t, "connect", host, port), (c: PostgresConnection) => c.close) {
             rawConn =>
@@ -483,10 +484,11 @@ object PostgresConnection:
                     // so openSocket's outer bracket would not close the upgraded fd if startup or auth then fails.
                     kyo.db.Connection.closingOnFailure(conn) {
                         PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                            StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
-                                // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
-                                val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                                mkConnection(channel, result, preparedStmtCacheSize, ttl)
+                            StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName, searchPath).flatMap {
+                                result =>
+                                    // Duration.Infinity means "no time-based expiry"; pass Duration.Zero to Cache.init.
+                                    val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
+                                    mkConnection(channel, result, preparedStmtCacheSize, ttl)
                             }
                         }
                     }
@@ -550,7 +552,8 @@ object PostgresConnection:
         preparedStmtCacheSize: Int,
         preparedStmtTtl: Duration,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(
             host,
@@ -573,7 +576,7 @@ object PostgresConnection:
                 // upgraded fd rather than the raw socket whose close is by then a no-op.
                 kyo.db.Connection.closingOnFailure(conn) {
                     PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName).flatMap { result =>
+                        StartupExchange.run(channel, user, db, password, Absent, Absent, applicationName, searchPath).flatMap { result =>
                             val ttl = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
                             mkConnection(channel, result, preparedStmtCacheSize, ttl)
                         }
@@ -606,7 +609,8 @@ object PostgresConnection:
         mechanismCapture: Maybe[AtomicRef[String]],
         preparedStmtCacheSize: Int,
         applicationName: Maybe[String] = Absent,
-        socketTimeout: Duration = Duration.Infinity
+        socketTimeout: Duration = Duration.Infinity,
+        searchPath: Maybe[String] = Absent
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         kyo.db.Connection.openSocket(
             host,
@@ -622,7 +626,16 @@ object PostgresConnection:
                 // it has upgraded, so a startup failure would otherwise leak the upgraded fd.
                 kyo.db.Connection.closingOnFailure(conn) {
                     PostgresChannel(conn, socketTimeout).flatMap { channel =>
-                        StartupExchange.run(channel, user, db, password, certHashOverride, mechanismCapture, applicationName).flatMap {
+                        StartupExchange.run(
+                            channel,
+                            user,
+                            db,
+                            password,
+                            certHashOverride,
+                            mechanismCapture,
+                            applicationName,
+                            searchPath
+                        ).flatMap {
                             result =>
                                 // connectWithCertHashOverride is test-only; no TTL parameter, use Duration.Zero directly.
                                 mkConnection(channel, result, preparedStmtCacheSize, Duration.Zero)
