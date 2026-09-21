@@ -3,7 +3,7 @@ package kyo
 class IsFatalTest extends kyo.test.Test[Any]:
 
     "fatal" - {
-        // Only what says the process itself is finished. `VirtualMachineError`'s four subclasses are named
+        // `VirtualMachineError`'s four subclasses are named
         // one by one rather than through the parent, so a change to the set has to be made here too.
         "OutOfMemoryError" in assert(IsFatal(new OutOfMemoryError("boom")))
         "StackOverflowError" in assert(IsFatal(new StackOverflowError("boom")))

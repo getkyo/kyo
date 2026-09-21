@@ -243,9 +243,8 @@ class ScopeTest extends kyo.test.Test[Any]:
                     yield a == 1 && r == 1
                 }
             yield
-                // One acquisition, one release. Comparing the counters to each other would hold at zero
-                // before the fiber has acquired anything. The refusal names the scope that closed, so the
-                // escaping fiber can be traced to the `Scope.run` it outlived.
+                // Comparing the counters to each other would hold at zero
+                // before the fiber has acquired anything.
                 assert(result.panic.exists(_.isInstanceOf[Closed]), s"registering on a closed scope must panic Closed: $result")
                 assert(
                     result.panic.exists(_.getMessage.contains(s"Finalizer created at ${scopeFrame.position.show} is closed.")),
@@ -266,8 +265,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                     Fiber.initUnscoped {
                         start.await.andThen {
                             Scope.acquireRelease("token") { _ =>
-                                // The refused release runs detached: it may suspend, and its own failure is logged, not
-                                // delivered, so the acquiring fiber's error stays the refusal.
                                 Sync.ensure(finished.release) {
                                     entered.release.andThen(gate.await).andThen {
                                         released.incrementAndGet.andThen(Abort.fail(failure))
@@ -322,8 +319,7 @@ class ScopeTest extends kyo.test.Test[Any]:
                     yield fibers
                     end for
                 }
-                _ <- Kyo.foreachDiscard(fibers)(_.get)
-                // a refused finalizer runs off the scope, so the last of them can land after the fibers finish
+                _   <- Kyo.foreachDiscard(fibers)(_.get)
                 _   <- assertEventually(Kyo.zip(attempted.get, ran.get).map((att, r) => r == att))
                 att <- attempted.get
                 acc <- accepted.get
@@ -642,7 +638,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         case object TestAcquireException extends scala.util.control.NoStackTrace
 
         // The fiber interrupts itself in the same Sync node that performs the claim, so the earliest the
-        // interrupt can be delivered is after the acquire has returned. No held worker, so it runs everywhere.
+        // interrupt can be delivered is after the acquire has returned.
         "a self-interrupt inside the acquire still releases what the acquire produced" in {
             val rounds = 500
             Kyo.foreach(1 to rounds) { _ =>
@@ -672,8 +668,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                     _ <- handoff.complete(Result.succeed(fiber))
                     _ <- fiber.getResult
                     a <- claimed.get
-                    // The finalizers drain on a detached fiber, so a release can land after the result. Waiting
-                    // is what separates "released late" from "leaked".
                     _ <- assertEventually(Kyo.zip(claimed.get, released.get).map((acquired, freed) => !acquired || freed))
                     r <- released.get
                 yield (a, r)
@@ -761,7 +755,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         // An interrupt completes the fiber's promise at once, but the body still has to unwind for its brackets
         // to run, and a parked fiber has no slice in flight to notice: the task is rescheduled for exactly that
-        // reason. Nothing else covers a fiber interrupted while parked rather than while running.
+        // reason.
         "an interrupted parked fiber runs its brackets" in {
             for
                 ran     <- AtomicInt.init(0)
@@ -772,7 +766,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 )
                 _ <- started.await
                 _ <- fiber.interrupt
-                // the bracket runs on the abandonment walk, which the interrupt starts without awaiting
                 _ <- assertEventually(ran.get.map(_ == 1))
                 n <- ran.get
             yield assert(n == 1, s"bracket ran $n times")
@@ -991,7 +984,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                         .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
                 }
                 seq <- ran.get
-            // Reverse registration order, with the failure in the middle absent rather than fatal.
             yield assert(seq == Chunk("third", "first"), s"order was $seq")
             end for
         }
@@ -1041,7 +1033,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                         )
                     }
                 }
-                // The drain is running the finalizer and parked on the gate.
                 _ <- entered.get
                 _ <- closer.interrupt
                 _ <- gate.release
@@ -1051,8 +1042,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // A finalizer opening a scope of its own during the drain: the nested run must get to close itself
-        // rather than being cut short by the drain it is running under.
         "a finalizer that opens a scope of its own releases what it acquires" in {
             for
                 outer <- AtomicInt.init(0)
@@ -1072,7 +1061,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
 
         // A fatal error leaves a finalizer by a different path than an ordinary failure; the releases registered
-        // before it are owed either way. JVM-only like IOTaskTest's fatal leaf: it needs worker-thread semantics
+        // before it are owed either way. JVM-only: it needs worker-thread semantics
         // single-worker Native and single-threaded JS do not provide.
         "a finalizer that throws a fatal error does not stop the ones registered before it".onlyJvm in {
             for
@@ -1131,7 +1120,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                             }.map(fiber => ready.get.andThen(fiber.interrupt)).andThen(Loop.continue)
                         }
                 }
-                // The drains are detached, so the counts are polled rather than read once.
                 _   <- assertEventually(Kyo.zip(registered.get, released.get).map((reg, rel) => reg == rounds && rel == rounds))
                 reg <- registered.get
                 rel <- released.get
@@ -1242,9 +1230,8 @@ class ScopeTest extends kyo.test.Test[Any]:
                 }
                 _   <- handoff.complete(Result.succeed(fiber))
                 res <- fiber.getResult
-                // The interrupt starts the release without waiting for it, so the count is polled.
-                _ <- assertEventually(released.get.map(_ == 1))
-                r <- released.get
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
             yield
                 assert(res.isPanic, s"expected the interrupt to abort the body but got $res")
                 assert(r == 1, s"the value the acquire produced was released $r times")
@@ -1269,7 +1256,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 seen   <- Scope.run {
                     Scope.ensure(caller.incrementAndGet.unit).andThen {
                         Mask.run[Scope](generic(Mask[Scope](Scope.ensure(inner.incrementAndGet.unit).andThen(42)))).map { r =>
-                            // read inside the outer scope: the callee's own finalizer has run, the caller's has not
                             Kyo.zip(caller.get, inner.get).map((c, i) => (r, c, i))
                         }
                     }
@@ -1279,8 +1265,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 afterSupplied <- inner.get
             yield
                 assert(r == 42)
-                // Both finalizers below belong to the caller, one registered in the outer scope and one handed
-                // to `generic` in its argument, so the callee's run must leave both to the outer exit.
                 assert(c == 0, s"the caller's own finalizer ran inside the callee's scope: caller=$c")
                 assert(i == 0, s"the callee's scope claimed a finalizer the caller supplied: supplied=$i")
                 assert(afterCaller == 1, s"the caller's own finalizer must run once, at the outer exit: caller=$afterCaller")
@@ -1288,8 +1272,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The same opt-out with a real resource in the caller's argument rather than a counter: the callee's run
-        // must leave it open, and the outer exit closes it once.
         "a resource the caller acquires stays open across a masked generic call and closes at the outer exit" in {
             import kyo.kernel.ArrowEffect.Mask
 
@@ -1300,7 +1282,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             for
                 seen <- Scope.run {
                     Mask.run[Scope](generic(Mask[Scope](Scope.acquire(r)))).map { res =>
-                        // read inside the outer scope, after the callee's scope has closed
                         Sync.defer((res.id, res.closes))
                     }
                 }
@@ -1312,10 +1293,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // #1381's isolation driven from the callee side, no dedicated API needed: `generic` masks the incoming
-        // effect's `Scope` before its own `Scope.run`, so its run answers none of the caller's finalizers. The caller
-        // hands in a plain `Scope` argument and re-exposes it with `Mask.run` for its own outer `Scope.run`, so the
-        // caller-supplied finalizer runs at the outer exit rather than inside the callee.
         "a generic function isolates the caller's Scope itself via Mask" in {
             import kyo.kernel.ArrowEffect.Mask
 
@@ -1326,7 +1303,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 supplied <- AtomicInt.init(0)
                 seen     <- Scope.run {
                     Mask.run[Scope](generic(Scope.ensure(supplied.incrementAndGet.unit).andThen(42))).map { r =>
-                        // read inside the outer scope, after the callee's scope has closed
                         supplied.get.map(s => (r, s))
                     }
                 }
@@ -1349,8 +1325,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 Fiber.initUnscoped(Sync.defer { seenOpen = res.closes; res.id }).map(_.get)
             }.handle(Scope.run).map { id =>
                 assert(id == 1)
-                // the fork runs inside the extent that owes the release, so it must not observe one that
-                // already ran: a child seeing a closed resource is the escape the Closed abort reports
                 assert(seenOpen == 0)
                 assert(r.closes == 1)
             }
@@ -1360,8 +1334,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             val r = TestResource(1)
             Scope.acquire(r).map { res =>
                 Fiber.initUnscoped(Sync.defer(res.id)).map(_.get).map { id =>
-                    // still inside the extent after the child completed: the child ending is not the
-                    // extent ending, so nothing is owed yet
                     assert(res.closes == 0)
                     id
                 }
@@ -1377,7 +1349,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                 Kyo.foreach(Seq(1, 2, 3))(_ => Fiber.initUnscoped(Sync.defer(res.id)).map(_.get))
             }.handle(Scope.run).map { ids =>
                 assert(ids == Seq(1, 1, 1))
-                // one extent, one release, however many children read the resource
                 assert(r.closes == 1)
             }
         }
@@ -1394,11 +1365,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "release ordering under an outer handler (#1723)" - {
 
-        // When an outer handler discards Scope.run's continuation, the scope hands its async finalizers to a
-        // detached drain nothing awaits: Finalizer.close runs the synchronous releases and returns, so the next
-        // effect runs while an async finalizer is still in flight. The desired behavior is backpressure, the same
-        // `finalizer.await` the normal Scope.run path has; by decision it is not applied on abnormal exit yet, so
-        // this is pending. The async finalizer suspends on a fiber join before its final step, so a drain that is
+        // The async finalizer suspends on a fiber join before its final step, so a drain that is
         // kicked off but not awaited leaves `released` false when the next effect observes it; the loop makes a
         // round that races the drain fail rather than pass, so the pending marker is stable.
         "a scope short-circuited by an outer handler awaits its async release before the next effect".pendingUntilFixed(
@@ -1425,9 +1392,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The half that is delivered: a scope short-circuited by an outer handler is closed at that handler's end,
-        // as a child of the enclosing scope, so its releases run before the enclosing scope's own finalizers rather
-        // than with the outermost unwind.
         "a scope short-circuited by an outer handler releases before the enclosing scope's own finalizers" in {
             for
                 order <- AtomicRef.init(Chunk.empty[String])
@@ -1452,9 +1416,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "hierarchical scopes (#1131)" - {
 
-        // A scoped fiber is interrupted by the scope it was spawned in, and the run nested inside it releases
-        // before that scope releases anything of its own; #1131's actor mailbox closes on the parent's close by
-        // this route. The child can park for good because `Fiber.init` interrupts it and waits for its release.
+        // The child can park for good because `Fiber.init` interrupts it and waits for its release.
         "a scoped fiber's nested run releases when the scope it was spawned in closes" in {
             for
                 released <- AtomicInt.init(0)
@@ -1474,9 +1436,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // A run nested inside a scoped fiber must release before the scope that spawned that fiber releases
-        // anything of its own, or an inner resource outlives the outer one it was borrowed from. A fork withholds
-        // membership, so what carries the ordering is the scope `Fiber.init` gives its fiber.
         "a scoped fiber's nested run releases before the enclosing scope's own finalizers" in {
             for
                 order <- AtomicRef.init(Chunk.empty[String])
@@ -1500,8 +1459,8 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         // A run opened inside a fork is a root: the enclosing scope does not end the fiber carrying it, so closing
         // it from there takes a resource from an owner still using it, such as a service started lazily under
-        // `Fiber.initUnscoped`. Registration still reaches the scope the fork was made in
-        // (`StreamCoreExtensionsTest:890`); membership is what a fork withholds.
+        // `Fiber.initUnscoped`. Registration still reaches the scope the fork was made in;
+        // membership is what a fork withholds.
         "a run opened inside an unscoped fiber outlives the scope the fiber was spawned in" in {
             for
                 released <- AtomicInt.init(0)
@@ -1516,7 +1475,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                         }
                     }.map(fiber => started.await.andThen(fiber))
                 }
-                // the scope that spawned the fiber has closed; the service is still parked holding its resource
                 onParentExit <- released.get
                 _            <- gate.release
                 _            <- service.getResult
@@ -1527,9 +1485,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // On an unwind only `Sync.ensure` runs, and `close` hands the drain to a detached fiber without
-        // awaiting it, so without the child link the enclosing scope's own finalizers would run alongside
-        // the nested run's rather than after them.
         "a nested run releases before the enclosing scope's own finalizers when the enclosing run is aborted" in {
             for
                 order <- AtomicRef.init(Chunk.empty[String])
@@ -1548,8 +1503,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The other half of #1131: a child that completes on its own releases at its own exit, while the scope it
-        // was spawned in is still open, rather than deferring to that scope's close.
         "a scoped fiber's nested run releases at its own exit while the enclosing scope is still open" in {
             for
                 released <- AtomicInt.init(0)
@@ -1571,12 +1524,9 @@ class ScopeTest extends kyo.test.Test[Any]:
     "under a handler that replays" - {
 
         // `Choice.run` outside `Scope.run` answers the choice inside the scope's body twice, so the body runs
-        // twice and each branch registers a finalizer. The bracket contract under a replaying handler (SyncTest,
-        // "under a handler that replays") is that every branch runs against the live region and the release runs
-        // once after all of them; a scope's registrations are the counterpart, each running once. Today the
-        // scope's close is part of the continuation the handler replays, so the first shot's end closes it and the
-        // second shot's registration is refused with Closed, on this branch as on main; the two leaves below are
-        // pending until the close is held by the replaying handler the way a bracket's release is.
+        // twice and each branch registers a finalizer. The bracket contract under a replaying handler
+        // is that every branch runs against the live region and the release runs
+        // once after all of them; a scope's registrations are the counterpart, each running once.
         "every branch of a replaying handler registers its finalizer and each runs once".pendingUntilFixed(
             "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot registers on a closed scope and is refused with Closed"
         ) in {
@@ -1630,7 +1580,7 @@ class ScopeTest extends kyo.test.Test[Any]:
     "racing scopes (#1735)" - {
 
         // #1735 as reported: four items, a resource that is an item taken from the channel and released by putting
-        // it back, and four concurrent users. The leaf below states the guarantee in general; this pins their shape.
+        // it back, and four concurrent users.
         "the reporter's program leaves every item in the channel" in {
             val expected = (1 to 4).map(_.toString).toSet
             Scope.run {
@@ -1638,8 +1588,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                     Kyo.foreachDiscard(expected.toSeq)(chan.put).andThen {
                         val acqRel = Scope.acquireRelease(chan.take)(chan.put)
                         Async.foreachDiscard(1 to 4)(_ => Scope.run(acqRel.unit)).andThen {
-                            // Drained after the users finish, so this reads what their releases put back
-                            // rather than racing them.
                             assertEventually(chan.size.map(_ == expected.size)).andThen {
                                 Kyo.foreach(1 to expected.size)(_ => chan.take).map { drained =>
                                     assert(drained.toSet == expected, s"expected $expected but the channel held ${drained.toSet}")
@@ -1651,12 +1599,11 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
 
-        // Whatever a racer took, its release puts back. More racers than items on purpose, so some are interrupted
+        // More racers than items on purpose, so some are interrupted
         // while parked on `take` and the rest after taking. Counted rather than latched per racer, because which
         // racers get an item is exactly what the interleaving decides, and the counts are compared to each other
         // rather than to four: between the latch opening and a racer's interrupt landing, a racer still parked can
-        // take an item a release has just put back. The racers are awaited to their results, which arrive once
-        // their finalizers ran, so nothing is still unwinding when the channel is read.
+        // take an item a release has just put back.
         "every racer that took an item from the channel puts it back" in {
             // The loss this pins (a put delivered into a parked racer's promise as the racer's interrupt lands, then the racer
             // abandoned without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated
@@ -1685,11 +1632,9 @@ class ScopeTest extends kyo.test.Test[Any]:
                             }
                         }
                     }
-                    _ <- allTaken.await
-                    _ <- Kyo.foreachDiscard(racers)(_.interrupt.unit)
-                    _ <- Kyo.foreachDiscard(racers)(_.getResult.unit)
-                    // every racer has finished, so nothing takes any more; a release with an effectful put may still be
-                    // landing, so the returns are polled up to the takes, which count at most what was registered
+                    _       <- allTaken.await
+                    _       <- Kyo.foreachDiscard(racers)(_.interrupt.unit)
+                    _       <- Kyo.foreachDiscard(racers)(_.getResult.unit)
                     _       <- assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t <= r))
                     t       <- taken.get
                     r       <- returned.get

@@ -9,20 +9,11 @@ import scala.scalajs.js as sjs
 /** Reproduce-first regression for a STARTTLS upgrade-handoff drop on the JS Node driver: without an `onInboundClosedDuringRead` override,
   * [[JsIoDriver]] falls back to [[kyo.net.internal.transport.IoDriver]]'s no-op default, so a STARTTLS upgrade racing the plaintext
   * [[kyo.net.internal.transport.ReadPump]]'s parked put silently drops bytes already pulled off the socket instead of salvaging them into the
-  * handle's leftover queue that [[JsTransport.upgradeToTls]]'s afterDetach drains and unshifts into the handshake. It was the one STARTTLS-capable
-  * backend missing this override, which stranded one of many concurrent upgrades at the handshake deadline under load (only the JS CI job saw it;
-  * NIO/io_uring/poller already salvage). The JS arm provides the matching override, staging into leftover.
+  * handle's leftover queue that [[JsTransport.upgradeToTls]]'s afterDetach drains and unshifts into the handshake.
   *
-  * The main scenario drives the race directly rather than through a real TLS handshake ([[kyo.net.TransportStartTlsConcurrentTest]] exercises that
-  * end to end): with `channelCapacity=1` and nothing consuming `conn.inbound`, chunk A fills the channel; chunk B's delivery then parks the pump's
-  * putFiber (`Channel.offer` returns false, `ReadPump.offerToChannel` falls to the putFiber branch). Setting `upgrading=true` and calling
-  * `detachForUpgrade()` closes `inbound`, which both returns `[A]` (the already-buffered chunk) and fails B's parked put with `Closed`, invoking
-  * `driver.onInboundClosedDuringRead`. Without the override this drops B; with it, B lands in the handle's leftover queue. The other two scenarios
-  * pin the hook's contract directly: staging on an upgrade close, and discarding on an ordinary (non-upgrade) close.
-  *
-  * Anti-flakiness: waits for `conn.inbound.size() == 1` (chunk A landed) and the pump re-armed for B (`pendingRead` set), then for B's delivery to
-  * clear that read and park the put (`pendingRead` empty again) before detaching, then polls the parked put's async salvage. No sleep-as-assertion.
-  * The client fd, handle, and driver are released on every path so a failed assertion (a real regression) surfaces as that assertion, not a leak.
+  * The main scenario drives the race directly rather than through a real TLS handshake:
+  * with `channelCapacity=1` and nothing consuming `conn.inbound`, chunk A fills the channel; chunk B's delivery then parks the pump's
+  * putFiber (`Channel.offer` returns false, `ReadPump.offerToChannel` falls to the putFiber branch).
   */
 class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
 
@@ -62,8 +53,7 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
         sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
 
     /** An inert stand-in for a socket the leftover-only scenarios never drive: `onInboundClosedDuringRead` touches `upgrading` and the leftover
-      * queue, never the socket. A bare literal (not a `require`d EventEmitter) keeps these scenarios runnable on the Wasm backend too, which links
-      * as an ES module where `require` is undefined.
+      * queue, never the socket.
       */
     private def inertSocket(): sjs.Dynamic = sjs.Dynamic.literal()
 
@@ -91,7 +81,6 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
 
                 discard(clientSock.write(buffer(chunkA)))
 
-                // Chunk A fills the capacity-1 channel and the pump re-arms for the next read (pendingRead set): both hold before B is sent.
                 awaitCondition(5.seconds)(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).map { armed =>
                     assert(armed, "chunk A never landed and the pump never re-armed (a hang, not the race under test)")
 
@@ -113,8 +102,7 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                             s"detachForUpgrade must return the already-buffered chunk A, got ${bufferedBytes.toSeq}"
                         )
 
-                        // The core regression guard: chunk B, off the socket and parked in the pump's put when detachForUpgrade raced it, must be
-                        // salvaged into the leftover queue instead of dropped. The parked put's onComplete (which invokes onInboundClosedDuringRead)
+                        // The parked put's onComplete (which invokes onInboundClosedDuringRead)
                         // is a raw IOPromise callback that runs synchronously inside inbound.close() on this single-threaded platform, so the
                         // leftover is already staged by the time this runs; the poll is a harmless guard, not a wait for a rescheduled callback.
                         awaitCondition(5.seconds)(handle.hasLeftover).map { salvaged =>
@@ -153,7 +141,6 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
         "discards the bytes when the handle is not upgrading (ordinary close, unchanged behavior)" in {
             val driver = JsIoDriver.init()
             val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal)
-            // handle.upgrading stays false (the default): an ordinary teardown close, not a STARTTLS upgrade window.
             driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(Array[Byte](44, 55)))
             assert(!handle.hasLeftover, "an ordinary (non-upgrade) close must discard the read, not stage it as leftover")
         }

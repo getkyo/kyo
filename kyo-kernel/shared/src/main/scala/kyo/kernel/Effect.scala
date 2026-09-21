@@ -18,10 +18,6 @@ import scala.annotation.nowarn
   *   - [[ContextEffect]] for values bound around a computation and read from within it.
   *
   * @see
-  *   [[ArrowEffect]] For declaring an operation and the handlers that answer it
-  * @see
-  *   [[ContextEffect]] For declaring a value bound around a computation
-  * @see
   *   [[Effect.defer]] For moving a block into the computation the evaluator runs
   */
 abstract class Effect private[kernel] ()

@@ -349,7 +349,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
                     }
                 }((_, _) => log = log.append("release"))
             assert(v.eval == Chunk(1, 2, 3))
-            // The release belongs to an extent outside the region, so every branch runs against the same live resource.
             assert(log == Chunk("branch1", "branch2", "branch3", "release"))
         }
 
@@ -361,8 +360,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
                         Choice.eval(1, 2, 3).map(n => (n, released))
                     }
                 }((_, _) => released = true)
-            // a branch seeing the release already run would mean the extent ended on the first branch and
-            // the later ones ran against a spent resource
             assert(v.eval == Chunk((1, false), (2, false), (3, false)))
             assert(released)
         }
@@ -377,7 +374,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 yield r
             }
             assert(v.eval == Chunk(10, 20, 30))
-            // each branch acquires its own: replaying the continuation mints a fresh resource rather than re-entering a released one
             assert(opens == 3)
             assert(closes == 3)
         }
@@ -412,8 +408,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket around the streamed choice releases once after every branch" in {
-            // the bracket sits below the region that replays, so it is not part of any branch's remainder:
-            // every branch runs against the live resource and the release runs once when the stream body ends
             var log = Chunk.empty[String]
             val v   =
                 Stream {

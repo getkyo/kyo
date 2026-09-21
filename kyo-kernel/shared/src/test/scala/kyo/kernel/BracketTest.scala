@@ -91,10 +91,7 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq Boom)))
         }
 
-        // A bracket owes a release only once its acquire has finished, so that the release is owed the value the
-        // acquire returned. An interrupt inside the acquire, before that value reaches the bracket, parks with the
-        // acquire's own inner region still owing its release but the outer bracket having acquired nothing: the outer
-        // release does not run. Here a polling `map` under the acquire's `ensuring` holds the interrupt in that gap.
+        // A polling `map` under the acquire's `ensuring` holds the interrupt in that gap.
         "a bracket whose acquire is interrupted before it finishes owns nothing" in {
             var released = 0
             var ended    = 0
@@ -154,8 +151,7 @@ class BracketTest extends AnyFreeSpec:
         // shape of every bracket that is not the last thing a computation does. A composition applied to a settled
         // value has to reach its first link as the value arrives: reified as a deferral instead, the loop polls before
         // dispatching it, and a stop pending there parks with the value settled and the region never installed, so the
-        // abandonment walk has nothing to release. Here the value arrives through a handler's answer, the delivery a
-        // spawn's capture and every context read share.
+        // abandonment walk has nothing to release.
         "a stop landing as a handler answers the acquire still installs the region behind a composed continuation" in {
             var count              = 0
             val acquire: Int < Ask = ArrowEffect.suspendWith[Any](Tag[Ask], ()) { _ =>
@@ -172,8 +168,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // The same pairing at a region exit: a peel settles the acquire as its region ends, and the region's
-        // continuation, the bracket's install, is owed that value with nothing schedulable in between.
         "a stop landing as a peel settles the acquire still installs the region" in {
             var count         = 0
             def settle(): Int =
@@ -187,9 +181,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // The same pairing across a foreign crossing: the acquire is answered below a region dumped over its handler,
-        // and the answer crosses back into that region as a deferral the reinstalled region then unfolds. The bracket's
-        // install is the first link of that deferral, and a stop landing as the answer crosses is owed to it first.
         "a stop landing as an answer crosses back into a dumped region still installs the region" in {
             var count                   = 0
             val body: Int < (Ask & Str) =
@@ -208,9 +199,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // The value the answer delivers ends the extent of a region of the acquire's own, and the bracket's install is
-        // that region's continuation: the region exits under the stop, its release told a clean end, and the value reaches
-        // the install before any park.
         "a stop landing as an answer ends the acquire's own region still installs the region behind it" in {
             var ended              = Maybe.empty[Maybe[Throwable]]
             var count              = 0
@@ -229,10 +217,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // A loop clause can answer the acquire with a pending computation, not just a settled one. That answer is
-        // delivered to the continuation that installs the bracket, and the delivery must reach the install directly: a
-        // stop landing as the pending answer settles is owed to the install, not parked in front of the step carrying
-        // it. The clause here requests the stop as its answer settles.
         "a stop landing as a loop clause answers the acquire with a pending value still installs the region" in {
             var count        = 0
             val v: Int < Ask =
@@ -248,7 +232,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // The same pending answer resumed rather than abandoned: the bracket completes and releases cleanly.
         "a loop clause answering the acquire with a pending value completes and releases on resume" in {
             var seen         = Maybe.empty[Maybe[Throwable]]
             val v: Int < Ask =
@@ -263,7 +246,6 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists(_.isEmpty))
         }
 
-        // The stateful loop clause takes the same delivery path, carrying its state alongside the pending answer.
         "a stop landing as a stateful loop clause answers the acquire with a pending value still installs the region" in {
             var count        = 0
             val v: Int < Ask =
@@ -279,9 +261,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // The same pairing across a mask boundary: the acquire is a masked operation, and `Mask.run` resumes the
-        // tunneled operation and hands its answer to the continuation that installs the bracket. A stop landing as that
-        // answer settles is owed to the install first, with nothing schedulable in between.
         "a stop landing as a masked acquire is answered still installs the region" in {
             var count                             = 0
             val body: Int < ArrowEffect.Mask[Ask] =
@@ -344,7 +323,7 @@ class BracketTest extends AnyFreeSpec:
 
         // A fiber's regions stand above its boundary, so an operation the boundary answers dumps them into
         // the continuation it parks with, and the park itself holds only what stood at or below the
-        // answering region. Abandoning that park must still release what the continuation carries.
+        // answering region.
         "releases a region dumped into the continuation of a park at a region below it" in {
             var seen               = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask    = Bracket(Effect.defer(7))(a => ask.map(_ + a))((_, outcome) => seen = Maybe(outcome))
@@ -420,7 +399,6 @@ class BracketTest extends AnyFreeSpec:
                 b => b
             )
             assert(r.eval == -1)
-            // the clause answers done without resuming, so the bracket's use never ran to an end: discard signal
             assert(seen.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
@@ -454,9 +432,7 @@ class BracketTest extends AnyFreeSpec:
             )
             assert(r.eval == -1)
             assert(outcomes.size == 1)
-            // the leaked continuation is dropped, so the bracket's use never ran to an end: discard signal
             assert(outcomes.head.exists(_.isInstanceOf[kyo.KyoException]))
-            // the leaked continuation re-enters a region already released, which is refused
             discard(intercept[kyo.Closed](answerAsk(0)(leaked.get(1)).eval))
             assert(outcomes.size == 1)
         }
@@ -754,8 +730,6 @@ class BracketTest extends AnyFreeSpec:
             assert(log.toList == List("inner", "outer"))
         }
 
-        // The bracket's release belongs to the handler that took the continuation: every shot runs against the live
-        // resource, and the release runs once, where the handler ends, told a clean end since the extent ran to one.
         "a multi-shot capture over a bracket runs every shot against the live resource and releases once at the handler's end" in {
             val outcomes        = ListBuffer[Maybe[Throwable]]()
             var uses            = 0
@@ -808,13 +782,10 @@ class BracketTest extends AnyFreeSpec:
                     a => a,
                     ex => Maybe(if ex.isInstanceOf[Closed] then -2 else -3)
                 )
-            // leaked.get(1) re-enters a released region, refused with Closed, which the recover arm turns into -2
             assert(again.eval == -2)
         }
 
         "a bracket does not cross into an isolated child: a capture inside the child, resumed after the bracket ended, runs" in {
-            // The child copy a bracket forks is inert, so a continuation escaping the child carries no obligation
-            // and no refusal.
             var leaked          = Maybe.empty[Arrow[Int, Int, Ask]]
             var released        = false
             var usedAfter       = false
@@ -1141,7 +1112,6 @@ class BracketTest extends AnyFreeSpec:
             val p = Eval.partial(v)
             assert(p.evalNow.isEmpty)
             assert(p.eval == 42)
-            // the first evaluation completes and releases; the second re-enters a released region and is refused
             discard(intercept[kyo.Closed](p.eval))
             assert(released == 1)
         }
@@ -1400,8 +1370,6 @@ class BracketTest extends AnyFreeSpec:
 
     "multi-shot clauses" - {
 
-        // A held region records that its extent ended instead of releasing, and an unwind overrides that record:
-        // the extent is being abandoned, so the release is owed the failure.
         "an unwind after a branch ended tells the release it failed" in {
             var outcome: Maybe[Maybe[Throwable]] = Absent
             val v                                =
@@ -1507,7 +1475,6 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
-            // uniform: no refusal; cont(10) runs, cont(-1) throws, unwinding the held bracket with the failure
             assert(intercept[RuntimeException](twice.eval) eq boom)
             assert(events == List("acquire", "release 1"))
         }
@@ -1528,7 +1495,6 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            // uniform: the resource stays live across shots and is released once, after both branches
             assert(twice.eval == 32)
             assert(seen == List("branch 10", "branch 20"))
             assert(closed)
@@ -1550,7 +1516,6 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
-            // uniform: the resource stays live across all three shots, released once at the end
             assert(branches.eval == 306)
             assert(seen == List("branch 1", "branch 2", "branch 3"))
             assert(closed)
@@ -1573,7 +1538,6 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            // uniform: both branches run against the live nested resources, released once each at the holder
             assert(twice.eval == 36)
             assert(events == List("branch 10", "branch 20", "release inner", "release outer"))
         }
@@ -1593,15 +1557,12 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(dropped.eval == -1)
             assert(count == 1)
-            // the region was released when the eval ended; the held continuation re-enters it, which is refused
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get(2)).eval))
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get(5)).eval))
             assert(count == 1)
         }
 
         "a handleFirst remainder that is never resumed releases at the enclosing region's exit, as discarded" in {
-            // The clause drops the continuation: the bracket it carries is owed to the region below the
-            // handleFirst and drained when that region exits.
             var outcome            = Maybe.empty[Maybe[Throwable]]
             var closedAtClause     = false
             var closedAfter        = false
@@ -1622,13 +1583,9 @@ class BracketTest extends AnyFreeSpec:
             assert(r.eval == 0)
             assert(!closedAtClause)
             assert(!closedAfter)
-            // the remainder is never resumed, so the bracket's use never ran to an end: discard signal
             assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
-        // The peel's remainder is owed to the region below it. Handed to a nested eval on the same thread and parked
-        // there inside the bracket's use, it must not be released under that use when the region ends: the resume is
-        // either refused with Closed or completes on a resource still held.
         "a peeled remainder parked in a nested eval is not released under it when the peeling region ends" in {
             sealed trait Rel extends ContextEffect[Int]
             def outer[A, S](v: A < (Rel & S)): A < S =
@@ -1658,7 +1615,7 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(answerAsk(0)(outer(peeled)).eval == -1)
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
-            // Either fix shape passes: the resume is refused with Closed, or the use completes on a resource the
+            // the resume is refused with Closed, or the use completes on a resource the
             // region's exit did not release under it.
             val resumed = scala.util.Try(parked.eval)
             val refused = resumed.failed.toOption.exists(_.isInstanceOf[Closed])
@@ -1710,8 +1667,6 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "nested hand-outs descend the debt through each region, and the remainder resumed through both completes the bracket" in {
-            // Each region hands its remainder out as a value with the bracket-carrying one inside, so the debt
-            // descends region by region to where the resume finds it.
             var outcome                                  = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask                          = Bracket(Effect.defer(1))(r => ask.map(_ + r))((_, o) => outcome = Maybe(o))
             val inner: Maybe[Arrow[Int, Int, Ask]] < Any =
@@ -1766,7 +1721,6 @@ class BracketTest extends AnyFreeSpec:
                 }
             assert(r.eval == -1)
             assert(openAfterDrop)
-            // the nested remainder is dropped without being resumed, so its bracket's use never ran: discard signal
             assert(outcome.exists(_.exists(_.isInstanceOf[kyo.KyoException])))
         }
 
@@ -1789,7 +1743,6 @@ class BracketTest extends AnyFreeSpec:
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
-            // uniform: both shots run against the one live resource
             assert(twice.eval == 32)
             assert(acquired == 1)
             assert(seen == List(1, 1))
@@ -1817,7 +1770,6 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(built.eval == -1)
             assert(closed)
-            // the branch was built after the region released; evaluating it re-enters the released region, refused
             discard(intercept[kyo.Closed](answerAsk(0)(stash.get).eval))
             assert(seen == Nil)
         }
@@ -1932,9 +1884,6 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "a handleFirst remainder carries the bracket it was handed: the first shot completes it, the second is refused" in {
-            // The clause hands the continuation out as the region's value, so the remainder carries the bracket
-            // dumped into it and releases it when it completes. One-shot: the second application finds the cell
-            // released and is refused.
             var closed             = false
             var closedAtClause     = false
             var seen               = List.empty[String]
@@ -2109,8 +2058,6 @@ class BracketTest extends AnyFreeSpec:
             assert(seen.exists((s, outcome) => s == 7 && outcome.exists(_ eq Boom)))
         }
 
-        // The region is a node from the start, so a computation abandoned before it ran a single step still
-        // owes the release, told a state made for that run which nothing ever wrote.
         "releases with a fresh state when abandoned before a step" in {
             var made = 0
             var seen = Maybe.empty[(Int, Maybe[Throwable])]

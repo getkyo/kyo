@@ -118,8 +118,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
         "async" - {
             // `Kyo.async` spawns the effect handed to its continuation and the caller parks on a promise that fiber
-            // completes. An interrupt of the caller reaches the promise through that join and has to stop the spawned
-            // fiber, or it runs on, holding whatever it acquired, until it ends by itself.
+            // completes.
             "interrupting the caller of async interrupts the effect it registered" in {
                 for
                     gate     <- Latch.init(1)

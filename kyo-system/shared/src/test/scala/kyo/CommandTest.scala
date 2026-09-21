@@ -311,8 +311,7 @@ class CommandTest extends kyo.test.Test[Any]:
             }
             r    <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(alive.map(_.isEmpty))))
             left <- alive
-            // whatever was orphaned is killed here so it does not outlive the suite
-            _ <- Kyo.foreachDiscard(left)(pid => Abort.run[CommandException](Command("kill", "-9", pid).waitFor).unit)
+            _    <- Kyo.foreachDiscard(left)(pid => Abort.run[CommandException](Command("kill", "-9", pid).waitFor).unit)
         yield assert(r.isSuccess, s"${left.size} process(es) outlived the scope that spawned them: ${left.mkString(", ")}")
         end for
     }

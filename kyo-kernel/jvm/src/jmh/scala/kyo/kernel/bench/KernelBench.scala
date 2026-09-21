@@ -46,7 +46,6 @@ class KernelBench:
         acc
     end evalFixedOverheadBatch
 
-    /** The floor the row above is measured against: the same batch with nothing composed onto the value. */
     @Benchmark
     @OperationsPerInvocation(1000)
     def entryFloorBatch: Int =
@@ -131,9 +130,6 @@ class KernelBench:
         loop(seed - 1).eval
     end deepRecursionPaysRescuesOnly
 
-    /** Recursion that stays within one safepoint period (256 nested strict applications), so the chain is never
-      * reified: no rescue.
-      */
     @Benchmark
     def deepRecursionNoRescue: Int =
         def loop(i: Int): Int < Any =
@@ -143,7 +139,6 @@ class KernelBench:
         loop(seed - 1).eval
     end deepRecursionNoRescue
 
-    /** Recursion crossing the period exactly once, so one rescue reifies the chain and the rest runs strictly. */
     @Benchmark
     def deepRecursionOneRescue: Int =
         def loop(i: Int): Int < Any =
@@ -188,9 +183,6 @@ class KernelBench:
         )(b => b + 1).eval
     end handleLoopFusesContinuation
 
-    /** The continuation in hand, applied exactly once per occurrence: suspensionBaseline's loop answered by handleCont
-      * rather than in place.
-      */
     @Benchmark
     def handleContResumesOnce: Int =
         def loop(i: Int): Int < Ask =
@@ -199,8 +191,8 @@ class KernelBench:
         ArrowEffect.handleCont(Tag[Ask], loop(seed - 1))([C] => (_, cont) => cont(1), a => a).eval
     end handleContResumesOnce
 
-    /** The continuation applied twice per occurrence, the second shot's result kept, under a region installed per
-      * round so the replayed remainder is one map.
+    /** The continuation applied twice per occurrence, under a region installed per round so the replayed remainder is
+      * one map.
       */
     @Benchmark
     def handleContResumesTwice: Int =
@@ -247,9 +239,6 @@ class KernelBench:
         loop(0, seed).eval
     end recoverAnswersThrow
 
-    /** The first occurrence peeled: the region ends at it and hands the remainder out as a value, resumed once below
-      * the region under the outer handler.
-      */
     @Benchmark
     def handleFirstPeelsRemainder: Int =
         def loop(i: Int, acc: Int): Int < Ask =
@@ -279,7 +268,6 @@ class KernelBench:
         ArrowEffect.handleLoop(Tag[Ask], loop(0, seed))([C] => _ => Loop.continue(1), a => a).eval
     end maskTunnelsPastInnerHandler
 
-    /** Two handlers of one tag nested, the inner answering every occurrence and the outer shadowed. */
     @Benchmark
     def sameTagInnerHandlerAnswers: Int =
         def loop(i: Int): Int < Ask =
@@ -612,7 +600,6 @@ class KernelBench:
         ContextEffect.handleInheritable(Tag[Cfg], 1)(loop(seed - 1)).eval
     end isolateCrossingPerRound
 
-    /** The same loop with the answer installed as a bound value rather than by a handler. */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): Int < Cfg =
@@ -621,7 +608,6 @@ class KernelBench:
         ContextEffect.handleInheritable(Tag[Cfg], 1)(loop(seed - 1)).eval
     end suspensionBaselineAltInstall
 
-    /** The same loop reading a value bound for the whole extent rather than answered per occurrence. */
     @Benchmark
     def suspensionBaselineAltEnv: Int =
         def loop(i: Int): Int < Cfg2 =
@@ -630,9 +616,6 @@ class KernelBench:
         ContextEffect.handleInheritable(Tag[Cfg2], 1)(loop(seed - 1)).eval
     end suspensionBaselineAltEnv
 
-    /** The stateful loop with the successor kept in a shared atomic cell rather than in the handler's state: the
-      * clause answers 1 and advances the cell.
-      */
     @Benchmark
     def statefulAnswersPaySuccessorAltRef: Int =
         def loop(i: Int): Int < Ask =
@@ -644,7 +627,6 @@ class KernelBench:
         ).eval
     end statefulAnswersPaySuccessorAltRef
 
-    /** A resource bound and released once per round, so the round pays a region install and discharge. */
     @Benchmark
     def bracketPerRound: Int =
         def loop(i: Int, acc: Int): Int < Any =
@@ -671,19 +653,16 @@ class KernelBench:
         Bracket.ensuring(_ => ())(loop(seed - 1)).eval
     end bracketEnsuringOnly
 
-    /** A transformation applied to every element of a collection. */
     @Benchmark
     def foreachOverCollection: Int =
         Kyo.foreach(elements)(a => (a + seed): Int < Any).map(_.sum).eval
     end foreachOverCollection
 
-    /** A fold threading an accumulator through a collection. */
     @Benchmark
     def foldOverCollection: Int =
         Kyo.foldLeft(elements)(seed)((acc, a) => (acc + a): Int < Any).eval
     end foldOverCollection
 
-    /** A fold that keeps only part of the collection, so each element decides whether it contributes. */
     @Benchmark
     def collectOverCollection: Int =
         Kyo.collect(elements)(a => (if (a & 1) == 0 then Maybe(a) else Maybe.empty): Maybe[Int] < Any).map(_.sum + seed).eval
@@ -698,10 +677,10 @@ object KernelBench:
     inline def FusedDepth     = 32
     inline def FusedWideDepth = 8
 
-    /** Below the safepoint period of 256 nested strict applications, so deepRecursionNoRescue never reifies. */
+    /** Below the safepoint period of 256 nested strict applications. */
     inline def ShallowDepth = 200
 
-    /** Between one and two periods, so deepRecursionOneRescue reifies exactly once. */
+    /** Between one and two periods. */
     inline def OneRescueDepth = 400
 
     val elements: Chunk[Int] = Chunk.from(0 until NarrowDepth)

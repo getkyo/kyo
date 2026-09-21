@@ -1494,7 +1494,6 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // The same window on Topic.stream's subscription add, closed the same way by `ensureMap`.
     "an interrupt on a completed add closes the subscription the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
@@ -1508,7 +1507,7 @@ class AeronTransportTest extends Test:
                 )
             ).flatMap { fiber =>
                 Sync.Unsafe.defer {
-                    // Unsafe: as above, the interrupt has to come from inside the transport call.
+                    // Unsafe: the interrupt has to come from inside the transport call.
                     transport.interrupter = () => fiber.unsafe.interrupt()
                 }
                     .andThen(gate.release)

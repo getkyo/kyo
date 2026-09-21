@@ -22,15 +22,13 @@ import scala.annotation.nowarn
   *
   * @tparam A
   *   The type of value that will be provided by a handler
-  * @see
-  *   [[ContextEffect.suspend]], [[ContextEffect.handleInheritable]], [[ArrowEffect]]
   */
 abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
     /** Reads the value bound for this context effect. The effect joins the row (evaluating only once the row is empty), so this read cannot be
-      * reached until a handler has bound a value; the overload taking a default reads without requiring one.
+      * reached until a handler has bound a value.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
@@ -40,8 +38,7 @@ object ContextEffect:
             def default        = Maybe.empty
             def cont           = Arrow.id
 
-    /** Reads the bound value and transforms it in the same node, fusing `f` into the read rather than reading and mapping afterwards, so the
-      * value is transformed where it arrives instead of through a separate node.
+    /** Reads the bound value and transforms it in the same node, fusing `f` into the read rather than reading and mapping afterwards.
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -76,7 +73,7 @@ object ContextEffect:
     end suspend
 
     /** Reads the bound value with a fallback and transforms it in the same node: `f` receives whichever value the read produced, bound or
-      * default, and the effect stays out of the row as in the plain defaulted read.
+      * default.
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A, E <: ContextEffect[A], B, S](
@@ -204,8 +201,7 @@ object ContextEffect:
       * `derive` produces the region's value from whatever an outer handler bound (absent when none), `fork` computes what a forked
       * computation starts with from the parent's value, `join` computes what the parent holds once the fork rejoins from the parent's,
       * forked-start and forked-end values, and `release` runs once when the region ends, told `Absent` for a clean end or the failure on an
-      * unwind. The narrower entry points are this one with arms filled in: [[handleInheritable]] forks the parent's value as it stands and
-      * keeps the parent's on join, [[handleNonInheritable]] derives a fresh value for the fork instead, as though no outer binding existed.
+      * unwind.
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](

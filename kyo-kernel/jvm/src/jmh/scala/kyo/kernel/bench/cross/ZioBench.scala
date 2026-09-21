@@ -11,9 +11,8 @@ import zio.{Scope as _, *}
   * Run entry: `runtime.unsafe.run` on a shared runtime allocates a FiberRuntime and its FiberRefs and
   * runs the computation on the calling thread. The runtime has cooperative yielding disabled: with it
   * on, a run longer than 10240 operations is preempted, resumed on the ZIO executor and joined by the
-  * parked caller, a thread handoff kyo's `eval` never pays. The one row that measures the preemptible
-  * run, partialSuspensionBaseline, uses `Runtime.default` with the flag on. The entry cost is
-  * measured, not factored out; entryFloorBatch isolates it.
+  * parked caller, a thread handoff kyo's `eval` never pays. The entry cost is measured, not factored
+  * out.
   *
   * Tier B substitution: kyo's Ask suspension becomes a `FiberRef.get`, ZIO's ambient-value
   * substrate, with the answer as the FiberRef's initial value so no per-run install is paid; the
@@ -268,9 +267,8 @@ class ZioBench:
         runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
-    /** NarrowDepth map links attached in a runtime loop, then one run. ZIO reifies a Mapped node
-      * per link, so the row measures node build plus the interpreter over those nodes. Shape from
-      * zio-blocks' AsyncChainBench.
+    /** ZIO reifies a Mapped node per link, so the row measures node build plus the interpreter over
+      * those nodes. Shape from zio-blocks' AsyncChainBench.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -282,7 +280,6 @@ class ZioBench:
         runSync(fa)
     end dynamicChainOfMapsStaysLinear
 
-    /** The bind spelling of dynamicChainOfMapsStaysLinear: a FlatMap node per link. */
     @Benchmark
     def dynamicChainOfBindsStaysLinear: Int =
         var fa: UIO[Int] = ZIO.succeed(seed)
@@ -309,7 +306,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end deepRecursionOneRescue
 
-    /** Iteration driven by open recursion through a method. */
     @Benchmark
     def pureIterationViaMethod: Int =
         def loop(i: Int): UIO[Int] =
@@ -317,7 +313,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end pureIterationViaMethod
 
-    /** A deferral reified per step, so each round costs one suspension node. */
     @Benchmark
     def deferBindPerStep: Int =
         def loop(i: Int): UIO[Int] =
@@ -325,7 +320,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end deferBindPerStep
 
-    /** The deferral loop with one transformation composed after it, so the tail is rebuilt. */
     @Benchmark
     def deferBindUnderTrailingMap: Int =
         def loop(i: Int): UIO[Int] =
@@ -333,7 +327,6 @@ class ZioBench:
         runSync(loop(seed - 1).map(x => x))
     end deferBindUnderTrailingMap
 
-    /** The deferral loop under a binding nothing reads, isolating the cost of the region itself. */
     @Benchmark
     def deferBindUnderIdleHandler: Int =
         def loop(i: Int): UIO[Int] =
@@ -341,13 +334,11 @@ class ZioBench:
         runSync(ask.locally(1)(loop(seed - 1)))
     end deferBindUnderIdleHandler
 
-    /** Iteration expressed through the library's loop combinator rather than open recursion. */
     @Benchmark
     def pureIterationViaLoop: Int =
         runSync(ZIO.iterate(seed - 1)(_ <= Depth)(i => ZIO.succeed(i + 1)))
     end pureIterationViaLoop
 
-    /** Iteration through a step held as a value, so the loop body outlives the expression that built it. */
     @Benchmark
     def pureIterationViaArrow: Int =
         lazy val step: Int => UIO[Int] = i =>
@@ -355,13 +346,11 @@ class ZioBench:
         runSync(step(seed - 1))
     end pureIterationViaArrow
 
-    /** Iteration whose every round performs an operation, through the library's loop combinator. */
     @Benchmark
     def effectfulIterationViaLoop: Int =
         runSync(ZIO.iterate(seed - 1)(_ <= Depth)(i => ask.get.map(a => i + a)))
     end effectfulIterationViaLoop
 
-    /** Iteration whose every round performs an operation, driven by a step held as a value. */
     @Benchmark
     def effectfulIterationViaArrow: Int =
         lazy val step: Int => UIO[Int] = i =>
@@ -390,7 +379,6 @@ class ZioBench:
         runSync(loop(0, seed))
     end inlineLimitKeepsZeroAllocation
 
-    /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
         def loop(i: Int): UIO[Int] =
@@ -428,8 +416,8 @@ class ZioBench:
         runSync(ZIO.succeed(seed).map(_ + 1))
     end evalFixedOverhead
 
-    /** A read of the outermost of three nested bindings, under an idle binding innermost, as in the
-      * kyo row; a FiberRef read is a map lookup, so the nesting is carried for shape, not cost.
+    /** A read of the outermost of three nested bindings, under an idle binding innermost; a FiberRef
+      * read is a map lookup, so the nesting is carried for shape, not cost.
       */
     @Benchmark
     def contextReadsUnderBindings: Int =
@@ -438,7 +426,6 @@ class ZioBench:
         runSync(cfg3.locally(1)(cfg2.locally(2)(cfg.locally(3)(ask.locally(1)(loop(seed - 1))))))
     end contextReadsUnderBindings
 
-    /** A binding installed and torn down once per round, so the round pays entry and exit. */
     @Benchmark
     def contextRegionsPayEntryExit: Int =
         def loop(i: Int): UIO[Int] =
@@ -447,7 +434,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end contextRegionsPayEntryExit
 
-    /** A binding installed per round that derives its value from the enclosing one. */
     @Benchmark
     def contextRegionsDeriveFromOuter: Int =
         def loop(i: Int): UIO[Int] =
@@ -456,7 +442,6 @@ class ZioBench:
         runSync(cfg.locally(0)(loop(seed - 1)))
     end contextRegionsDeriveFromOuter
 
-    /** Every occurrence answered where it stands, without the remainder being handed over. */
     @Benchmark
     def handleLoopAnswersInPlace: Int =
         def loop(i: Int): UIO[Int] =
@@ -464,7 +449,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end handleLoopAnswersInPlace
 
-    /** Two bindings of one ref nested, the inner shadowing the outer for every read. */
     @Benchmark
     def sameTagInnerHandlerAnswers: Int =
         def loop(i: Int): UIO[Int] =
@@ -472,7 +456,6 @@ class ZioBench:
         runSync(ask.locally(0)(ask.locally(1)(loop(seed - 1))))
     end sameTagInnerHandlerAnswers
 
-    /** Two operations interleaved, the inner one answered without displacing the outer. */
     @Benchmark
     def foreignCrossingsAnsweredInPlace: Int =
         def loop(i: Int): UIO[Int] =
@@ -493,7 +476,6 @@ class ZioBench:
         runYielding(loop(seed - 1))
     end partialSuspensionBaseline
 
-    /** A typed failure raised under a bracket and a binding, unwinding both to the catch outside. */
     @Benchmark
     def abortUnwindsThroughRegions: Int =
         def loop(i: Int, acc: Int): UIO[Int] =
@@ -505,7 +487,6 @@ class ZioBench:
         runSync(loop(0, seed))
     end abortUnwindsThroughRegions
 
-    /** A throw raised after a read and recovered by the catch around it. */
     @Benchmark
     def recoverAnswersThrow: Int =
         def loop(i: Int, acc: Int): UIO[Int] =
@@ -517,7 +498,6 @@ class ZioBench:
         runSync(loop(0, seed))
     end recoverAnswersThrow
 
-    /** Recorded alternative: the successor kept in a shared `Ref`, an atomic CAS per answer. */
     @Benchmark
     def statefulAnswersPaySuccessorAltRef: Int =
         def loop(i: Int): UIO[Int] =
@@ -525,7 +505,6 @@ class ZioBench:
         runSync(loop(seed - 1))
     end statefulAnswersPaySuccessorAltRef
 
-    /** A resource bound and released once per round, so the round pays a region install and discharge. */
     @Benchmark
     def bracketPerRound: Int =
         def loop(i: Int, acc: Int): UIO[Int] =
@@ -536,7 +515,6 @@ class ZioBench:
         runSync(loop(0, seed))
     end bracketPerRound
 
-    /** One resource held across the whole loop, so every step carries an outstanding region. */
     @Benchmark
     def bracketAroundLoop: Int =
         def loop(i: Int): UIO[Int] =
@@ -544,7 +522,6 @@ class ZioBench:
         runSync(ZIO.acquireReleaseWith(ZIO.succeed(seed))(_ => ZIO.unit)(a => loop(a - 1)))
     end bracketAroundLoop
 
-    /** The release-only form, which installs its region before the body is built. */
     @Benchmark
     def bracketEnsuringOnly: Int =
         def loop(i: Int): UIO[Int] =
@@ -552,20 +529,17 @@ class ZioBench:
         runSync(loop(seed - 1).ensuring(ZIO.unit))
     end bracketEnsuringOnly
 
-    /** A transformation applied to every element of a collection. */
     @Benchmark
     def foreachOverCollection: Int =
         runSync(ZIO.foreach(elements)(a => ZIO.succeed(a + seed)).map(_.sum))
     end foreachOverCollection
 
-    /** A fold threading an accumulator through a collection. */
     @Benchmark
     def foldOverCollection: Int =
         runSync(ZIO.foldLeft(elements)(seed)((acc, a) => ZIO.succeed(acc + a)))
     end foldOverCollection
 
-    /** A fold that keeps only part of the collection, so each element decides whether it contributes.
-      * ZIO's own `collect` routes the dropped case through the failure channel, so the option-valued
+    /** ZIO's own `collect` routes the dropped case through the failure channel, so the option-valued
       * traversal plus a flatten is the spelling that keeps the per-element decision a value; the
       * flatten is a second pure pass kyo's single-pass collect does not make.
       */
@@ -589,19 +563,12 @@ object ZioBench:
 
     final case class Box(value: Int)
 
-    /** One runtime for the whole class, cooperative yielding off: `unsafe.run` then runs the whole
-      * computation on the calling thread, as kyo's `eval` does. Building one per operation would
-      * measure runtime construction, not evaluation.
-      */
+    /** Building one per operation would measure runtime construction, not evaluation. */
     val runtime: Runtime[Any] =
         Runtime(ZEnvironment.empty, FiberRefs.empty, RuntimeFlags.disable(RuntimeFlags.default)(RuntimeFlag.CooperativeYielding))
 
-    /** The default runtime, cooperative yielding on, for the one row that measures the preemptible run. */
     val yieldingRuntime: Runtime[Any] = Runtime.default
 
-    /** The ambient answer: a fresh fiber reads a FiberRef's initial value, so constructing it with
-      * the answer is the install.
-      */
     val ask: FiberRef[Int]  = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(1))
     val ask2: FiberRef[Int] = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(0))
     val st: FiberRef[Int]   = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(0))
@@ -609,12 +576,10 @@ object ZioBench:
     val cfg2: FiberRef[Int] = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(0))
     val cfg3: FiberRef[Int] = Unsafe.unsafe(implicit u => FiberRef.unsafe.make(0))
 
-    /** The shared cell of statefulAnswersPaySuccessorAltRef; it accumulates across runs. */
     val stRef: Ref[Int] = Unsafe.unsafe(implicit u => Ref.unsafe.make(0))
 
     val env: ZEnvironment[Int] = ZEnvironment(1)
 
-    /** The failure recoverAnswersThrow raises: allocated once and without a stack trace. */
     object Boom extends Exception with NoStackTrace
 
     def runSync[A](z: ZIO[Any, Nothing, A]): A =

@@ -145,7 +145,7 @@ class IsolateTest extends Test:
         }
 
         // The two differ only where the bound value is derived from what the fork would have carried, so the
-        // derive is what tells them apart: inheriting applies it to the scope's value, not inheriting starts over.
+        // derive is what tells them apart.
         "a non-inheritable region starts its derive over in a crossing, where an inheritable one carries the scope's value" in {
             val isolate         = summon[Isolate[Any, Any, Any]].crossing
             val read: Int < Any = ContextEffect.suspend(Tag[Forking], -1)

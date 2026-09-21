@@ -1151,10 +1151,7 @@ class ActorTest extends kyo.test.Test[Any]:
     }
 
     "resource safety under interruption" - {
-        // A subscriber adds itself through the actor's reply (the ask) and registers its removal with `Scope.ensure`
-        // only after the ask resumes. An interrupt landing at the reply's resume abandons that continuation, so the
-        // subscriber stays in the set and every later publish would block on a mailbox nobody drains. This is the
-        // `PubSub.subscribe` window, pinned through a raw actor. The reply-promise probe lands the stop
+        // This is the `PubSub.subscribe` window, pinned through a raw actor. The reply-promise probe lands the stop
         // deterministically: an `onComplete` registered after the caller parked fires LIFO before the caller's resume.
         "a subscriber interrupted at the ask reply is left in the actor's set".pendingUntilFixed(
             "a subscriber adds via actor.ask and registers its removal with Scope.ensure only after the reply resumes; an interrupt in that window leaves it in the set"

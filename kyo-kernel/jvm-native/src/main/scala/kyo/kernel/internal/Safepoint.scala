@@ -236,8 +236,6 @@ object Safepoint:
         thread.isAlive() && loop(home(thread), 0)
     end stop
 
-    // A stop naming a slice counts only while that slice is still running, so one aimed at work that has already
-    // finished does not land on whatever the slot picked up next.
     @static private def honored(slot: Slot, s: Stop): Boolean = (s.slice eq null) || (s.slice eq slices(slot))
 
     @static private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef =

@@ -243,9 +243,8 @@ object Meter:
             Sync.Unsafe.defer {
                 new Base(rate, reentrant):
                     val timerTask =
-                        // Schedule periodic task to replenish permits. Under the caller's clock: the nested evaluation starts from
-                        // an empty context and would read the default one, so a meter initialized under a controlled or shifted
-                        // clock would replenish on the live one.
+                        // Under the caller's clock: the nested evaluation starts from an empty context and would read the default
+                        // one, so a meter initialized under a controlled or shifted clock would replenish on the live one.
                         Sync.Unsafe.evalOrThrow(Clock.let(clock)(Clock.repeatAtInterval(period, period)(replenish())))
 
                     // A consumed permit is not returned on completion; the timer task replenishes it.

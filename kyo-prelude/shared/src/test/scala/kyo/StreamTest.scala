@@ -1203,7 +1203,7 @@ class StreamTest extends kyo.test.Test[Any]:
         assert(result == Chunk(1, 2, 3))
     }
 
-    // the internal peel, used by the readers in kyo-http and by splitAtWith below: it hands the rest back
+    // the internal peel: it hands the rest back
     // as a value, so nothing bounds it but the region enclosing the call
     "splitAt" - {
         "split under length" in {

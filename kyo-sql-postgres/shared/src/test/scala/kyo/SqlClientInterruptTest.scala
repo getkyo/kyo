@@ -209,8 +209,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** The prior leaf locks a free key, so the grant is instant and never lands in the one-park window between the grant
-      * and `Scope.ensure(release)`. Here a second client holds the lock so `pg_advisory_lock` blocks; the interrupt is
+    /** Here a second client holds the lock so `pg_advisory_lock` blocks; the interrupt is
       * requested while it waits, then the holder releases so the grant lands into the abandoned fiber before its release
       * registers. Deterministic: the window is the holder's real lock duration, not a timer race.
       */

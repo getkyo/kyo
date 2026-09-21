@@ -30,9 +30,8 @@ class StatsRegistryWeakReferenceTest extends AnyFreeSpec {
         assert(store.map.size() == 1)
     }
 
-    // The symptom a stand-in shadowing the platform class produced on Native: the javalib's ThreadLocal keys its entries
-    // with WeakReference and migrates them through a `Reference` type test when the table grows (at ten entries), so
-    // every ThreadLocal on the thread lost its entry at that point.
+    // The javalib's ThreadLocal keys its entries
+    // with WeakReference and migrates them through a `Reference` type test when the table grows (at ten entries).
     "every ThreadLocal keeps its entry while the thread's table grows" in {
         val n      = 24
         val locals = Array.tabulate(n)(_ => new ThreadLocal[AnyRef] { override def initialValue(): AnyRef = new Object })

@@ -482,8 +482,7 @@ class AsyncTest extends kyo.test.Test[Any]:
 
     // The caller of `uninterruptible` parks on a masked promise that refuses the interrupt link, so an interrupt
     // abandons the caller and leaves the shielded body to run to its end: the caller's own finalizers run at once,
-    // and what the body produces reaches only what the body itself completes. A value the body produces is therefore
-    // owned by a registration inside the shielded computation, never by the caller's continuation.
+    // and what the body produces reaches only what the body itself completes.
     "interrupting the caller of uninterruptible runs the caller's finalizer while the shielded body completes" in {
         for
             start          <- Latch.init(1)
@@ -507,9 +506,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // The shielded body's value is delivered to a promise the caller joins, and the caller's next step is the first
-    // that can own it. An interrupt of the caller landing at that join abandons the value: the release the caller
-    // meant to register for it never runs, and the shield that let the body finish is what produced the orphan.
     "a value the shielded body produces is not stranded when the caller is interrupted at the join".pendingUntilFixed(
         "Async.uninterruptible joins the shielded fiber's promise and hands its value to the caller's next step, so a stop landing at that join abandons the value with no owner"
     ) in {
@@ -1811,7 +1807,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 }
             }
             // Nothing completes `never`, so a fiber waiting on it cannot finish and a poll taken once it is
-            // parked needs no grace period. A fixed wait would only ask whether it finished early on this machine.
+            // parked needs no grace period.
             _      <- assertEventually(never.waiters.map(_ == 1))
             polled <- fiber.poll
         yield assert(polled.isEmpty, s"fiber completed early with: $polled")
@@ -1943,13 +1939,11 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
 
         "interrupting a timeout interrupts the computation it guards" in {
-            // Liveness: the finalizer completes only if the interrupt reached the guarded computation. A timeout that spawned its
-            // computation without wiring the interrupt through would leave this parked forever.
+            // Liveness: the finalizer completes only if the interrupt reached the guarded computation.
             for
                 started     <- Promise.init[Unit, Any]
                 interrupted <- Promise.init[Unit, Any]
-                // The deadline is far beyond any run, so only the caller's interrupt reaching through the timeout can complete the
-                // finalizer below; the harness budget reports it if nothing does.
+                // The deadline is far beyond any run.
                 fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
                     Sync.ensure(interrupted.completeUnitDiscard)(
                         started.completeUnitDiscard.andThen(Async.never)

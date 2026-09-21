@@ -420,8 +420,7 @@ class TransportStartTlsTest extends Test:
                     Abort.run[Closed | NetException] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
-                                // Wait, bounded by the caller's handshake deadline, for the ClientHello to land in the plaintext channel before the
-                                // detach, so the replay the upgrade must feed to the engine is non-empty.
+                                // Wait, bounded by the caller's handshake deadline, for the ClientHello to land in the plaintext channel before the detach.
                                 Loop(()) { _ =>
                                     Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1)).map { staged =>
                                         if staged >= 1 then Loop.done(())

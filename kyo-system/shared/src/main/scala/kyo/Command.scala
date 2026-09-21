@@ -84,7 +84,7 @@ object Command:
           */
         def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
             // `.safe` is a pure `Result.map` inside the unsafe block, so the process arrives from `Abort.get` with no
-            // trailing kernel `.map` a stop could park on before a bracketing caller (SpawnBackend) registers its release.
+            // trailing kernel `.map` a stop could park on before a bracketing caller registers its release.
             Sync.Unsafe.defer {
                 Abort.get(self.unsafe.spawn().map(_.safe))
             }
@@ -96,12 +96,8 @@ object Command:
         /** Spawns the process and returns its stdout as a byte stream (scope-managed). */
         def stream(using Frame): Stream[Byte, Async & Scope & Abort[CommandException]] =
             Stream {
-                // As in `spawn`: the fork is the acquire, and `.safe` is a pure `Result.map` inside the unsafe block so no
-                // kernel `.map` poll sits between the fork and `acquireRelease`'s `ensureMap`.
                 Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
                     Sync.Unsafe.defer {
-                        // Feeds are stopped unconditionally: the process may have exited
-                        // while a feed is still parked reading its own source.
                         p.unsafe.stopInputFeeds()
                         if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
                     }

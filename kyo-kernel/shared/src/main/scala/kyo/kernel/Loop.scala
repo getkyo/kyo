@@ -19,17 +19,7 @@ import scala.util.NotGiven
   * loop's result. Up to four state values can be carried, through the `Continue` variants, so a multi-value loop allocates no tuple per
   * round.
   *
-  * The combinators take no `Safepoint` evidence, because the evaluator polls the budget itself. A body that can suspend defers the rest of
-  * the loop through an `Arrow` node, cached across rounds rather than rebuilt on each one.
-  *
-  * @see
-  *   [[Loop.Outcome]] For what a round answers with
-  * @see
-  *   [[Loop.continue]] For carrying state into the next round
-  * @see
-  *   [[Loop.done]] For ending the loop with a result
-  * @see
-  *   [[Loop.forever]] For a loop with no termination condition
+  * The combinators take no `Safepoint` evidence, because the evaluator polls the budget itself.
   */
 object Loop:
 
@@ -243,8 +233,6 @@ object Loop:
         ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
     end continue
 
-    // Wraps an answer that is itself a Continue in `Done`, so a settled answer is not read as a request
-    // to continue.
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
     inline def done[A]: Outcome[A, Unit] < Any = ().asInstanceOf[Outcome[A, Unit] < Any]

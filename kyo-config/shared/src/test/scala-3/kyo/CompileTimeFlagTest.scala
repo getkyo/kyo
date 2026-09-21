@@ -20,13 +20,12 @@ class CompileTimeFlagTest extends AnyFreeSpec:
 
     // That the value is a literal, and so that a branch on it is eliminated, is not directly assertable:
     // `inline val` wants a literal constant TYPE and the macro answers at `Boolean`. What is observable is
-    // that the value is fixed before the call runs, which the leaf below pins.
+    // that the value is fixed before the call runs.
     "resolution happens at compile time, not at the call" in {
         val key = "kyo.CompileTimeFlagTest.setAtRuntime"
         java.lang.System.setProperty(key, "true"): Unit
         try
-            // The expansion already ran, with the property unset, so setting it now changes nothing. A flag
-            // read at runtime would answer true here.
+            // A flag read at runtime would answer true here.
             assert(!CompileTimeFlag.boolean("kyo.CompileTimeFlagTest.setAtRuntime", false))
         finally
             java.lang.System.clearProperty(key): Unit

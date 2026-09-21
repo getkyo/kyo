@@ -103,8 +103,6 @@ class HostPathLockTest extends FileSystemLockTest[Sync]:
                                 }.andThen(Loop.continue)
                             }
                     }.andThen {
-                        // Retried rather than attempted once: an interrupt starts the release without
-                        // waiting for it, so a lock briefly held is not a stranded one.
                         assertEventually {
                             Scope.run(FileSystem.host.tryLock(target, Path.LockMode.Exclusive).map(_.isDefined))
                         }.andThen {

@@ -63,8 +63,6 @@ class KernelTest extends AnyFreeSpec:
             assert(v.eval == 42)
         }
 
-        // `ensureMap` expanded into `new Arrow.Ensure`, a `private[kyo]` class, so every call site outside the
-        // package failed to compile. This file is where that is caught: the assertion is secondary to compiling.
         "ensureMap" in {
             val r = answer(ask.ensureMap(a => a + 1)).eval
             assert(r == 2)

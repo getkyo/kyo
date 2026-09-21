@@ -87,7 +87,7 @@ object JsonRpcHandler:
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
             // Uninterruptible: `.get` registers the close carrier in the caller's interrupts, so an interrupt of the
             // caller would cascade into the finalizer and abandon it partway, leaving the transport, exchange and
-            // inbound handlers uncleaned. The carrier runs the finalizer to completion regardless of the caller.
+            // inbound handlers uncleaned.
             Sync.Unsafe.defer(self.close(gracePeriod).uninterruptible().safe.get)
 
         /** Closes the handler immediately without draining in-flight requests. Identical to `close(Duration.Zero)`. */

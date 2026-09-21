@@ -156,7 +156,6 @@ class EmitTest extends kyo.test.Test[Any]:
                     }
                 }.eval
             assert(seen == List(0, 1, 2, 3, 4))
-            // the predicate went false at 4, which ends the emitter, so it never produced its value
             assert(result == (5, Absent))
         }
 

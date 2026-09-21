@@ -189,8 +189,7 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev)
     }
 
-    // A stop aimed at a slice that has ended can land after the next slice began, and it then sits in the slot
-    // unhonored. A stop the running slice requests for itself must still land: a fiber boundary asks for one
+    // A stop the running slice requests for itself must still land: a fiber boundary asks for one
     // as it parks on a join, and one that never lands re-raises the join every round, nesting a continuation
     // per round until the promise completes and the delivery overflows the stack.
     "a stop for the running slice supersedes a stale one left by a departed slice" in {
@@ -207,9 +206,6 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev)
     }
 
-    // A late delivery to a departed slice is not honored by the running one, and it must not answer for a fresh
-    // request from another thread either: an interrupt's stop, or the coordinator's preemption, for the running
-    // slice has to land, or the slice runs on until it parks or ends on its own.
     "a stop from another thread lands while a stale one is pending" in {
         val slot     = Safepoint.get()
         val owner    = Thread.currentThread()

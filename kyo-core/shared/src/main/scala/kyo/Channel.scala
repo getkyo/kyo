@@ -174,7 +174,7 @@ object Channel:
             }
         end takeWith
 
-        /** The parked half of [[takeWith]], out of line so the inline fast path stays small, and interrupt-safe.
+        /** The parked half of [[takeWith]], out of line so the inline fast path stays small.
           *
           * A parked taker is a promise in the channel's take queue, and a fiber interrupted while parked is abandoned without resuming
           * (see `IOTask.abandon`): a value the channel delivered into the promise would be consumed by no one. The abandonment runs the

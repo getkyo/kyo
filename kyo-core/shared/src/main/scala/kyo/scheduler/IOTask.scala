@@ -13,12 +13,11 @@ import scala.annotation.tailrec
 
 sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2] with Task:
 
-    /** This fiber's computation wrapped in the boundary, nothing composed between the region and the body's
-      * first operation. A member, not a function, so the spawn's captures live on the task.
+    /** A member, not a function, so the spawn's captures live on the task.
       */
     protected def prepared: Unit < Any
 
-    /** The remainder of this fiber. Filled by `start`, not here: `prepared` reads subclass fields assigned
+    /** Filled by `start`, not here: `prepared` reads subclass fields assigned
       * after this constructor runs. Built once, not per slice, since the region carries what a handler accumulates.
       */
     private var curr: Unit < Any = cleared
@@ -43,14 +42,12 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** The one place an ending of the body completes the promise: a value, an abort, a throw of its own.
       *
       * It completes only while the ending is still the body's to settle: not after the abort arm settled it and
-      * answered with a placeholder. An interrupt taken on this slice wins over a value the body reaches on its own:
-      * the success caller and the throw arm both guard so a value produced on an interrupted slice is dropped and
-      * `release` settles the promise with the interrupt. By name, so a value is not restored for an ending nobody settles.
+      * answered with a placeholder. By name, so a value is not restored for an ending nobody settles.
       */
     private def finish(result: => Result[E, A < S2]): Unit =
         if isPending() then completeDiscard(result)
 
-    /** Claims this task for a thread that does not own it yet. An absent handle means a single-threaded
+    /** An absent handle means a single-threaded
       * runtime, where the read-modify-write is already atomic.
       */
     private def casStatus(curr: Status, next: Status): Boolean =
@@ -64,14 +61,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 handle.compareAndSet(this, curr, next)
     end casStatus
 
-    /** The frame of the join a park stopped at, for the unlink the wakeup performs. `run` arms the wakeup but only the boundary holds the
+    /** `run` arms the wakeup but only the boundary holds the
       * join's frame, so the boundary leaves it here. A plain var, not volatile: written and read by the same thread within one slice.
       */
     private var joinFrame: Frame = Frame.internal
 
     /** The fiber boundary: one region answering everything the scheduler owns, in `IOTask` not `Fiber` since its
-      * decisions are scheduling, not effect interpretation. `Async.Join` and `Abort` share one entry through a tag
-      * that is the union of the two, and every abort reaches it whatever its type since each `Abort[E]` is an `Abort[Nothing]`.
+      * decisions are scheduling, not effect interpretation.
       */
     protected def boundary[P](v: P < (Abort[E] & Async))(restore: P => A < S2): Unit < Any =
         // Typed at Unit: a fiber answers with its promise, so every exit completes this task or hands the continuation on.
@@ -92,12 +88,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         )(
             [C] =>
                 input =>
-                    // one clause for two families, discriminated by what the operation carries: an abort's input is
-                    // its error, a join's the promise thunk
                     input match
                         case error: Result.Error[E] @unchecked =>
                             // Ending the region discards the rest and releases the regions above it, so no stop is
-                            // needed. The done lane below is not reached for this ending; `finish` settles the promise here.
+                            // needed.
                             finish(error)
                             Loop.done(())
                         case joinInput: Async.JoinInput[C] @unchecked =>
@@ -135,15 +129,13 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 // bare `!interrupted` check is not enough, the interrupt can land between the check and the completion.
                 // Claiming `Done` is safe because the boundary is the fiber's last step.
                 if casStatus(Status.running(Thread.currentThread()), Status.Done) then finish(Result.succeed(restore(p)))
-            // No call site to name: what a parked fiber reports comes from the operation it stopped at.
         )(using Frame.internal).asInstanceOf[Unit < Any]
     end boundary
 
-    /** Puts the prepared computation in place, once the spawn that built this task is fully constructed. */
     private def install(): Unit =
         curr = prepared
 
-    /** Records that this slice has decided to park, and on what. A method, not two writes at the site: a field a
+    /** A method, not two writes at the site: a field a
       * lambda touches is promoted and renamed, while the platform handle finds `status` by name.
       */
     private def parkOn(promise: IOPromise[?, ?], frame: Frame): Unit =
@@ -155,7 +147,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def stopSlice(): Unit =
         // Addressed to this task: the read and the sentinel landing are two steps and the slice can end between them,
-        // so the addressee lets the slot refuse a late delivery; see `Safepoint.stop`.
+        // so the addressee lets the slot refuse a late delivery.
         status.runningThread.foreach(thread => discard(Safepoint.stop(thread, this)))
     end stopSlice
 
@@ -168,15 +160,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         super.doPreempt()
         stopSlice()
 
-    /** Takes an interrupt: the word holds the error until the remainder is released, and the promise stays pending
-      * until then, so the result is available once the finalizers have run.
-      *
-      * Over `Idle` nobody owns the task, so this schedules the run that claims the error and releases. Over the
-      * thread the slice is in flight: it is stopped, and its owner finds the error at the slice's end. Over the
-      * promise the slice is still unwinding from its park, with a stop already requested, and the same owner finds
-      * it. First to land wins; a later one finds the error, or `Done`, through `preInterrupt` and is refused, as it
-      * would be by a completed promise.
-      */
     final override protected def interrupt(p: IOPromise.Pending[E, A < S2], error: Result.Error[E]): Boolean =
         @tailrec def loop(): Boolean =
             val s = status
@@ -190,7 +173,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 s.runningThread match
                     case Present(thread) =>
                         (casStatus(Status.running(thread), Status.interrupted(error)) && {
-                            // Addressed to this task; see `stopSlice`.
                             discard(Safepoint.stop(thread, this))
                             taken()
                             true
@@ -222,7 +204,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     final override def needsInterrupt(): Boolean =
         interrupted || !isPending()
 
-    /** Where this fiber currently stands, as one rendered frame, or empty where there is none. A cross-thread
+    /** A cross-thread
       * diagnostic read: it touches only fields already in hand, never anything the evaluator would have run.
       */
     final override def fiberTrace(): String =
@@ -232,7 +214,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 case Absent     => ""
         catch case _: Throwable => ""
 
-    /** The frame of the operation this fiber stands at, where it stands at one. A deferral's payload is a value,
+    /** A deferral's payload is a value,
       * not a body, so this runs none of the fiber's computation.
       */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
@@ -287,7 +269,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             // delivery racing the slice boundary cannot stop whatever runs next.
             val slot          = Safepoint.get()
             val previousSlice = Safepoint.beginSlice(slot, this)
-            // The slice deadline. On js-wasm it is the preemption source; on jvm-native stops carry preemption and this inlines to nothing.
+            // On js-wasm it is the preemption source; on jvm-native stops carry preemption and this inlines to nothing.
             Safepoint.deadline(deadline)
             val next =
                 try
@@ -366,8 +348,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         end if
     end run
 
-    /** Releases on behalf of the interrupt the word holds: claims it, releases the remainder, and completes the
-      * promise with it. The claim is what keeps two runs from releasing the same remainder.
+    /** The claim is what keeps two runs from releasing the same remainder.
       */
     private def release(): Unit =
         status.interruptError.foreach { error =>
@@ -375,10 +356,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
             if casStatus(Status.interrupted(error), Status.Done) then abandon(Present(error.asInstanceOf[Result.Error[E]]))
         }
 
-    /** Releases what an abandoned remainder still holds, links what it stands waiting on, and completes the promise
-      * with the interrupt taken, when one was.
-      *
-      * A parked computation carries its owed releases rather than running them, and this fiber will not resume, so
+    /** A parked computation carries its owed releases rather than running them, and this fiber will not resume, so
       * they are run here. The link comes first: an interrupt arriving as the fiber reached its join can find a
       * remainder standing at one whose promise is not yet tied to this fiber. The walk reaches the join through the
       * nodes and runs no step of the remainder to get there: a join behind a step that never ran is not waited on yet
@@ -396,7 +374,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         status = Status.Done
         if !isNull(remainder) then
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
-                // Invoking the input registers the link, the same call the boundary makes.
+                // Invoking the input registers the link.
                 [C] => input => discard(input(this))
             }
         end if
@@ -414,31 +392,26 @@ end IOTask
 
 object IOTask:
 
-    /** The two states of a task's status word that name no thread, no promise and no error. Objects, not an enum
+    /** Objects, not an enum
       * over the whole word: the three carrying states hold an already-allocated reference, so naming all five would allocate on every slice and every interrupt.
       */
     private[scheduler] case object Idle
     private[scheduler] case object Done
 
-    /** Who owns a task, and whether it is still alive: a running thread, the promise it parked on, the error it was interrupted with, or
-      * the `Idle`/`Done` markers. Opaque over the union so the states stay typed and exhaustive at every match inside this file while the
+    /** Opaque over the union so the states stay typed and exhaustive at every match inside this file while the
       * union never leaks to a call site, no state costs a wrapper, and the field's erased type stays `Object` for the platform handle.
       * Bounded by `AnyRef` so the word can be compared by reference identity for the CAS.
       */
     private[scheduler] opaque type Status <: AnyRef = Thread | IOPromise[?, ?] | Idle.type | Done.type | Result.Error[?]
 
-    /** The whole surface of the status word: the union and every discrimination on it live here. */
     private[scheduler] object Status:
         val Idle: Status = IOTask.Idle
         val Done: Status = IOTask.Done
 
-        /** A slice is in flight on this thread. */
         def running(thread: Thread): Status = thread
 
-        /** Parked on this promise, awaiting its completion; not to be rescheduled. */
         def parked(promise: IOPromise[?, ?]): Status = promise
 
-        /** Interrupted with this error, the remainder not yet released. */
         def interrupted(error: Result.Error[?]): Status = error
 
         extension (self: Status)
@@ -452,24 +425,21 @@ object IOTask:
                 case _: Result.Error[?] => true;
                 case _                  => false
 
-            /** The error an interrupt left, `Absent` if this is not the interrupted state. */
             def interruptError: Maybe[Result.Error[?]] = self match
                 case e: Result.Error[?] => Present(e);
                 case _                  => Absent
 
-            /** The promise a park is waiting on, `Absent` otherwise. */
             def parkedPromise: Maybe[IOPromise[?, ?]] = self match
                 case p: IOPromise[?, ?] => Present(p);
                 case _                  => Absent
 
-            /** The thread running the slice, `Absent` otherwise. */
             def runningThread: Maybe[Thread] = self match
                 case t: Thread => Present(t);
                 case _         => Absent
         end extension
     end Status
 
-    /** Compare-and-set on a task's `status` field, without an atomic wrapper. Same shape and reason as
+    /** Same shape and reason as
       * `IOPromise.StateHandle`: a boxed atomic would be a second object per fiber, where a field the platform updates in place costs
       * nothing.
       */
@@ -483,7 +453,7 @@ object IOTask:
     // fiber task is created, so a leaf that later hangs has the scheduler's live worker state in its Diagnostics.dumpAll() instead of blank.
     SchedulerDiagnostics.init()
 
-    /** The fiber running on this thread, or null where none is. The boundary is built before the fiber exists,
+    /** The boundary is built before the fiber exists,
       * so it asks here rather than closing over one, and a spawning fiber reads it to link its children.
       */
     private[kyo] val current: ThreadLocal[IOTask[?, ?, ?]] = new ThreadLocal[IOTask[?, ?, ?]]
@@ -492,7 +462,7 @@ object IOTask:
 
     /** When `parent` is present it is linked to interrupt the new task BEFORE it is scheduled, closing the window where a parent interrupted
       * while children launch orphans one started but not yet registered. The caller reads the parent once and passes it, so this does not
-      * read the thread local per child. Detached creators pass `Absent`.
+      * read the thread local per child.
       */
     def apply[E, A, S, S2](isolate: Isolate[S, Abort[E] & Async, S2])(
         state: isolate.State,
@@ -526,7 +496,6 @@ object IOTask:
         )
 
     private def start[E, A, S2](task: IOTask[E, A, S2], parent: Maybe[IOPromise[?, ?]], runtime: Int): IOTask[E, A, S2] =
-        // after the subclass is constructed, so `prepared` reads fields that are assigned
         task.install()
         task.addRuntime(runtime)
         parent.foreach(p => p.interrupts(task))

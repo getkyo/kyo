@@ -18,31 +18,22 @@ import scala.annotation.tailrec
   * answers `X` unchanged.
   *
   * Two families answer an operation:
-  *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]], to apply once, many times, or not at all.
+  *   - [[ArrowEffect.handleCont]] hands the clause the continuation as an [[Arrow]].
   *   - [[ArrowEffect.handleLoop]] hands the clause the input alone and takes a [[Loop.Outcome]] back; [[ArrowEffect.handleLoopState]] carries
   *     state between occurrences.
-  *
-  * Overloads add a `done` arm (transforming the region's final value) and a `recover` arm (answering a throwable raised inside it); the
-  * `*With` variants fuse the caller's continuation into the region node.
   *
   * @tparam Input
   *   The type constructor for what an operation carries in
   * @tparam Output
   *   The type constructor for what a handler answers with
-  * @see
-  *   [[ArrowEffect.suspend]], [[ArrowEffect.suspendWith]], [[ArrowEffect.Mask]], [[ContextEffect]]
   */
 abstract class ArrowEffect[-Input[_], +Output[_]] extends Effect
 
 object ArrowEffect:
 
-    // Suspensions and handled regions are arrow nodes (Pending.SuspendArrow, Pending.HandleArrow, the
-    // Handler instances below), interpreted by Eval.
-
     /** Performs an operation of an arrow effect, suspending until a handler answers it.
       *
-      * The value carries the input and the continuation from this point, and the effect joins the row, so nothing evaluates until a handler
-      * removes it. The answer belongs to whichever handler is installed when the computation runs.
+      * The answer belongs to whichever handler is installed when the computation runs.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A](
@@ -57,8 +48,7 @@ object ArrowEffect:
             def input          = functionInput
             def cont           = Arrow.id
 
-    /** Performs an operation and transforms its answer in the same node, fusing `f` in rather than suspending and mapping afterwards, so the
-      * answer is transformed where it arrives instead of through a separate node the evaluator must reach first.
+    /** Performs an operation and transforms its answer in the same node, fusing `f` in rather than suspending and mapping afterwards.
       */
     @nowarn("msg=anonymous")
     inline def suspendWith[A](
@@ -84,8 +74,8 @@ object ArrowEffect:
       * Each occurrence is answered independently. Never applying the continuation abandons the remainder (an early exit); applying it more
       * than once is supported, the regions this handler dumps into it moving their releases to this region, which runs them once where it
       * ends, so every resumption runs against the live resource. The rows place the clause inside the region it serves (result at
-      * `E & S & S2`), so an `E` operation the clause performs is answered by this same handler: it is re-entrant. That is the difference from
-      * [[handleLoop]], whose clause sits outside the region. The continuation carries [[Region.NoEscape]], confining it to the clause.
+      * `E & S & S2`), so an `E` operation the clause performs is answered by this same handler: it is re-entrant.
+      * The continuation carries [[Region.NoEscape]], confining it to the clause.
       */
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -170,7 +160,7 @@ object ArrowEffect:
       * The continuation never becomes a value the clause holds, so each occurrence is answered exactly once or not at all. The rows place the
       * clause outside the region it serves: the outcome sits at `S & S2`, the answer inside it at `E & S & S2`, so only the answer handed back
       * is region currency, a `Loop.done` result bypasses the region, and an effect the clause performs is answered by a handler further out.
-      * Contrast [[handleCont]], which hands over the continuation itself; [[handleLoopState]] carries state between occurrences.
+      * Contrast [[handleCont]], which hands over the continuation itself.
       */
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -239,7 +229,6 @@ object ArrowEffect:
         inline done: A => B < (S & S2),
         inline recover: Throwable => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        // the input is forced under the recovery clause, as in the recovering handleCont
         try
             val v0 = v
             v0 match
@@ -298,7 +287,7 @@ object ArrowEffect:
         handleLoopState(effectTag, state, v)(handle, (_, a) => a)
 
     /** [[handleLoopState]] with a `done` arm receiving the final state alongside the region's value. `done` is where the state leaves the
-      * region (without it the state is discarded on completion), so use it when the state is the answer, as for a counter or accumulator.
+      * region (without it the state is discarded on completion).
       */
     @nowarn("msg=anonymous")
     inline def handleLoopState[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, State](
@@ -361,7 +350,7 @@ object ArrowEffect:
         inline done: (State, A) => B < (S & S2),
         inline recover: (State, Throwable) => Maybe[B < (S & S2)]
     )(using inline _frame: Frame): B < (S & S2) =
-        // the input is forced under the recovery clause, as in the recovering handleCont; a throw there
+        // the input is forced under the recovery clause; a throw there
         // sees the initial state, the only one the region has had
         try
             val v0 = v
@@ -646,7 +635,7 @@ object ArrowEffect:
 
     /** As [[handleFirst]], but the handed-out remainder may be resumed more than once: its dumped regions are held rather than closed at each
       * resumption's end, so a resource shared across the resumptions (a streamed choice's branches) stays live and is released once after the
-      * scope that resumes them ends. Use [[handleFirst]] when the remainder is consumed once.
+      * scope that resumes them ends.
       */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleFirstRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](inline effectTag: Tag[E], v: A < (E & S))(
@@ -685,9 +674,7 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleMasking(effectTag, v)(handle, a => a)
 
-    /** [[handleMasking]] with a `done` arm; the clause receives the suspended operation as a computation in the effect, and the continuation
-      * is the one from the suspension point, as in [[handleCont]].
-      */
+    /** [[handleMasking]] with a `done` arm. */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleMasking[E <: Effect, A, B, S, S2](
         inline effectTag: Tag[E],

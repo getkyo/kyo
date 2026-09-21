@@ -14,7 +14,6 @@ import kyo.kernel.Bracket
   */
 class ScopeInterruptTest extends kyo.test.Test[Any]:
 
-    /** A closeable that records its own close. */
     final class Handle(closes: JAtomicInteger) extends java.lang.AutoCloseable:
         def close(): Unit = discard(closes.incrementAndGet())
 
@@ -36,7 +35,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         // resource an acquire holds until the step that hands it on is itself a bracket, nested as the acquire: its
         // end runs in place as the value flows to the outer bracket. `Sync.ensure` and `Sync.acquireReleaseWith`
         // bind after their body, so in that position the interrupt would park at the bind, with the value in front
-        // of it and nothing owning it; the leaf after this one is that shape.
+        // of it and nothing owning it.
         "a bracket nested as the acquire of another hands what its use produced to the outer bracket" in {
             val rounds = 200
             for
@@ -47,7 +46,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Bracket(
                         Bracket(Sync.defer(0)) { _ =>
                             Sync.defer {
-                                // Unsafe: as above, the interrupt is requested from inside the step that produces
+                                // Unsafe: the interrupt is requested from inside the step that produces
                                 // the acquire's value.
                                 import AllowUnsafe.embrace.danger
                                 discard(self.unsafe.interrupt())
@@ -72,9 +71,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         // Whether the interrupt stops the acquire before its value reaches the outer bracket is a race, and the
         // outcome differs by platform and by run: the JVM and Native preempt finely, so the value usually stops
         // short and the bracket owns nothing (rel near 0); JS usually lets the acquire complete, so the bracket
-        // takes it and releases it (rel near acq), and a run may land anywhere between. All of these are the
-        // contract, so the only cross-platform invariant here is that the bracket never releases more than were
-        // produced (rel <= acq). The deterministic owns-nothing case is guarded in the kernel BracketTest.
+        // takes it and releases it (rel near acq), and a run may land anywhere between.
         "an acquire under its own Sync.ensure runs that finalizer, and the bracket never over-releases" in {
             val rounds = 200
             for
@@ -85,7 +82,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Sync.acquireReleaseWith {
                         Sync.ensure(ended.incrementAndGet.unit) {
                             Sync.defer {
-                                // Unsafe: as above, the interrupt is requested from inside the step that produces
+                                // Unsafe: the interrupt is requested from inside the step that produces
                                 // the acquire's value.
                                 import AllowUnsafe.embrace.danger
                                 discard(self.unsafe.interrupt())
@@ -105,8 +102,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The request lands one step before the value: the interrupt stops in front of that step, the
-        // abandonment runs nothing of it, and an acquire that never produced owes no release.
         "an acquire interrupted a step before its value produces nothing and releases nothing" in {
             val rounds = 200
             for
@@ -126,8 +121,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Bracket installs its region as the acquire is applied, so an abandonment that finds the acquired value
-        // has something to release it with.
         "Sync.acquireReleaseWith still releases what the acquire produced (value in the same node as the interrupt)" in {
             val rounds = 200
             for
@@ -151,7 +144,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Scope.acquire is acquireRelease(resource)(_.close()), so what it adds is the close path.
         "Scope.acquire closes the handle it opened (value in the same node as the interrupt)" in {
             val rounds = 200
             val opened = new JAtomicInteger(0)
@@ -161,7 +153,8 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     Scope.run {
                         Scope.acquire {
                             Sync.defer {
-                                // Unsafe: see the leaf above.
+                                // Unsafe: the interrupt is requested from inside the step that produces
+                                // the acquire's value.
                                 import AllowUnsafe.embrace.danger
                                 discard(self.unsafe.interrupt())
                                 discard(opened.incrementAndGet())
@@ -180,9 +173,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     // The acquire is a join. Its value arrives in the promise while the acquiring fiber is parked, and the
     // interrupt lands before the fiber resumes: the promise's callbacks run last-registered first, so one
-    // registered after the park runs before the fiber's own wakeup. The acquire never reached the bracket's
-    // region with the value, so the region owns nothing and releases nothing: whoever produced the value owns
-    // it until a handoff the owner registered before waiting, which the leaves further down are the shape of.
+    // registered after the park runs before the fiber's own wakeup.
     "an acquire abandoned before it resumed with its value owns nothing" in {
         for
             released <- AtomicInt.init(0)
@@ -203,7 +194,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // The same, with the acquire joining a fiber rather than a promise.
     "an acquire joining a fiber, abandoned before it resumed with the fiber's value, owns nothing" in {
         for
             released <- AtomicInt.init(0)
@@ -215,9 +205,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 }
             }
             // `inner` is a fiber parked on `child`, and a fiber's own join link counts as a waiter on its promise, so one
-            // waiter is there before the parent parks. The interrupt callback has to be registered after the parent's
-            // wakeup: completion callbacks run newest first, and one registered before the wakeup would let the parent
-            // resume with the value and register its release before the interrupt lands.
+            // waiter is there before the parent parks.
             _   <- assertEventually(inner.waiters.map(_ >= 2))
             _   <- inner.onComplete(_ => parent.interrupt.unit)
             _   <- child.complete(Result.succeed(42))
@@ -229,10 +217,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // A resource produced on a child fiber after its owner was abandoned. The child is spawned under the owner's
-    // scope and takes the permit only once the owner is gone, so its registration lands on a scope that closed,
-    // which runs the release detached: what the child produced for an owner nobody will hand it to comes back
-    // through the owner's scope all the same.
     "a permit a child takes after its owner was abandoned is returned through the owner's closed scope" in {
         for
             permits <- Channel.init[Unit](1)
@@ -256,7 +240,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     // The supported shape for a resource produced on one fiber and owned by another: the producing fiber registers
     // the release in the step the value arrives in, into the owner's scope, which it reaches through the context.
-    // Here the owner is abandoned once the value exists and before it resumed.
     "the producing fiber's registration returns the permit when the owner is abandoned after the value" in {
         for
             permits    <- Channel.init[Unit](1)
@@ -277,8 +260,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // The same shape with the owner's scope already closed when the value arrives: the registration lands on a
-    // closed scope, which runs it detached, and the permit still comes back.
     "the producing fiber's registration returns the permit when the owner's scope closed first" in {
         for
             permits <- Channel.init[Unit](1)
@@ -302,7 +283,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
 
     "Scope.run waits for a scoped fiber to release the bracket it is inside" in {
         // The child must hold the bracket when the scope starts exiting, or the release happens for the wrong
-        // reason. It parks rather than spinning: the region is installed before the body runs.
+        // reason.
         for
             entered  <- AtomicBoolean.init(false)
             log      <- AtomicRef.init(Chunk.empty[String])
@@ -344,7 +325,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     _      <- parent.getResult
                     // A child that never started holds nothing and tears nothing down.
                     ran <- started.done
-                    // The orphan check. A deadline here would make a slow worker read as a leak, while an orphan
+                    // A deadline here would make a slow worker read as a leak, while an orphan
                     // never clears the flag.
                     _ <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
                     _ <- gate.release
@@ -353,19 +334,15 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 end for
             }
             hit <- exercised.get
-        // A round whose child never started proves nothing, so the leaf has to know the race lands sometimes.
         yield assert(hit > 0, s"none of the $rounds rounds got the child running, so nothing was raced against the spawn")
         end for
     }
 
-    // The same gap at the other spawn: Fiber.init registers the interrupt that stops the child as the acquire's
-    // value arrives, leaving an interrupt landing on the spawn itself uncovered.
     "Fiber.init interrupts and awaits the fiber it spawned when the interrupt lands on the spawn" in {
         val rounds = 40
         for
             exercised <- AtomicInt.init(0)
-            // Half the rounds wait for the child to be running, the other half interrupt at the spawn.
-            _ <- Kyo.foreachDiscard(1 to rounds) { round =>
+            _         <- Kyo.foreachDiscard(1 to rounds) { round =>
                 for
                     started    <- Promise.init[Unit, Any]
                     gate       <- Latch.init(1)
@@ -377,11 +354,10 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     _      <- if round % 2 == 0 then started.get else Kyo.unit
                     _      <- parent.interrupt
                     _      <- parent.getResult
-                    // A child that never started holds nothing and tears nothing down.
-                    ran <- started.done
-                    _   <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
-                    _   <- gate.release
-                    _   <- if ran then exercised.incrementAndGet.unit else Kyo.unit
+                    ran    <- started.done
+                    _      <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
+                    _      <- gate.release
+                    _      <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
@@ -409,7 +385,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                 discard(fiber.unsafe.interrupt())
                 promise.unsafe.completeUnitDiscard()
             }
-            // the release runs on the abandonment walk, so wait for it
             _    <- assertEventually(finalized.get.map(_ == 1))
             fin  <- finalized.get
             woke <- resumed.get
@@ -419,9 +394,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // A clean Scope.run exit closes its scope and then awaits the drain on a join, with the body's value in flight.
-    // A caller that registers that value once the run returns is exposed at every clean exit: an interrupt at the
-    // await abandons the continuation, the backstop finds the scope already closed, and the value reaches nobody.
     // The inner finalizer parks on a gate so the drain is a real join when the interrupt lands.
     "an interrupt at Scope.run's drain await does not strand the value the body produced".pendingUntilFixed(
         "Scope.run's clean exit awaits its drain on a join with the body's value in flight, so an interrupt there abandons the continuation and the value never reaches the caller's registration"
@@ -449,7 +421,7 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     // A remainder handed out by a peel (`Emit.runFirst`) carries the regions the peeled body had installed. Handed
     // to a child fiber and run there while the peeling scope ends, the resource stays with the child's run: the
     // child either completes its use with the resource still held, releasing it at its own exit, or is refused
-    // with Closed. What must never happen is the peeling scope releasing the resource under a use in flight.
+    // with Closed.
     "a peeled remainder running on a child fiber is not released under it when the peeling scope ends" in {
         for
             released <- AtomicBoolean.init(false)

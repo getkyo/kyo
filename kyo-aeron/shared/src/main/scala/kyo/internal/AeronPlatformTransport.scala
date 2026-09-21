@@ -108,7 +108,6 @@ private[kyo] object AeronPlatformTransport:
         Sync.Unsafe.defer(Ffi.load[AeronBindings]).map(bindings => externalWith(aeronDir, bindings))
 
     /** [[external]] with the FFI bindings injected, so a test can drive the connect/close lifecycle with a fake.
-      * Production calls [[external]], which loads the real bindings via `Ffi.load`; behavior is identical.
       */
     private[kyo] def externalWith(aeronDir: String, bindings: AeronBindings)(using
         Frame

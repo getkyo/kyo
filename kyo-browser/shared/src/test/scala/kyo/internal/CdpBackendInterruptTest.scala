@@ -11,12 +11,8 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     private val cfg = Browser.LaunchConfig.default
 
-    /** What the browser side records: every request method in order, and how many responses it was sent. */
     final private class Wire(val seen: AtomicRef[Chunk[String]], val replies: AtomicInt)
 
-    /** The browser side of the wire: answers every request with a result the client decodes, records the methods it saw in order, holds
-      * the reply of a gated method until its latch opens, and counts the responses the client side sends it.
-      */
     private def serve(browserEnd: JsonRpcTransport, wire: Wire, gates: Map[String, Latch])(using Frame): Fiber[Unit, Any] < Sync =
         def result(method: String): Structure.Value = method match
             case "Browser.getVersion" =>
@@ -28,8 +24,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             case "Target.attachToTarget" =>
                 summon[Schema[AttachResult]].toStructureValue(AttachResult("session-1"))
             case "Runtime.evaluate" =>
-                // Only `screenshotElement`'s box-stable eval reaches this wire in this suite: a resolved, stable,
-                // already-in-viewport rect, so the retry it runs under never needs a second attempt.
+                // Only `screenshotElement`'s box-stable eval reaches this wire in this suite.
                 summon[Schema[EvalResult]].toStructureValue(EvalResult(RemoteObject.`string`(elementClipReplyJson), Absent))
             case _ =>
                 summon[Schema[CdpNoParams]].toStructureValue(CdpNoParams())
@@ -145,10 +140,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             a      <- f(client, browser, wire, gate)
         yield a
 
-    // The init builds the endpoint over the wire and spawns the dialog drainer before it probes `Browser.getVersion`.
-    // The endpoint is scope-bound, so a stop landing at the probe's join must close it on the way out: a request sent
-    // from the browser side afterwards must get no answer. The drainer, parked on a queue nothing else references,
-    // has no observable of its own.
+    // The init builds the endpoint over the wire before it probes `Browser.getVersion`.
     "an interrupt landing at the version probe closes the endpoint the init built" in {
         Latch.init(1).map { gate =>
             wired(Map("Browser.getVersion" -> gate)) { (client, browser, wire) =>
@@ -170,10 +162,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // The dialog drainer fiber is spawned (Fiber.initUnscoped, so the init's own interrupt never reaches it) and owned
-    // only by the backend's close, which is never registered when the version probe abandons `initUnscoped` before it
-    // yields the backend. The probe captures the dialog queue the drainer parks on, so the orphan is observable: after
-    // the interrupt the drainer should be gone, not still parked on the queue.
+    // The probe captures the dialog queue the drainer parks on, so the orphan is observable.
     "an interrupt landing at the version probe leaves no dialog drainer parked".pendingUntilFixed(
         "the dialog drainer is spawned before the version probe and owned by the backend's close, which init never registers when the probe abandons it; the drainer stays parked on the dialog queue"
     ) in {
@@ -202,8 +191,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // The tab setup creates the browser context in a round trip. A stop landing at that reply's join abandons the
-    // caller without the reply, so the context the reply names has to be disposed by the call that receives it.
     "an interrupt landing at the context creation reply still disposes the context" in {
         Latch.init(1).map { gate =>
             wired(Map("Target.createBrowserContext" -> gate)) { (client, _, wire) =>
@@ -228,8 +215,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `withViewport` sends the override in a round trip. A stop landing at that reply's join abandons the caller
-    // without the reply, so the override the reply confirms has to be restored by the call that receives it.
     "an interrupt landing at the viewport override reply still restores the viewport" in {
         Latch.init(1).map { gate =>
             wired(Map("Emulation.setDeviceMetricsOverride" -> gate)) { (client, _, wire) =>
@@ -263,8 +248,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `screenshotElement(transparentBackground = true)` applies the background-color override through a plain
-    // `Scope.acquireRelease(<CDP call>)(restore)`, not the detached `acquire`, so a stop at the reply strands it.
     "an interrupt landing at the background-color override reply still clears it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -301,7 +284,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     // `withEmulation` applies the emulated-media override through the same un-detached `Scope.acquireRelease` shape;
     // quiescence is disabled so `afterAction` sends it directly, not via a mutation observer the fake browser does not
-    // answer. A stop at the reply strands the override with no restore.
+    // answer.
     "an interrupt landing at the emulated-media override reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -337,8 +320,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `withDownloads` applies the download policy through the same plain `Scope.acquireRelease(<CDP call>)(restore)`
-    // shape, so a stop at the reply leaves the tab accepting downloads with no restore sent.
     "an interrupt landing at the download-policy reply still restores it".pendingUntilFixed(
         "the CDP override lands on the server before its reply and Scope.acquireRelease registers the restore only when the reply lands; an interrupt at the reply strands the override with no restore"
     ) in {
@@ -372,8 +353,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     }
 
-    // `HoldStill.withFrozenPage` injects the freeze stylesheet through the same un-detached `Scope.acquireRelease`,
-    // over `Runtime.evaluate` instead of a typed CDP method, so a stop at the reply leaves the freeze style on the page.
     "an interrupt landing at the freeze-style injection reply still removes the freeze style".pendingUntilFixed(
         "the freeze style is injected on the server before its reply and the removal registers only when the reply lands; an interrupt at the reply strands the injected style with no removal"
     ) in {

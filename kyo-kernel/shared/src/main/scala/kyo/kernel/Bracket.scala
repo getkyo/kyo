@@ -25,27 +25,22 @@ import kyo.kernel.internal.*
   */
 object Bracket:
 
-    // The region a bracket runs its use body under; `Cell` is its state and the exactly-once release guard.
+    // The region a bracket runs its use body under.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
     // The exactly-once release guard, in two shapes rather than one with a flag: a bracket's own, and the inert one
     // handed to an isolated child (a recording instance would carry one crossing's state into the next).
     sealed abstract private[kyo] class Cell extends AtomicBoolean:
-        // Fires the release once, whichever ending reaches it first. A failure is forwarded; a clean ending (Absent)
-        // is forwarded as a clean ending if the extent ran to an end, or as the discard signal if it never did,
-        // which is what a remainder nobody resumed looks like from the scope that released it.
+        // Fires the release once, whichever ending reaches it first.
         private[kyo] def run(failure: Maybe[Throwable]): Unit
         // Records that the extent ran to a clean end, so the release, run here or by the scope that holds it, tells a
-        // clean ending rather than a discard, and a later refused re-entry can say which way it fired. Does not fire.
+        // clean ending rather than a discard. Does not fire.
         private[kyo] def complete(): Unit
-        // Whether the extent ran to an end, versus being released when its owning scope ended without it ever running.
         private[kyo] def endedItsExtent: Boolean
     end Cell
 
     private[kyo] object Cell:
 
-        // `state` is the per-run value handed to the release: the acquired resource for a bracket, the slot `ensuringWith` makes on
-        // entry, so a value run twice shares nothing.
         final class Live[R](val state: R, fin: (R, Maybe[Throwable]) => Unit, frame: Frame) extends Cell:
             @volatile private var ended                           = false
             private[kyo] def endedItsExtent: Boolean              = ended
@@ -61,7 +56,6 @@ object Bracket:
             private[kyo] def complete(): Unit = ended = true
         end Live
 
-        // Handed to an isolated child: no release, so one instance serves every crossing.
         val inert: Cell =
             new Cell:
                 private[kyo] def run(failure: Maybe[Throwable]): Unit = ()
@@ -113,8 +107,7 @@ object Bracket:
 
     /** Runs `release` when `body`'s extent ends, with a per-run state made as the region is entered.
       *
-      * Like [[ensuring]], the region is a node from the start, found by the abandonment walk whether or not a step ran. `init` runs once per
-      * run, so `release` and `body` share a slot no second run of the value carries between runs.
+      * `init` runs once per run, so `release` and `body` share a slot no second run of the value carries between runs.
       */
     def ensuringWith[R, B, S](init: => R)(release: (R, Maybe[Throwable]) => Unit)(body: R => B < S)(using _frame: Frame): B < S =
         region(
@@ -133,8 +126,7 @@ object Bracket:
             def fork(parent: Cell)                              = Cell.inert
             def join(parent: Cell, fk: Cell, child: Cell)       = parent
             def release(state: Cell, failure: Maybe[Throwable]) = state.run(failure)
-            // Record the clean end so the release, run here or by a scope holding the cell, tells it apart from the discard signal.
-            override def complete(state: Cell): Unit = state.complete()
+            override def complete(state: Cell): Unit            = state.complete()
             // A remainder resumed after its bracket's resource was released is a use-after-release: the cell has fired,
             // so refuse rather than run the body against a released resource. The two ways it gets re-entered want
             // different advice, and guessing wrong sends the reader after the wrong cause.

@@ -131,7 +131,7 @@ object Batch:
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
         // handleFirst, not handleCont: the clause answers one suspension and hands its cont out inside the item, resumed by the loop
-        // below after this region ends; the region owes what it dumped to the scope below, so a bracket opened inside survives into its item.
+        // after this region ends; the region owes what it dumped to the scope below, so a bracket opened inside survives into its item.
         def capture(v: Item < (Batch & S)): Item < S =
             ArrowEffect.handleFirst(Tag[Batch], v)(
                 handle = [C] =>
@@ -213,7 +213,7 @@ object Batch:
             case ToExpand(op: Seq[Any], cont: ContEval[A, S])
             case Expanded(value: Any, source: SourceAny[S], cont: ContCall[A, S])
 
-        // The captured cont is the kernel's Arrow, applied strictly at the two call sites, so multi-shot replay carries the batching. Its
+        // The captured cont is the kernel's Arrow, applied strictly, so multi-shot replay carries the batching. Its
         // input keeps what the op answers with: an element for Eval, the source's result computation for Call. Typed over a computation the
         // arrow receives it as data and splices it at the call site under the regions installed there; typed over Any it would run it at the resume.
         type ContEval[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]

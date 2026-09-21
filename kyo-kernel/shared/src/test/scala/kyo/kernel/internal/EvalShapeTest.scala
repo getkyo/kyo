@@ -15,7 +15,6 @@ import kyo.kernel.ArrowEffect.Mask
   */
 class EvalShapeTest extends Test:
 
-    // the effect under test, answered by the handler each scenario installs
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
@@ -33,7 +32,6 @@ class EvalShapeTest extends Test:
             (log, a) => (log, a)
         )
 
-    // n occurrences of the effect, consecutive, summed; zero occurrences settles without it
     def prog(n: Int): Int < Ask =
         if n == 0 then 0 else ask.map(a => prog(n - 1).map(_ + a))
 
@@ -75,7 +73,6 @@ class EvalShapeTest extends Test:
         loop(init, 0, 0)
     end lawState
 
-    /** How many times a clause runs for n occurrences: once for the first, then once more per resumption for the rest. */
     def runs(resumes: Int)(n: Int): Int = if n == 0 then 0 else 1 + resumes * runs(resumes)(n - 1)
 
     /** One handler under test.
@@ -96,8 +93,6 @@ class EvalShapeTest extends Test:
 
     val counter: (Int, Int) => Int = (st, a) => a * 1000 + st
 
-    // every handler kind with every arm it has: handleCont resumes once or never, handleContRepeated once, twice or never, handleLoop
-    // and handleLoopState continue or end from the clause, Mask has no arm of its own and tunnels a handleCont past an inner handler
     val scenarios: List[Scenario] = List(
         Scenario(
             "handleCont resuming once",
@@ -115,7 +110,7 @@ class EvalShapeTest extends Test:
             law(List(1000)),
             runs(0)
         ),
-        /* handleContRepeated is not in this kernel (handleFirstRepeated replaced it). Disabled; restore if the API is reintroduced.
+        /* handleContRepeated is not in this kernel. Disabled; restore if the API is reintroduced.
         Scenario(
             "handleContRepeated resuming once",
             v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, k) => k(7), a => a),
@@ -201,8 +196,6 @@ class EvalShapeTest extends Test:
                         assert(record(s.run(prog(n))).eval == ((Nil, s.expected(n))))
                     }
 
-                    // fusion law over a trailing map: the answering walk chains the deferral's continuation onto the suspension's
-                    // instead of leaving the region, and the value is the law's either way
                     "base, with a trailing map after each occurrence" in {
                         assert(record(s.run(progTrailing(n))).eval == ((Nil, s.expected(n))))
                     }
@@ -211,7 +204,6 @@ class EvalShapeTest extends Test:
                         assert(record(s.suspending(progTrailing(n))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
-                    // at-top law: an inert region above the handler changes nothing, whichever kind it is
                     "a binding above" in {
                         assert(record(s.run(cfgAbove(prog(n)))).eval == ((Nil, s.expected(n))))
                     }
@@ -220,7 +212,6 @@ class EvalShapeTest extends Test:
                         assert(record(s.run(idleAbove(prog(n)))).eval == ((Nil, s.expected(n))))
                     }
 
-                    // suspension law: a clause that performs an outer effect and then answers equals one that answers at once
                     "the clause suspends first" in {
                         assert(record(s.suspending(prog(n))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
@@ -233,7 +224,6 @@ class EvalShapeTest extends Test:
                         assert(record(s.suspending(idleAbove(prog(n)))).eval == ((List.fill(s.says(n))("s"), s.expected(n))))
                     }
 
-                    // geography: an inner handler for the same tag answers, and this handler's clause never runs
                     "an inner handler for the same tag" in {
                         assert(record(s.run(innerAbove(prog(n)))).eval == ((Nil, s.inner(n))))
                     }

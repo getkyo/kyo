@@ -298,8 +298,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     // when the spawn returns and closes a few milliseconds later, so the rounds sweep the first twelve
     // milliseconds in quarter-millisecond steps and then coarser steps for a slower machine. Each round's worker
     // carries a unique token in its command line (a `-Wconf` filter that matches nothing, forwarded as a scalac
-    // option), so the count afterwards is of this round's workers alone, whatever else the suite is spawning; a
-    // worker left over is killed by the leaf.
+    // option), so the count afterwards is of this round's workers alone, whatever else the suite is spawning.
     "an interrupt landing before the kill is armed does not orphan the worker JVM" in {
         withDriver { driver =>
             val rounds                              = 64

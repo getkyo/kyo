@@ -966,12 +966,6 @@ object Span:
 
         /** Returns a new Span with the element at the specified index replaced.
           *
-          * @param idx
-          *   the index of the element to replace
-          * @param x
-          *   the replacement element
-          * @return
-          *   a new Span with the element at idx replaced
           * @throws IndexOutOfBoundsException
           *   if the index is out of bounds
           */

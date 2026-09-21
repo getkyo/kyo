@@ -199,7 +199,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
       *
       * `IOTask` overrides this to take the interrupt without completing, so a fiber's result is available only
       * once what it held has been released, and completes through [[settleInterrupt]] when that is done. `false`
-      * means the attempt did not land: the state is read again, after [[preInterrupt]] is asked once more.
+      * means the attempt did not land.
       */
     protected def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
         settleInterrupt(p, v)

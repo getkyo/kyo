@@ -23,7 +23,7 @@ object Region:
 
     /** Takes a continuation out of its confinement, making the caller responsible for it. Ordinary code never needs this (a clause hands its
       * continuation back to its region, a peel receives an unmarked one); it exists for the kernel's own tests, which reach runtime behaviour
-      * their types forbid, and the explicit name keeps those sites one grep away. What the caller takes on is what the marker stated: a
+      * their types forbid. What the caller takes on is what the marker stated: a
       * continuation carried past its region is refused when it re-enters a bracket the region already released (`kyo.Closed`), and one carried
       * to another fiber can have that bracket released under it.
       */

@@ -468,12 +468,12 @@ class PendingTest extends Test:
 
         // When the safepoint denies entry (as it does under fiber preemption), map/flatMap/andThen defer the
         // resumption over a nested `A < S` value; each must still apply its continuation so the inner effect stays
-        // handled and does not leak past its handler. `drainedBudget` forces that deferral deterministically.
+        // handled and does not leak past its handler.
         // One leaf per operation.
 
         // `ensureMap` reaches a function recording an obligation the value has already created (a spawned fiber,
         // an opened handle) even when the safepoint is denied, where `map` polls first and defers, dropping the
-        // recording and leaking the value. `Scope.acquireRelease`, `Async.timeout` and `Exchange.init` rely on it.
+        // recording and leaking the value.
         "ensureMap applies its function at a denied safepoint, where map defers it" in {
             var mapped         = false
             var ensureMapped   = false

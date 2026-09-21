@@ -833,8 +833,6 @@ class MeterTest extends kyo.test.Test[Any]:
     }
 
     "typed abort (#1846)" - {
-        // A permit is released through the kernel's bracket, so a body that ends with a typed Abort, the ending the
-        // old Sync.ensure missed, gives its permit back like any other ending, and the meter is usable afterwards.
         "a semaphore body that aborts with a typed error returns its permit" in {
             for
                 meter  <- Meter.initSemaphore(1)

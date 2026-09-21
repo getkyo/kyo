@@ -94,12 +94,11 @@ final private[kyo] class CdpBackend private[kyo] (
         release: R => Unit < (Async & Abort[BrowserReadException])
     )(using Frame): R < (Async & Abort[BrowserReadException]) =
         // Unsafe: the handoff promise and the detached call are unsafe-tier; the registration runs in the step the reply
-        // arrives. `Sync.Unsafe.defer` already provides the `AllowUnsafe`, so no import (a second one is ambiguous).
+        // arrives.
         Sync.Unsafe.defer {
             val handoff = Promise.Unsafe.init[R, Abort[BrowserReadException]]()
             Fiber.Unsafe.init(send[P, R](method, params)).onComplete { result =>
                 result.foldError(
-                    // The completed fiber's payload is a settled `R < Any`; `eval` reads the reply out of it.
                     replyComp =>
                         val reply = replyComp.eval
                         if !handoff.complete(Result.succeed(reply)) then discard(Fiber.Unsafe.init(release(reply)))
@@ -114,7 +113,6 @@ final private[kyo] class CdpBackend private[kyo] (
         }
     end acquire
 
-    /** [[acquire]] against the innermost scope. */
     private[kyo] def acquire[P: Schema, R: Schema](method: String, params: P)(
         release: R => Unit < (Async & Abort[BrowserReadException])
     )(using Frame): R < (Async & Scope & Abort[BrowserReadException]) =
@@ -484,9 +482,6 @@ private[kyo] object CdpBackend:
     ): CreateBrowserContextResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, CreateBrowserContextResult]("Target.createBrowserContext", CdpNoParams())
 
-    /** Creates a browser context owned by the scope: disposed on scope exit, or by the call itself when its reply arrives after the
-      * caller has gone.
-      */
     private[kyo] def acquireBrowserContext(backend: CdpBackend)(using
         Frame
     ): CreateBrowserContextResult < (Async & Scope & Abort[BrowserReadException]) =

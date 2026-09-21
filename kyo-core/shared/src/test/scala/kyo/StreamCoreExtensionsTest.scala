@@ -988,9 +988,8 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // An unbounded emitter ended early, which the bounded leaves around this one do not cover. The release
-        // is awaited rather than read when `run` returns: Scope.run's close hands its backlog to a detached
-        // fiber, so the finalizer runs, just not before the next effect.
+        // The release is awaited rather than read when `run` returns: Scope.run's close hands its backlog to a
+        // detached fiber, so the finalizer runs, just not before the next effect.
         "Scope.ensure over an unbounded stream releases once when take ends it" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
@@ -1027,11 +1026,10 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The Scope form of the same criterion, the issue's second test. `take` ends the emitter by discarding its
-        // continuation, so the scope leaves by its abnormal-exit path, which hands the release to a detached drain
-        // that nothing awaits (the decision recorded under #1723 in ScopeTest): the finalizer lands after `run` has
-        // returned. The finalizer suspends on a fiber join first so a round cannot win the race, and the rounds keep
-        // the pending marker stable.
+        // `take` ends the emitter by discarding its continuation, so the scope leaves by its abnormal-exit path,
+        // which hands the release to a detached drain that nothing awaits (the decision recorded under #1723): the
+        // finalizer lands after `run` has returned. The finalizer suspends on a fiber join first so a round cannot
+        // win the race, and the rounds keep the pending marker stable.
         "the Scope finalizer of a taken stream runs after the last element it emitted".pendingUntilFixed(
             "by decision there is no backpressure on abnormal exit: the scope's release runs on a detached drain that the end of take does not await"
         ) in {
@@ -1072,8 +1070,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The hand-out lane: a peel captures the rest of the stream as a value, and a resource acquired inside
-        // the stream must survive into whatever consumes that value, releasing once when its extent ends.
         "a resource-carrying remainder from a peel is consumable afterwards" in {
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
@@ -1091,7 +1087,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "a Sync.ensure remainder from a peel is consumable afterwards" in {
-            // The same lane with the bare bracket: Scope.run is Sync.ensure underneath.
             AtomicInt.init(0).map { released =>
                 val stream = Stream:
                     Sync.ensure(released.incrementAndGet.unit):
@@ -1109,8 +1104,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "a Sync.ensure stream zipped with another releases once after both are consumed" in {
-            // zip pulls each side one emission at a time through a handleFirst region and evaluates the
-            // remainder in its own loop, after that region ended, so no peel is visible to the user.
             AtomicInt.init(0).map { released =>
                 val left = Stream:
                     Sync.ensure(released.incrementAndGet.unit):
@@ -1140,8 +1133,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
 
         "a mapPar stream, which emits from inside the brackets that own its channels, can be peeled" in {
-            // mapPar's body is Channel.use around Meter.useSemaphore around a Sync.ensure, and the emissions
-            // happen inside all three, so a peel hands out a remainder carrying every one of them.
             Stream.init(1 to 6).mapPar(2)(i => Sync.defer(i + 1)).splitAt(2).map { (head, rest) =>
                 rest.run.map { tail =>
                     assert(head == Chunk(2, 3) && tail == Chunk(4, 5, 6, 7))
@@ -1196,15 +1187,12 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 Env.run(0)(left.zip(Stream.init(Seq("a", "b"))).run).map { pairs =>
                     seen.get.map { outcome =>
                         assert(pairs == Chunk((0, "a"), (1, "b")))
-                        // the dropped side's use never ran to an end, so its finalizer is told the discard signal
                         assert(outcome.exists(_.exists(_.panic.exists(_.isInstanceOf[kyo.KyoException]))))
                     }
                 }
             }
         }
 
-        // The two below assert prompt release at the library's own drop sites, not at the enclosing scope:
-        // zip drops the longer side's remainder when the other side ends, a pipe that stops early its source's.
         "zip releases the side it drops when the other side ends" in {
             AtomicInt.init(0).map { released =>
                 val left = Stream:
@@ -1286,7 +1274,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The release runs on the producer's own fiber, so it is awaited rather than read at once.
         "merge releases a producer's resource when the consumer stops" in {
             for
                 released <- AtomicInt.init(0)
@@ -1329,9 +1316,9 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The leaf above ends the consumer normally. Here the consumer fiber is interrupted while one element fiber
-        // is joined and the others sit buffered in the output channel: the joined one is reached through the join
-        // link, and the buffered ones through the handler's cleanup, so none runs on unowned.
+        // The consumer fiber is interrupted while one element fiber is joined and the others sit buffered in the
+        // output channel: the joined one is reached through the join link, and the buffered ones through the
+        // handler's cleanup, so none runs on unowned.
         "mapPar interrupted with element fibers buffered interrupts every element fiber" in {
             for
                 started  <- Latch.init(4)
@@ -1355,9 +1342,6 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The public peel confines its rest to the callback, so neither reproduction below compiles against
-        // it: the fork is refused where the crossing's isolate is demanded, and the hand-off on the row. The
-        // internal peel hands out an unconfined rest.
         "the rest of a public peel cannot be forked" in {
             typeCheckFailure(
                 """
@@ -1424,7 +1408,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // A stream that closes over its own Scope.run anchors the resource to whichever evaluation runs it. A
         // remainder handed across a fiber boundary loses the resource at the peeling fiber's exit (the drain
         // is the leak backstop), and consuming it afterwards panics on the spent scope. A resource meant to
-        // outlive the peel keeps Scope in the row instead, as in the next leaf.
+        // outlive the peel keeps Scope in the row instead.
         "a self-contained stream's resource does not survive a fiber hand-out" in {
             AtomicInt.init(0).map { released =>
                 Latch.init(1).map { drainedGate =>
@@ -1472,17 +1456,13 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         }
     }
 
-    // The rest of a public peel, and a bracket a multi-shot handler replays, under every way an extent can
-    // end that reaches them.
     "a peeled rest under interrupts, timeouts, aborts and replay" - {
 
-        /** Three emissions under one Sync.ensure, the finalizer counting and opening a latch. */
         def bracketed(released: AtomicInt, done: Latch): Stream[Int, Sync] =
             Stream:
                 Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
                     Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.value(Chunk(3))))
 
-        /** An unbounded emitter under one Sync.ensure. */
         def unbounded(released: AtomicInt, done: Latch): Stream[Int, Sync] =
             Stream:
                 Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):

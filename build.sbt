@@ -766,10 +766,6 @@ lazy val `kyo-data` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-// Cross-library ports of KernelBench's rows (ZIO, cats-effect),
-// for comparison boards. A separate unpublished project so the external dependencies never
-// reach a published kyo artifact's pom; row names match KernelBench's so result tables join
-// by name.
 lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -779,8 +775,7 @@ lazy val `kyo-kernel` =
             `kyo-settings`,
             // The kernel tests on ScalaTest, not kyo-test: kyo-test runs its leaves as fibers on
             // the scheduler the kernel powers, and the scheduler's preemption writes into the
-            // stop channel and safepoint state the kernel suites assert on. See kyo.Test in this
-            // module's test sources.
+            // stop channel and safepoint state the kernel suites assert on.
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
@@ -790,15 +785,13 @@ lazy val `kyo-kernel` =
             // reusing one compiler across blocks trips dotty's denotation validation on the
             // suspended-unit retries. A fresh driver per block sidesteps it.
             doctestFreshDriver := true,
-            // Bytecode-shape pins (PendingBytecodeTest, ArrowEffectBytecodeTest) read method
+            // Bytecode-shape pins read method
             // sizes through javassist.
             libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
             // flag must not be baked into the canonical numbers.
             Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
-            // The comparison benches under bench/cross; jmh-scoped so the frameworks stay off
-            // the Compile and Test classpaths.
             libraryDependencies ++= Seq(
                 "dev.zio"        %% "zio"             % zioVersion,
                 "org.typelevel"  %% "cats-effect"     % catsVersion,
@@ -3722,10 +3715,9 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // The Jmh fork runs on the background-job service's re-materialized classpath, where an
             // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
-            // natives (P2b: they ship in per-platform classifier jars). Without them the transport
+            // natives (they ship in per-platform classifier jars). Without them the transport
             // silently floors to NIO and the benches measure the floor instead of the primary posix
-            // backend. The all-natives classifier jar restores every platform's shim on the bench
-            // classpath, which is the documented production setup: main jar plus classifier.
+            // backend.
             Jmh / unmanagedJars += {
                 val artifacts = (`kyo-net`.jvm / kyoNetClassifierArtifacts).value
                 val jar       = artifacts.collectFirst { case (a, f) if a.classifier.contains("all-natives") => f }

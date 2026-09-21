@@ -7,8 +7,7 @@ import kyo.Frame
   * A value of type `Kyo[A, S]` is either a [[Pending]] node (the reification of one combinator) or an [[kyo.kernel.Arrow]] (the reification
   * of a continuation). The evaluator runs values built from these two families; each carries the frame it was created at, for traces.
   *
-  * The families are otherwise unrelated: the nodes are `Pending`'s subclasses in `PendingInternal`, a continuation is a first-class
-  * `Arrow`. This trait is the supertype of both, which is what lets one position hold either.
+  * This trait is the supertype of both, which is what lets one position hold either.
   *
   * @tparam A
   *   The type of value this computation will eventually produce
@@ -16,5 +15,4 @@ import kyo.Frame
   *   The type-level set of effects this computation may perform
   */
 trait Kyo[+A, -S]:
-    /** The stack frame where this value was created */
     def frame: Frame

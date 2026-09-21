@@ -171,10 +171,9 @@ class FiberTest extends kyo.test.Test[Any]:
             }
             // The race interrupts each loser from the winner's completion callback while the loser may be mid-slice on
             // another worker, never parking: the stop has to be observed by the loser's next safepoint poll or at its
-            // next slice entry. A loser that keeps running past the winner outlives the leaf and the end-of-run fiber
-            // probe reports it, which is how one run of the "n" leaf above surfaced. Each round races an immediate
-            // winner against a spinning loser that owes a finalizer; the flag lets the leaf stop a loser the race
-            // failed to, so a lost stop fails the round instead of the fork.
+            // next slice entry. Each round races an immediate winner against a spinning loser that owes a finalizer;
+            // the flag lets the leaf stop a loser the race failed to, so a lost stop fails the round instead of the
+            // fork.
             "interrupts a losing computation that never parks" in {
                 val rounds                                                             = 500
                 def spin(stop: java.util.concurrent.atomic.AtomicBoolean): Unit < Sync =
@@ -752,15 +751,11 @@ class FiberTest extends kyo.test.Test[Any]:
                     yield assert(result == "hi")
                 }
 
-                // The kernel's trace is rebuilt from the child's own regions, so a spawn does not carry the
-                // spawning chain's frames into the child's exceptions.
                 "a carrier spawned from a running computation carries the spawning chain's frames in its failure".pendingUntilFixed(
                     "the kernel's effect trace does not carry the spawning chain's frames into a child fiber"
                 ) in {
-                    // The spawning chain's own user frames are expected in the exception the carrier throws, as
-                    // Kyo frame elements (format "snippet @ className" in the class-name field). The spawn
-                    // follows at least one user-framed effect step, since only those steps push frames; a spawn
-                    // at the very start of the body would see an empty trace.
+                    // The spawn follows at least one user-framed effect step, since only those steps push frames;
+                    // a spawn at the very start of the body would see an empty trace.
                     Sync.defer(1).map(_ => 2).map { _ =>
                         Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
                     }.map { carrier =>
@@ -1345,7 +1340,7 @@ class FiberTest extends kyo.test.Test[Any]:
         // An interrupt taken on a slice wins over a value the body produces on that same slice: `interrupt()`
         // returned true, so the fiber ends interrupted, never a success. The value is dropped; a resource a body
         // would hold as its value is the caller's to bracket, not the scheduler's to keep by refusing the
-        // interrupt (ruling 2026-09-13). The fiber still completes, with the interrupt, so nothing is lost.
+        // interrupt.
         "a body ending with its value in the slice its interrupt landed on completes with the interrupt" in {
             for
                 handoff <- Promise.init[Fiber[Int, Any], Any]
@@ -1378,9 +1373,6 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(seen.reverse == List("fiber", "scope"))
         }
 
-        // A scoped fiber's own scope is closed by the enclosing scope's release, with the fiber's own verdict: a
-        // finalizer registered directly in the fiber's body runs then, not when the fiber ends, and it is told how
-        // the fiber ended rather than how the enclosing scope did.
         "a finalizer registered in a scoped fiber's body runs at the enclosing scope's close with a clean ending" in {
             for
                 seen   <- AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]])

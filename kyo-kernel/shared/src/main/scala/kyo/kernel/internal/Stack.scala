@@ -28,7 +28,6 @@ final private[kernel] class Stack:
     // none, which makes a held region release once, at the holder, without a separate flag.
     private var releases = new Array[Stack.Releases](0)
 
-    // Releases owed below depth 0, run by the evaluation rather than a region.
     private var evalReleases: Stack.Releases = Stack.Releases.empty
 
     // Remainders an escaping peel handed out, owed to an entry until the remainder resumes (settled out of the lane) or
@@ -36,7 +35,6 @@ final private[kernel] class Stack:
     // region carries in its snapshot runs exactly once, with no once-guard.
     private var owedRemainders = new Array[Chunk[Stack.Snapshot]](0)
 
-    // Remainders owed below depth 0, drained by the evaluation rather than a region.
     private var evalOwedRemainders: Chunk[Stack.Snapshot] = Chunk.empty
 
     // Fast-path guard read before scanning the lanes; every write to a release or owed-remainder lane must set it.
@@ -44,8 +42,7 @@ final private[kernel] class Stack:
 
     /** A write-only store that forces a loop handler's outcome to escape. Nothing reads it; deleting it is a large regression: the write
       * keeps C2 from scalar-replacing the outcome away, and without it the settled handleLoop rows run about twice as slow at byte-identical
-      * allocation (the slow compilation has no allocation site for the outcome; the fast one materializes it). Measure
-      * `handleLoopAnswersInPlace`, `handleLoopFusesContinuation` and `statefulAnswersPaySuccessor` in the kernel benchmarks before touching it.
+      * allocation (the slow compilation has no allocation site for the outcome; the fast one materializes it).
       */
     var sink: Any = null
 
@@ -148,7 +145,6 @@ final private[kernel] class Stack:
             owes = true
             owedRemainders(i) = owedRemainders(i).concat(snapshots)
 
-    /** Removes `snapshot` from wherever it is owed, when its remainder resumes. Identity, not equality: the same snapshot object. */
     def settle(snapshot: Stack.Snapshot): Unit =
         if owes then
             @tailrec def loop(i: Int): Unit =
@@ -300,15 +296,11 @@ final private[kernel] class Stack:
                 out(i * 4) = handlers(j)
                 out(i * 4 + 1) = states(j).asInstanceOf[AnyRef]
                 out(i * 4 + 2) = continuations(j)
-                // Escaping peel: each region keeps its own release in the snapshot, and the whole snapshot is owed to the
-                // scope below (settled if the remainder resumes, drained if it is dropped, never both, so the release runs
-                // once).
                 if escaping then out(i * 4 + 3) = releases(j).asInstanceOf[AnyRef]
                 else
                     out(i * 4 + 3) = null
                     moved = moved.concat(releases(j).capture(states(j)))
                 end if
-                // Owed remainders move to the holder the same way releases do, not into the snapshot.
                 movedOwed = movedOwed.concat(owedRemainders(j))
                 handlers(j) = null
                 states(j) = null
@@ -404,9 +396,6 @@ private[kernel] object Stack:
                                 Chunk(g.asInstanceOf[Maybe[Throwable] => Unit]).concat(c2)
                             case f2 => Chunk(g.asInstanceOf[Maybe[Throwable] => Unit], f2.asInstanceOf[Maybe[Throwable] => Unit])
 
-        /** Fixes each [[OwnRelease]] to `state` before the entry is reused, so the releases no longer read the live entry. A plain closure is
-          * left as is.
-          */
         def capture(state: Any): Releases =
             if self.isEmpty then self
             else
@@ -414,7 +403,6 @@ private[kernel] object Stack:
                     case c: Chunk[Maybe[Throwable] => Unit] @unchecked => c.map(Stack.captureOne(_, state))
                     case f                                             => Stack.captureOne(f.asInstanceOf[Maybe[Throwable] => Unit], state)
 
-        /** Runs each release once, innermost first; a throw goes to `onError` so the rest still run. */
         inline def run(failure: Maybe[Throwable])(inline onError: Throwable => Unit): Unit =
             if !self.isEmpty then
                 self match
@@ -429,7 +417,6 @@ private[kernel] object Stack:
                         try f.asInstanceOf[Maybe[Throwable] => Unit](failure)
                         catch case ex if !IsFatal(ex) => onError(ex)
 
-        /** Like [[run]], but resolves the region's [[OwnRelease]] against `state` (the entry's live state) before running it. */
         inline def runOwn(state: Any, failure: Maybe[Throwable])(inline onError: Throwable => Unit): Unit =
             if !self.isEmpty then
                 self match
@@ -491,9 +478,6 @@ private[kernel] object Stack:
 
     end extension
 
-    /** A per-thread free list of stacks, reused across evaluations rather than allocated per run. Release clears the stack, which also bumps
-      * its epoch.
-      */
     final private class Pool:
         private var free = new Array[Stack](4)
         private var size = 0

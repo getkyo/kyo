@@ -70,7 +70,7 @@ class SyncTest extends kyo.test.Test[Any]:
                 assert(result == frames)
             }
         }
-        // The leaves above recurse in tail position; the map after the recursive defer makes each level
+        // The map after the recursive defer makes each level
         // leave a cont behind (#1739). The assertion is on the value, so a rescue that unwinds by
         // dropping accumulated conts fails too.
         "stack-safe when a map follows the recursive defer" in {
@@ -330,14 +330,12 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // A bracket whose use suspends on an async join releases where the use ends, not at the fiber's
-        // end. The fiber boundary answers a join in place, or parks at it carrying the region, rather than
-        // handing a continuation out and moving the release onto the boundary (which fired only at fiber end).
+        // The fiber boundary answers a join in place, or parks at it carrying the region, rather than
+        // handing a continuation out and moving the release onto the boundary.
         "whose use suspends on an async join releases at its own end" in {
             for
                 released <- AtomicInt.init(0)
                 _        <- Sync.ensure(released.incrementAndGet.unit)(Async.sleep(1.millis).andThen(Sync.defer(())))
-                // the bracket's use has completed; its release must already have run, before these later steps
                 afterUse <- released.get
                 _        <- Async.sleep(1.millis)
                 total    <- released.get
@@ -613,7 +611,7 @@ class SyncTest extends kyo.test.Test[Any]:
         // The finalizer runs as the region ends, and the step that raises the recorded abort applies as the value
         // arrives, so a stop delivered while the finalizer runs, here requested by the finalizer itself, cannot
         // separate the region's clean end from the caller's `ensureMap`. A guard that hands its value on at a clean
-        // end (the shape Topic's add-deadline guards document) closes nothing, and the caller must own the value.
+        // end closes nothing, and the caller must own the value.
         "a caller's ensureMap after the region runs when the interrupt lands as the region ends" in {
             for
                 handoff <- Promise.init[Fiber[Unit, Any], Any]
@@ -649,7 +647,6 @@ class SyncTest extends kyo.test.Test[Any]:
 
         // An interrupt landing as the body produces its outcome: the body interrupts its own fiber, so
         // delivery lands at the next safepoint, after the body's step and before the region completes.
-        // No second thread, so it runs on every platform.
         "still runs the finalizer" in {
             for
                 ran     <- AtomicInt.init(0)
@@ -685,7 +682,8 @@ class SyncTest extends kyo.test.Test[Any]:
                         Abort.run[String] {
                             Sync.ensure(ran.incrementAndGet.unit) {
                                 Sync.defer {
-                                    // Unsafe: see the leaf above.
+                                    // Unsafe: the interrupt has to be requested from inside the body, before
+                                    // its step ends, which is not an effectful position.
                                     import AllowUnsafe.embrace.danger
                                     discard(self.unsafe.interrupt())
                                 }.andThen(Abort.fail("boom"))
@@ -701,7 +699,6 @@ class SyncTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Any handler holding the continuation may resume it more than once: nothing has to be declared.
         "a plain handler that resumes twice runs both shots against the live resource, released once" in {
             import kyo.kernel.ArrowEffect
             for

@@ -365,9 +365,7 @@ object JsonRpcEndpointImpl:
                                     // A Closed from the transport's incoming stream is the transport going away: an orderly
                                     // end of the receive stream, on which the Exchange reader completes its done promise with
                                     // Closed. Reporting it as a JsonRpcTransportError would instead poison that promise with a
-                                    // transport error, so later calls read the stale error back rather than Closed. The shipped
-                                    // transports already end their incoming cleanly here; this only matters for a custom
-                                    // transport whose incoming aborts Closed.
+                                    // transport error, so later calls read the stale error back rather than Closed.
                                     case Result.Failure(_) => ()
                                     case Result.Panic(t)   => Abort.panic(t)
                                 }
@@ -632,8 +630,8 @@ object JsonRpcEndpointImpl:
                                                                             case _ => ()
                                                                         }
                                                                     end if
-                                                                    // Attach the completion hook after the link. fiber onComplete attaches a cleanup hook from outside the
-                                                                    // fiber; no safe equivalent in Fiber's public API.
+                                                                    // fiber onComplete attaches a cleanup hook from outside the fiber; no safe equivalent in Fiber's
+                                                                    // public API.
                                                                     fiber.unsafe.onComplete { result =>
                                                                         val responseEnvelope = result match
                                                                             case Result.Success(sv) =>
@@ -644,7 +642,6 @@ object JsonRpcEndpointImpl:
                                                                                     extras
                                                                                 )
                                                                             case Result.Failure(halt: JsonRpcResponse.Halt) =>
-                                                                                // Handler short-circuited with Halt; emit the wrapped response directly.
                                                                                 halt.response
                                                                             case Result.Failure(e: JsonRpcError) =>
                                                                                 JsonRpcResponse(id, Absent, Present(e), extras)
@@ -668,7 +665,7 @@ object JsonRpcEndpointImpl:
                                                                                 val replying =
                                                                                     InboundEntry.Replying(method, suppressUnsafe.safe)
                                                                                 if pendingInbound.replace(id, running, replying) then
-                                                                                    // Guaranteed delivery from the Sync-only onComplete callback (see enqueueResponse).
+                                                                                    // Guaranteed delivery from the Sync-only onComplete callback.
                                                                                     enqueueResponse(
                                                                                         writerChannel,
                                                                                         WriterMsg.SuppressIfCancelled(
@@ -678,14 +675,11 @@ object JsonRpcEndpointImpl:
                                                                                     )(using frame, AllowUnsafe.embrace.danger)
                                                                                 end if
                                                                             case _: InboundEntry.Cancelled =>
-                                                                                // Cancel won the CAS. If the policy demands a reply for cancelled
-                                                                                // requests, send the response anyway; otherwise the handler was
-                                                                                // interrupted and produces no reply.
                                                                                 val mustReply = config.cancellation match
                                                                                     case Present(p) => p.expectReplyForCancelledRequest
                                                                                     case Absent     => false
                                                                                 if mustReply then
-                                                                                    // SendEnvelope bypasses the suppress check because the policy demands a reply; guaranteed delivery.
+                                                                                    // SendEnvelope bypasses the suppress check because the policy demands a reply.
                                                                                     enqueueResponse(
                                                                                         writerChannel,
                                                                                         WriterMsg.SendEnvelope(responseEnvelope)

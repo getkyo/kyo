@@ -106,8 +106,7 @@ private[kyo] object BrowserLauncher:
       * GPU process and the network service still write into the user-data-dir: a removal that runs inside that window finds the
       * directory re-created behind it. The helpers carry no `--user-data-dir` in their argv, so `killOrphans` cannot reach them
       * either. The descendants are listed while the main process is alive, because its death re-parents them and they can no
-      * longer be found through it; then every process of the tree gets SIGKILL, and the release returns once none of them is
-      * left, so the removal registered before the spawn runs against a directory nothing can write to.
+      * longer be found through it.
       *
       * The input feeds are stopped first, as `Command.spawn`'s release does: the process may have exited while a feed is still
       * parked reading its own source. On a host without `pgrep` and `kill` (Windows) the listing is empty and only the main
@@ -124,7 +123,6 @@ private[kyo] object BrowserLauncher:
             }
         }
 
-    /** Every process below `pid`, listed through `pgrep -P` one generation at a time; empty where `pgrep` is missing. */
     private def descendants(pid: Long)(using Frame): Chunk[Long] < Async =
         Abort.run[CommandException](Command("pgrep", "-P", pid.toString).text).map {
             case Result.Success(output) =>
@@ -136,15 +134,14 @@ private[kyo] object BrowserLauncher:
     private def kill(pid: Long)(using Frame): Unit < Async =
         Abort.run[CommandException](Command("kill", "-9", pid.toString).waitFor).unit
 
-    /** Whether `pid` still names a process: `kill -0` exits 0 while it does. */
     private def alive(pid: Long)(using Frame): Boolean < Async =
         Abort.run[CommandException](Command("kill", "-0", pid.toString).waitFor).map {
             case Result.Success(code) => code.isSuccess
             case _                    => false
         }
 
-    /** Polls until no process of the tree is left. A killed process is gone within milliseconds, so the bound only ever
-      * matters for a pid that could not be signalled; when it is reached the removal that follows still has its own retries.
+    /** A killed process is gone within milliseconds, so the bound only ever matters for a pid that could not be
+      * signalled; when it is reached the removal that follows still has its own retries.
       */
     private def awaitExit(pids: Chunk[Long])(using Frame): Unit < Async =
         def poll(remaining: Chunk[Long], polls: Int): Unit < Async =

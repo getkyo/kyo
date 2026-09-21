@@ -64,8 +64,7 @@ private[mysql] object LocalInfileExchange:
                 // Register a cleanup finalizer that fires on error exit (including timeout/interrupt).
                 // A failure the terminator can still speak to gets the graceful cleanup: empty terminator plus
                 // drain, inside Async.uninterruptible so the cleanup cannot itself be interrupted, under a
-                // 5-second timeout so a server that stops responding cannot hang it forever. A cancellation
-                // takes no round-trip at all, for the reason given on that branch.
+                // 5-second timeout so a server that stops responding cannot hang it forever.
                 // The latch is always released at the end of this block so waiting callers unblock.
                 Scope.ensure {
                     case Maybe.Present(error) =>
@@ -94,17 +93,15 @@ private[mysql] object LocalInfileExchange:
                                     Async.timeout(5.seconds) {
                                         Abort.run[SqlException](
                                             sendRawPayload(channel, Span.empty).flatMap { _ =>
-                                                // Use readRawPayloadSkipCheck: _corrupted may already be set
+                                                // _corrupted may already be set
                                                 // by a concurrent markCorrupted() call and we still need to
                                                 // drain the server's response before discarding the connection.
                                                 readFinalResponseSkipCheck(channel).map(_ => ())
                                             }
                                         ).flatMap {
                                             case Result.Success(_) =>
-                                                // The terminator is genuine on this branch, so the connection stays reusable.
                                                 channel.endCleanup().andThen(latch.release)
                                             case Result.Failure(_) =>
-                                                // Cleanup failed (write error or ERR from server).
                                                 channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                                             case Result.Panic(t) =>
                                                 channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
@@ -113,7 +110,6 @@ private[mysql] object LocalInfileExchange:
                                 ).flatMap {
                                     case Result.Success(_) => ()
                                     case Result.Failure(_) =>
-                                        // Inner 5-second cleanup timeout fired. Mark corrupted and unblock callers.
                                         channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)
                                     case Result.Panic(t) =>
                                         channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)

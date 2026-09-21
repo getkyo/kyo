@@ -9,9 +9,8 @@ import kyo.kernel.internal.Pending
 
 /** A [[Debugger]] that prints the evaluator's steps as they happen, indented by region depth.
   *
-  * Shows what a computation did, in order: which nodes were allocated, where the loop went, which region answered what. The reported JVM
-  * stack depth at each step tells a fused run building frames apart from one deferring through the evaluator. Nothing here is on unless the
-  * kernel was compiled with `-Dkyo.kernel.internal.Debugger.enabled=true`, since the hooks are erased otherwise.
+  * The reported JVM stack depth at each step tells a fused run building frames apart from one deferring through the evaluator. Nothing here
+  * is on unless the kernel was compiled with `-Dkyo.kernel.internal.Debugger.enabled=true`, since the hooks are erased otherwise.
   */
 final class ConsoleDebugger extends Debugger:
 

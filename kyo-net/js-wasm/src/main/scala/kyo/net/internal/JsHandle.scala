@@ -71,8 +71,6 @@ private[kyo] object JsHandle:
         // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
         val handle = new JsHandle(socket, HandleId.next(0), createdAt)
 
-        // Permanent "data" listener. Kept on the handle (handle.dataListener) so a STARTTLS upgrade can remove exactly this
-        // listener via socket.removeListener("data", _), the only removal that clears Node's kDataListening flag.
         val dataFn: js.Function1[js.Dynamic, Unit] = (chunk: js.Dynamic) =>
             discard(socket.pause())
             // Safe: a Node socket with no encoding set always emits its "data" chunks as Buffers, which are Uint8Arrays.
@@ -84,7 +82,6 @@ private[kyo] object JsHandle:
                     handle.clearPendingRead()
                     pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                 case Absent =>
-                    // No pending read: enqueue as leftover (the pump is parked, or the peer-close grace probe's resume() drained this chunk).
                     handle.enqueueLeftover(arr, 0, arr.length)
             end match
         handle.dataListener = dataFn

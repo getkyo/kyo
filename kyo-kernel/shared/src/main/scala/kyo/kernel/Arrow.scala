@@ -13,52 +13,24 @@ import scala.annotation.targetName
 
 /** A transformation from an `A` to a `B` that may perform `S` on the way, reified as a value.
   *
-  * An arrow is the third piece beside a computation (what you compose) and a handler (what consumes it): a transformation that outlives the
-  * expression that built it, so it can be stored, passed, composed, and applied whenever its holder decides.
-  *
-  * Applying an arrow answers a computation rather than a value, which is how an arrow performs effects of its own: a body that suspends
-  * `Ask` gives an `Arrow[Int, Int, Ask]`, and applying it gives an `Int < Ask`. [[chain]] composes two by feeding the first result into the
-  * second and intersecting both rows, with [[Arrow.id]] as the neutral element.
-  *
-  * Because an arrow outlives its application, building one ahead of time is a performance tool: a transformation hoisted into a `val` is
-  * allocated once and applied as many times as needed, and a pipeline pre-composed with [[chain]] pays for its composition once.
-  * [[Arrow.recursive]] is the same idea for a step that re-enters itself.
-  *
-  * The two-argument [[apply]] is where the module's throughput comes from: handing the continuation in lets the JIT fuse a chain of steps
-  * into straight-line code rather than routing each back through the evaluator, and [[head]]/[[tail]] let a composed arrow take part.
-  *
   * A handler clause receives its continuation (via [[ArrowEffect.handleCont]]) as an arrow of this same type, composed and applied like any
   * other as many times as it likes, which makes multi-shot continuations ordinary here rather than a separate capability.
   *
   * IMPORTANT: the continuation a clause receives carries [[Region.NoEscape]] in its row, confining it to that clause. An arrow built with
   * [[Arrow.apply]] carries no such marker and goes wherever it is sent.
-  *
-  * @tparam A
-  *   The value the arrow accepts
-  * @tparam B
-  *   The value it produces
-  * @tparam S
-  *   The effects it may perform while producing that value
   */
 sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
-    /** Applies this arrow to a value already in hand, answering a computation because the arrow may perform `S` on the way. */
     def apply(v: A): B < S =
         Debugger.onUnfused(this)
         this.head(v, this.tail)
 
-    /** Applies this arrow to a computation, with nothing composed after it. The arrow is the receiver, so a value needs no arrow-shaped
-      * method of its own.
-      *
-      * `@targetName` because this erases to the same signature as `apply(v: A)`: a raw `A` is also an `A < S2`, the union's first arm.
-      */
+    /** `@targetName` because this erases to the same signature as `apply(v: A)`: a raw `A` is also an `A < S2`, the union's first arm. */
     @targetName("applyPending")
     def apply[S2](v: A < S2): B < (S & S2) =
         this(v, Arrow.id)
 
-    /** Composes this arrow with another, feeding this arrow's result into `a` and intersecting both rows.
-      *
-      * Composing with [[Arrow.id]] on either side answers the other arrow unchanged, so a fold over a collection of arrows starting from
+    /** Composing with [[Arrow.id]] on either side answers the other arrow unchanged, so a fold over a collection of arrows starting from
       * `id` allocates nothing for the empty and single-element cases.
       */
     def chain[C, S2](a: Arrow[B, C, S2]): Arrow[A, C, S & S2] =
@@ -69,9 +41,7 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
         else
             Arrow.Chain(this, a)
 
-    /** Applies this arrow to a computation with `cont` composed after it, so the result never becomes a value in between.
-      *
-      * Taking the rest of the computation as an argument is what lets the JIT fuse a chain of transformations into straight-line code: every
+    /** Taking the rest of the computation as an argument is what lets the JIT fuse a chain of transformations into straight-line code: every
       * `map` and [[Arrow.apply]] expands to its own class with the body inlined into `apply`, so the receiver at each site is monomorphic and
       * the JIT can inline through it. Answering with the intermediate value instead would route every step back through the evaluator's loop,
       * far too large to inline and seeing every effect in the program, so nothing downstream would fuse.
@@ -80,8 +50,6 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
       * second behind it, and an atom with [[Arrow.id]] behind it, the same expression either way. Calling `cont` directly would reach the
       * composition node, which can only build a node and hand it back to the evaluator, ending fusion at every composition boundary. It also
       * keeps a deferral to one node, carrying both halves rather than a node plus a composition.
-      *
-      * Ordinary code wants `arrow(value)`; this is for callers that already hold a continuation.
       */
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
@@ -89,24 +57,21 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
     type X
 
     /** The half of this arrow's composition that does work when the arrow is applied: for a composed arrow its first link, for an atom the
-      * arrow itself with [[tail]] the identity. That uniformity makes the fused application in [[apply]] possible and keeps composition free.
+      * arrow itself with [[tail]] the identity.
       *
       * Public because the module's hot-path inline expansions must reach it, not an invitation: reach for [[chain]] to compose and
       * `arrow(value)` to apply.
       */
     def head: Arrow[A, X, S]
 
-    /** The half of this arrow's composition passed along as the continuation when [[head]] is applied, [[Arrow.id]] for an atom.
-      *
-      * See [[head]] for why both are public and what the split buys.
-      */
+    /** The half of this arrow's composition passed along as the continuation when [[head]] is applied, [[Arrow.id]] for an atom. */
     def tail: Arrow[X, B, S]
 end Arrow
 
 object Arrow:
 
     /** The arrow that returns its input untouched. Reach for [[id]] rather than constructing one: a single instance is shared across every
-      * type, and [[Arrow.chain]] recognizes it by identity to collapse the composition instead of building a node.
+      * type.
       */
     class Id[A] private[Arrow] () extends Step[A, A, Any]:
         def frame                                          = Frame.internal
@@ -121,17 +86,8 @@ object Arrow:
 
     private val identity = Id[Any]()
 
-    /** The arrow that returns its input untouched, the neutral element of [[Arrow.chain]]. */
     def id[A]: Id[A] = identity.asInstanceOf[Id[A]]
 
-    /** Builds an arrow from an ordinary function, reifying the transformation as a value that can be stored, composed and applied later.
-      *
-      * `f` may itself suspend, which is how an arrow carries effects in `S` (a body performing `Ask` gives an `Arrow[A, B, Ask]`). It is
-      * inlined into a fresh class at each call site, so an arrow costs one allocation and reaching its body no indirection.
-      *
-      * @param f
-      *   The transformation, which may perform effects of its own
-      */
     @nowarn("msg=anonymous")
     inline def apply[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
         new Step[A, B, S]:
@@ -156,10 +112,7 @@ object Arrow:
       * [[Arrow.apply]] polls before applying, so an interrupt pending when the value arrives parks the computation and `f` never runs. That is
       * right nearly everywhere, and wrong where `f` records an obligation the value just created (a resource opened and its release registered,
       * a fiber spawned and its handle stored): a park between the two loses it. Reach for it only for that pairing; skipping the poll also
-      * blocks preemption there, so [[Arrow.apply]] is right everywhere else.
-      *
-      * @param f
-      *   The transformation, run as the value arrives
+      * blocks preemption there.
       */
     @nowarn("msg=anonymous")
     inline def ensure[A](using _frame: Frame)[B, S](inline f: A => B < S): Arrow[A, B, S] =
@@ -169,9 +122,6 @@ object Arrow:
 
     /** Builds an arrow whose body receives the arrow being defined alongside the value, so a step that loops can re-enter itself. Naming
       * `self` rather than rebuilding the arrow per round means one allocation for the whole loop.
-      *
-      * @param f
-      *   The transformation, taking the arrow being defined and the input value
       */
     @nowarn("msg=anonymous")
     inline def recursive[A, B, S](inline f: (Arrow[A, B, S], A) => B < S)(using _frame: Frame): Arrow[A, B, S] =
@@ -192,11 +142,9 @@ object Arrow:
                             out
                         end if
 
-    /** An arrow that is its own head, with `id` as its tail: the shape of every arrow but `Chain`.
-      *
-      * A `Pending` node mixes this in to stand in an arrow position as its own continuation, the site's transformation inlined into the
+    /** A `Pending` node mixes this in to stand in an arrow position as its own continuation, the site's transformation inlined into the
       * node's `apply` rather than sitting in a separate arrow behind it. That is what fuses a `map` or a `done` into the node it follows and
-      * saves the evaluator a hop; the `*With` nodes are exactly those.
+      * saves the evaluator a hop.
       */
     private[kyo] trait Transform[-A, B, -S] extends Arrow[A, B, S]:
         type X = B
@@ -229,9 +177,7 @@ object Arrow:
       *
       * It does no work itself. Applied to a settled value it reaches its first link with the rest behind it, the expression the evaluator's
       * settled arm computes, so a link that must run as the value arrives (an [[Ensure]]) does; reified as a deferral instead, the value
-      * would sit in front of a poll with that link unapplied. Applied to a pending value it can only build a node and hand it back to the
-      * evaluator. The hot paths pull it apart through [[Arrow.head]] and [[Arrow.tail]] instead, which is what keeps composition free at
-      * the point of application.
+      * would sit in front of a poll with that link unapplied.
       */
     final private[kyo] class Chain[A, B, C, S] private[kernel] (
         val a: Arrow[A, B, S],
@@ -272,9 +218,7 @@ object Arrow:
     end Chain
 
     private object Chain:
-        /** Applies a composition to a settled value: the leftmost link takes it with the rest behind, the expression the evaluator's settled
-          * arm computes. Walked, not recursed: a fold over a collection of arrows nests the left spine as deep as the collection.
-          */
+        /** Walked, not recursed: a fold over a collection of arrows nests the left spine as deep as the collection. */
         @tailrec def first[A, B, C, D, S, S2](v: A < S2, chain: Chain[A, B, C, S], cont: Arrow[C, D, S2]): D < (S & S2) =
             chain.a match
                 // Erasure-forced: the type joining a nested composition's links is existential from out here.

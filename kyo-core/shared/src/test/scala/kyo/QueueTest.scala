@@ -1051,7 +1051,7 @@ class QueueTest extends kyo.test.Test[Any]:
     }
 
     // `close` joins the fiber that settles the in-flight offers before it returns the backlog. An interrupt landing on
-    // that join discards the backlog and the queue still closes, which the scaladoc states; the latch places the
+    // that join discards the backlog and the queue still closes; the latch places the
     // interrupt after the close began, so a round never interrupts a close that has not started.
     "an interrupted close still closes the queue" in {
         val rounds = 100

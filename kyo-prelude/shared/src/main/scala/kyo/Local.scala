@@ -15,8 +15,7 @@ import scala.annotation.nowarn
   * makes `Local` ideal for contextual information that varies within different parts of your application.
   *
   * Each local carries its own strategy for crossing fork boundaries: what a forked computation receives (everything, nothing, or a
-  * transformation of the current value) and what the parent holds once a fork ends. The default strategy inherits the value into forks and
-  * keeps the parent's own value on join, matching inheritable thread locals; `initNoninheritable` builds one that never crosses.
+  * transformation of the current value) and what the parent holds once a fork ends.
   *
   * This effect useful for managing request context information, tracing and logging context, temporary configuration overrides, and user or
   * tenant context. Choose `Local` when you have context that always has a sensible default value and may need to be modified temporarily.
@@ -42,7 +41,6 @@ abstract class Local[A] extends Serializable:
     /** What a computation forked from a scope holding this local receives; Absent for a value that must not cross. */
     def fork(value: A): Maybe[A]
 
-    /** What this local holds once a fork ends, given what the parent held and what the fork ended with. */
     def join(held: A, forked: A): A
 
     /** Retrieves the current value of this Local.
@@ -93,8 +91,7 @@ abstract class Local[A] extends Serializable:
             map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
         )(v)
 
-    // All locals share one tag, so every binding installs these strategies: a fork asks each local for
-    // its own crossing, and a join asks each held local against what the fork ended with.
+    // All locals share one tag, so every binding installs these strategies.
     private def scoped[B, S](
         ifUndefined: Map[Local[?], AnyRef],
         ifDefined: Map[Local[?], AnyRef] => Map[Local[?], AnyRef]
@@ -145,10 +142,6 @@ object Local:
       *
       * @param defaultValue
       *   The default value for the Local
-      * @param forkValue
-      *   What a forked computation receives, given the current value
-      * @param joinValue
-      *   What the parent holds after a fork ends, given its value and the fork's final value
       * @return
       *   A new Local instance carrying the strategy
       */
@@ -165,12 +158,7 @@ object Local:
     /** Creates a new non-inheritable Local instance with the given default value.
       *
       * Child computations always start with the default value and do not inherit from their parent,
-      * matching non-inheritable thread locals. Shorthand for `init(defaultValue)(_ => Absent)`.
-      *
-      * @param defaultValue
-      *   The default value for the Local
-      * @return
-      *   A new non-inheritable Local instance
+      * matching non-inheritable thread locals.
       */
     inline def initNoninheritable[A](inline defaultValue: A): Local[A] =
         init(defaultValue)(_ => Maybe.Absent)

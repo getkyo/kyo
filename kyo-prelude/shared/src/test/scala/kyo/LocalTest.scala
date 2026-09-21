@@ -114,7 +114,7 @@ class LocalTest extends kyo.test.Test[Any]:
     "non-inheritable" - {
         // These ask the isolate for the crossing rather than for isolation in place: what a local does at a
         // boundary is a question about crossing one. `Isolate[Any, Any, Any]` manages nothing and leaves every
-        // local reading what it read, which the last leaf here pins.
+        // local reading what it read.
         "context inheritance" in {
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")

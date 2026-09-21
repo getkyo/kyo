@@ -61,7 +61,6 @@ class ArrowEffectTest extends Test:
     def peel(v: Any < (Src & Cnt)): Any < Cnt =
         ArrowEffect.handleFirst(Tag[Src], v)([C] => (input, cont) => Peeled(input, cont), a => a)
 
-    // items 1 and 2 run their source call under a counter of their own; 3, 4 and 5 under the one outside
     def item(a: Int): Int < (Src & Cnt) =
         if a < 3 then counting(42)(src(a)).map(_._2)
         else src(a)
@@ -271,8 +270,7 @@ class ArrowEffectTest extends Test:
         }
 
         "a continuation typed over a computation splices the answer at the call site" in {
-            // The peel hands the continuation out and the region ends; the answer, a computation, is handed to it
-            // later from outside. Typed over a computation, the continuation takes it as data and splices it at
+            // Typed over a computation, the continuation takes it as data and splices it at
             // the suspension point, under the counter dumped from between the peel and the call, so items 1 and 2
             // bump their own counter and the rest bump the one outside.
             assert(batched(t => peel(t.cont(bump(t.input)))).eval == ((12, Chunk(43, 44, 3, 7, 12))))
@@ -1745,8 +1743,7 @@ class ArrowEffectTest extends Test:
 
         // The recovering region's continuation runs where the guard is re-entered, after the region is popped, not from
         // inside the guard's catch: a throw from the continuation's first link is the enclosing region's to answer, and
-        // raised from the catch it would leave the eval unrecovered. `Retry` re-raising a `Result.Failure` in the map after
-        // its `Abort.run` is this shape.
+        // raised from the catch it would leave the eval unrecovered.
         "a throw from the continuation of a recovered region reaches the enclosing region" in {
             object Again extends RuntimeException("again", null, false, false)
             val body: Int < Ask  = ask.map(_ => (throw Boom): Int)
@@ -3529,9 +3526,7 @@ class ArrowEffectTest extends Test:
         }
 
         /* Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
-        // The continuation captured at the second occurrence must be the rest of the body only. Before the re-entry
-        // it also carried the enclosing clause's pending second resumption, so every inner resumption re-triggered
-        // it and the program never terminated.
+        // The continuation captured at the second occurrence must be the rest of the body only.
         "a clause resuming twice over two consecutive occurrences" in {
             // every path through two choices of 7 or 8, summed: (7 + 7) + (7 + 8) + (8 + 7) + (8 + 8)
             val v = ask.map(a => ask.map(b => a + b))
@@ -3564,7 +3559,7 @@ class ArrowEffectTest extends Test:
 
         "a throw after a second resumption reaches the outer recover" in {
             // the region a resumption re-enters answers nothing on its own: a throwable raised inside it unwinds to the
-            // outer region, whose recover is the one in effect, as before the re-entry existed
+            // outer region, whose recover is the one in effect
             val v = ask.map(a => ask.map(b => if a + b == 15 then throw new IllegalStateException("boom") else a + b))
             val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], v)(
                 [C] => (_, k) => k(7).map(x => k(8).map(y => x + y)),

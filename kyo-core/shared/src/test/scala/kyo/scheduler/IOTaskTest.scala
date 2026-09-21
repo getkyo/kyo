@@ -12,7 +12,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
         // A spawning fiber reads the task running on its thread to link its children before they are scheduled, so a parent
         // interrupted while they launch reaches them. The task is a ThreadLocal entry, and on Scala Native a class of kyo's own
         // once shadowed the javalib's java.lang.ref.WeakReference, which ThreadLocal keys its table with: every entry was lost
-        // when the table grew. The slice below grows the table, then asks for its own task.
+        // when the table grew.
         "the current task survives the thread's ThreadLocal table growing within the slice" in {
             Fiber.initUnscoped {
                 Sync.defer {
@@ -64,8 +64,6 @@ class IOTaskTest extends kyo.test.Test[Any]:
                 _ <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
                 _ <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
             yield
-                // `currentFrame` drops `Frame.internal` by reference, so what renders is a call site the
-                // user wrote, never a file the kernel owns.
                 assert(!rendered.contains("<internal>"), s"the internal placeholder surfaced: $rendered")
                 List("Eval.scala", "Arrow.scala", "IOTask.scala", "Fiber.scala").foreach { internal =>
                     assert(!rendered.contains(internal), s"a kernel frame surfaced: $rendered")
@@ -104,12 +102,11 @@ class IOTaskTest extends kyo.test.Test[Any]:
             for
                 // A forked reader hammers fiberTrace() while the worker rewrites `curr`: the fiber parks
                 // (a frame to render), resumes (the remainder is replaced), then completes (`curr` is
-                // cleared). Every one of those cross-thread reads has to stay safe.
+                // cleared).
                 reader <- Fiber.initUnscoped(Sync.defer((0 until 2000).map(_ => iotask.fiberTrace()).toVector))
                 _      <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
                 reads  <- reader.get
                 _      <- Async.use(iotask.asInstanceOf[IOPromise[Nothing, Unit]])(_ => ())
-                // After the task is definitely complete `curr` is cleared, so every later read is "".
                 afterComplete = (0 until 1000).map(_ => iotask.fiberTrace()).toVector
             yield
                 assert(reads.size == 2000)
@@ -132,7 +129,7 @@ class IOTaskTest extends kyo.test.Test[Any]:
 
     "fatal error in a guarded body" - {
         // A fatal error must still run the computation's finalizers: here one completes `probe`, standing in
-        // for a promise awaited elsewhere, so a skipped finalizer expires the await below.
+        // for a promise awaited elsewhere, so a skipped finalizer expires the await.
         //
         // InternalError because the scheduler gates on `IsFatal`, which counts only `VirtualMachineError` and
         // `ControlThrowable`. JVM-only: it relies on one worker taking the fatal while the timeout fires on

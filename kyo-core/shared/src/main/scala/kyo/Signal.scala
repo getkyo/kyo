@@ -651,7 +651,7 @@ object Signal:
           * changes.
           *
           * Promises are uninterruptible to prevent interrupt propagation between observers: if one observer is interrupted, the
-          * interruption won't affect other observers waiting on the same signal. This ensures notification chains remain independent.
+          * interruption won't affect other observers waiting on the same signal.
           */
         final class Unsafe[A] private (
             currentRef: AtomicRef.Unsafe[A],
@@ -729,7 +729,6 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    // Uninterruptible, consistent with the promises `onUpdate` creates; see the class doc for why.
                     AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible())
                 )
         end Unsafe

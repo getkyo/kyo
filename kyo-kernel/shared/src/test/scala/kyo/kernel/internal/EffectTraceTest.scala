@@ -404,7 +404,7 @@ class EffectTraceTest extends AnyFreeSpec:
         assert(ms.contains("innerStep"))
         assert(ms.contains("stepA"))
         // A run of steps from one call site folds away, so it never fills the budget the same depth of
-        // alternating steps does (the cap group above pins that one at 64).
+        // alternating steps does.
         assert(els.length < 64)
         assert(els.sliding(2).forall(w => w.length < 2 || w(0) != w(1)))
     }

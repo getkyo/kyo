@@ -240,9 +240,7 @@ object Flag {
         }
     }
 
-    /** Environment variable name for a flag name: dots become underscores, then uppercased.
-      *
-      * Pure, with no config source behind it, so [[kyo.CompileTimeFlag]] can share it from inside the compiler.
+    /** Pure, with no config source behind it, so [[kyo.CompileTimeFlag]] can share it from inside the compiler.
       */
     private[kyo] def envName(name: String): String = name.replace('.', '_').toUpperCase
 

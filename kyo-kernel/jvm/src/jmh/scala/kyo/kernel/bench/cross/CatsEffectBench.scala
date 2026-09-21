@@ -29,14 +29,7 @@ import scala.util.control.NoStackTrace
   * (the per-run scoped install, `Ref[IO]`'s shared atomic CAS) and are excluded from the headline
   * tables.
   *
-  * Rows with no cats-effect counterpart are absent rather than approximated: a continuation captured
-  * and resumed by a handler (foreignCrossingsPayRotation, handleContResumesOnce,
-  * handleContResumesTwice, handleFirstPeelsRemainder), a handler clause that performs another effect
-  * (emittingClausesPayRegionRebuild), a suspension with its continuation fused into the node
-  * (suspensionFusesContinuation), a region with the following map fused into it
-  * (handleLoopFusesContinuation), a preemptible run distinct from the plain one
-  * (partialSuspensionBaseline: the fiber always auto-yields), masking (maskTunnelsPastInnerHandler)
-  * and the isolate state crossing without a fiber (isolateCrossingPerRound).
+  * Rows with no cats-effect counterpart are absent rather than approximated.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -82,7 +75,6 @@ class CatsEffectBench:
         acc
     end evalFixedOverheadBatch
 
-    /** The bare entry with no transformation, exposing the fixed per-run cost in the same units as every other row. */
     @Benchmark
     @OperationsPerInvocation(1000)
     def entryFloorBatch: Int =
@@ -165,7 +157,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end suspensionBaseline
 
-    /** Recorded alternative: the per-run scoped install. */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): IO[Int] =
@@ -255,7 +246,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end statefulAnswersPaySuccessor
 
-    /** Recorded alternative: the `Ref[IO]` spelling, a shared atomic CAS per answer. */
     @Benchmark
     def statefulAnswersPaySuccessorAltRef: Int =
         def loop(i: Int): IO[Int] =
@@ -272,9 +262,8 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end trailingMapsStayLinear
 
-    /** Dynamic single-link application: NarrowDepth map links attached in a runtime loop, then
-      * one run. IO reifies a Map node per link, so the row measures node build plus the
-      * interpreter over a thousand stored nodes. Shape taken from zio-blocks' AsyncChainBench.
+    /** IO reifies a Map node per link, so the row measures node build plus the
+      * interpreter over a thousand stored nodes.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =
@@ -286,7 +275,6 @@ class CatsEffectBench:
         runSync(fa)
     end dynamicChainOfMapsStaysLinear
 
-    /** The bind spelling of dynamicChainOfMapsStaysLinear: a FlatMap node per link. */
     @Benchmark
     def dynamicChainOfBindsStaysLinear: Int =
         var fa: IO[Int] = IO.pure(seed)
@@ -297,7 +285,6 @@ class CatsEffectBench:
         runSync(fa)
     end dynamicChainOfBindsStaysLinear
 
-    /** Recursion shallow enough to stay within one of kyo's safepoint periods. */
     @Benchmark
     def deepRecursionNoRescue: Int =
         def loop(i: Int): IO[Int] =
@@ -313,7 +300,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end deepRecursionOneRescue
 
-    /** Iteration driven by open recursion through a method. */
     @Benchmark
     def pureIterationViaMethod: Int =
         def loop(i: Int): IO[Int] =
@@ -321,7 +307,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end pureIterationViaMethod
 
-    /** A deferral reified per step, so each round costs one suspension node. */
     @Benchmark
     def deferBindPerStep: Int =
         def loop(i: Int): IO[Int] =
@@ -329,7 +314,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end deferBindPerStep
 
-    /** The deferral loop with one transformation composed after it, so the tail is rebuilt. */
     @Benchmark
     def deferBindUnderTrailingMap: Int =
         def loop(i: Int): IO[Int] =
@@ -337,7 +321,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1).map(x => x))
     end deferBindUnderTrailingMap
 
-    /** The deferral loop under a binding nothing reads, isolating the cost of the region itself. */
     @Benchmark
     def deferBindUnderIdleHandler: Int =
         def loop(i: Int): IO[Int] =
@@ -345,7 +328,6 @@ class CatsEffectBench:
         runSync(locally(ask, 1)(loop(seed - 1)))
     end deferBindUnderIdleHandler
 
-    /** Iteration expressed through the library's loop combinator rather than open recursion. */
     @Benchmark
     def pureIterationViaLoop: Int =
         runSync(IO.asyncForIO.iterateWhileM(seed - 1)(i => IO.pure(i + 1))(_ <= Depth))
@@ -359,13 +341,11 @@ class CatsEffectBench:
         runSync(step(seed - 1))
     end pureIterationViaArrow
 
-    /** Iteration whose every round performs an operation, through the library's loop combinator. */
     @Benchmark
     def effectfulIterationViaLoop: Int =
         runSync(IO.asyncForIO.iterateWhileM(seed - 1)(i => ask.get.map(a => i + a))(_ <= Depth))
     end effectfulIterationViaLoop
 
-    /** Iteration whose every round performs an operation, driven by a step held as a value. */
     @Benchmark
     def effectfulIterationViaArrow: Int =
         lazy val step: Int => IO[Int] = i =>
@@ -373,7 +353,6 @@ class CatsEffectBench:
         runSync(step(seed - 1))
     end effectfulIterationViaArrow
 
-    /** A transformation chain wide enough to reach the compiler's expansion limit, run shallow. */
     @Benchmark
     def inlineLimitKeepsZeroAllocation: Int =
         def loop(i: Int, acc: Int): IO[Int] =
@@ -394,7 +373,6 @@ class CatsEffectBench:
         runSync(loop(0, seed))
     end inlineLimitKeepsZeroAllocation
 
-    /** A narrower chain run deep, so the cost shows in time rather than in expansion. */
     @Benchmark
     def inlineLimitCostsTimeNotAllocation: Int =
         def loop(i: Int): IO[Int] =
@@ -442,7 +420,6 @@ class CatsEffectBench:
         runSync(locally(cfg3, 1)(locally(cfg2, 2)(locally(cfg, 3)(locally(ask, 1)(loop(seed - 1))))))
     end contextReadsUnderBindings
 
-    /** A binding installed and torn down once per round, so the round pays entry and exit. */
     @Benchmark
     def contextRegionsPayEntryExit: Int =
         def loop(i: Int): IO[Int] =
@@ -451,7 +428,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end contextRegionsPayEntryExit
 
-    /** A binding installed per round that derives its value from the enclosing one. */
     @Benchmark
     def contextRegionsDeriveFromOuter: Int =
         def loop(i: Int): IO[Int] =
@@ -460,7 +436,6 @@ class CatsEffectBench:
         runSync(locally(cfg, 0)(loop(seed - 1)))
     end contextRegionsDeriveFromOuter
 
-    /** Every occurrence answered where it stands, without the remainder being handed over. */
     @Benchmark
     def handleLoopAnswersInPlace: Int =
         def loop(i: Int): IO[Int] =
@@ -468,7 +443,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end handleLoopAnswersInPlace
 
-    /** Two bindings of one local nested, the inner shadowing the outer for every read. */
     @Benchmark
     def sameTagInnerHandlerAnswers: Int =
         def loop(i: Int): IO[Int] =
@@ -476,7 +450,6 @@ class CatsEffectBench:
         runSync(locally(ask, 0)(locally(ask, 1)(loop(seed - 1))))
     end sameTagInnerHandlerAnswers
 
-    /** Two operations interleaved, the inner one answered without displacing the outer. */
     @Benchmark
     def foreignCrossingsAnsweredInPlace: Int =
         def loop(i: Int): IO[Int] =
@@ -485,7 +458,6 @@ class CatsEffectBench:
         runSync(loop(seed - 1))
     end foreignCrossingsAnsweredInPlace
 
-    /** A failure raised under a bracket and a binding, unwinding both to the handler outside. */
     @Benchmark
     def abortUnwindsThroughRegions: Int =
         def loop(i: Int, acc: Int): IO[Int] =
@@ -497,7 +469,6 @@ class CatsEffectBench:
         runSync(loop(0, seed))
     end abortUnwindsThroughRegions
 
-    /** A throw raised after a read and recovered by the handler around it. */
     @Benchmark
     def recoverAnswersThrow: Int =
         def loop(i: Int, acc: Int): IO[Int] =
@@ -517,7 +488,6 @@ class CatsEffectBench:
         runSync(locally(ask2, 1)(loop(seed - 1)))
     end suspensionBaselineAltEnv
 
-    /** A resource bound and released once per round, so the round pays a region install and discharge. */
     @Benchmark
     def bracketPerRound: Int =
         def loop(i: Int, acc: Int): IO[Int] =
@@ -526,7 +496,6 @@ class CatsEffectBench:
         runSync(loop(0, seed))
     end bracketPerRound
 
-    /** One resource held across the whole loop, so every step carries an outstanding region. */
     @Benchmark
     def bracketAroundLoop: Int =
         def loop(i: Int): IO[Int] =
@@ -534,7 +503,6 @@ class CatsEffectBench:
         runSync(IO.pure(seed).bracket(a => loop(a - 1))(_ => IO.unit))
     end bracketAroundLoop
 
-    /** The release-only form, which installs its region before the body is built. */
     @Benchmark
     def bracketEnsuringOnly: Int =
         def loop(i: Int): IO[Int] =
@@ -542,13 +510,11 @@ class CatsEffectBench:
         runSync(loop(seed - 1).guarantee(IO.unit))
     end bracketEnsuringOnly
 
-    /** A transformation applied to every element of a collection. */
     @Benchmark
     def foreachOverCollection: Int =
         runSync(elements.traverse(a => IO.pure(a + seed)).map(_.sum))
     end foreachOverCollection
 
-    /** A fold threading an accumulator through a collection. */
     @Benchmark
     def foldOverCollection: Int =
         runSync(elements.foldLeftM(seed)((acc, a) => IO.pure(acc + a)))
@@ -579,7 +545,7 @@ object CatsEffectBench:
 
     /** One runtime for the whole class, running fibers on the calling thread: the parasitic execution
       * context executes a submitted fiber inline and trampolines its auto-yield resubmissions, so
-      * `unsafeRunSync` never parks. The blocking pool and the scheduler are the defaults, both idle here.
+      * `unsafeRunSync` never parks.
       */
     implicit val runtime: IORuntime =
         IORuntime(
@@ -590,7 +556,6 @@ object CatsEffectBench:
             IORuntimeConfig()
         )
 
-    /** The ambient answer: a fresh fiber reads the constructor default, so constructing it is the install. */
     val ask: IOLocal[Int]  = IOLocal(1).unsafeRunSync()
     val ask2: IOLocal[Int] = IOLocal(0).unsafeRunSync()
     val st: IOLocal[Int]   = IOLocal(0).unsafeRunSync()
@@ -598,19 +563,13 @@ object CatsEffectBench:
     val cfg2: IOLocal[Int] = IOLocal(0).unsafeRunSync()
     val cfg3: IOLocal[Int] = IOLocal(0).unsafeRunSync()
 
-    /** The shared cell of statefulAnswersPaySuccessorAltRef; it accumulates across runs. */
     val stRef: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
 
-    /** The failure recoverAnswersThrow raises: allocated once and without a stack trace. */
     object Boom extends Exception with NoStackTrace
 
-    /** A binding for the extent of `body`: what `IOLocal#asLocal` spells as `local`, the modify and its restore
-      * bracketed, so the region is entered and left the way a kyo binding region is.
-      */
     def locally[A](local: IOLocal[Int], value: Int)(body: IO[A]): IO[A] =
         local.modify(prev => (value, prev)).bracket(_ => body)(prev => local.set(prev))
 
-    /** As [[locally]], with the value derived from the enclosing one. */
     def locallyWith[A](local: IOLocal[Int], f: Int => Int)(body: IO[A]): IO[A] =
         local.modify(prev => (f(prev), prev)).bracket(_ => body)(prev => local.set(prev))
 

@@ -10,8 +10,6 @@ import org.openjdk.jmh.annotations.*
   * with, and a fork per fixture isolates shared-JVM state. A compile with diagnostics fails the
   * run, so a broken fixture cannot masquerade as a fast one. Fixtures live outside the kyo package
   * so Frame derivation is the real per-site macro cost, and each isolates one compile-cost driver.
-  *
-  * Pass -f 0 to skip forking for an in-process diagnosis loop.
   */
 @State(Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))

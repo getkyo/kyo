@@ -195,7 +195,6 @@ object Emit:
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input and continuation
                         (Maybe(input), cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation

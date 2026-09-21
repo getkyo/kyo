@@ -96,8 +96,7 @@ object Frame:
 
         /** The compact form naming what was called and where, as `caller.callee(file:line:col)`.
           *
-          * For identifying a frame inside a larger rendering, where [[show]] is too wide and [[render]] too tall. A frame with no callee
-          * drops that half rather than leaving it empty.
+          * For identifying a frame inside a larger rendering, where [[show]] is too wide and [[render]] too tall.
           */
         def callSite: String =
             // Position.show rather than position.show: inside this extension the latter resolves to Frame's own show.

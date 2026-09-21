@@ -5,7 +5,6 @@ import scala.quoted.*
 
 /** Resolves a flag at compile time and inlines the result as a constant.
   *
-  * Resolution order is [[Flag]]'s, system property then environment variable then the default, read from the machine doing the compiling.
   * The value reaches the program as a literal, so a branch on it is eliminated before the class file exists.
   *
   * Reads the JDK directly rather than through [[FlagPlatform]]: a macro expands inside the compiler, on a JVM, whichever platform is being

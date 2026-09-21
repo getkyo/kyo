@@ -7,7 +7,7 @@ class FatalFiberTest extends kyo.test.Test[Any]:
             // `run` completes the promise with a Panic and only then rethrows, so a fiber that took a fatal still
             // reports it. Awaiting `getResult` exercises that order: with the rethrow first the promise would
             // never complete. InternalError because `IsFatal` counts only `VirtualMachineError` and
-            // `ControlThrowable`; a `LinkageError` is not fatal to kyo, which the leaf below pins.
+            // `ControlThrowable`.
             val fatal                                 = new InternalError("simulated fatal")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw fatal; 0 }
             Fiber.initUnscoped(body).map: fiber =>
@@ -16,8 +16,7 @@ class FatalFiberTest extends kyo.test.Test[Any]:
                     case other             => fail(s"unexpected outcome: $other")
         }
 
-        // Scala treats a LinkageError as fatal and kyo does not, so it is carried as a value and the worker
-        // survives it.
+        // Scala treats a LinkageError as fatal and kyo does not.
         "a LinkageError is carried as a Panic rather than rethrown" in {
             val ex                                    = new LinkageError("simulated NoClassDefFoundError")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw ex; 0 }

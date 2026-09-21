@@ -37,9 +37,7 @@ class AeronClientTest extends Test:
             }
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
 
-    // `connectUnscoped` joins the blocking connect on a carrier and builds the runtime that owns the native client in the
-    // step after; `connect` wraps that in `Scope.acquireRelease`, which registers as the value arrives but not for a stop
-    // landing inside the acquire. The client is a native handle with no Scala reference once abandoned, so the leaf
+    // The client is a native handle with no Scala reference once abandoned, so the leaf
     // asserts what the driver can show: after rounds of connects stopped at sub-millisecond offsets, with every client
     // the rounds did receive closed, the embedded driver still closes within its bound rather than waiting on a client
     // that nobody closed.
@@ -214,8 +212,7 @@ class AeronClientTest extends Test:
         succeed
     }
 
-    // A fake FFI binding whose clientConnect returns a gated fiber and whose clientClose records the close. Every other
-    // method is unused by this reproduction: the caller is interrupted at the connect join before any transport op.
+    // Every other method is unused by this reproduction: the caller is interrupted at the connect join before any transport op.
     final private class FakeBindings(
         connectFiber: Promise.Unsafe[Ffi.Handle[AeronClientHandle], Any],
         onConnect: () => Unit,
@@ -258,9 +255,7 @@ class AeronClientTest extends Test:
         def testInjectError(client: Ffi.Handle[AeronClientHandle], errcode: Int, errmsg: String)(using AllowUnsafe): Unit      = ???
     end FakeBindings
 
-    // externalWith builds the runtime (and its close) a step after the blocking clientConnect join, so a stop at the
-    // join leaves the connected client with no `Scope.acquireRelease` to close it. Deterministic via the seam: a fake
-    // binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
+    // Deterministic via the seam: a fake binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
     "an interrupt landing at the connect join leaves the connected client unclosed".pendingUntilFixed(
         "externalWith builds the runtime and its close after the blocking clientConnect join; an interrupt at the join leaves the connected client unclosed"
     ) in {

@@ -25,7 +25,6 @@ private[kyo] object bug:
     def apply(msg: String): Nothing =
         throw exception(msg)
 
-    /** The exception [[apply]] throws, for a caller that has to do something with it before throwing. */
     def exception(msg: String): KyoBugException =
         KyoBugException(message(msg))
 

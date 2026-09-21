@@ -134,9 +134,8 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
                 // The slot's give-back is registered on the enclosing Scope BEFORE the take, which claims the slot in
-                // the step it completes in (see `takeSlot`). The Scope also closes when the connect fails, which is
-                // what prevents a slot leak: without it, a connect failure after a server restart would strand the
-                // slot and eventually deadlock the pool.
+                // the step it completes in. The Scope also closes when the connect fails, which is what prevents a
+                // slot leak.
                 Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
                     Scope.ensure {
                         Sync.Unsafe.defer {
@@ -209,9 +208,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       */
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
         // Marked closed first so tryReserve opens no new connection; slot channels stay open through the grace period
-        // for in-flight callers. The logger is captured before the extract and `ensureMap` installs the force-close in
-        // the step that extracts the ring, so no poll sits between the extract and the finalizer: one there would
-        // strand connections the ring no longer holds, out of the ring and never closed.
+        // for in-flight callers.
         Log.use { logger =>
             Sync.Unsafe.defer(closeExtract()).ensureMap(idleConns => closeDrain(idleConns, logger, gracePeriod))
         }
@@ -240,8 +237,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 }
                 slotChans.clear()
                 idleConns.foreach(_.closeNow)
-                // Destroy any connection a reclaim left quarantined at grace expiry (its detached carrier is the only other
-                // owner). `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
+                // `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
                 quarantined.forEach { conn =>
                     if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
                 }
@@ -386,7 +382,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * caller interrupted there is abandoned without resuming (see `IOTask.abandon`): nothing is delivered to the join, so a permit the
       * child took would be owned by its result and by nobody else. The claim is a plain flag write inside the take itself, so no park can
       * separate the two: the take either completes claimed, or is refused by the channel's own interrupt handoff and leaves the permit in
-      * the channel. [[withSlot]] registers the give-back for a claimed permit before this is called.
+      * the channel.
       */
     private def takeSlot(slotCh: Channel[Unit], config: SqlConfig, held: AtomicBoolean.Unsafe)(using
         Frame
@@ -442,11 +438,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                         case Result.Success(a)                     => a
                                         case Result.Failure(e: SqlServerException) =>
                                             // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
-                                            // decides what it is: a tool running user-written SQL gets a syntax error back
-                                            // from the server as its ordinary answer. At ERROR this fills an operator's
-                                            // dashboard with entries for a program behaving correctly, and on a stdio
-                                            // transport anything the library writes on its own initiative is a candidate
-                                            // for corrupting the channel.
+                                            // decides what it is. At ERROR this fills an operator's dashboard with entries
+                                            // for a program behaving correctly, and on a stdio transport anything the
+                                            // library writes on its own initiative is a candidate for corrupting the
+                                            // channel.
                                             Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                                 .andThen(Abort.fail[SqlException](e))
                                         case Result.Failure(e) => Abort.fail[SqlException](e)
@@ -508,8 +503,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     /** Owns a reservation the body may take from the ring, registered before it is taken.
       *
       * The finalizer is registered before `acquireOrReserve` and the flag set in the reserving step, so no poll leaves
-      * a taken reservation unowned; registering once it is in hand would strand the in-flight count on a stop. Same
-      * shape as [[withSlot]]'s permit.
+      * a taken reservation unowned; registering once it is in hand would strand the in-flight count on a stop.
       */
     private def reserving[A, S](netKey: SqlConnectionPool.Endpoint)(
         body: AtomicBoolean.Unsafe => A < (S & Async & Abort[SqlException])
@@ -576,7 +570,6 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     ): Maybe[C] < (Async & Abort[SqlException]) =
         // Claim a polled connection into the lease's custody in the SAME unsafe block that polls it: the poll vacated the ring
         // slot, so an interrupt before onLease would strand it with no owner. Claiming at the poll lets the orphan finalizer close it.
-        // A reservation is claimed the same way, into the flag [[reserving]]'s finalizer reads.
         Connection.custodyLocal.use { maybeCustody =>
             Clock.stopwatch.flatMap { transitClock =>
                 Loop(()) { _ =>

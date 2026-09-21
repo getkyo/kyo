@@ -94,7 +94,6 @@ final private[kyo] class HttpClientBackend private (
                         val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
                         // Tracked in the step that creates it, not by the caller after the handoff: a caller stopped
                         // after the handoff never tracks anything, and an untracked connection stays established.
-                        // Registered from creation, `closeAll` reaches it whatever the caller did.
                         trackConn(conn)
                         // The handoff is at-most-once, so a caller that already settled (a request timeout or any other
                         // interrupt of `resultPromise`) leaves this connection undelivered. Nobody will ever use it and

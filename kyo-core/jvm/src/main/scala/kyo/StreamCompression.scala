@@ -667,7 +667,6 @@ object StreamCompression:
                     else
                         Sync.defer(inflater.setInput(toUnboxByteArray(leftOver)))
                             .andThen(
-                                // the state holds conts; this one resumes a computation that ignores the answer
                                 Loop.continue(GunzipState.PullInflater(inflater, contentCrc32, Present(Arrow((_: Unit) => emit)), leftOver))
                             )
                     end if

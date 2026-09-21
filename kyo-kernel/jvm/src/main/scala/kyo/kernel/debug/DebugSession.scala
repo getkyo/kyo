@@ -33,7 +33,6 @@ end Counting
 object DebugSession:
     /** Evaluates `build()` with a debugger installed, printing a step-by-step trace or a summary, and uninstalls it afterwards.
       *
-      * `quiet` picks [[Counting]] over [[ConsoleDebugger]]: a trace for a small computation, counts for one whose trace would be unreadable.
       * The computation is built inside rather than passed as a value so that the nodes it allocates are seen by the debugger too.
       */
     def run(quiet: Boolean, guardsLikeProduction: Boolean)(build: () => Int < Any): Int =

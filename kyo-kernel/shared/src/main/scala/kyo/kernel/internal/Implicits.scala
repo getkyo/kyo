@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 // The lift is a plain implicit gated by CanLift, which rejects pending values at the type level. It must live in
 // this trait rather than in the `<` companion it is mixed into: in the companion the alias is transparent, so a
 // lambda such as liftPureFunction1's is typed with the dealiased union as its result, which the inliner's opaque
-// proxies do not map back when the conversion feeds map (PendingTest, "a pure function passes to map point-free").
+// proxies do not map back when the conversion feeds map.
 trait Implicits:
 
     /** Implicitly converts a plain value to an effectful computation.
@@ -14,11 +14,6 @@ trait Implicits:
       * A computation used where a value is expected is wrapped in `Nested` to prevent unsound flattening; a plain value is lifted directly.
       * The `CanLift` constraint refuses an argument that is already a computation, and a kyo module object; a `Unit`
       * computation widened to another row is the separate case `abortCastUnit` answers with a guided error.
-      *
-      * @param v
-      *   The value to lift into the effect context
-      * @return
-      *   A computation in the effect context
       */
     implicit inline def lift[A, S](v: A)(using inline cl: CanLift[A]): A < S =
         inline scala.compiletime.erasedValue[A] match

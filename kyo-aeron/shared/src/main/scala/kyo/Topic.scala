@@ -336,8 +336,6 @@ object Topic:
         Stream {
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                // `ensureMap`, not `map`, for the same reason as the publication path: the subscription's closer must
-                // be registered in the step the add completes in.
                 addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
@@ -519,10 +517,6 @@ object Topic:
                     case Present(tok) =>
                         var tokOwned           = true
                         var opened: Maybe[Sub] = Absent
-                        // Symmetric to addPublicationDeadline: before Done the guard owns the token; on Done the
-                        // driver takes it and returns the subscription, which the guard owns until the use's own
-                        // finalizer takes over on a clean hand-off. An abnormal end after Done closes the subscription
-                        // here rather than leaking it; a clean end hands off, so the guard closes nothing.
                         Sync.ensure { outcome =>
                             Sync.Unsafe.defer {
                                 if tokOwned then transport.freeAsyncSub(tok)
@@ -532,8 +526,6 @@ object Topic:
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
                                 Sync.Unsafe.defer {
                                     val poll = transport.pollAddSubscription(tok)
-                                    // The token passes to the subscription in the same step as the poll, as it does in
-                                    // addPublicationDeadline.
                                     poll match
                                         case AeronTransport.AddPoll.Done(subscription) =>
                                             tokOwned = false

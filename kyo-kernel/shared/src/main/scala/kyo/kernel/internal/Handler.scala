@@ -38,9 +38,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
 
-        /** Runs the clause, attaching the effect trace to anything it throws.
-          *
-          * The catch is here, not around the evaluator's call, so the suspension and stack are still in hand: by the time a throwable reaches
+        /** The catch is here, not around the evaluator's call, so the suspension and stack are still in hand: by the time a throwable reaches
           * the loop, its region may already be off the stack.
           */
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): A < (E & S) =
@@ -68,14 +66,10 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
       * Single-shot (the default): the remainder is consumed once, each dumped region closing at its own end (the scope below drains it if the
       * remainder is dropped). [[repeated]]: the remainder is resumed more than once (a streamed choice's branches), so the dumped regions are
       * held and their releases run once after every resumption, keeping a shared resource live across all of them.
-      *
-      * `run` answers at the region result `B`, unlike [[ContHandler]] whose answer re-enters the region: the peel leaves the region, it does
-      * not continue inside it.
       */
     abstract class FirstHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): B < (E & S)
 
-        /** Whether the handed-out remainder may be resumed more than once. Default single-shot. */
         private[kyo] def repeated: Boolean = false
 
         private[kyo] def answering[X](input: I[X], cont: Arrow[O[X], A, E & S], kyo: Pending[?, ?], stack: Stack): B < (E & S) =
@@ -104,11 +98,8 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 
-        /** The arrow that reads a settled outcome and either re-enters the region with the answer or leaves with the result.
-          *
-          * A `Continue` rebuilds the region as a fresh `Handle` over the answer, making resumption the same operation as entry rather than a
-          * separate evaluator path. Anything else is the loop's result, already at the outside row, so it goes straight to the caller's
-          * continuation. An unsettled outcome defers and comes back here.
+        /** A `Continue` rebuilds the region as a fresh `Handle` over the answer, making resumption the same operation as entry rather than a
+          * separate evaluator path.
           */
         private[kyo] def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
             type OutT = Outcome[A < (E & S), B < S]
@@ -220,7 +211,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                // As above: a `map` would park a settled answer in front of `k`'s `Ensure` under a stop.
                                 Loop.continue(st, Effect.defer(ans, k))
                             case _ =>
                                 Loop.continue(st, k(Nested.unnest[O[X]](ans)))
@@ -253,14 +243,12 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         private[kyo] def complete(state: State): Unit = ()
 
         /** Called when a region is reinstalled by a resumed remainder. A region whose release has already run refuses here (a bracket
-          * resumed after its resource was released is a use-after-release), by throwing. Default allows the resumption.
+          * resumed after its resource was released is a use-after-release), by throwing.
           */
         private[kyo] def reenter(state: State): Unit = ()
     end ContextHandler
 
-    /** Attaches a cont to an outcome whose clause has not settled yet, turning the clause's answer into the region's remaining computation.
-      *
-      * The caller must pass the cont of the operation whose answer this outcome carries. That obligation is why the attachment is here rather
+    /** The caller must pass the cont of the operation whose answer this outcome carries. That obligation is why the attachment is here rather
       * than where the region is rebuilt: a walk that fuses across a run of operations answers a different one each turn, and only the walk
       * knows which. Applying it to an outcome that already carries a cont would apply two.
       */
@@ -322,7 +310,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._1
                         ans match
                             case _: Pending[?, ?] =>
-                                // As above. The result cast is erasure-forced: the fused walk erases `k`'s output.
                                 result = Loop.continue(Effect.defer(ans, k).asInstanceOf[A < (E & S)])
                                 running = false
                             case _ =>
@@ -390,7 +377,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         armed: Boolean,
         slot: Safepoint.Slot
     ): Outcome2[State, A < (E & S), B < S] < S =
-        // The walk fuses across operations of different types, so the input and cont in flight are erased.
         var st: State                                       = state0
         var in: Any                                         = input0
         var k: Arrow[Any, Any, Any]                         = k0.asInstanceOf[Arrow[Any, Any, Any]]
@@ -404,7 +390,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                         val ans = c._2
                         ans match
                             case _: Pending[?, ?] =>
-                                // As above; the result cast is erasure-forced (walk erases `k`'s output).
                                 result = Loop.continue(st, Effect.defer(ans, k).asInstanceOf[A < (E & S)])
                                 running = false
                             case _ =>

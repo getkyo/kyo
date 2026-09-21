@@ -85,8 +85,7 @@ object Sync:
         Sync.Unsafe.defer {
             val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
             // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here
-            // and only its own Abort surfaces, as a throw. `ensureMap`, not `map`, raises the recorded abort: a
-            // `map` polls after the release, parking a value it handed on with nobody to own it.
+            // and only its own Abort surfaces, as a throw.
             Bracket(acquire) { resource =>
                 Abort.runWith[E](use(resource)) { result =>
                     result.foldError(
@@ -114,9 +113,8 @@ object Sync:
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
-      * This version provides the finalizer with information about how the computation ended. The finalizer receives a
-      * `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic` when it threw or when
-      * its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
+      * The finalizer receives a `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic`
+      * when it threw or when its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
       *
       * @param f
       *   The finalizer function that receives information about potential errors and performs cleanup actions.

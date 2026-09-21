@@ -85,8 +85,7 @@ object HttpServer:
     ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         // The listener is owned by a scope finalizer registered before the bind's join, reading the bound server from a
         // cell the bind fills: a plain `Scope.acquireRelease` over the join leaves a window (the JVM bind completes
-        // synchronously) where an abandoned caller strands the listener. The finalizer closes whatever the bind
-        // produced on every exit. Same shape as `UdsBackend`.
+        // synchronously) where an abandoned caller strands the listener.
         Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map { serverCell =>
             Scope.ensure { _ =>
                 Sync.Unsafe.defer(serverCell.get()).map {
@@ -124,7 +123,7 @@ object HttpServer:
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException]) =
-        // Unscoped: the caller owns the returned server. The cell the bind fills is a throwaway here (only `init`'s
+        // The cell the bind fills is a throwaway here (only `init`'s
         // scope reads it); the bind's own lost-handoff branch closes a listener a lost async handoff abandons.
         Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map(serverCell => initInto(config, serverCell)(handlers*))
 

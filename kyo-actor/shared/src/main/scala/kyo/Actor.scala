@@ -109,8 +109,7 @@ sealed abstract class Actor[+E, A, B](
       */
     private[kyo] def pendingReplies: Int = _pending.size
 
-    /** The in-flight `ask` reply promises currently registered with this actor. Exposed for tests that need a handle to
-      * a specific reply, to observe it or complete it.
+    /** Exposed for tests that need a handle to a specific reply, to observe it or complete it.
       */
     private[kyo] def inFlightReplies: Chunk[Promise[Any, Abort[Closed]]] = _pending.snapshot
 
@@ -184,7 +183,6 @@ object Actor:
 
         def size: Int = waiters.size
 
-        /** Snapshot of the in-flight reply promises, for a test that needs a handle to a specific reply. */
         def snapshot: Chunk[Promise[Any, Abort[Closed]]] =
             // toArray erases the element type; the set's declared type makes the cast safe
             Chunk.from(waiters.toArray()).asInstanceOf[Chunk[Promise[Any, Abort[Closed]]]]

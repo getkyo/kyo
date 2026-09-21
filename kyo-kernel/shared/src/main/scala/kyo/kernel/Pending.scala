@@ -41,12 +41,11 @@ import scala.language.implicitConversions
   *
   * The type is opaque over a three-arm union, and each arm is load-bearing:
   *   - a raw `A`, which is why a plain value is already a computation and why a settled one costs no wrapper;
-  *   - a `Pending` node, the family in `PendingInternal` reifying one combinator: a deferral, a suspension, a region entry, a parked slice
-  *     or a stack snapshot;
+  *   - a `Pending` node, the family in `PendingInternal` reifying one combinator;
   *   - a `Nested` wrapper, which is what the lift puts around a computation used as a value. Without an arm of its own, `Nothing < S`
   *     erases to `Pending` and a position holding a nested computation could not carry it.
   *
-  * The combinators below build `Arrow` and `Defer` nodes and leave the stack-depth budget to the evaluator, which is why their function
+  * The combinators build `Arrow` and `Defer` nodes and leave the stack-depth budget to the evaluator, which is why their function
   * parameters take no `Safepoint` evidence.
   */
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
@@ -98,7 +97,6 @@ object `<` extends Implicits:
         inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
             // Through `Arrow.ensure` rather than `new Arrow.Ensure` here: `Ensure` is `private[kyo]`, so naming it
             // in this expansion made the method uncallable from outside the package.
-            // Cast per `map`'s note above.
             Arrow.ensure[A](f)(v.asInstanceOf[A < S])
         end ensureMap
 
@@ -128,7 +126,6 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            // Cast per `map`'s note above.
             run(v.asInstanceOf[A < S], Arrow.id)
         end flatMap
 
@@ -155,7 +152,6 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            // Cast per `map`'s note above.
             run(v.asInstanceOf[A < S], Arrow.id)
         end andThen
 
@@ -182,7 +178,6 @@ object `<` extends Implicits:
                     out
                 end if
             end run
-            // Cast per `map`'s note above.
             run(v.asInstanceOf[A < S], Arrow.id)
         end unit
 
@@ -427,7 +422,7 @@ object `<` extends Implicits:
     end extension
 
     // Public in binary rather than inline: an inline conversion binds a prefix proxy at every expansion site, a
-    // private one goes through an inline accessor, and both grow every suspension (ArrowEffectBytecodeTest pins this).
+    // private one goes through an inline accessor, and both grow every suspension.
     @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with

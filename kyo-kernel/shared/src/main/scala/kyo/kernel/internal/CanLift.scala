@@ -39,8 +39,6 @@ To fix this, you can:
 """)
 opaque type CanLift[A] = Null
 
-// Two macros: the singleton check that derives a `CanLift`, and the error raised when a Unit computation
-// is lifted to the wrong row.
 object CanLiftMacro:
     inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
@@ -78,13 +76,11 @@ object CanLift:
     // expansion at every lift site, and a file that summons a same-module macro is suspended to a retry run, a
     // cascade this module sits close to.
 
-    /** The common case: anything that is neither a computation nor a singleton, settled by two `NotGiven` tests and no expansion. */
     inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
     /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
     inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
 
-    /** Every other singleton, where the module-object check has to run. */
     inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
 
     inline given CanLift[Nothing] = null

@@ -19,7 +19,6 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         // block an owner from creating entries in a read-only directory anyway, so the
         // unwritable-parent scenario is expressible on POSIX hosts only.
         assume(!Platform.isWindows, "POSIX directory permissions")
-        // root ignores directory permissions, so a read-only parent refuses nothing when the JVM runs as root.
         assume(java.lang.System.getProperty("user.name") != "root", "a non-root user, for whom a read-only parent refuses writes")
         val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
         val parent   = Files.createTempDirectory(outerTmp, s"kyo-browser-jvm-test-${UUID.randomUUID()}-")
@@ -53,7 +52,7 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
     // unique name first, so a Chrome the spawn step handed to a continuation the stop dropped is still found and killed
     // when the scope closes. The rounds stop the launch at staggered sub-millisecond offsets from the step before it,
     // across the spawn and the port poll after it; each round's Chrome carries a unique flag Chrome ignores, so the
-    // count afterwards is of this round's tree alone, and whatever the sweep missed is killed here.
+    // count afterwards is of this round's tree alone.
     "a launch stopped around its spawn leaves no Chrome behind" in {
         assume(!Platform.isWindows, "POSIX process tree")
         val rounds                            = 40
@@ -96,10 +95,9 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         }
     }
 
-    // terminateTree: Chrome's helpers (zygotes, GPU process, network service) outlive the main process by a few
-    // milliseconds and write into the user-data-dir as they go down, so a removal that runs as soon as the main process
-    // is dead can find the directory re-created behind it. The tree here has that shape: a parent whose background child
-    // keeps re-creating a directory and survives the parent's death on its own.
+    // Chrome's helpers (zygotes, GPU process, network service) outlive the main process by a few milliseconds and write
+    // into the user-data-dir as they go down, so a removal that runs as soon as the main process is dead can find the
+    // directory re-created behind it.
     "terminateTree leaves no descendant alive to write into the directory" in {
         assume(!Platform.isWindows, "POSIX process tree")
         val outerTmp                = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))

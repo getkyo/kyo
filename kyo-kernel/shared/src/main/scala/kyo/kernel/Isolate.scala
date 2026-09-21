@@ -91,8 +91,6 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       * This is the first phase of isolation, obtaining the state that will be managed during the isolated execution. The computation
       * continues with all original effects plus Keep effects available.
       *
-      * The captured computation's row is `Remove & S`, which the IOTask integration relies on.
-      *
       * @param f
       *   Function that receives the captured state
       */
@@ -211,8 +209,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
     /** This isolate, plus the crossing that leaving one fiber for another makes.
       *
       * Isolating state in place and carrying it to another fiber are different acts, and only the second asks a context region what a fork
-      * of it holds. A spawn composes this in front of the caller's isolate to say the body starts somewhere else: each region in scope is
-      * forked through its own strategy on the way in, and joined back on the way out.
+      * of it holds.
       *
       * Capture and isolate must come from the same instance, so a spawn holds the result of one call rather than calling this twice.
       */
@@ -225,8 +222,8 @@ object Isolate:
 
     /** The effect that marks a computation as unable to cross an isolation boundary.
       *
-      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). The derivation below
-      * refuses it with an explanation instead of looking for an instance, so moving such a computation to another fiber does not compile.
+      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). The derivation refuses
+      * it with an explanation instead of looking for an instance, so moving such a computation to another fiber does not compile.
       */
     sealed abstract class Disallowed extends Effect
 
@@ -252,8 +249,7 @@ object Isolate:
 
         /** The isolate that manages nothing, and the base case a composition folds onto.
           *
-          * The base has to be the identity of `andThen`, so an isolate for effects nobody named does nothing at all. `Contextual` below is
-          * not that: it crosses a fiber boundary, which is asked for rather than inherited from the shape of a type.
+          * The base has to be the identity of `andThen`, so an isolate for effects nobody named does nothing at all.
           */
         private[kernel] object Identity extends Isolate[Any, Any, Any]:
             type State        = Unit
@@ -362,7 +358,7 @@ object Isolate:
                 tpe match
                     case AndType(left, right)        => flatten(left) ++ flatten(right)
                     case t if t =:= TypeRepr.of[Any] => Nil
-                    // The bottom type has to be dropped rather than left to the tests below: every `t <:< X` holds
+                    // The bottom type has to be dropped rather than left to the tests: every `t <:< X` holds
                     // for it, so a row inferred as Nothing, which is what an unconstrained row in a contravariant
                     // position becomes, would read as naming the no-escape marker and be refused as a region escape.
                     case t if t =:= TypeRepr.of[Nothing] => Nil

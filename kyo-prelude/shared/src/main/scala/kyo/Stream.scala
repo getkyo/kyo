@@ -641,8 +641,6 @@ abstract class Stream[+V, -S] @publicInBinary private[kyo] () extends Serializab
       *
       * @param n
       *   The number of elements to take
-      * @param f
-      *   Receives the first n elements and the rest of the stream
       * @return
       *   The result of f
       */

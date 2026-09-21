@@ -44,7 +44,6 @@ class ReportTest extends AnyFreeSpec:
         try
             assert(dropped.eval == -1)
         finally thread.setUncaughtExceptionHandler(previous)
-        // uniform: the outer release still runs; the inner throw, with no computation left to fail, is reported
         assert(log.toList == List("outer"))
         assert(reported.exists(_ eq Bad))
     }

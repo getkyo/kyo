@@ -29,13 +29,11 @@ class EvalTest extends AnyFreeSpec:
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 
-    /** An answer that carries a computation as data, as a fiber's result carries the isolate's restore. */
     final case class Got(value: Int < Any)
     sealed trait Fetch extends ArrowEffect[Const[Unit], Const[Got]]
     def fetch: Got < Fetch = ArrowEffect.suspend[Any](Tag[Fetch], ())
 
-    /** A computation the evaluator answers from the context alone, running no step of anyone's code, as it answers an isolate's restore
-      * from the stack: a defaulted context read.
+    /** A computation the evaluator answers from the context alone, running no step of anyone's code: a defaulted context read.
       */
     sealed trait Env extends ContextEffect[Int]
     def reading(value: Int): Int < Any = ContextEffect.suspend(Tag[Env], value)
@@ -600,8 +598,6 @@ class EvalTest extends AnyFreeSpec:
         }
 
         "a stop alone, with no slice deadline, parks in front of a re-raise" in {
-            // the scheduler's join clause requests a stop and nothing else, so the stop has to be
-            // honored by itself on every platform, not only where a slice deadline backs it
             var clauseRuns         = 0
             val handled: Int < Any = ArrowEffect.handleCont(Tag[Ask], ask.map(_ + 1))(
                 [C] =>
@@ -834,8 +830,7 @@ class EvalTest extends AnyFreeSpec:
         }
 
         // The region an `ensuring` installs from the start is entered before its body's first step runs, so the park
-        // taken in that step carries the entered cell, and the second walk finds it already run. This is the
-        // exactly-once shape the raw-hook leaf above shows is not shared by a plain context region.
+        // taken in that step carries the entered cell, and the second walk finds it already run.
         "a double abandonment reaches an ensuring region stopped in its first step once" in {
             val seen         = ListBuffer[Maybe[Throwable]]()
             val v: Int < Any =
@@ -1025,8 +1020,7 @@ class EvalTest extends AnyFreeSpec:
 
         // An operation issued under a region answers back through the region its clause sits in, and the crossing
         // parks the answer as a deferral in front of the operation's own continuation, under the regions it crosses
-        // into. A stop pending as the answer arrives parks in front of the step receiving it, and what those regions
-        // own travels with the park: an abandonment releases it, a resumption runs the step under them.
+        // into.
         "a stop pending as a crossing answer arrives parks in front of the step receiving it, the crossed regions still owning what they hold" in {
             var registered      = Maybe.empty[Int]
             var outcome         = Maybe.empty[Maybe[Throwable]]
@@ -1114,8 +1108,6 @@ class EvalTest extends AnyFreeSpec:
             assert(seen.exists(_.exists(_ eq boom)), s"the bracket saw $seen")
         }
 
-        // A step is where a stop can be requested without splitting anything: what it did stands, and the first
-        // poll after it parks.
         "a stop requested inside a step parks at the next poll, after it" in {
             var registered      = Maybe.empty[Int]
             var later           = false
@@ -1918,14 +1910,13 @@ class EvalTest extends AnyFreeSpec:
     }
 
     // A release reports the first operation under what it is tearing down, which is how a fiber's interrupt reaches
-    // the join it would have awaited. These pin what it reports; that it also releases is BracketTest's.
+    // the join it would have awaited.
     "release reports the first operation" - {
         val walked = new RuntimeException("walked")
 
         sealed trait AskSub extends Ask
         def askSub: Int < AskSub = ArrowEffect.suspend[Any](Tag[AskSub], ())
 
-        // A reporter that records the operation's input.
         def seeing[A](f: A => Unit): [C] => A => Unit = [C] => (input: A) => f(input)
 
         "through a region and a handed-in deferral" in {
@@ -2008,8 +1999,6 @@ class EvalTest extends AnyFreeSpec:
             assert(seen == "deep")
         }
 
-        // An operation under a deferral exists only once the deferral has run, and the walk runs nothing: the
-        // body is the caller's code, and a step of it after the interrupt acquires what nothing will release.
         // Nothing under a deferral that never ran is reported, since nothing there is waited on yet.
         "does not run a deferral to reach the operation behind it" in {
             var seen  = ""

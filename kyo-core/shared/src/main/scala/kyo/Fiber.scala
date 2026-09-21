@@ -136,9 +136,7 @@ object Fiber:
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S & Scope) =
         // The fiber gets a scope of its own, standalone rather than the enclosing scope's child, so a nested run is its
         // child and its resources close with what actually ended the FIBER, not the enclosing scope's verdict. The
-        // release runs when the enclosing scope closes: interrupt the fiber, close its scope with the fiber's result (an
-        // interrupted lease sees the panic and cancels, one that finished on its own closes clean), then `await` the
-        // drain. The `await` is load-bearing: it orders the fiber's releases ahead of the enclosing scope's own
+        // `await` is load-bearing: it orders the fiber's releases ahead of the enclosing scope's own
         // finalizers, which a mere close (the run backstop's) does not, since the drain runs on a detached fiber.
         Sync.Unsafe.defer {
             val own   = Scope.Finalizer.Unsafe.init(1)
@@ -187,7 +185,7 @@ object Fiber:
         frame: Frame
     ): Fiber[A, reduce.SReduced & S2] < (Sync & S) =
         // Only the capture happens here: the task holds the isolate and crosses itself, so it is handed the body as
-        // written. Deliberately unparented (what unscoped means); the internal spawners below link it to a parent.
+        // written. Deliberately unparented.
         val crossing = isolate.crossing
         crossing.capture { state =>
             IOTask(crossing)(state, v).asInstanceOf[Fiber[A, reduce.SReduced & S2]]
@@ -368,11 +366,7 @@ object Fiber:
         def interruptAwait(using frame: Frame): Unit < Async =
             interruptAwait(Result.Panic(Interrupted(frame)))
 
-        /** Interrupts the Fiber with a specific error and waits until it has released what it held.
-          *
-          * @param error
-          *   The error to interrupt the Fiber with
-          */
+        /** Interrupts the Fiber with a specific error and waits until it has released what it held. */
         inline def interruptAwait(inline error: => Result.Error[E])(using Frame): Unit < Async =
             // One defer: the interrupt is a synchronous promise write and the join that follows awaits the result. The
             // result is discarded, so the fiber's own effects are never run here, and the wait itself is pure `Async`.
@@ -800,7 +794,6 @@ object Fiber:
                 if numWorkers == 1 then
                     initUnscoped[E, Chunk[B], S, S2](Kyo.foreachIndexed(items)(f))
                 else
-                    // named here rather than inline: the array holding each item's isolated form is typed by it
                     val crossing = isolate.crossing
                     Sync.Unsafe.defer {
                         // A worker's value is Unit; what it produces reaches the promise through `complete`, so the array
@@ -814,7 +807,6 @@ object Fiber:
                             def complete(idx: Int, value: crossing.Transform[B]): Unit =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    // restored where the whole chunk is known, so each item's forked state comes back in caller order
                                     this.completeDiscard(Result.succeed(
                                         Kyo.foreach(Chunk.fromNoCopy(results))(crossing.restore(_))
                                     ))
@@ -873,8 +865,7 @@ object Fiber:
         private object Race:
 
             // One captured state for the whole race, each computation isolated against it here rather than at the caller, so
-            // its restore travels inside the fiber. The interrupt parent is read once and passed to each child before any is
-            // scheduled (see Fiber.internal.foreachIndexed).
+            // its restore travels inside the fiber.
             private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
                 isolate: Isolate[S, Abort[E] & Async, S2],
@@ -938,7 +929,7 @@ object Fiber:
             else
                 Sync.Unsafe.defer {
                     // unlike foreachIndexed, what a child produces IS its fiber's value, so the restore packed into it arrives
-                    // here and the array holds the pending computations the collect below runs
+                    // here and the array holds the pending computations
                     class State extends IOPromise[Any, Chunk[A] < (Abort[E] & S2)]
                         with Function2[Int, Result[E, A < S2], Unit]:
                         val results = new Array[AnyRef](max)
@@ -1003,8 +994,7 @@ object Fiber:
                             loop()
                         end apply
                     end State
-                    val state = new State
-                    // the crossing lands here, at the one place that spawns (see Fiber.internal.Race.apply)
+                    val state    = new State
                     val crossing = isolate.crossing
                     crossing.capture { captured =>
                         import AllowUnsafe.embrace.danger

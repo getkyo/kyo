@@ -14,9 +14,8 @@ import scala.annotation.publicInBinary
 
 /** One node of a suspended computation, the reification of a single combinator.
   *
-  * Each subclass is one thing the evaluator can encounter: a deferral holding a value with the continuations waiting on it, a suspension
-  * awaiting an answer, a region entry, a parked slice, or a stack snapshot. With [[kyo.kernel.Arrow]] these are the whole of what a
-  * computation is made of, so a new node kind implies a new combinator rather than a patch to the evaluator.
+  * With [[kyo.kernel.Arrow]] these are the whole of what a computation is made of, so a new node kind implies a new combinator rather than
+  * a patch to the evaluator.
   *
   * The nodes are abstract classes so each construction site implements the members anonymously and keeps its own types, which lets a node
   * hold a primitive input without boxing it.
@@ -51,8 +50,7 @@ object Pending:
 
     /** An operation waiting for a handler to answer it.
       *
-      * `tag` names the effect, which is what a region matches on as the evaluator walks outward looking for a handler, and `cont` is the rest
-      * of the computation from this point, applied to whatever answer arrives.
+      * `tag` names the effect, which is what a region matches on as the evaluator walks outward looking for a handler.
       */
     sealed abstract class Suspend[E <: Effect, A, B, S] extends Pending[B, S]:
         Debugger.onAlloc(this)
@@ -97,7 +95,6 @@ object Pending:
             s"Kyo(${tag.show}, ${frame.callSite})"
     end Suspend
 
-    /** A suspended [[kyo.kernel.ArrowEffect]] operation, carrying the input its clause will be handed. */
     abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
         self =>
         def input: I[A]
@@ -115,8 +112,7 @@ object Pending:
 
     /** A suspended [[kyo.kernel.ContextEffect]] read.
       *
-      * `default` present is the defaulted form, which is why such a read keeps the effect out of its row: no binding is required, because the
-      * node can answer itself.
+      * `default` present is the defaulted form, which is why such a read keeps the effect out of its row: no binding is required.
       */
     abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
         self =>
@@ -133,11 +129,7 @@ object Pending:
     abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
         extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
-    /** Enters a region: builds the node that installs `handler` with `state` over `v`.
-      *
-      * A value that has already settled has no operation to answer, so it skips the region entirely and goes straight to the handler's `done`
-      * arm.
-      */
+    /** Enters a region: builds the node that installs `handler` with `state` over `v`. */
     def handle[State, E <: Effect, A, B, S](v: A < (E & S), handler: Handler.ArrowHandler[State, E, A, B, S], state: State): B < S =
         v match
             case kyo: Pending[A, E & S] @unchecked =>
@@ -165,7 +157,6 @@ object Pending:
         def handler: Handler[E, ?, S]
     end Handle
 
-    /** A region answering an [[kyo.kernel.ArrowEffect]], carrying the handler's state and the continuation for the region's own result. */
     abstract class HandleArrow[State, E <: Effect, A, B, C, -S] extends Handle[E, A, C, S]:
         def handler: Handler[E, B, S]
         def state: State

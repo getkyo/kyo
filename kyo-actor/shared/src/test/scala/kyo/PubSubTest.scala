@@ -155,7 +155,7 @@ class PubSubTest extends kyo.test.Test[Any]:
         // unsubscribe is registered only when the subscriber's fiber resumes. An interrupt landing between the two
         // would abandon that continuation and leave the subscriber in the set, where every later publish waits on a
         // mailbox nobody drains. The interrupt here is requested as soon as the actor reports the subscriber, so the
-        // rounds sample that window; each round asserts the set is empty once the subscriber's fiber has settled.
+        // rounds sample that window.
         "a subscriber interrupted at the subscribe reply is not left in the set" in {
             val rounds = 200
             Loop.indexed { i =>

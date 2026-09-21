@@ -11,7 +11,6 @@ private[kernel] inline def maxStackDepth = kyo.internal.Platform.maxStackDepth
 // Fixed rather than platform-specific: a trace is bounded by how much of it is worth reading.
 private[kernel] inline def maxTraceFrames = 64
 
-// Rendering helpers for the node and arrow toStrings.
 // No arm for Arrow.Transform: every one is a Pending node or an Arrow.Step, which render with their own site.
 private[kernel] def short(v: Any): String =
     v match

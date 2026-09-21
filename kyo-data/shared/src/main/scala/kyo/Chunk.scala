@@ -160,12 +160,6 @@ sealed abstract class Chunk[+A]
       *
       * Replacing the last element relinks its chain node in constant time; any other index copies once into a flat chunk.
       *
-      * @param index
-      *   the index of the element to replace
-      * @param elem
-      *   the replacement element
-      * @return
-      *   a new Chunk with the element at index replaced
       * @throws IndexOutOfBoundsException
       *   if the index is out of bounds
       */

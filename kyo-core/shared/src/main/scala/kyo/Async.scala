@@ -205,8 +205,7 @@ object Async extends AsyncPlatformSpecific:
                     // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
                     // completed promise, so a sleep completing before the wiring below still interrupts at registration.
                     val sleepFiber = clock.unsafe.sleep(after)
-                    // A bracket owns the child and interrupts it on release, so the caller's abandonment reaches it on
-                    // every exit. Not `Fiber.use`: that needs a `Sync` isolate, and here it is `Abort[E] & Async`;
+                    // Not `Fiber.use`: that needs a `Sync` isolate, and here it is `Abort[E] & Async`;
                     // `internal.initUnscoped` keeps `Abort[E]` in the child so `task.get` resurfaces the body's failure.
                     Sync.acquireReleaseWith(Fiber.internal.initUnscoped(v))(_.interrupt)[A, Nothing, Abort[E] & Async & S] { task =>
                         sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
@@ -815,7 +814,7 @@ object Async extends AsyncPlatformSpecific:
     abstract class JoinInput[A]:
         def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
 
-        /** Where the join was written. The scheduler raises this operation again when the promise is not ready, and
+        /** The scheduler raises this operation again when the promise is not ready, and
           * a clause is never handed the frame of what it answers, so without this the raise would carry the
           * scheduler's internal frame instead of the join site.
           */

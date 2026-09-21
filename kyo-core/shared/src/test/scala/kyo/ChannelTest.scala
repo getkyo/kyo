@@ -210,7 +210,7 @@ class ChannelTest extends kyo.test.Test[Any]:
             }
 
             // A zero-capacity channel has no ring to hand a value back into: the hand-back is held as a put until the
-            // next taker. Whichever way the put and the interrupt land, the value reaches exactly one taker.
+            // next taker.
             "a take interrupted while parked on a zero-capacity channel never loses a racing put" in {
                 val rounds = 100
                 Loop.indexed { i =>
@@ -2161,8 +2161,7 @@ class ChannelTest extends kyo.test.Test[Any]:
     "take under interruption" - {
         // `take` delivers the element to its continuation as a value, and the continuation's first step is where the
         // element is first owned: a stop pending at that step drops it whole, which is why `takeWith` is the ownership
-        // boundary (the leaf below). The same interrupt sampling as there; the contract pinned is that a dropped
-        // element is dropped entirely, never released and left in the channel at once.
+        // boundary.
         "take hands the element to its continuation, which a pending stop can drop whole" in {
             val rounds = 100
             Loop.indexed { i =>
@@ -2192,7 +2191,7 @@ class ChannelTest extends kyo.test.Test[Any]:
         // is owed by the taker's scope even when a stop is pending against the taker. The interrupt here is
         // requested right after the put that wakes the parked taker, so it lands around the resumed slice. Two
         // outcomes are correct: the element was delivered and its release ran, or the abandoned take handed it back
-        // to the channel. Delivered and never released is the one the leaf refuses.
+        // to the channel.
         "takeWith registers a release for the element it delivers under a pending interrupt" in {
             val rounds = 100
             Loop.indexed { i =>

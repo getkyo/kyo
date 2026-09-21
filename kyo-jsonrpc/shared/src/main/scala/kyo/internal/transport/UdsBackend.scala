@@ -41,8 +41,6 @@ private[kyo] object UdsBackend:
                     Sync.Unsafe.defer {
                         val listenFiber =
                             NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
-                                // Single-client server: the first accept wins and becomes the wire; a later client is closed
-                                // immediately rather than left un-accepted in the kernel backlog.
                                 if !first.complete(Result.succeed(conn)) then conn.close()
                             }.safe
                         listenCell.set(Maybe(listenFiber))
