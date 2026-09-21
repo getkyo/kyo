@@ -1,7 +1,7 @@
 import java.io.File
-import sbt._
-import sbt.Keys._
-import sbt.complete.DefaultParsers._
+import sbt.*
+import sbt.Keys.*
+import sbt.complete.DefaultParsers.*
 import sbt.complete.Parser
 import sbtcrossproject.CrossPlugin.autoImport.crossProjectPlatform
 
@@ -28,9 +28,9 @@ object ClassNameCheck {
     private val selfTestArg = "--self-test"
 
     /** Added with `inThisBuild`, so `checkClassNames` resolves from any project and `classNameGroup` falls back to None. */
-    val settings: Seq[Setting[_]] = Seq(
-        classNameGroup              := None,
-        checkClassNames             := checkTask.evaluated,
+    val settings: Seq[Setting[?]] = Seq(
+        classNameGroup  := None,
+        checkClassNames := checkTask.evaluated,
         // The task reads every project itself, so the root's aggregation would only run the same scan once per aggregated project.
         checkClassNames / aggregate := false
     )
@@ -64,8 +64,7 @@ object ClassNameCheck {
         }
     }
 
-    private def argParser: Parser[String] =
-        (Space ~> token(StringBasic, "<platform>")).examples(platforms :+ selfTestArg: _*)
+    private def argParser: Parser[String] = (Space ~> token(StringBasic, "<platform>")).examples(platforms :+ selfTestArg: _*)
 
     /** The namespaces a platform argument selects. The sbt plugins are JVM projects, and they share a classpath with each other inside a
       * user's build definition rather than with anything running on the JVM, so they are their own namespace.
@@ -135,7 +134,7 @@ object ClassNameCheck {
                 reachableAll(ref.project).forall { case (project, _) => scalaOf.get(project).forall(_ == scalaOf(ref.project)) }
             }
 
-            val inProducers = ScopeFilter(inProjects(selected: _*), inConfigurations(Compile, Test))
+            val inProducers = ScopeFilter(inProjects(selected*), inConfigurations(Compile, Test))
             val reachable   = reachableOf(extracted, selected)
 
             Def.task {
@@ -197,7 +196,7 @@ object ClassNameCheck {
                         } ++
                     Seq("Rename one of them. Visibility does not help: a name in kyo or kyo.internal is shared by every kyo module.")
 
-        val met = onOneClasspath(byDesign ++ withTest, reachable)
+        val met    = onOneClasspath(byDesign ++ withTest, reachable)
         val shared =
             if (met.isEmpty) Nil
             else Seq("Class names that two projects put on one classpath, where the first wins and the other is dropped:") ++ met
@@ -257,10 +256,12 @@ object ClassNameCheck {
             val a = producer("a", "compile", "jvm", None, "p/X.class", "p/X$.class")
             val b = producer("b", "compile", "jvm", None, "p/X.class")
             check("two projects producing one class collide", reportOf(Seq(a, b)).contains("p.X"))
-            check("the report names both producers", {
-                val out = reportOf(Seq(a, b))
-                out.contains("a (main)") && out.contains("b (main)")
-            })
+            check(
+                "the report names both producers", {
+                    val out = reportOf(Seq(a, b))
+                    out.contains("a (main)") && out.contains("b (main)")
+                }
+            )
             check("nested classes report their top level owner", !reportOf(Seq(a, b)).contains("p.X$"))
 
             val aTest = producer("a", "test", "jvm", None, "p/XTest.class")

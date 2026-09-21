@@ -3167,7 +3167,7 @@ lazy val `kyo-compat-kyo` =
         .dependsOn(`kyo-core`, `kyo-data`)
         .settings(
             `kyo-settings`,
-            ClassNameCheck.classNameGroup := Some("kyo-compat"),
+            ClassNameCheck.classNameGroup           := Some("kyo-compat"),
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
