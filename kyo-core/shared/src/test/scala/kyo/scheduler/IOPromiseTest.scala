@@ -956,7 +956,7 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "remove reaches a registration merged in by become" in {
-            val p1                             = new IOPromise[Nothing, Int]()
+            val p1                              = new IOPromise[Nothing, Int]()
             val p2                              = new IOPromise[Nothing, Int]()
             val f: Result[Nothing, Int] => Unit = _ => ()
             p1.onComplete(f)
