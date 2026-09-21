@@ -849,6 +849,23 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!p2.done())
         }
 
+        "walks a long chain without a frame per registration" in {
+            // A promise awaited by many fibers holds one registration per waiter, and a removal has to walk
+            // past every one of them to reach the end. The walk must cost no stack: a frame per link puts the
+            // ceiling at whatever the platform's thread stack happens to be, which is a different number on
+            // every leg. Sized well past any of them.
+            val depth = 100000
+            val p     = new IOPromise[Nothing, Int]()
+            val links = Array.fill(depth)(new IOPromise[Nothing, Int]())
+            links.foreach(p.interrupts(_))
+
+            p.remove(links(0))
+
+            assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!links(0).done())
+            assert(links(depth - 1).done())
+        }
+
         "remove with become" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
@@ -873,6 +890,27 @@ class IOPromiseTest extends kyo.test.Test[Any]:
 
             assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(!other.done())
+        }
+
+        "an interrupt keeps a registration its cascade could not deliver" in {
+            // The link reclaims the awaiter's registration on the premise that the cascade just completed the
+            // awaited promise and handed the awaiter its final wakeup. A mask refuses interruption, so there
+            // the cascade does nothing and the reclaim is the only effect: it takes the awaiter off a promise
+            // that is still going to complete, and nobody is left to wake.
+            val awaited = new IOPromise[Nothing, Int]()
+            val masked  = awaited.mask()
+            val awaiter = new IOPromise[Nothing, Int]()
+
+            var resumed                              = false
+            val resume: Result[Nothing, Int] => Unit = _ => resumed = true
+            masked.onComplete(resume)
+            awaiter.interrupts(masked, Present(resume))
+
+            assert(awaiter.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!masked.done(), "a mask refuses interruption, so the cascade cannot have completed it")
+
+            awaited.complete(Result.succeed(1))
+            assert(resumed, "the awaited promise completed, but the interrupt had already unregistered its waiter")
         }
 
         "remove preserves other callbacks" in {
