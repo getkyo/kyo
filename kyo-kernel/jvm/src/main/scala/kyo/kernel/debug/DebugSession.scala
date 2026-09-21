@@ -7,7 +7,7 @@ import kyo.kernel.internal.Handler
 import kyo.kernel.internal.Nested
 import kyo.kernel.internal.Pending
 
-/** A [[Debugger]] that counts what happened instead of printing it, for a run too large to read step by step.
+/** A `Debugger` that counts what happened instead of printing it, for a run too large to read step by step.
   *
   * `guardsLikeProduction` decides whether `enter` answers as the production build would, so a count can be taken with or without the guards
   * a real run has.

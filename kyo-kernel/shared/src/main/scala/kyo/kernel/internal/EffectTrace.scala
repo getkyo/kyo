@@ -17,7 +17,7 @@ import scala.util.control.NoStackTrace
   * at the point of failure: the node that failed, the continuation behind it, and the regions installed around it. Each contributes the
   * [[kyo.Frame]] of the site that built it.
   *
-  * It is carried as a suppressed exception on the failure rather than replacing it, so nothing about the original is lost, and [[splice]]
+  * It is carried as a suppressed exception on the failure rather than replacing it, so nothing about the original is lost, and `splice`
   * later prepends the reconstructed frames to its stack trace.
   *
   * @param elements
