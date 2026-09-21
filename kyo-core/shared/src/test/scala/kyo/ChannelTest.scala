@@ -193,30 +193,13 @@ class ChannelTest extends kyo.test.Test[Any]:
                                 }
                         }
                     }
-                    // A hand-back whose ring was full is held as a put, and a held put moves into the ring only when
-                    // something runs a flush. A drain over an empty ring returns without flushing, so the sentinel
-                    // is what gives the drain something to find: its loop flushes after each non-empty pass, which
-                    // transfers the held value into the ring the pass before it is read. The sentinel is negative
-                    // and the items are positive, so it filters out of the accounting.
-                    //
-                    // `pendingPuts` is not the signal for any of this: it is the size of the put queue, which still
-                    // counts puts whose promise is done, the ones `pollNextLive` skips. Reading it as a count of
-                    // live values strands a `take` on a queue that holds only dead entries.
-                    //
-                    // Attempts repeat because a taker's hand-back runs on its abandonment, which is spawned rather
-                    // than waited for, so a value can still be on its way back. The budget is bounded so that a
-                    // value which genuinely went missing reports the diff below rather than spending the leaf.
+                    // A taker's hand-back runs on its abandonment, which is spawned rather than waited for, so a value
+                    // can still be on its way back when the first drain runs. Retried for that, and only that: `drain`
+                    // itself is responsible for surfacing a value parked as a put, so nothing here has to prod it.
                     collected <- AtomicRef.init(Chunk.empty[Int])
-                    _         <- Abort.run[String] {
-                        Retry[String](Schedule.fixed(10.millis).take(300)) {
-                            for
-                                _     <- c.offer(-1)
-                                chunk <- c.drain
-                                acc   <- collected.updateAndGet(_.concat(chunk.filter(_ > 0)))
-                                _     <-
-                                    if received.size + acc.size >= items then Kyo.unit
-                                    else Abort.fail("accounting incomplete")
-                            yield ()
+                    _         <- assertEventually {
+                        c.drain.flatMap { chunk =>
+                            collected.updateAndGet(_.concat(chunk)).map(acc => received.size + acc.size >= items)
                         }
                     }
                     drained <- collected.get
