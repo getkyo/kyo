@@ -94,14 +94,15 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                                 // The one removal that cannot be typed: `self` is a callback on the
                                                 // AWAITED promise being dropped from the link on THIS task, so no
                                                 // signature here can name its type.
-                                                IOTask.this.remove(self)
+                                                discard(IOTask.this.remove(self))
                                                 curr = Sync.defer(cont(r.asInstanceOf[Result[Nothing, C]]))
                                                 Scheduler.get.schedule(IOTask.this)
                                             end apply
                                     // Invoking joinInput links the awaited promise against THIS task, carrying
-                                    // `resume` so an interrupt reclaims it, and does so before we read the promise's
-                                    // state (see Async.useResult). The awaited promise's error type is opaque here and
-                                    // only `resume` consumes it, so it is bound once for the registration calls below.
+                                    // `resume` so an interrupt that cannot complete the awaited promise fires it
+                                    // itself, and does so before we read the promise's state (see Async.useResult).
+                                    // The awaited promise's error type is opaque here and only `resume` consumes it,
+                                    // so it is bound once for the registration calls below.
                                     val input = joinInput(this, Present(resume)).asInstanceOf[IOPromise[Any, C]]
                                     input.poll() match
                                         case null =>
@@ -109,16 +110,18 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                         case Present(r) =>
                                             // Promise was already complete when the thunk ran, so drop the
                                             // cascade link the thunk pre-registered so it doesn't accumulate.
-                                            this.remove(input)
+                                            discard(this.remove(input))
                                             cont(r.asInstanceOf[Result[Nothing, C]])
                                         case Absent =>
                                             curr = nullResult
                                             input.onComplete(resume)
                                             // An interrupt that landed while this task was registering already fired
-                                            // the link, which found nothing to reclaim. Both the link's read of this
-                                            // task's state and the interrupt's write of it are volatile, so if the
-                                            // link ran too early then that write precedes this read.
-                                            if !isPending() then input.remove(resume)
+                                            // the link, which found nothing to take over. This task is still running,
+                                            // so `run` sees the interrupt and finishes it; only the registration must
+                                            // not be left behind. Both the link's read of this task's state and the
+                                            // interrupt's write of it are volatile, so if the link ran too early then
+                                            // that write precedes this read.
+                                            if !isPending() then discard(input.remove(resume))
                                             nullResult
                                     end match
                                 }

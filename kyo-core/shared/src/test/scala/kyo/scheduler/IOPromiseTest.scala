@@ -867,17 +867,20 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "remove with become" in {
+            // A link made on `p1` before `p1.become(p2)` lives on in the half of `p2`'s chain the merge carries as
+            // its tail. Removing it through `p1` has to reach it there: the caller unlinked `p3`, so interrupting
+            // `p2` must leave `p3` alone.
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             val p3 = new IOPromise[Nothing, Int]()
 
             p1.interrupts(p3)
             p1.become(p2)
-            p1.remove(p3)
+            assert(p1.remove(p3))
 
             assert(p2.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p2.block(deadline()).isPanic)
-            assert(p3.done())
+            assert(!p3.done())
         }
 
         "remove with mask" in {
@@ -892,25 +895,69 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!other.done())
         }
 
-        "an interrupt keeps a registration its cascade could not deliver" in {
-            // The link reclaims the awaiter's registration on the premise that the cascade just completed the
-            // awaited promise and handed the awaiter its final wakeup. A mask refuses interruption, so there
-            // the cascade does nothing and the reclaim is the only effect: it takes the awaiter off a promise
-            // that is still going to complete, and nobody is left to wake.
+        "an interrupt on a masked await wakes the awaiter itself" in {
+            // A mask refuses interruption, so the cascade cannot complete the awaited promise and cannot fire the
+            // awaiter's callback that way. Leaving the callback registered leaks it on a promise that may never
+            // complete; taking it off without firing it strands the awaiter. The link has to do both: take it
+            // off, and fire it with the interrupt.
             val awaited = new IOPromise[Nothing, Int]()
             val masked  = awaited.mask()
             val awaiter = new IOPromise[Nothing, Int]()
 
-            var resumed                              = false
-            val resume: Result[Nothing, Int] => Unit = _ => resumed = true
+            var fired                                = 0
+            var seen: Maybe[Result[Nothing, Int]]    = Absent
+            val resume: Result[Nothing, Int] => Unit = r =>
+                fired += 1
+                seen = Present(r)
             masked.onComplete(resume)
             awaiter.interrupts(masked, Present(resume))
 
             assert(awaiter.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(!masked.done(), "a mask refuses interruption, so the cascade cannot have completed it")
+            assert(!masked.done(), "the mask held: the awaited promise is still pending")
+            assert(fired == 1 && seen.exists(_.isPanic), "the awaiter was woken with the interrupt")
+            assert(masked.waiters() == 0, "and holds no registration on the promise it stopped waiting for")
 
             awaited.complete(Result.succeed(1))
-            assert(resumed, "the awaited promise completed, but the interrupt had already unregistered its waiter")
+            assert(fired == 1, "completion found no callback to fire a second time")
+        }
+
+        "an interrupt on an unmasked await fires the callback once, through completion" in {
+            val awaited = new IOPromise[Nothing, Int]()
+            val awaiter = new IOPromise[Nothing, Int]()
+
+            var fired                                = 0
+            val resume: Result[Nothing, Int] => Unit = _ => fired += 1
+            awaited.onComplete(resume)
+            awaiter.interrupts(awaited, Present(resume))
+
+            assert(awaiter.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(awaited.done())
+            assert(fired == 1)
+        }
+
+        "remove reports whether the registration was there" in {
+            val p                               = new IOPromise[Nothing, Int]()
+            val f: Result[Nothing, Int] => Unit = _ => ()
+            val g: Result[Nothing, Int] => Unit = _ => ()
+            p.onComplete(f)
+            assert(p.remove(f))
+            assert(!p.remove(f), "already removed")
+            assert(!p.remove(g), "never registered")
+            p.complete(Result.succeed(1))
+            assert(!p.remove(f), "a completed promise holds nothing")
+        }
+
+        "remove reaches a registration merged in by become" in {
+            // A waiter registered on `p1` before `p1.become(p2)` sits in the half of `p2`'s chain that the
+            // merge carries as its tail. It must still be removable, and removable through `p1`.
+            val p1                              = new IOPromise[Nothing, Int]()
+            val p2                              = new IOPromise[Nothing, Int]()
+            val f: Result[Nothing, Int] => Unit = _ => ()
+            p1.onComplete(f)
+            assert(p1.become(p2))
+            assert(p2.waiters() == 1)
+            assert(p1.remove(f))
+            assert(p2.waiters() == 0)
         }
 
         "remove preserves other callbacks" in {
