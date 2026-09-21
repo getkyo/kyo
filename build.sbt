@@ -3651,6 +3651,7 @@ lazy val `kyo-website` =
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
         .disablePlugins(MimaPlugin)
+        .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.
@@ -3658,7 +3659,11 @@ lazy val `kyo-website` =
             // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
             // while the rest of the project uses sourcecode_3.
             libraryDependencies += ("org.scalameta" %% "scalameta" % "4.17.4")
-                .exclude("com.lihaoyi", "sourcecode_2.13")
+                .exclude("com.lihaoyi", "sourcecode_2.13"),
+            // The JVM tests serve the real browser bundle. Referenced by project id: `kyo-website-bundle`
+            // depends on this project, so naming its val here would make this val recursive.
+            Test / test    := (Test / test).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).value,
+            Test / testOnly := (Test / testOnly).dependsOn(LocalProject("kyo-website-bundleJS") / Compile / fullLinkJS).evaluated
         )
         .jsSettings(
             `js-settings`,

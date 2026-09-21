@@ -66,10 +66,16 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         state.isInstanceOf[Pending[?, ?]]
 
     final def interrupts(other: IOPromise[?, ?])(using frame: Frame): Unit =
+        interrupts(other, Absent)
+
+    /** `release` is the awaiter's callback on `other`. If `other` refuses the interrupt (masked), the link removes the
+      * callback from it and fires it with the interrupt.
+      */
+    final def interrupts[E2, A2](other: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !promise.compareAndSet(p, p.interrupts(other)) then
+                    if !promise.compareAndSet(p, p.interrupts(other, release)) then
                         interruptsLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
@@ -78,17 +84,26 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         interruptsLoop(this)
     end interrupts
 
-    final def removeInterrupt(other: IOPromise[?, ?])(using frame: Frame): Unit =
-        @tailrec def removeInterruptLoop(promise: IOPromise[E, A]): Unit =
+    /** Drops the registration made under `key`, matched by reference: the promise given to [[interrupts]], or the
+      * function given to [[onComplete]] / [[onInterrupt]].
+      *
+      * Returns whether it was there. The drop shares completion's CAS, so `true` means this promise will never fire
+      * that callback and the caller may fire it exactly once.
+      */
+    final def remove(key: IOPromise[?, ?] | Function1[?, ?]): Boolean =
+        @tailrec def removeLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !promise.compareAndSet(p, p.removeInterrupt(other)) then
-                        removeInterruptLoop(promise)
+                    val next = p.remove(key)
+                    if next eq p then false
+                    else if !promise.compareAndSet(p, next) then removeLoop(promise)
+                    else true
                 case l: Linked[E, A] @unchecked =>
-                    removeInterruptLoop(l.p)
+                    removeLoop(l.p)
                 case _ =>
-        removeInterruptLoop(this)
-    end removeInterrupt
+                    false
+        removeLoop(this)
+    end remove
 
     def preInterrupt(): Boolean = true
 
@@ -310,8 +325,15 @@ private[kyo] object IOPromise:
 
         def waiters: Int
         def interrupt(v: Error[E]): Pending[E, A]
-        def removeInterrupt(other: IOPromise[?, ?]): Pending[E, A]
+
+        /** Costs a frame per node walked, so it stops at the first match; the registration being dropped is normally
+          * the newest, at the head. Returns `this`, not a copy, when nothing matched.
+          */
+        def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
+
+        /** The rest of the chain if this node is a link to a completed promise, else this node. */
+        def dropIfDead: Pending[E, A] = this
 
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
@@ -319,38 +341,62 @@ private[kyo] object IOPromise:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def removeInterrupt(other: IOPromise[?, ?]) =
-                    self.removeInterrupt(other).onComplete(f)
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    if key eq f then self
+                    else
+                        val rest = self.remove(key)
+                        if rest eq self then this else rest.onComplete(f)
                 def run(v: Result[E, A]) =
                     eval(discard(f(v.asInstanceOf[Result[E, A]])))
                     self
                 end run
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
-            new Pending[E, A]:
-                def interrupt(error: Error[E]) =
-                    val ex =
-                        error match
-                            case error: Result.Panic => error
-                            case _                   => interruptPanic
+            interrupts(p, Absent)
 
-                    discard(p.interrupt(ex))
-                    self
-                end interrupt
-                def removeInterrupt(other: IOPromise[?, ?]) =
-                    if p eq other then self
-                    else self.removeInterrupt(other).interrupts(p)
-                def waiters: Int         = self.waiters + 1
-                def run(v: Result[E, A]) =
-                    self
+        final def interrupts[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
+            // Without this a long-lived fiber keeps a link per child it ever forked.
+            @tailrec def live(chain: Pending[E, A]): Pending[E, A] =
+                val next = chain.dropIfDead
+                if next eq chain then chain else live(next)
+            val base = live(this)
+            if base ne this then base.interrupts(p, release)
+            else
+                new Pending[E, A]:
+                    def interrupt(error: Error[E]) =
+                        val ex =
+                            error match
+                                case error: Result.Panic => error
+                                case _                   => interruptPanic
+
+                        // A masked `p` refuses the interrupt and fires nothing, so the awaiter is woken here.
+                        // `remove` is false if completion already fired `release`.
+                        if !p.interrupt(ex) then
+                            release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
+                        self
+                    end interrupt
+                    def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                        if (key eq p) || release.exists(_ eq key) then self
+                        else
+                            val rest = self.remove(key)
+                            if rest eq self then this else rest.interrupts(p, release)
+                    override def dropIfDead  = if p.done() then self else this
+                    def waiters: Int         = self.waiters + 1
+                    def run(v: Result[E, A]) =
+                        self
+            end if
+        end interrupts
 
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(error: Error[E]) =
                     eval(discard(f(error)))
                     self
-                def removeInterrupt(other: IOPromise[?, ?]) =
-                    self.removeInterrupt(other).onInterrupt(f)
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    if key eq f then self
+                    else
+                        val rest = self.remove(key)
+                        if rest eq self then this else rest.onInterrupt(f)
                 def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
@@ -367,16 +413,19 @@ private[kyo] object IOPromise:
                     case _ if (p eq Pending.Empty) => tail
                     case p: Pending[E, A]          => interruptLoop(p.interrupt(error), error)
 
-            @tailrec def removeInterruptsLoop(p: Pending[E, A], other: IOPromise[?, ?]): Pending[E, A] =
-                p match
-                    case _ if (p eq Pending.Empty) => tail
-                    case p: Pending[E, A]          => removeInterruptsLoop(p.removeInterrupt(other), other)
-
             new Pending[E, A]:
-                def waiters: Int                            = self.waiters + tail.waiters
-                def interrupt(error: Error[E])              = interruptLoop(self, error)
-                def removeInterrupt(other: IOPromise[?, ?]) = removeInterruptsLoop(self, other)
-                def run(v: Result[E, A])                    = runLoop(self, v)
+                def waiters: Int               = self.waiters + tail.waiters
+                def interrupt(error: Error[E]) = interruptLoop(self, error)
+                // `tail` holds what was registered on a promise before it became this one.
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    val head = self.remove(key)
+                    if head ne self then head.merge(tail)
+                    else
+                        val rest = tail.remove(key)
+                        if rest eq tail then this else self.merge(rest)
+                    end if
+                end remove
+                def run(v: Result[E, A]) = runLoop(self, v)
             end new
         end merge
 
@@ -403,10 +452,10 @@ private[kyo] object IOPromise:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                            = 0
-            def interrupt(v: Error[Nothing])            = this
-            def removeInterrupt(other: IOPromise[?, ?]) = this
-            def run(v: Result[Nothing, Nothing])        = this
+            def waiters: Int                                   = 0
+            def interrupt(v: Error[Nothing])                   = this
+            def remove(key: IOPromise[?, ?] | Function1[?, ?]) = this
+            def run(v: Result[Nothing, Nothing])               = this
         end Empty
     end Pending
 

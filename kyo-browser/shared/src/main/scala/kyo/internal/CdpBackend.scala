@@ -325,6 +325,15 @@ private[kyo] object CdpBackend:
             }
         }
 
+    private[kyo] def getHeapUsage(backend: CdpBackend)(using
+        Frame
+    ): GetHeapUsageResult < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, GetHeapUsageResult]("Runtime.getHeapUsage", CdpNoParams())
+
+    // The reply is sent after the collection finishes.
+    private[kyo] def collectGarbage(backend: CdpBackend)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        backend.send[CdpNoParams, Unit]("HeapProfiler.collectGarbage", CdpNoParams())
+
     private[kyo] def setDeviceMetricsOverride(backend: CdpBackend, params: ViewportParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =

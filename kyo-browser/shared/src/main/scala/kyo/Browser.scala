@@ -2579,6 +2579,23 @@ object Browser:
     def evalDiscard(js: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         eval(js).unit
 
+    // --- Memory ---
+
+    /** Reads the active tab's JS heap occupancy via `Runtime.getHeapUsage`.
+      *
+      * The read includes garbage not yet collected. To measure what the page retains, call [[collectGarbage]] first.
+      */
+    def heapUsage(using Frame): HeapUsage < (Browser & Abort[BrowserReadException]) =
+        Env.use[BrowserTab] { tab =>
+            CdpBackend.getHeapUsage(tab.session).map(r => HeapUsage(r.usedSize.toLong, r.totalSize.toLong))
+        }
+
+    /** Runs a full GC in the active tab's isolate via `HeapProfiler.collectGarbage`, returning once it has finished. */
+    def collectGarbage(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        Env.use[BrowserTab] { tab =>
+            CdpBackend.collectGarbage(tab.session)
+        }
+
     /** Returns all console messages captured since the last call (or since page load on the first call) and clears the buffer.
       *
       * The `console.debug` / `console.info` / `console.log` / `console.warn` / `console.error` override is installed eagerly when the tab is
@@ -3851,6 +3868,9 @@ object Browser:
       * `ScreenshotFrame`.
       */
     final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** JS heap occupancy in bytes. `used` is live plus not-yet-collected data; `total` is what V8 has reserved. */
+    final case class HeapUsage(used: Long, total: Long) derives Schema, CanEqual
 
     /** One frame recorded by [[screenshotFrames]]. `image` is the captured frame; `offsetMs` is `round(timestamp * 1000) - t0` from the
       * screencast metadata (with a wall-clock fallback), relative to the cast start and floored at the previous frame's offset so a
