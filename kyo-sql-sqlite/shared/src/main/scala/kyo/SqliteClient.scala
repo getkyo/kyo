@@ -41,6 +41,13 @@ object SqliteClient:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): SqliteClient < (Async & Abort[SqlException]) =
+        Scope.runUnowned(opened(url, config))
+
+    /** Builds a client on `url` under the ambient scope, for the backend factory to hand back.
+      *
+      * The row carries [[kyo.Scope]] because `Runtime.init` registers the pool's release against it as the pool is allocated.
+      */
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqliteClient < (Async & Abort[SqlException] & Scope) =
         // The bindings are loaded once per client rather than per connection and handed to the factory, which is what
         // lets the sibling embedded backend reuse this connection layer against its own library.
         Sync.Unsafe.defer(Ffi.load[VendoredSqliteBindings]).flatMap { bindings =>

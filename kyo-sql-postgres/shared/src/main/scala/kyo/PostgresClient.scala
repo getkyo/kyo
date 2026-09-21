@@ -305,14 +305,16 @@ object PostgresClient:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): PostgresClient < (Async & Abort[SqlException]) =
-        opened(url, config)
+        Scope.runUnowned(opened(url, config))
 
     /** Validates the PostgreSQL settings, then assembles the carrier through [[kyo.db.Runtime.init]] and wraps it in a client.
       *
       * `Runtime.init` merges the URL's options under `config`, builds the pool over the connection factory, and warms it up behind a bracket
       * that closes whatever it opened on any failure edge, so a caller never receives a half-open client to clean up.
+      *
+      * The row carries [[kyo.Scope]] because `Runtime.init` registers the pool's release against it as the pool is allocated.
       */
-    private def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException]) =
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException] & Scope) =
         sanitizeTypeNames(PostgresConfig.of(config).typeNames).andThen {
             Runtime.init(url, config, PostgresSqlConnection.factory(url.options)).map(rt => new PostgresClient(rt))
         }
