@@ -184,6 +184,11 @@ abstract class Listener:
     /** The address this listener is bound to (TCP or Unix). */
     def address: NetAddress
 
-    /** Stop accepting new connections and close the listener. Synchronous, idempotent. Does not close already-accepted connections. */
+    /** Stop accepting new connections and close the listener. Idempotent. Does not close already-accepted connections.
+      *
+      * Returning does NOT mean the descriptor is released. The NIO implementation hands the real close to the selector's next pass on
+      * JDK 11+, so a caller that needs the descriptor actually gone, to unlink a socket file on a platform that refuses while it is open,
+      * has to wait for it rather than assume this call did it.
+      */
     def close()(using AllowUnsafe, Frame): Unit
 end Listener

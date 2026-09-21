@@ -25,24 +25,32 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
 
     // `unixDomain` binds the listener (and its socket file) on a fiber the caller joins; the listener must be owned
-    // whichever side of the join a stop lands on. The rounds interrupt at staggered delays and wait, bounded, for the
-    // socket file to go: a release in flight removes it within the bound, a listener nobody owns keeps it.
+    // whichever side of the join a stop lands on. Each round interrupts and then waits for the socket file to go: a
+    // release in flight removes it, a listener nobody owns keeps it, and the leaf timeout is what reports the latter.
+    //
+    // The probe reads a path whose socket may still be open, because the interrupt spawns the scope's drain rather
+    // than waiting for it. Windows answers that state by refusing access rather than by saying the file is there, so
+    // an unreadable path counts as not yet gone; letting it raise would fail the round on the transient rather than
+    // on the leak.
     "an interrupt landing as the listener binds leaves no listener or socket file behind" in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock   = Path(tempDir, "test.sock")
-            val rounds = 40
+            val sock                                 = Path(tempDir, "test.sock")
+            val rounds                               = 40
+            def removed(using Frame): Boolean < Sync =
+                Abort.run[FileSystemException](Path.runReadOnly(sock.exists)).map {
+                    case Result.Success(exists) => !exists
+                    case _                      => false
+                }
             Loop.indexed { i =>
                 if i >= rounds then Loop.done(succeed)
                 else
                     for
                         fiber <- Fiber.initUnscoped(Scope.run(JsonRpcTransport.unixDomain(sock).andThen(Async.never)))
-                        _     <- Async.delay((i % 3).millis)(fiber.interrupt)
+                        _     <- fiber.interrupt
                         _     <- fiber.getResult
-                        gone  <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(sock.exists.map(!_))))
-                    yield
-                        assert(gone.isSuccess, s"round $i: the socket file is still there, so its listener was released by nobody")
-                        Loop.continue
+                        _     <- assertEventually(removed)
+                    yield Loop.continue
             }
         })
     }

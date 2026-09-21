@@ -142,16 +142,19 @@ object JsonRpcTransport:
       * platform kyo-net targets: JVM (the posix io_uring/epoll/kqueue backend, or the NIO floor), Native (posix), and
       * JS/Wasm (Node's `net` module, so it requires a Node.js runtime; a browser has no sockets).
       *
-      * @param sockPath path to the socket file (must not already exist)
-      * @param framer   byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
-      * @param codec    envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`
+      * @param sockPath    path to the socket file (must not already exist)
+      * @param framer      byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
+      * @param codec       envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`
+      * @param unlinkRetry how cleanup retries removing the socket file while the listener's descriptor is still being
+      *                    released; defaults to [[kyo.internal.transport.UdsBackend.defaultUnlinkRetry]]
       */
     def unixDomain(
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
-        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        unlinkRetry: Schedule = internal.transport.UdsBackend.defaultUnlinkRetry
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
-        internal.transport.UdsBackend.connect(sockPath, framer, codec)
+        internal.transport.UdsBackend.connect(sockPath, framer, codec, unlinkRetry)
 
     /** Content-Length-framed stdio transport for JSON-RPC (LSP, DAP, BSP).
       *

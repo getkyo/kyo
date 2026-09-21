@@ -12,10 +12,19 @@ import kyo.net.NetPlatform
   */
 private[kyo] object UdsBackend:
 
+    /** How the socket-file unlink is retried while the listener's descriptor is still being released.
+      *
+      * `Listener.close()` does not free the descriptor synchronously: on JDK 11+ the real close is handed to the selector's next pass. A
+      * platform that refuses to unlink a socket file whose descriptor is open, Windows among them, therefore needs the unlink to outlast
+      * that pass. Bounded rather than indefinite, so a path that genuinely cannot be removed reports instead of retrying forever.
+      */
+    val defaultUnlinkRetry: Schedule = Schedule.fixed(5.millis).take(40)
+
     def connect(
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
-        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        unlinkRetry: Schedule = defaultUnlinkRetry
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
@@ -36,7 +45,17 @@ private[kyo] object UdsBackend:
                                 }
                             case Absent => ()
                         }
-                    }.andThen(Abort.run[FileSystemException](Path.run(sockPath.remove)).unit)
+                    }.andThen {
+                        // Retried on `unlinkRetry` because the listener's descriptor outlives `close()`; see its default
+                        // above. The final failure is logged rather than swallowed, because a socket file left behind is
+                        // what the next bind on the same path trips over.
+                        Abort.run[FileSystemException](
+                            Retry[FileSystemException](unlinkRetry)(Path.run(sockPath.remove))
+                        ).map(_.foldError(
+                            _ => (),
+                            error => Log.error(s"UdsBackend: could not remove the socket file at $sockPath", error.exception)
+                        ))
+                    }
                 }.andThen {
                     Sync.Unsafe.defer {
                         val listenFiber =
