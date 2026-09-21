@@ -31,9 +31,10 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
       *     result is available once its finalizers have run.
       *   - `Done`: terminal, remainder released.
       *
-      * `Idle` and the error are the only states another thread may take this task out of; every other transition is the owner's, and each
-      * one out of a slice is a CAS since an interrupt may have taken the word meanwhile. So a run is never scheduled for a slice in
-      * flight, and the two contended claims are out of `Idle` and out of the error.
+      * A task in `Idle` or holding the error is unowned, and either word may be claimed by any thread. An interrupt is the only transition
+      * another thread makes out of `Thread` or `IOPromise`; every other transition is the owner's, and each one out of a slice is a CAS
+      * since an interrupt may have taken the word meanwhile. So a run is never scheduled for a slice in flight, and the two contended
+      * claims are out of `Idle` and out of the error.
       */
     @volatile private var status: Status = Status.Idle
 
@@ -100,7 +101,8 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                             val promise = joinInput(this)
                             promise.poll() match
                                 case null =>
-                                    // placeholder for a not-ready poll; O[C] is erased to Any here
+                                    // A promise completed with a `null` value polls as a bare `null`, since `Success` and
+                                    // `Present` are both unwrapped; O[C] is erased to Any here
                                     Loop.continue(null.asInstanceOf[Any])
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
@@ -304,7 +306,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     // `abandon` can find it. Order matters (store the remainder, then arm): arming publishes the task,
                     // so everything a resuming worker reads must already be written.
                     curr = next
-                    // Read out before the wakeup closes over it; see `parkOn`.
+                    // Read out before the wakeup closes over it.
                     val frame = joinFrame
                     if casStatus(Status.parked(promise), Status.Idle) then
                         promise.onComplete { _ =>
@@ -320,9 +322,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 case Absent =>
                     if s.isInterrupted then
                         // An interrupt landed on this slice. What the stop left is the remainder, unless the body
-                        // reached its own ending first, in which case its value was dropped by the `!interrupted` guard
-                        // and its finalizers already ran, so there is nothing to release and the promise is still
-                        // pending. Either way `release` settles the promise with the interrupt.
+                        // reached its own ending first, in which case its value was dropped by the boundary's failed
+                        // claim on the word and its finalizers already ran, so there is nothing to release and the
+                        // promise is still pending. Either way `release` settles the promise with the interrupt.
                         curr = if next.evalNow.isDefined then cleared else next
                         release()
                         Task.Done

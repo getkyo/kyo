@@ -24,8 +24,8 @@ final private[kernel] class Stack:
     private var size          = 0
 
     // A region's release runs when its own extent ends, so the presence of a release here is what marks the region as
-    // still owning it: a region dumped into a continuation moves its releases to the holder's entry and reinstalls with
-    // none, which makes a held region release once, at the holder, without a separate flag.
+    // still owning it: a non-escaping dump moves a region's releases to the holder's entry and reinstalls it with none,
+    // which makes a held region release once, at the holder, without a separate flag.
     private var releases = new Array[Stack.Releases](0)
 
     private var evalReleases: Stack.Releases = Stack.Releases.empty
@@ -270,8 +270,8 @@ final private[kernel] class Stack:
     end truncate
 
     /** The depth of the innermost region answering `tag`, or -1 when nothing does. The inward-out walk makes an inner handler shadow an
-      * outer one, and the match is on tag subtyping, so a handler for a supertype answers an operation of a subtype. Context reads resolve
-      * the same way, through the handler stack rather than a separate context.
+      * outer one, and the match is on tag subtyping, so a handler at a subtype effect answers an operation raised at a supertype, never
+      * the other way round. Context reads resolve the same way, through the handler stack rather than a separate context.
       */
     def find[E <: Effect](tag: kyo.Tag[E]): Int =
         @tailrec def loop(i: Int): Int =
@@ -283,7 +283,8 @@ final private[kernel] class Stack:
 
     /** Takes the regions from `from` upward off the live stack as a snapshot (reinstalled if the continuation is resumed), moving the
       * releases they owed onto the region below. The releases do not travel with them, because the continuation may be resumed more than
-      * once against the live resource; the region below runs them once, at its own end.
+      * once against the live resource; the region below runs them once, at its own end. An `escaping` dump is the exception: the releases
+      * travel in the snapshot, which the caller owes below as a remainder that drains them if it is never resumed.
       */
     def dump(from: Int, escaping: Boolean = false): Stack.Snapshot =
         val count                            = size - from

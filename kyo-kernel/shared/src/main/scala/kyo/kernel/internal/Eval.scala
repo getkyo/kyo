@@ -343,7 +343,6 @@ import scala.annotation.tailrec
                 case kyo: Pending.Snapshot[T, S2] @unchecked =>
                     loop(kyo.cont(stack, contA.chain(contB)), Arrow.id, Arrow.id)
 
-                // a settled value
                 case res =>
                     if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then
                         if stack.isEmpty then
@@ -433,9 +432,9 @@ import scala.annotation.tailrec
 
         /** Reinstalls the regions a parked slice carries, restoring the releases each owed.
           *
-          * A dump snapshot carries no releases (the dumping handler moved them to its own entry), so a reinstalled region resumes with none
-          * and the holder runs them once at its end. A park snapshot carries them, because a parked computation is itself resuming and runs
-          * its regions' extents to an end where it resumes.
+          * A non-escaping dump snapshot carries no releases (the dumping handler moved them to its own entry), so a reinstalled region
+          * resumes with none and the holder runs them once at its end. A park snapshot and an escaping peel's snapshot carry them, because
+          * each is a computation resuming and runs its regions' extents to an end where it resumes.
           */
         def installed(kyo: Pending.Park[?, ?], resume: Arrow[Any, Any, Any]): Unit =
             val entries   = kyo.entries
