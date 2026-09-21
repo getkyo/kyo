@@ -1685,7 +1685,7 @@ object FlowEngine:
                 // subflow embedded twice would otherwise contribute two entries a renderer cannot tell apart.
                 def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[NodeProgress], frame: Frame, meta: Flow.Meta) =
                     Chunk(NodeProgress(name, NodeType.Subflow, NodeStatus.Pending, frame.snippetShort)) ++
-                        child.map(n => n.copy(name = NodePath.qualify(name, n.name)))
+                        child.map(n => n.copy(name = FlowNodePath.qualify(name, n.name)))
                 def onAndThen(first: Chunk[NodeProgress], second: Chunk[NodeProgress], frame: Frame) = first ++ second
                 def onZip(left: Chunk[NodeProgress], right: Chunk[NodeProgress], frame: Frame)       = left ++ right
                 def onGather(flows: Seq[Chunk[NodeProgress]], frame: Frame) = flows.foldLeft(Chunk.empty[NodeProgress])(_ ++ _)
@@ -1700,7 +1700,7 @@ object FlowEngine:
             def owner(path: String): Maybe[String] =
                 if nodeNames.contains(path) then Maybe(path)
                 else
-                    val cut = path.lastIndexWhere(c => c == '#' || c == NodePath.Separator)
+                    val cut = path.lastIndexWhere(c => c == '#' || c == FlowNodePath.Separator)
                     if cut <= 0 then Maybe.empty else owner(path.substring(0, cut))
             // Sorted so that two items of one fan-out failing paint their parent with the same message on every platform, rather
             // than with whichever the map happened to yield first.
@@ -1755,7 +1755,7 @@ object FlowEngine:
             end assignStatuses
             val walked                                                                   = assignStatuses(0, false, Chunk.empty)
             def under(nodes: Chunk[NodeProgress], instance: String): Chunk[NodeProgress] =
-                val prefix = s"$instance${NodePath.Separator}"
+                val prefix = s"$instance${FlowNodePath.Separator}"
                 nodes.filter(_.name.startsWith(prefix))
             // A recorded failure keeps its place ahead of the derivation, here as everywhere else: it is a fact the execution wrote,
             // and only the resolver decides which node owns it.
