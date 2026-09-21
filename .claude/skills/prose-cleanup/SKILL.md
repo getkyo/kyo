@@ -45,7 +45,16 @@ Do not judge each block once and move on. One holistic look per block is what ke
 
 **Pass 1 — whole blocks that restate.** For every block: does grepping the identifier below it recover the content? Does the method, test, or class name already say it? Does the assertion message on the next line say it? If yes, DELETE the block. Do this before anything else; there is no point polishing a block that should not exist.
 
+One exception, because a name states a **subject** and never a **rationale**. Keep the sentences that say why a thing is *built the way it is*, where a reader who does not know would simplify it and quietly destroy what it does:
+
+- **A test whose setup encodes its reproduction.** A capacity of 1, a queue deliberately left unconsumed, an ordering, a magic constant: the sentences explaining why those specific choices stay, even when the test name states the bug. `FooDropTest` tells a reader what is under test; it does not tell them that `channelCapacity = 1` is load-bearing rather than arbitrary, and a maintainer tidying it away deletes the guard while the test still passes.
+- **A benchmark row's measurement claim.** What the number means, where the method name does not carry it. A results table read months later is interpreted through these sentences, and a plausible-looking name is exactly what lets a row be read as measuring something it does not.
+
+This licenses the construction rationale and nothing else. The story of how the bug was found, a walkthrough of the body, and a label announcing the block's own topic are all still deleted.
+
 **Pass 2 — duplicates across the file.** Compare every surviving block against every other, and against any block it points at. Where two state the same fact, keep the one at the site that needs it and DELETE the other outright. **Duplication is resolved by deleting a copy, never by merging** — merging is a rewrite, deleting is a cut. A fact stated once where it belongs beats the same fact in three places drifting apart.
+
+Before deleting a block that carries a kyo ticket reference, check the reference survives somewhere in the file. A redundant block can still hold the only route back to the report, and losing it costs a reader the discussion the comment was too small to carry. If it is the last occurrence, keep the sentence carrying it.
 
 **Pass 3 — inventories and pointers.** Inside surviving blocks, cut every clause naming a test, file, issue number, call site, or position ("the leaf below", "as above", "same shape as X"). Keep a pointer only when it routes to a substantially fuller argument elsewhere that this sentence merely summarises.
 
@@ -70,7 +79,9 @@ The default is no comment. A comment is warranted **only** as an answer to one o
 Apply all three kill tests to every block:
 
 - **Grep test.** Is the content recoverable by grepping the identifier below it? Tautology. Delete.
-- **Sync test.** Does it name anything nothing keeps in sync? Test classes, call sites, file lists, counts, issue numbers, and **positional references** ("the leaf after this one", "the same as the block above", "as above"). It is false on the next rename or reorder and nothing will catch it. State the constraint, never the inventory. Check a pointer before trusting it; plenty have already gone stale.
+- **Sync test.** Does it name anything nothing keeps in sync? Test classes, call sites, file paths, `file:line` citations, counts, and **positional references** ("the leaf after this one", "the same as the block above", "as above"). Each is false on the next rename or reorder and nothing will catch it. State the constraint, never the inventory.
+
+  **A kyo ticket reference is allowed, and is the only external reference that is.** A ticket number does not rot the way a test name does, and it routes a reader to the report and the discussion, which is where reasoning too large for a comment lives. Keep `(#1928)` and its like. This does not extend to anything else that looks like a citation: a test name, a file, or a `file:line` still goes. Check a pointer before trusting it; plenty have already gone stale.
 
 One case is the single exception to the cut-only rule. A **required marker whose entire content is a positional pointer** (`// Unsafe: see the leaf above.`) cannot be fixed by cutting: delete the pointer and a bare `// Unsafe:` remains, which is worse. Write the reason in place, whether or not the pointer happens to resolve today, since an accurate positional reference still breaks silently on the next reorder and the marker is the one comment that must carry its justification. Keep it to the reason itself, and say in your report that you wrote rather than cut.
 - **Decision test.** Would removing it change what a maintainer does? If no, delete.
@@ -78,7 +89,7 @@ One case is the single exception to the cut-only rule. A **required marker whose
 Cut these on sight. Each is a tautology or an inventory, and none of them needs a judgment call:
 
 - **`@param` / `@return` that restate the name and type.** The repo's rule is "only when name and type aren't enough" (CONTRIBUTING, Method-Level Scaladoc). `@param v` / "The value to lift" on a parameter named `v` of the type in the signature is the shape to remove. Keep the tag when it carries a constraint, a unit, a range, or an ownership rule.
-- **A clause citing a test, an issue number, or a file** as evidence for a claim the sentence already makes. Accuracy today is not the point; nothing keeps it accurate.
+- **A clause citing a test, a file, or a `file:line`** as evidence for a claim the sentence already makes. Accuracy today is not the point; nothing keeps it accurate. A kyo ticket reference is the exception and stays.
 - **A pointer with no content** ("as above", "same as the block below", "see the leaf above"). Either the reason belongs here, or the sentence does not.
 - **An opening sentence that announces what the next line does** before the block gets to its actual point.
 - **A closing clause of commentary on a naming or style choice**, where the decision it would change is nobody's.
