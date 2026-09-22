@@ -921,6 +921,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // handover reads a counter that has not caught up yet, and a metric that lags what it counts is one a
             // caller cannot act on the moment it learns the thing happened.
             discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+            discard(Sync.Unsafe.evalOrThrow(metrics.recordReprepares(conn.takeReprepares())))
             pool.release(netKey, conn)
             // Not "closed": this connection is going back into the ring alive. The sibling in destroyAndFreeSlot is
             // the one that closes.
@@ -931,6 +932,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         // Counted before the close, for the reason releaseToPool spells out: the close is observable, so anything that
         // sees it must already see the count.
         discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+        discard(Sync.Unsafe.evalOrThrow(metrics.recordReprepares(conn.takeReprepares())))
         pool.discard(conn)
         logger.unsafe.debug(s"kyo.sql: closed connection id=${conn.id} reason=discarded")
     end destroyAndFreeSlot

@@ -34,7 +34,8 @@ class MysqlConnectionPingTest extends Test:
             statusRef  <- AtomicRef.init(0)
             closesRef  <- AtomicRef.init(Chunk.empty[Int])
             stmtCache  <- MysqlConnection.mkStmtCache(closesRef, 8, Duration.Zero)
-        yield new MysqlConnection(channel, connIdRef, capsRef, versionRef, charsetRef, statusRef, stmtCache, closesRef)
+            stmtRef    <- AtomicRef.init(stmtCache)
+        yield new MysqlConnection(channel, connIdRef, capsRef, versionRef, charsetRef, statusRef, stmtRef, 8, Duration.Zero, closesRef)
 
     "ping answered with neither OK nor ERR reports the packet it got, not the packet's class name" in {
         // `getSimpleName` would render `EofPacket`, which names the shape and drops every field, so two different EOF packets produce the

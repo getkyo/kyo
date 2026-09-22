@@ -1543,6 +1543,104 @@ class AsyncTest extends kyo.test.Test[Any]:
                 assert(v2 == 1)
                 assert(count == 1)
         }
+
+        /** A memoized computation of 42, held open until `gate` is released, counting every evaluation so a
+          * leaf can tell a reused value from a recomputed one.
+          */
+        def gatedMemo(gate: Latch, counter: AtomicInt)(using Frame): Int < Async < Sync =
+            Async.memoize(counter.incrementAndGet.andThen(gate.await).andThen(42))
+
+        /** A caller of a memoized computation parks by registering the shared promise as something its own
+          * interrupt reaches, so one waiter on the fiber is exactly "parked on the pending value".
+          */
+        def parkedOnValue(caller: Fiber[Int, Any])(using Frame): Boolean < Sync =
+            caller.waiters.map(_ == 1)
+
+        "a waiter's interrupt leaves the value intact for the other waiters".pendingUntilFixed(
+            "the memoized slot's promise is handed to every caller, so one waiter's interrupt completes it for all of them"
+        ) in {
+            // The promise is the memoized slot, shared by every caller, and one caller going away is not the
+            // computation going away. Both survivors are checked, one already parked when the interrupt landed
+            // and one that arrived after it, because a slot broken by the interrupt fails them in different ways.
+            for
+                counter   <- AtomicInt.init(0)
+                gate      <- Latch.init(1)
+                memoized  <- gatedMemo(gate, counter)
+                computing <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(counter.get.map(_ == 1))
+                leaving   <- Fiber.initUnscoped(memoized)
+                parked    <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(Kyo.zip(parkedOnValue(leaving), parkedOnValue(parked)).map { case (a, b) => a && b })
+                _         <- leaving.interrupt
+                _         <- leaving.getResult
+                arrived   <- Fiber.initUnscoped(memoized)
+                _         <- gate.release
+                w         <- computing.get
+                first     <- parked.get
+                second    <- arrived.get
+                count     <- counter.get
+            yield
+                assert(w == 42)
+                assert(first == 42, "a caller parked when another was interrupted must still get the value")
+                assert(second == 42, "a caller arriving after another was interrupted must still get the value")
+                assert(count == 1, "an interrupted caller must not cost a recomputation")
+            end for
+        }
+
+        "a waiter's interrupt does not poison the value for later callers".pendingUntilFixed(
+            "the slot keeps the interrupted promise, and there is no eviction to recover through"
+        ) in {
+            // The interrupted caller is gone before the value is produced, so nothing it did can reach the caller
+            // that asks once the slot is settled: that one is an ordinary hit.
+            for
+                counter   <- AtomicInt.init(0)
+                gate      <- Latch.init(1)
+                memoized  <- gatedMemo(gate, counter)
+                computing <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(counter.get.map(_ == 1))
+                leaving   <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(parkedOnValue(leaving))
+                _         <- leaving.interrupt
+                _         <- leaving.getResult
+                _         <- gate.release
+                w         <- computing.get
+                later     <- memoized
+                count     <- counter.get
+            yield
+                assert(w == 42)
+                assert(later == 42, "the slot must still serve the value after one of its callers was interrupted")
+                assert(count == 1, "the settled slot must be reused, not recomputed")
+            end for
+        }
+
+        // Bounded because the symptom is non-termination: the waiter parks on a promise nothing completes,
+        // and the suite's per-leaf default is Duration.Infinity. The bound is not the pass condition, and it
+        // fires only while the defect stands; once a waiter is told, the assertions decide the leaf in
+        // milliseconds.
+        "the computing caller's interrupt fails the waiters and the next caller recomputes".pendingUntilFixed(
+            "a waiter parked on the slot's promise is never completed, so this leaf ends on its bound rather than on a result"
+        ).timeout(5.seconds) in {
+            // The other half of the contract: a value that was never produced must not be served, and a waiter
+            // must be told so rather than left parked on a promise nothing will ever complete.
+            for
+                counter   <- AtomicInt.init(0)
+                gate      <- Latch.init(1)
+                memoized  <- gatedMemo(gate, counter)
+                computing <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(counter.get.map(_ == 1))
+                waiting   <- Fiber.initUnscoped(memoized)
+                _         <- assertEventually(parkedOnValue(waiting))
+                _         <- computing.interrupt
+                _         <- gate.release
+                failed    <- waiting.getResult
+                retried   <- memoized
+                count     <- counter.get
+            yield
+                assert(failed.panic.exists(_.isInstanceOf[Interrupted]), "a waiter on a cancelled computation must fail")
+                assert(retried == 42)
+                assert(count == 2, "the next caller must recompute rather than read a value never produced")
+            end for
+        }
     }
 
     "apply" - {

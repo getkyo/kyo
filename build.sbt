@@ -62,6 +62,8 @@ inThisBuild(List(
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
+inThisBuild(ClassNameCheck.settings)
+
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 Global / commands += TestKyo.doneCommand
@@ -2694,7 +2696,7 @@ lazy val `kyo-net` =
             ),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
-        // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
+        // Wasm runs the same koffi posix transport on Node as JS (koffi is required on first use, never statically), so it needs the identical koffi bootstrap
         // and native-path env; only the NodeJSEnv args differ (the WASM backend needs `--experimental-wasm-exnref`, Node 24+, matching
         // `wasm-settings`).
         .wasmSettings(
@@ -3137,12 +3139,17 @@ lazy val `kyo-zio` =
         .jvmSettings(mimaCheck(false))
         .wasmSettings(`wasm-settings`)
 
+// Every binding declares the same `kyo.compat` surface, one implementation per runtime, and the shared conformance suite compiles into
+// each one's tests. A library written against kyo-compat resolves those names from whichever binding the consumer links, so the
+// duplication is the design: `classNameGroup` records it, and `checkClassNames` then enforces what the design assumes, that no
+// classpath holds two of them.
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // Default compile under scala39Version so unidoc reads consistent TASTy with the rest of the build.
@@ -3182,6 +3189,7 @@ lazy val `kyo-compat-kyo` =
         .dependsOn(`kyo-core`, `kyo-data`)
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup           := Some("kyo-compat"),
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
@@ -3213,6 +3221,7 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3248,6 +3257,7 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3278,6 +3288,7 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3314,6 +3325,8 @@ lazy val `kyo-compat-tests` =
         .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
+            // It compiles the bindings' shared suite a sixth time, so it shares their test class names.
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
             scalaVersion                           := scala33Version,

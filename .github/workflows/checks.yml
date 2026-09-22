@@ -194,3 +194,19 @@ jobs:
       # on that rather than on a link.
       - name: Scaladoc links
         run: sbt kyoJVM/doc
+
+      # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
+      # both the Scala.js and Scala Native linkers keep the first class on the classpath and drop the rest.
+      # This is the only job that has every module of every platform, which is what the check needs: the ci
+      # rows compile all of them only on a push to main (a PR runs testDiff), and a name declared in `js`,
+      # `js-wasm`, `native` or `wasm` sources never reaches a JVM row at all.
+      #
+      # One process per platform: each is a complete check for its platform, and none holds another's
+      # compile heap. The JVM run reuses what doctest compiled, and also covers the sbt plugins.
+      - name: Class names
+        run: |
+          sbt 'checkClassNames --self-test'
+          sbt 'checkClassNames JVM'
+          sbt 'checkClassNames JS'
+          sbt 'checkClassNames Native'
+          sbt 'checkClassNames Wasm'

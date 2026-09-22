@@ -101,59 +101,172 @@ private[postgres] object StreamQueryExchange:
             // Random.nextLong gives uniqueness-by-randomness without a JDK System call.
             Random.nextLong.flatMap { rnd =>
                 val portalName = s"p_${ExtendedQueryExchange.cacheKey(sql, paramOids)}_${rnd.toHexString}"
-                // False until prepareStmt has consumed its own ReadyForQuery, true once the portal loop owns the
-                // wire. A dirty exit is resolved differently in the two phases: the portal loop keeps zero
-                // barriers outstanding (Flush pipeline) so the cleanup owes one Sync, while the prepare phase's
-                // own Sync is already outstanding and a second would desynchronise the reclaim's drain.
+                // Whether the wire owes a barrier: false while a Sync of this exchange's own is outstanding and
+                // unread, true once the portal loop owns the wire. A dirty exit is resolved differently in the
+                // two states: the portal loop keeps zero barriers outstanding (Flush pipeline) so the cleanup
+                // owes one Sync, while an outstanding Sync is already the barrier the reclaim's drain will find
+                // and a second would leave it a pair.
                 AtomicRef.init(false).flatMap { portalPhase =>
                     // Register the portal cleanup in the enclosing Scope. Fires on every exit path; what it does
                     // is keyed on the exit edge (see the class scaladoc, "Cleanup discipline").
                     Scope.ensure(error =>
                         cleanup(channel, portalName, portalPhase, cleanupTimeout, onParameterStatus, onNotification, error)
                     ).andThen:
-                        for
-                            stmt <- ExtendedQueryExchange.prepareStmt(
-                                channel,
-                                stmtCache,
-                                stmtCounter,
-                                sql,
-                                paramOids,
-                                pid,
-                                onParameterStatus,
-                                onNotification
-                            )
-                            // The prepare barrier is consumed; from here a dirty exit owes the wire a Close + Sync.
-                            _ <- portalPhase.set(true)
-                            fields = stmt.rowDescription match
-                                case Absent      => Chunk.empty[FieldDescription]
-                                case Present(rd) => rd.fields
-                            format =
-                                if stmt.resultFormats.nonEmpty then Format.fromCode(stmt.resultFormats(0))
-                                else Format.Text
-                            // Pipeline Bind + first Execute + Flush in one message group.
-                            _ <- sendBindAndExecuteWithFlush(channel, stmt, portalName, params, batchSize)
-                            // Read the first batch (includes BindComplete response); no Sync was sent so no ReadyForQuery.
-                            firstBatch <- readBatch(channel, fields, format, pid, onParameterStatus, onNotification, isFirstBatch = true)
-                            // Emit first batch, then loop for subsequent batches on PortalSuspended.
-                            _ <- emitAndLoop(
-                                channel,
-                                portalName,
-                                batchSize,
-                                fields,
-                                format,
-                                firstBatch,
-                                pid,
-                                onParameterStatus,
-                                onNotification
-                            )
-                        yield ()
-                        end for
+                        val key = ExtendedQueryExchange.cacheKey(sql, paramOids)
+                        stmtCache.get(key).flatMap { cached =>
+                            val resolved: PreparedStmt < (Async & Abort[SqlException]) =
+                                cached match
+                                    case Present(stmt) => stmt
+                                    case Absent        =>
+                                        ExtendedQueryExchange.parseAndCache(
+                                            channel,
+                                            stmtCache,
+                                            stmtCounter,
+                                            key,
+                                            sql,
+                                            paramOids,
+                                            pid,
+                                            onParameterStatus,
+                                            onNotification
+                                        )
+                            resolved.flatMap { stmt =>
+                                // The prepare barrier is consumed; from here a dirty exit owes the wire a Close + Sync.
+                                portalPhase.set(true).andThen(
+                                    firstBatch(
+                                        channel,
+                                        stmtCache,
+                                        stmtCounter,
+                                        portalPhase,
+                                        key,
+                                        sql,
+                                        paramOids,
+                                        stmt,
+                                        fromCache = cached.isDefined,
+                                        portalName,
+                                        params,
+                                        batchSize,
+                                        pid,
+                                        onParameterStatus,
+                                        onNotification
+                                    ).flatMap { case (bound, batch) =>
+                                        // Emit first batch, then loop for subsequent batches on PortalSuspended.
+                                        emitAndLoop(
+                                            channel,
+                                            portalName,
+                                            batchSize,
+                                            fieldsOf(bound),
+                                            formatOf(bound),
+                                            batch,
+                                            pid,
+                                            onParameterStatus,
+                                            onNotification
+                                        )
+                                    }
+                                )
+                            }
+                        }
                 }
             }
 
     end stream
 
     // --- Private helpers ---
+
+    private def fieldsOf(stmt: PreparedStmt): Chunk[FieldDescription] =
+        stmt.rowDescription match
+            case Absent      => Chunk.empty
+            case Present(rd) => rd.fields
+
+    private def formatOf(stmt: PreparedStmt): Format =
+        if stmt.resultFormats.nonEmpty then Format.fromCode(stmt.resultFormats(0))
+        else Format.Text
+
+    /** Binds the portal and reads the first batch, re-preparing once if the server refuses the Bind for a statement it no longer holds.
+      * See [[ExtendedQueryExchange.prepareAndBind]] for the conditions, which are the same.
+      *
+      * Safe here because the first batch is read in full before anything is emitted, so the caller has seen no rows when the second attempt
+      * starts. Returns the statement the portal was bound to, since a retry binds a different one and the emit loop decodes with its
+      * descriptors.
+      *
+      * The gate cannot read the status off the last `ReadyForQuery` the way the non-streaming path does: this pipeline ends with a `Flush`,
+      * so the server answers a mid-batch error without one and the channel still holds whatever preceded the stream. Hence the explicit
+      * barrier, and hence `underBarrier` around it and around the re-`Parse`.
+      */
+    private def firstBatch(
+        channel: PostgresChannel,
+        stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
+        portalPhase: AtomicRef[Boolean],
+        key: String,
+        sql: String,
+        paramOids: Chunk[Int],
+        stmt: PreparedStmt,
+        fromCache: Boolean,
+        portalName: String,
+        params: Chunk[BoundParam[?]],
+        batchSize: Int,
+        pid: Long,
+        onParameterStatus: (String, String) => Unit < Async,
+        onNotification: NotificationResponse => Unit < Async
+    )(using Frame): (PreparedStmt, BatchResult) < (Async & Abort[SqlException]) =
+        def attempt(bound: PreparedStmt): (PreparedStmt, BatchResult) < (Async & Abort[SqlException]) =
+            // Pipeline Bind + first Execute + Flush in one message group, then read the batch it produces
+            // (including the BindComplete); no Sync was sent so no ReadyForQuery follows.
+            sendBindAndExecuteWithFlush(channel, bound, portalName, params, batchSize).andThen(
+                readBatch(channel, fieldsOf(bound), formatOf(bound), pid, onParameterStatus, onNotification, isFirstBatch = true)
+                    .map(batch => (bound, batch))
+            )
+
+        if !fromCache then attempt(stmt)
+        else
+            attempt(stmt).flatMap {
+                case (bound, BatchResult.Failed(error, portalOpened))
+                    if !portalOpened && StalePreparedStatement.matches(error) =>
+                    underBarrier(portalPhase)(syncAndDrain(channel, onParameterStatus, onNotification)).flatMap { status =>
+                        stmtCache.remove(key).andThen {
+                            if status != ReadyForQuery.Idle then Abort.fail(error)
+                            else
+                                StalePreparedStatement.record(channel, sql, error).andThen(
+                                    underBarrier(portalPhase)(
+                                        ExtendedQueryExchange.parseAndCache(
+                                            channel,
+                                            stmtCache,
+                                            stmtCounter,
+                                            key,
+                                            sql,
+                                            paramOids,
+                                            pid,
+                                            onParameterStatus,
+                                            onNotification
+                                        )
+                                    ).flatMap(attempt)
+                                )
+                        }
+                    }
+                case other => other
+            }
+        end if
+    end firstBatch
+
+    /** Runs `barrier`, which sends its own `Sync` and reads the `ReadyForQuery` answering it, with `portalPhase` lowered meanwhile.
+      *
+      * A dirty exit while a barrier is outstanding must write nothing: the reclaim's drain already has one `ReadyForQuery` to find, and a
+      * second `Sync` would leave it a pair.
+      */
+    private def underBarrier[A](portalPhase: AtomicRef[Boolean])(
+        barrier: => A < (Async & Abort[SqlException])
+    )(using Frame): A < (Async & Abort[SqlException]) =
+        portalPhase.set(false).andThen(barrier).flatMap(a => portalPhase.set(true).andThen(a))
+
+    /** Sends a `Sync` and reads the status byte off the `ReadyForQuery` that answers it. */
+    private def syncAndDrain(
+        channel: PostgresChannel,
+        onParameterStatus: (String, String) => Unit < Async,
+        onNotification: NotificationResponse => Unit < Async
+    )(using Frame): Byte < (Async & Abort[SqlException]) =
+        channel.send(kyo.internal.postgres.SyncMessage)(using channel.marshallers.sync).andThen(
+            ReadyForQueryDrain.run(channel, onParameterStatus, onNotification).map(_.status)
+        )
 
     /** The Scope finalizer for one stream, keyed on the exit edge.
       *
@@ -275,9 +388,11 @@ private[postgres] object StreamQueryExchange:
       * preceding message group ended with Flush, not Sync.
       *
       * `isFirstBatch` covers the one difference between the first Execute batch and every batch after it: only the first one follows a
-      * `Bind`, so only it can see `BindComplete` (and, in the cache-miss path where Parse/Bind/Execute/Flush are pipelined together,
-      * `ParseComplete`). Subsequent batches never legitimately see either, so they fall through to the same unrecognized-message failure as
-      * any other unexpected message; `contextLabel` and `expectedLabel` are chosen accordingly.
+      * `Bind`, so only it can see `BindComplete`. Subsequent batches never legitimately see it, so they fall through to the same
+      * unrecognized-message failure as any other unexpected message; `contextLabel` and `expectedLabel` are chosen accordingly.
+      *
+      * A `ParseComplete` never reaches here on either. A cache miss is parsed by its own Parse/Describe/Sync exchange, which reads to its
+      * own `ReadyForQuery` before this one sends a Bind.
       */
     private def readBatch(
         channel: PostgresChannel,
@@ -293,16 +408,15 @@ private[postgres] object StreamQueryExchange:
             if isFirstBatch then "BindComplete / DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse"
             else "DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse"
 
-        def loop(acc: Chunk[SqlRow])(using Frame): BatchResult < (Async & Abort[SqlException]) =
+        // `portalOpened` follows BindComplete down the loop, so a caller deciding whether to re-prepare reads the
+        // value this read produced rather than inferring it.
+        def loop(acc: Chunk[SqlRow], portalOpened: Boolean)(using Frame): BatchResult < (Async & Abort[SqlException]) =
             channel.receive.flatMap {
                 case BindComplete if isFirstBatch =>
-                    loop(acc)
-
-                case ParseComplete if isFirstBatch =>
-                    loop(acc)
+                    loop(acc, portalOpened = true)
 
                 case DataRow(values) =>
-                    loop(acc.appended(PostgresRowCodec.row(values, fields, format)))
+                    loop(acc.appended(PostgresRowCodec.row(values, fields, format)), portalOpened)
 
                 case PortalSuspended =>
                     // More rows available; no ReadyForQuery after Flush.
@@ -319,6 +433,12 @@ private[postgres] object StreamQueryExchange:
                     // Unexpected after Flush; treat as end-of-stream.
                     BatchResult.Complete(acc)
 
+                case ErrorResponse(errorFields) =>
+                    // Matched here rather than left to ReadLoopSideband, which always aborts: the first batch's
+                    // caller needs this error paired with whether the portal had opened. No drain either way, for
+                    // the reason below.
+                    BatchResult.Failed(ServerErrors.mkServerError(errorFields, Absent, 0, Present(pid)), portalOpened)
+
                 case msg =>
                     // Error during Bind/Execute is NOT preceded by a ReadyForQuery drain here: no Sync has been sent
                     // yet, so the server never answers a Flush-only pipeline with one. The Scope.ensure finalizer
@@ -334,10 +454,10 @@ private[postgres] object StreamQueryExchange:
                         onParameterStatus,
                         onNotification,
                         drainOnError = false
-                    )(loop(acc))
+                    )(loop(acc, portalOpened))
             }
 
-        loop(Chunk.empty)
+        loop(Chunk.empty, portalOpened = false)
     end readBatch
 
     /** Emits the given batch, then loops on PortalSuspended to fetch more batches via Execute + Flush. */
@@ -368,6 +488,9 @@ private[postgres] object StreamQueryExchange:
                     )
                 if rows.isEmpty then fetchNext
                 else Emit.valueWith(rows)(fetchNext)
+
+            case BatchResult.Failed(error, _) =>
+                Abort.fail(error)
     end emitAndLoop
 
     /** Sends Execute(batchSize) + Flush for subsequent batches (after the first). */
@@ -392,6 +515,11 @@ private[postgres] object StreamQueryExchange:
 
         /** CommandComplete or EmptyQueryResponse, stream is exhausted. */
         case Complete(rows: Chunk[SqlRow])
+
+        /** The server refused the batch. `portalOpened` is whether `BindComplete` had arrived, which is what decides whether re-preparing
+          * would repeat work the caller has already been given.
+          */
+        case Failed(error: SqlException, portalOpened: Boolean)
     end BatchResult
 
 end StreamQueryExchange

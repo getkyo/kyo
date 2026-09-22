@@ -31,6 +31,7 @@ class NativeLoaderMissingNativeTest extends Test:
         assert(msg.contains(id))
         assert(msg.contains(platform))
         assert(msg.contains(s"/META-INF/native/$platform/"))
+        assert(ex.platformTag == platform)
     }
 
     "load fallback: symbols the default lookup carries still resolve unchanged" in {

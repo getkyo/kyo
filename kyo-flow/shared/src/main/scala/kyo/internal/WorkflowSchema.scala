@@ -68,12 +68,12 @@ private[kyo] object WorkflowSchema:
           * and is assembled by that instance's own entry rather than landing here flattened.
           */
         def assemble(decoded: Dict[String, Any]): Record[Any] =
-            val prefix = s"$path${NodePath.Separator}"
+            val prefix = s"$path${FlowNodePath.Separator}"
             val own    = decoded.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
                 if !name.startsWith(prefix) then acc
                 else
                     val bare = name.substring(prefix.length)
-                    if bare.indexOf(NodePath.Separator) >= 0 then acc else acc.update(bare, value)
+                    if bare.indexOf(FlowNodePath.Separator) >= 0 then acc else acc.update(bare, value)
             }
             new Record[Any](children.foldLeft(own)((acc, child) => acc.update(child.name, child.assemble(decoded))))
         end assemble
@@ -157,7 +157,7 @@ private[kyo] object WorkflowSchema:
     /** Every entry of `entries`, re-keyed under a subflow instance's path, which is what the store holds a child's fields under. */
     private def underPath(path: String, entries: Entries): Entries =
         entries.foldLeft(Dict.empty[String, TypeEntry[Any]]) { (acc, name, e) =>
-            acc.update(NodePath.qualify(path, name), e)
+            acc.update(FlowNodePath.qualify(path, name), e)
         }
 
     /** Build a schema by walking all AST nodes and collecting type entries.
@@ -206,7 +206,7 @@ private[kyo] object WorkflowSchema:
         flow match
             case n: Subflow[?, ?, ?, ?, ?, ?] @unchecked =>
                 val instance  = n.name: String
-                val childPath = NodePath.qualify(path, instance)
+                val childPath = FlowNodePath.qualify(path, instance)
                 Chunk(SubflowAssembly(instance, childPath, subflowsOf(n.childFlow, childPath)))
             case n: AndThen[?, ?, ?, ?, ?, ?] @unchecked => subflowsOf(n.first, path) ++ subflowsOf(n.second, path)
             case n: Zip[?, ?, ?, ?, ?, ?] @unchecked     => subflowsOf(n.left, path) ++ subflowsOf(n.right, path)

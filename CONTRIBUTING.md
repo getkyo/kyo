@@ -668,6 +668,16 @@ A comment is warranted only as an answer to one of these:
 
 A source file should read like a guided tour of the type. A contributor opening it for the first time learns — in order — what the type is, how to create it, how to use it, and only then how it works internally. Scaladocs set the context, method ordering tells the story, and section separators mark the chapters.
 
+#### One Project per Class Name
+
+Every module compiles into the same packages, `kyo` and `kyo.internal`, and `private[kyo]` does not narrow that: it is package visibility, and every module sits in that package. When two modules declare one fully qualified name, a classpath holding both keeps the first class and drops the other, and nothing reports it: not the JVM classloader, not the Scala.js linker, not the Scala Native linker.
+
+A name in main sources belongs to one module, since users combine published modules in ways this build never does. In test sources the rule is narrower: two test classes under one name are fine until a `test->test` dependency puts them on one classpath, and the check fails on the change that does.
+
+Name a platform facade after its module. kyo-http binds Node's `path` module as `HttpNodePath` because kyo-system already binds it as `NodePath`.
+
+`sbt 'checkClassNames JVM'` compiles that platform and fails on a duplicate, naming both projects; the other arguments are `JS`, `Native` and `Wasm`. CI runs all four on every pull request. Projects that produce one name by design, as kyo-compat's five bindings do, declare `ClassNameCheck.classNameGroup`; the check then accepts the shared name and instead fails if any project's classpath reaches two of them.
+
 #### File Template
 
 ```scala

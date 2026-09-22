@@ -15,7 +15,10 @@ import kyo.net.Connection
   * [[send]] serialises a [[FrontendMessage]] to bytes via the appropriate [[Marshaller]] and writes it to the connection. [[receive]] reads
   * one complete [[BackendMessage]] from the connection via [[MessageReader]].
   *
-  * This class carries no protocol state; all stateful logic lives in [[PostgresConnection]] and the exchange functions.
+  * Session semantics live in [[PostgresConnection]] and the exchange functions, not here. The one exception is
+  * [[lastReadyForQueryStatus]], which records a fact about the WIRE rather than about the session: the status byte of the most recent
+  * `ReadyForQuery`. It is recorded here because [[receive]] is the single point every read passes through, and every exchange consumes its
+  * `ReadyForQuery` and discards it, so no other layer sees them all.
   *
   * ==COPY cleanup race protection==
   *
@@ -34,8 +37,38 @@ final class PostgresChannel(
     private val _socketTimeout: AtomicRef[Duration],
     private val _corrupted: AtomicBoolean,
     private val _cleanup: AtomicRef[Maybe[PostgresChannel.PendingCopyCleanup]],
-    private val _pendingCleanupWaiters: AtomicInt
+    private val _pendingCleanupWaiters: AtomicInt,
+    private val _lastReadyStatus: AtomicRef[Byte],
+    private val _reprepares: AtomicLong,
+    private val _deallocatedAll: AtomicBoolean
 ):
+
+    /** Whether the session reported deallocating every prepared statement since this was last called, which clears it.
+      *
+      * Read off the command tag rather than the SQL the caller handed us, because the tag is the server's account of what it actually ran:
+      * `DISCARD ALL` reports itself whether it arrived as that text, inside a multi-statement simple query, or from a function.
+      */
+    private[postgres] def takeDeallocatedAll(using Frame): Boolean < Sync = _deallocatedAll.getAndSet(false)
+
+    /** Records that a statement the server no longer held was prepared again. */
+    private[postgres] def countReprepare(using Frame): Unit < Sync =
+        _reprepares.incrementAndGet.unit
+
+    /** Takes the re-prepare count accumulated since the last call, resetting it.
+      *
+      * Unsafe: the pool harvests this from `releaseToPool` and `destroyAndFreeSlot`, which run inside the connection ring's own
+      * `AllowUnsafe` context and cannot suspend, so the read goes through the unsafe view rather than suspending for it.
+      */
+    private[postgres] def takeReprepares()(using AllowUnsafe): Long = _reprepares.unsafe.getAndSet(0L)
+
+    /** The status byte of the most recent `ReadyForQuery` read on this wire: `'I'` idle, `'T'` in a transaction, `'E'` in a failed one.
+      *
+      * The server's own account of whether a block is open, which is why it outranks any flag this driver keeps: a caller who opened a
+      * block with `executeRaw("BEGIN")` never goes through the adapter's transaction methods and so is invisible to them.
+      *
+      * The initial `'I'` is not a guess. The startup exchange ends at a `ReadyForQuery`, so any caller that can reach this has seen one.
+      */
+    def lastReadyForQueryStatus(using Frame): Byte < Sync = _lastReadyStatus.get
 
     /** Serialises `msg` using the provided [[Marshaller]] and writes the resulting bytes to the connection. */
     def send[T <: FrontendMessage](msg: T)(using m: Marshaller[T])(using Frame): Unit < (Async & Abort[SqlException]) =
@@ -54,7 +87,14 @@ final class PostgresChannel(
       * also short enough to kill a slow query. A caller that asks for one is choosing that trade.
       */
     def receive(using Frame): BackendMessage < (Async & Abort[SqlException]) =
-        checkCorrupted().andThen(bounded(reader.readOne(conn, unmarshallers)))
+        checkCorrupted().andThen(bounded(reader.readOne(conn, unmarshallers))).map {
+            // The one place every ReadyForQuery is visible. Exchanges consume theirs and drop it, so a
+            // reader that needs the status later has nowhere else to learn it. See lastReadyForQueryStatus.
+            case rfq: ReadyForQuery => _lastReadyStatus.set(rfq.status).andThen(rfq)
+            case cc @ CommandComplete(tag) if PostgresChannel.deallocatesEveryStatement(tag) =>
+                _deallocatedAll.set(true).andThen(cc)
+            case other => other
+        }
 
     /** Marks the channel as corrupted after a failed COPY cleanup attempt.
       *
@@ -206,6 +246,15 @@ final class PostgresChannel(
 end PostgresChannel
 
 object PostgresChannel:
+
+    /** Whether a command tag says every server-side prepared statement on this session is now gone.
+      *
+      * `DISCARD ALL` includes `DEALLOCATE ALL`, and both report a tag of their own name. Matched on the prefix because the tag is the
+      * command's name, and a `DEALLOCATE` of one statement reports `DEALLOCATE` alone, which must not match.
+      */
+    private def deallocatesEveryStatement(tag: String): Boolean =
+        tag.startsWith("DEALLOCATE ALL") || tag.startsWith("DISCARD ALL")
+
     /** Creates a [[PostgresChannel]] over the given safe `Connection` with default marshallers and unmarshallers.
       *
       * `socketTimeout` bounds each read; [[Duration.Infinity]], the default, leaves reads unbounded.
@@ -214,17 +263,26 @@ object PostgresChannel:
         AtomicBoolean.init(false).flatMap { corrupted =>
             AtomicRef.init[Maybe[PendingCopyCleanup]](Maybe.Absent).flatMap { cleanup =>
                 AtomicRef.init(socketTimeout).flatMap { readBound =>
-                    AtomicInt.init(0).map { pendingCleanupWaiters =>
-                        new PostgresChannel(
-                            conn,
-                            Marshallers.default,
-                            Unmarshallers.default,
-                            new MessageReader(),
-                            readBound,
-                            corrupted,
-                            cleanup,
-                            pendingCleanupWaiters
-                        )
+                    AtomicInt.init(0).flatMap { pendingCleanupWaiters =>
+                        AtomicRef.init(ReadyForQuery.Idle).flatMap { lastReadyStatus =>
+                            AtomicLong.init(0L).flatMap { reprepares =>
+                                AtomicBoolean.init(false).map { deallocatedAll =>
+                                    new PostgresChannel(
+                                        conn,
+                                        Marshallers.default,
+                                        Unmarshallers.default,
+                                        new MessageReader(),
+                                        readBound,
+                                        corrupted,
+                                        cleanup,
+                                        pendingCleanupWaiters,
+                                        lastReadyStatus,
+                                        reprepares,
+                                        deallocatedAll
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

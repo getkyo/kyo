@@ -13,8 +13,11 @@ package kyo.internal
   * Two characters are reserved in a user's node name and refused at registration. [[Separator]] joins a path, and `#` is what
   * [[IterationName]] uses to distinguish a loop's iterations and what a dispatch's choice field rides. The two compose, because a loop
   * can sit inside a subflow: iteration 0 of `sum` under `review` is `review~sum#0`.
+  *
+  * Not `NodePath`: kyo-system's JS build binds Node's `path` module as `kyo.internal.NodePath`, and a classpath holding both keeps one
+  * and drops the other, which leaves whichever module sees them both compiling against the wrong object.
   */
-private[kyo] object NodePath:
+private[kyo] object FlowNodePath:
 
     /** The character that joins a subflow instance's name to a node inside it. */
     val Separator: Char = '~'
@@ -30,4 +33,4 @@ private[kyo] object NodePath:
     def qualifyAll[V](path: String, names: Map[String, V]): Map[String, V] =
         names.map((name, value) => (qualify(path, name), value))
 
-end NodePath
+end FlowNodePath

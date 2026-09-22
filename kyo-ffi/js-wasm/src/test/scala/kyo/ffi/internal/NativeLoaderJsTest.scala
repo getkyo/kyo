@@ -57,6 +57,9 @@ class NativeLoaderJsTest extends Test:
         val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
         assert(ex.libraryId == libId)
         assert(ex.candidates.nonEmpty)
+        // The tag is the one the package lookup searched under, which the message names as the package to install.
+        assert(ex.platformTag.nonEmpty && !ex.platformTag.contains("unknown"), s"got '${ex.platformTag}'")
+        assert(ex.getMessage.contains(s"package for ${ex.platformTag}"))
     }
 
     "without env var, an unresolvable package prefix raises LibraryNotFound (no blind bare-name fallback)" in {
@@ -129,6 +132,23 @@ class NativeLoaderJsTest extends Test:
         finally
             clearEnv(cEnvKey)
         end try
+    }
+
+    "detectOsWith reports musl as its own pole, since a glibc library does not load there" in {
+        val musl = Set("/lib/ld-musl-x86_64.so.1")
+        assert(NativeLoader.detectOsWith("linux", musl.contains) == "linux-musl")
+        assert(NativeLoader.detectOsWith("linux", Set("/lib/ld-musl-aarch64.so.1").contains) == "linux-musl")
+        assert(NativeLoader.detectOsWith("linux", _ => false) == "linux")
+    }
+
+    "detectOsWith maps the platforms Node names to the tags the artifacts are packaged under" in {
+        assert(NativeLoader.detectOsWith("darwin", _ => false) == "darwin")
+        assert(NativeLoader.detectOsWith("win32", _ => false) == "windows")
+        assert(NativeLoader.detectOsWith("freebsd", _ => false) == "freebsd")
+    }
+
+    "detectOsWith does not consult the filesystem off linux, where musl is not a distinction" in {
+        assert(NativeLoader.detectOsWith("darwin", _ => throw new AssertionError("must not probe")) == "darwin")
     }
 
     // --- helpers ---
