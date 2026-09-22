@@ -167,39 +167,12 @@ object Channel:
                 self.poll().foldError(
                     {
                         case Present(value) => f(value)
-                        case Absent         => self.parkedTake(f)
+                        case Absent         => self.takeFiber().safe.use(f)
                     },
                     Abort.error
                 )
             }
         end takeWith
-
-        /** The parked half of [[takeWith]], out of line so the inline fast path stays small.
-          *
-          * A parked taker is a promise in the channel's take queue, and a fiber interrupted while parked is abandoned without resuming
-          * (see `IOTask.abandon`): a value the channel delivered into the promise would be consumed by no one. The abandonment runs the
-          * finalizer registered here before the wait, which is the handoff the kernel's ownership rule asks the waiter for. It interrupts
-          * the promise, so its state is final: a delivery that lost the race is refused and its value stays in the channel, and one that
-          * won is read back and returned through [[Unsafe.putBack]]. `taken` marks the normal exit, where `f` owns the value.
-          */
-        private[kyo] def parkedTake[B, S](f: A => B < S)(using Frame): B < (S & Abort[Closed] & Async) =
-            Sync.Unsafe.defer {
-                val fiber = self.takeFiber()
-                var taken = false
-                Sync.Unsafe.ensure {
-                    if !taken then
-                        discard(fiber.interrupt())
-                        fiber.poll() match
-                            case Present(Result.Success(v)) => self.putBack(v.eval)
-                            case _                          => ()
-                } {
-                    fiber.safe.use { v =>
-                        taken = true
-                        f(v)
-                    }
-                }
-            }
-        end parkedTake
 
         /** Takes `n` elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
           * not added to the channel it can block indefinitely.
@@ -244,8 +217,7 @@ object Channel:
           * committing when it runs. Use `closeDiscard` to close without the elements and stay in `Sync`.
           *
           * Interrupting a caller parked here discards those elements. The channel still closes, but they have no receiver, so an
-          * interrupted close behaves as `closeDiscard`. Make the close uninterruptible where the elements own a resource that must be
-          * released.
+          * interrupted close behaves as `closeDiscard`. Mask the interrupt where the elements own a resource that must be released.
           *
           * @return
           *   A sequence of remaining elements, or absent when another close owns the closure
@@ -444,9 +416,6 @@ object Channel:
         def putBatchFiber(values: Seq[A])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]]
         def takeFiber()(using AllowUnsafe, Frame): Fiber.Unsafe[A, Abort[Closed]]
         private[kyo] def reuseTake(promise: Promise.Unsafe[A, Abort[Closed]])(using AllowUnsafe, Frame): Unit
-
-        /** Returns a value a taker received but never consumed (see [[Channel.parkedTake]]) to the channel. */
-        private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit
 
         def drain()(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
         def drainUpTo(max: Int)(using AllowUnsafe, Frame): Result[Closed, Chunk[A]]
@@ -655,11 +624,6 @@ object Channel:
                 loop(Chunk.empty, max)
             end drainUpTo
 
-            /** Held as a put: the rendezvous transfers it to the next taker, or fails it with the channel. */
-            final private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit =
-                discard(puts.offer(Put.Value(value, Promise.Unsafe.init[Unit, Abort[Closed]]())))
-                flush()
-
             def drain()(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
@@ -824,32 +788,6 @@ object Channel:
                 loop(Chunk.empty, max)
             end drainUpTo
 
-            /** Keeps a value no taker consumed in the channel: in the ring if it accepts writes, held as a placeholder put for a later
-              * transfer when the ring is full but open, and when the ring no longer accepts writes (a closeAwaitEmpty drain, where a
-              * placeholder put would just be failed by the transfer arm) delivered to the next live taker, forfeited when none waits:
-              * the value's only consumer interrupted and the closing queue will not re-buffer it, so the drain settles one element
-              * short. The caller runs the flush that transfers a held value.
-              */
-            private def retain(value: A)(using Frame): Unit =
-                queue.offer(value) match
-                    case r if r.contains(true) => ()
-                    case Result.Success(false) =>
-                        val placeholder = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                        discard(puts.offer(Put.Value(value, placeholder)))
-                    case _ =>
-                        @tailrec
-                        def retryTransfer(): Unit =
-                            takes.poll() match
-                                case Present(next) => if !next.complete(Result.succeed(value)) then retryTransfer()
-                                case Absent        => ()
-                        retryTransfer()
-                end match
-            end retain
-
-            final private[kyo] def putBack(value: A)(using AllowUnsafe, Frame): Unit =
-                retain(value)
-                flush()
-
             def drain()(using AllowUnsafe, Frame) =
                 @tailrec
                 def loop(current: Chunk[A]): Result[Closed, Chunk[A]] =
@@ -927,8 +865,26 @@ object Channel:
                     takes.poll().foreach { promise =>
                         queue.poll() match
                             case Result.Success(Present(value)) =>
-                                // The take was interrupted before receiving the value: the value stays in the channel.
-                                if !promise.complete(Result.succeed(value)) then retain(value)
+                                if !promise.complete(Result.succeed(value)) then
+                                    // The take was interrupted before receiving the value. Put it back if the queue still accepts writes.
+                                    queue.offer(value) match
+                                        case r if r.contains(true) => ()
+                                        case Result.Success(false) =>
+                                            // Full but open: hold as a placeholder put for a later transfer.
+                                            val placeholder = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                                            discard(puts.offer(Put.Value(value, placeholder)))
+                                        case _ =>
+                                            // HalfOpen/closed (a closeAwaitEmpty drain): the offer can never succeed, and a placeholder put would
+                                            // just be failed by the transfer arm, dropping the value. Retry delivery against the remaining takers.
+                                            // If none are waiting, the value's only consumer interrupted and the closing queue will not re-buffer
+                                            // it, so it is forfeited (the drain settles one element short).
+                                            @tailrec
+                                            def retryTransfer(): Unit =
+                                                takes.poll() match
+                                                    case Present(next) => if !next.complete(Result.succeed(value)) then retryTransfer()
+                                                    case Absent        => ()
+                                            retryTransfer()
+                                    end match
                             case _ =>
                                 // Queue became empty, enqueue the take again
                                 discard(takes.offer(promise))
