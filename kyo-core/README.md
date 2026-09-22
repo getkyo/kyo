@@ -7,14 +7,12 @@ Two effects anchor the model and split responsibility. `Sync` marks pure suspens
 ```scala
 import kyo.*
 
-case class Report(url: String, status: Int)
-
 object Crawler extends KyoApp:
     run {
         val urls: Chunk[String] = Chunk("https://a.example", "https://b.example")
-        Async.foreach(urls, concurrency = 8) { url =>
+        Async.foreachDiscard(urls, concurrency = 8) { url =>
             fetch(url).map { status =>
-                Log.info(s"$url -> $status").andThen(Report(url, status))
+                Log.warn(s"$url -> $status")
             }
         }
     }
@@ -60,7 +58,7 @@ val infinite: Nothing < Async =
     Async.never
 ```
 
-`Async.timeout` requires a finite duration; an infinite duration is short-circuited and the underlying computation is returned unwrapped. `Async.timeoutWithError` lets you supply a custom error on expiry instead of `Timeout`.
+An infinite duration disables `Async.timeout`: the underlying computation is returned unwrapped. `Async.timeoutWithError` lets you supply a custom error on expiry instead of `Timeout`.
 
 `Async.memoize` lazily evaluates a computation and shares its first successful result with all subsequent callers; a failure clears the slot, so the next caller runs it again:
 
@@ -70,8 +68,11 @@ import kyo.*
 val expensive: Int < Async =
     Async.sleep(1.second).andThen(42)
 
-val cached: Int < (Async & Sync) =
-    Async.memoize(expensive).flatMap(memo => memo)
+// The second call reuses the first one's result instead of sleeping again.
+val sharedTwice: (Int, Int) < Async =
+    Async.memoize(expensive).map { memo =>
+        memo.map(first => memo.map(second => (first, second)))
+    }
 ```
 
 > **Caution:** `Async.memoize` leaves all callers waiting for completion if the initial computation hangs. Wrap with `Async.timeout` when the underlying computation might not complete.
@@ -95,9 +96,9 @@ object Hello extends KyoApp:
 end Hello
 ```
 
-The `run` block accepts `A < (Async & Scope & Abort[Any])`. Multiple `run` blocks execute sequentially. `args: Chunk[String]` exposes the command-line arguments.
+The `run` block accepts `A < (Async & Scope & Abort[Any])`. Multiple `run` blocks execute sequentially. A block's result, when it is not `Unit`, is printed to stdout, so a block that exists for its effects should end in `Unit`. `args: Chunk[String]` exposes the command-line arguments.
 
-> **Note:** `KyoApp.runAndBlock(timeout)(v)` blocks the calling thread until `v` finishes, leaving `Sync` and `Abort[E | Timeout]` in the row. It exists for embedding Kyo inside a blocking integration. It defeats the purpose of async execution, so reserve it for that bridging case.
+> **Note:** `KyoApp.runAndBlock(timeout)(v)` blocks the calling thread until `v` finishes, leaving `Sync` and `Abort[E | Timeout]` in the row. It exists for embedding Kyo inside a blocking integration. It defeats the purpose of async execution, so reserve it for that bridging case. Like `Fiber.block`, it throws on JavaScript and Wasm, where there is only one thread to block.
 
 For full integration outside an application entry point, `KyoApp.Unsafe.runAndBlock(timeout)(v): Result[Throwable, A]` runs a computation and produces a plain `Result`.
 
@@ -105,7 +106,7 @@ For full integration outside an application entry point, `KyoApp.Unsafe.runAndBl
 
 `Async` provides three families of structured-concurrency operators: races (pick one), gathers (collect many), and bounded-concurrency collection ops (process a collection, capped). When you need to escape into raw fibers, `Fiber.init` is there.
 
-> **Sequential vs parallel:** the `Async.*` collection operations below run inputs concurrently. For sequential execution, reach for the `Kyo.*` companion (`Kyo.collectAll`, `Kyo.foreach`, `Kyo.fill`, `Kyo.zip`, `Kyo.when`, `Kyo.unless`), defined in [kyo-prelude](../kyo-prelude/README.md). Mental model: `Kyo.*` for sequential, `Async.*` for parallel.
+> **Sequential vs parallel:** the `Async.*` collection operations below run inputs concurrently. For sequential execution, reach for the `Kyo.*` companion (`Kyo.collectAll`, `Kyo.foreach`, `Kyo.fill`, `Kyo.zip`, `Kyo.when`, `Kyo.unless`), defined in [kyo-kernel](../kyo-kernel/README.md). `Kyo.*` is sequential, `Async.*` is parallel.
 
 From here on, the examples share a small order-processing domain:
 
@@ -170,11 +171,11 @@ val orders: Chunk[Order] < Async =
 def loadOrder(id: Long): Order < Async = ???
 ```
 
-Failures are silently dropped; the result is the first `max` successes (or fewer, if not that many succeeded). When you want every result including failures, run `gather` on inputs lifted into `Result`.
+Failures are skipped while other inputs can still succeed; the result is up to `max` successes, returned in input order. If no input succeeds, `gather` fails with the last error. When you want every result including failures, run `gather` on inputs lifted into `Result`.
 
 ### Bounded-concurrency collection ops
 
-For mapping over a sequence with a concurrency cap, use `Async.foreach`, `Async.foreachIndexed`, `Async.collect`, `Async.filter`, `Async.collectAll`, `Async.fill`, and their `Discard` siblings.
+For mapping over a sequence with a concurrency cap, use `Async.foreach`, `Async.foreachIndexed`, `Async.collect`, `Async.filter`, `Async.collectAll`, and `Async.fill`, plus `Async.foreachDiscard` and `Async.collectAllDiscard` when the results are not needed.
 
 ```scala
 import kyo.*
@@ -272,7 +273,7 @@ A `Scope` release may be `Async`: it can flush over the network, wait on a fiber
 import java.io.FileWriter
 import kyo.*
 
-val withFile: Unit < (Async & Sync) =
+val withFile: Unit < Async =
     Scope.run {
         Scope.acquireRelease(new FileWriter("log.txt"))(_.close()).map { writer =>
             Sync.defer(writer.write("entry\n"))
@@ -285,7 +286,7 @@ val withFile: Unit < (Async & Sync) =
 ```scala
 import kyo.*
 
-val read: String < (Async & Sync) =
+val read: String < Async =
     Scope.run {
         Scope.acquire(new java.io.BufferedReader(new java.io.FileReader("data.txt"))).map { reader =>
             Sync.defer(reader.readLine())
@@ -296,7 +297,7 @@ val read: String < (Async & Sync) =
 `Scope.ensure` registers a release with no resource attached. Its overload hands the release the outcome, `Absent` when the scope's body completed and `Present(error)` when it failed or was interrupted, so a release can commit or roll back:
 
 ```scala
-val withCleanup: Int < (Async & Sync & Scope) =
+val withCleanup: Int < (Async & Scope) =
     Scope.ensure { (outcome: Maybe[Result.Error[Any]]) =>
         outcome match
             case Absent        => Log.info("committed")
@@ -353,7 +354,7 @@ When two fibers need a hand-off with backpressure, reach for `Channel`. It expos
 ```scala
 import kyo.*
 
-val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
+val example: Unit < (Async & Scope & Abort[Closed]) =
     Channel.init[Order](capacity = 64).map { channel =>
         channel.put(Order(1L, 100L, Chunk.empty, BigDecimal(0))).andThen {
             channel.take.map { received =>
@@ -377,7 +378,7 @@ The `access` parameter at `Channel.init` selects an internal representation tune
 - `Access.SingleProducerMultiConsumer`: one producer, many consumers.
 - `Access.SingleProducerSingleConsumer`: most restrictive, often fastest.
 
-> **Note:** `Channel` capacity is rounded up to the next power of two on every platform. Capacity 10 becomes 16.
+> **Note:** from 2 up, `Channel` capacity is rounded up to the next power of two on every platform, so capacity 10 becomes 16. Capacity 1 stays 1, and a capacity of 0 or less makes a rendezvous channel, where each `put` waits for a matching `take`.
 
 > **Caution:** A `Channel` has no upper bound on the number of fibers suspended on it. In an HTTP-per-request pattern the queue of waiters can grow unbounded even when the channel's element capacity is bounded. Combine with `Admission` or `Meter` at the boundary if request rate is unbounded.
 
@@ -420,7 +421,7 @@ val slide: Queue.Unbounded[Order] < (Sync & Scope) =
     Queue.Unbounded.initSliding[Order](capacity = 1024)
 ```
 
-`Queue.Unbounded.initDropping(capacity)` rejects new offers when full (returns `false`). `Queue.Unbounded.initSliding(capacity)` evicts the oldest element to make room. `Queue.Unbounded.init` has no upper bound.
+`Queue.Unbounded.initDropping(capacity)` discards a new element when full; `offer` still returns `true`, so the drop is silent. `Queue.Unbounded.initSliding(capacity)` evicts the oldest element to make room. `Queue.Unbounded.init` has no upper bound.
 
 > **Caution:** `Queue.Unbounded.init` can exhaust memory if producers outpace consumers indefinitely. Prefer `initDropping` or `initSliding` unless an external mechanism enforces a bound.
 
@@ -433,7 +434,7 @@ When one producer needs to feed many independent listeners (log auditors, metric
 ```scala
 import kyo.*
 
-val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
+val example: Unit < (Async & Scope & Abort[Closed]) =
     Hub.init[Order](capacity = 64).map { hub =>
         hub.listen.map { audit =>
             hub.listen(bufferSize = 16).map { metrics =>
@@ -484,12 +485,13 @@ The synchronization primitives below are for fiber-to-fiber waiting, mutual excl
 When N background tasks must complete before a coordinator proceeds, use `Latch`. `Latch.init(n)` creates a latch that releases all waiters when `release` has been called `n` times. Similar to `CountDownLatch`.
 
 ```scala
-val example: Unit < (Async & Sync) =
+// The workers run on their own fibers; the coordinator waits on the latch, not on them.
+val example: Unit < (Async & Scope) =
     Latch.init(3).map { latch =>
-        Async.foreachDiscard(1 to 3) { i =>
-            doWork(i).andThen(latch.release)
+        Kyo.foreachDiscard(1 to 3) { i =>
+            Fiber.init(doWork(i).andThen(latch.release))
         }.andThen {
-            latch.await.andThen(Log.info("all three done"))
+            latch.await.andThen(Log.warn("all three done"))
         }
     }
 
@@ -505,9 +507,10 @@ When N parties must all reach a rendezvous point before any proceeds, use `Gate`
 ```scala
 import kyo.*
 
-val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
+val example: Unit < (Async & Scope & Abort[Closed]) =
     Gate.init(parties = 4).map { gate =>
-        Async.foreachDiscard(1 to 4) { worker =>
+        // every party must be running at once to reach the gate together
+        Async.foreachDiscard(1 to 4, concurrency = 4) { worker =>
             prepare(worker).andThen {
                 gate.pass.andThen(execute(worker))
             }
@@ -518,7 +521,7 @@ def prepare(w: Int): Unit < Sync = ???
 def execute(w: Int): Unit < Sync = ???
 ```
 
-`Gate.Dynamic.init(parties)` is the variant where parties can join and leave between cycles.
+`Gate.Dynamic.init(parties)` is the variant where parties can join and leave at any time, and `subgroup` derives a gate for a subset of the parties.
 
 `Latch` is asymmetric: some parties release, others wait. `Gate` is symmetric: all parties pass together.
 
@@ -537,7 +540,7 @@ val rateLimiter: Meter < (Sync & Scope) =
     Meter.initRateLimiter(rate = 100, period = 1.second)
 ```
 
-Use `meter.run(v)` to execute a computation under the meter, blocking until a permit is available. `meter.tryRun(v)` returns `Maybe[A]` and skips the work if no permit is available.
+Use `meter.run(v)` to execute a computation under the meter, parking until a permit is available. `meter.tryRun(v)` returns `Maybe[A]` and skips the work if no permit is available.
 
 ```scala
 import kyo.*
@@ -556,7 +559,7 @@ val charged: Chunk[Txn] < (Async & Scope & Abort[ChargeError | Closed]) =
 
 Meters are reentrant by default: nested calls from the same fiber pass through. Pass `reentrant = false` to enforce strict mutual exclusion even within a single fiber. Each meter exposes `availablePermits`, `pendingWaiters`, `close`, and `closed`.
 
-`Meter.pipeline(m1, m2)` composes two (or more, up to four-arity) meters: a request must acquire each in order. The composite "limit to 10 concurrent operations but no more than 100/second" pattern is the canonical use:
+`Meter.pipeline(m1, m2, ...)` composes any number of meters: a request must acquire each in order. The typical use is "at most 10 concurrent operations and no more than 100 per second":
 
 ```scala
 val composite: Meter < (Sync & Scope) =
@@ -595,7 +598,7 @@ When downstream code must react to value changes (UI state, config reload, featu
 ```scala
 import kyo.*
 
-val example: Unit < (Async & Sync) =
+val example: Unit < Async =
     Signal.initRef(0).map { (count: SignalRef[Int]) =>
         Async.foreachDiscard(1 to 100) { _ =>
             count.updateAndGet(_ + 1).unit
@@ -611,9 +614,11 @@ val example: Unit < (Async & Sync) =
 
 `Signal.initConst(value)` produces a `Signal` that never changes: useful as a placeholder or a sentinel.
 
+Signals also compose as values. `signal.map(f)` derives a signal, `a.combineLatest(b)` pairs two and updates when either changes, and `a.zip(b)` updates only once both have changed. `signal.observe(f)` runs `f` for the current value and again on every change, each time inside a fresh `Scope` that is closed before the next value's `f` runs, so whatever `f` forks for one value is interrupted when the value changes. `observe` runs until interrupted, so fork it.
+
 ## Shared mutable state
 
-Across fibers, state lives in atomics, contended-write counters, or a CLOCK-evicting cache.
+Across fibers, state lives in atomics, contended-write counters, or a bounded cache.
 
 ### Atomic primitives
 
@@ -633,7 +638,7 @@ val refExample: Order < Sync =
     }
 ```
 
-All four expose `get`, `set`, `lazySet`, `getAndSet`, `compareAndSet(curr, next)`, `getAndUpdate(f)`, and `updateAndGet(f)`. The integer types add `incrementAndGet`, `decrementAndGet`, `getAndIncrement`, `getAndDecrement`, `getAndAdd`, `addAndGet`, etc.
+All four expose `get`, `set`, `lazySet`, `getAndSet`, and `compareAndSet(curr, next)`; `AtomicInt`, `AtomicLong`, and `AtomicRef` add `getAndUpdate(f)` and `updateAndGet(f)`. The integer types add `incrementAndGet`, `decrementAndGet`, `getAndIncrement`, `getAndDecrement`, `getAndAdd`, `addAndGet`, etc.
 
 ### Contention-optimized counters
 
@@ -642,7 +647,7 @@ When many fibers update a counter and reads are rare, `LongAdder` and `DoubleAdd
 ```scala
 import kyo.*
 
-val counted: Long < (Async & Sync) =
+val counted: Long < Async =
     LongAdder.init.map { adder =>
         Async.foreachDiscard(1 to 1_000_000)(_ => adder.increment)
             .andThen(adder.get)
@@ -653,7 +658,7 @@ Pick `LongAdder` when many fibers increment and the value is read infrequently (
 
 ### Bounded caches and memoization
 
-When repeated work on the same key should reuse a previous result, reach for `Cache`. `Cache.init(maxSize, expireAfterAccess, expireAfterWrite)` creates a bounded cache with CLOCK eviction.
+When repeated work on the same key should reuse a previous result, reach for `Cache`. `Cache.init(maxSize, expireAfterAccess, expireAfterWrite)` creates a bounded cache. When it is full, eviction uses the CLOCK algorithm: an approximation of least-recently-used that gives each recently read entry one more pass before it is evicted. `Cache.initWithFinalizer` is the scoped variant for values that must be closed: it runs the finalizer once for every value removed by any path (eviction, expiry, `remove`, or the scope closing the cache), on a background fiber so eviction never waits for it.
 
 ```scala
 import kyo.*
@@ -665,7 +670,7 @@ val lookups: Maybe[User] < Sync =
     }
 ```
 
-`getOrElse(key, value)` returns the cached value or evaluates the default and inserts it. `remove(key)` marks the entry for eviction.
+`getOrElse(key, value)` returns the cached value or evaluates the default and inserts it. `add(key, value)` inserts only when the key is absent and returns the value the cache holds, so it never overwrites. `remove(key)` removes the entry at once.
 
 > **Caution:** Actual table capacity is rounded up to the next power of two above `maxSize * 5/4`. Maximum `maxSize` is 1,048,576 entries.
 
@@ -691,7 +696,7 @@ The wall-clock and the monotonic clock answer different questions. Retries layer
 
 ### `Clock.now` vs `Clock.nowMonotonic`
 
-When you need a timestamp for humans or other systems (log lines, database TTLs), use `Clock.now`. When you need to measure elapsed time without surprises, use `Clock.nowMonotonic`. The wall-clock can jump (NTP adjustment, leap seconds, DST), go backwards, and stand still during a system suspend; the monotonic clock only increases, and the duration between two readings reflects real elapsed time.
+When you need a timestamp for humans or other systems (log lines, database TTLs), use `Clock.now`. When you need to measure elapsed time without surprises, use `Clock.nowMonotonic`. The wall-clock can jump (NTP adjustment, leap seconds) and go backwards; the monotonic clock only increases, so the difference between two readings is a usable duration. Across a system suspend the monotonic clock may stop while the wall clock jumps forward, so neither measures time spent suspended.
 
 ```scala
 val stamped: (Instant, Duration) < Sync =
@@ -703,7 +708,7 @@ val stamped: (Instant, Duration) < Sync =
 ### Measuring elapsed time and tracking deadlines
 
 ```scala
-val measured: (Result[Throwable, Int], Duration) < (Async & Sync) =
+val measured: (Result[Throwable, Int], Duration) < Async =
     Clock.stopwatch.map { sw =>
         Abort.run[Throwable](work).map { result =>
             sw.elapsed.map(d => (result, d))
@@ -722,34 +727,31 @@ val withDeadline: Boolean < Sync =
 
 ### Scheduling recurring work
 
-Both functions start the loop on a background fiber and return that fiber at once. The fiber is unscoped: nothing stops it until the caller interrupts it, so tie it to a scope:
+`Clock.repeatWithDelay` and `Clock.repeatAtInterval` start the loop on a background fiber and return that fiber at once. The fiber is unscoped: nothing stops it until the caller interrupts it, so acquire it with its interrupt as the release:
 
 ```scala
 val pollEverySec: Fiber[Unit, Any] < (Sync & Scope) =
-    Clock.repeatWithDelay(1.second)(checkHealth).map { fiber =>
-        Scope.ensure(fiber.interrupt).andThen(fiber)
-    }
+    Scope.acquireRelease(Clock.repeatWithDelay(1.second)(checkHealth))(_.interrupt)
 
-def checkHealth: Unit < (Async & Sync) = ???
+def checkHealth: Unit < Async = ???
 
-val tickOnSchedule: Fiber[Unit, Any] < Sync =
-    Clock.repeatAtInterval(1.second)(emitMetric)
+val tickOnSchedule: Fiber[Unit, Any] < (Sync & Scope) =
+    Scope.acquireRelease(Clock.repeatAtInterval(1.second)(emitMetric))(_.interrupt)
 
-def emitMetric: Unit < (Async & Sync) = ???
+def emitMetric: Unit < Async = ???
 ```
 
-`repeatWithDelay(d)` runs the task, waits `d`, and runs it again, so a slow task pushes the next start out. `repeatAtInterval(d)` aims for fixed intervals between starts; a run that overruns its interval is followed immediately by the next, and runs never overlap.
+`repeatWithDelay(d)` runs the task, waits `d`, and runs it again, so a slow task pushes the next start out. `repeatAtInterval(d)` schedules runs by the interval `d`, with an optional initial delay in its other overloads. Runs of either never overlap.
 
 ### Deterministic time for tests
 
-Both `Clock.withTimeShift` and `Clock.withTimeControl` produce deterministic time within a scope, useful for testing.
+`Clock.withTimeControl` gives deterministic time within a scope, which is what tests should use. `Clock.withTimeShift` scales the live clock instead: faster or slower, but still real time.
 
 ```scala
-val fastForward: Result[Throwable, Unit] < (Async & Sync) =
+// An hour of sleeping takes 3.6 real seconds.
+val fastForward: Unit < Async =
     Clock.withTimeShift(factor = 1000.0) {
-        Abort.run[Throwable] {
-            Async.sleep(1.hour).andThen(Log.info("done"))
-        }
+        Async.sleep(1.hour).andThen(Log.warn("done"))
     }
 ```
 
@@ -776,16 +778,16 @@ val customSchedule: Order < (Async & Abort[NotFound]) =
 def loadOrder(id: Long): Order < (Async & Abort[NotFound]) = ???
 ```
 
-`Retry[E](v)` uses `Retry.defaultSchedule`: exponential backoff starting at 100ms, factor 2, max 5 seconds, 0.2 jitter, and at most 3 retries, so 4 attempts in all. `Retry[E](schedule)(v)` accepts any `Schedule`.
+`Retry[E](v)` uses `Retry.defaultSchedule`: exponential backoff starting at 100ms, factor 2, max 5 seconds, 0.2 jitter, and at most 3 retries, so 4 attempts in all. `Retry[E](schedule)(v)` accepts any `Schedule`. Only failures of type `E` are retried; a panic ends the retry at once.
 
 `Schedule` is defined in `kyo-data`. Policies are built from `fixed`, `linear`, `exponential`, `exponentialBackoff`, or `fibonacci`, bounded with `take` or `maxDuration`, randomized with `jitter`, sequenced with `andThen`, and combined with `max` (the longer delay of two, stopping when either stops) or `min` (the shorter delay, continuing while either does).
 
 ### `Timeout`
 
-`Async.timeout(d)(v)` adds `Abort[Timeout]` to the effect row. The `Timeout` error carries the duration that expired:
+`Async.timeout(d)(v)` adds `Abort[Timeout]` to the effect row, and the `Timeout` error's message names the duration that expired:
 
 ```scala
-val withTimeout: Result[Timeout, Int] < (Async & Sync) =
+val withTimeout: Result[Timeout, Int] < Async =
     Abort.run[Timeout] {
         Async.timeout(2.seconds) {
             Async.sleep(5.seconds).andThen(42)
@@ -803,7 +805,7 @@ val withTimeout: Result[Timeout, Int] < (Async & Sync) =
 
 ## Ambient services
 
-`Console`, `Random`, `UUIDGenerator`, and `Log` are dynamically scoped context services. Their defaults target the platform console, a non-cryptographic `java.util.Random`, secure UUID entropy, and the console logger respectively. Tests can swap them out per scope without threading them as arguments.
+`Console`, `Random`, `SecureRandom`, `UUIDGenerator`, and `Log` are dynamically scoped context services. Their defaults target the platform console, a non-cryptographic `java.util.Random`, the platform's cryptographic random source, secure UUID entropy drawn from the ambient `SecureRandom` (so `SecureRandom.let` changes it too), and the console logger respectively. Tests can swap them out per scope without threading them as arguments.
 
 ### `Console`
 
@@ -869,7 +871,7 @@ For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; 
 
 ### `Log`
 
-`Log` is the ambient logger. `Log.live` is the default backend: a `ConsoleLogger` named `kyo.logs` at `warn` level, configurable with `-Dkyo.Log.defaultLevel` or `KYO_LOG_DEFAULTLEVEL`. At the default level, `trace`, `debug`, and `info` calls print nothing. It writes `warn` and `error` to stderr (with stack traces to stderr) and `trace`, `debug`, and `info` to stdout. Each line is prefixed with a timestamp from the ambient `Clock`, so time control applies to it. Log calls are async by default on JVM and Native: each call enqueues to a bounded background channel (capacity 4096) and returns without blocking; a daemon fiber drains the channel in FIFO order. `Log.flush: Unit < Async` suspends until the daemon has delivered every enqueued event. To force synchronous logging, set `-Dkyo.Log.asyncLogging=false`.
+`Log` is the ambient logger. `Log.live` is the default backend: a `ConsoleLogger` named `kyo.logs` at `warn` level, configurable with `-Dkyo.Log.defaultLevel` or `KYO_LOG_DEFAULTLEVEL`. At the default level, `trace`, `debug`, and `info` calls print nothing. It writes `warn` and `error` to stderr (with stack traces to stderr) and `trace`, `debug`, and `info` to stdout. Each line is prefixed with a timestamp from the ambient `Clock`, so time control applies to it. Log calls are async by default on JVM and Native: each call enqueues to a bounded background channel (capacity 4096) and returns at once; a daemon fiber drains the channel in FIFO order. When the channel is full, the default overflow policy writes that event inline on the caller instead of dropping it. `Log.flush: Unit < Async` suspends until the daemon has delivered every enqueued event. To force synchronous logging, set `-Dkyo.Log.asyncLogging=false`.
 
 ```scala
 import kyo.*
@@ -887,11 +889,14 @@ Each level (`trace`, `debug`, `info`, `warn`, `error`) has a `(msg)` form and a 
 
 ## Cross-cutting errors
 
-Three error types appear in `Abort` rows across the module:
+Three error types recur across the module. Two appear in `Abort` rows:
 
-- `Closed`: raised by `Channel`, `Queue`, `Promise`, and `Hub` when the underlying resource is closed (or by operations attempted after close). Carries the resource name and the frame where it was created.
-- `Interrupted`: marker for fiber interruption. Carries the frame where the interrupt was issued.
-- `Timeout`: produced by `Async.timeout(d)(v)` and `Fiber.block(duration)` on expiry. Carries the duration.
+- `Closed`: raised by `Channel`, `Queue`, `Hub`, `Meter`, `Gate`, and `Exchange` when the underlying resource is closed or an operation is attempted after close, and panicked by `Scope` for a registration on a closed scope. Its message names the resource and the frame where it was created.
+- `Timeout`: produced by `Async.timeout(d)(v)` and `Fiber.block(duration)` on expiry. Its message names the duration.
+
+The third arrives as a panic rather than a typed failure:
+
+- `Interrupted`: an interrupt ends the interrupted computation with `Result.Panic(Interrupted(frame))`, where the frame is where the interrupt was issued.
 
 `KyoApp.FailureException` wraps a non-`Throwable` `Abort` error that escapes an application's `run` block or `KyoApp.Unsafe.runAndBlock`, so it can travel as a `Throwable`; `KyoApp.Unsafe.runAndBlock` returns it inside its `Result`.
 
@@ -901,7 +906,7 @@ Handle them per-effect with `Abort.run[Closed]`, `Abort.recover[Timeout]`, and s
 import kyo.*
 val channel: Channel[Order] = ???
 
-val handled: Maybe[Order] < (Async & Sync) =
+val handled: Maybe[Order] < Async =
     Abort.run[Closed] {
         channel.take
     }.map {
@@ -931,7 +936,7 @@ def activeCount: Long = ???
 
 `Counter` exposes `inc`, `add(v)`, `get`. `Histogram` exposes `observe(v)` and `summary`, a non-destructive read of the whole distribution. `Gauge` and `CounterGauge` are read-only views: the registry calls the provided thunk on each scrape.
 
-The `init*` methods REGISTER, and registration is first-writer-wins. That makes them the wrong call for reading a metric somebody else publishes: `initGauge` supplies the thunk, so a consumer that calls it before the producer wins the path and the producer's real value becomes unreachable for the life of the process. To read without registering, ask:
+The `init*` methods register, and registration is first-writer-wins. That makes them the wrong call for reading a metric somebody else publishes: `initGauge` supplies the thunk, so a consumer that calls it before the producer wins the path and the producer's real value becomes unreachable for the life of the process. To read without registering, ask:
 
 ```scala
 val orders = Stat.initScope("kyo", "orders")
@@ -942,7 +947,9 @@ val missing: Maybe[Counter] < Sync   = orders.findCounter("processsed") // Absen
 
 `findCounter`, `findGauge` and `findHistogram` answer `Absent` when nothing is registered at that name and never create anything, so a misspelled path fails visibly instead of becoming a brand-new zeroed instrument that an exporter publishes and a dashboard renders as a permanent flat line.
 
-`stats.traceSpan(name, attributes)(v)`, on a `Stat` scope, wraps a computation in a trace span exported via the registered `TraceExporter`. `Stat.traceListen(exporter)(v)` registers an exporter for the duration of the scope.
+`stats.traceSpan(name, attributes)(v)`, on a `Stat` scope, wraps a computation in a trace span exported through the registered exporters.
+
+`Stat.traceListen(exporter)(v)` registers an exporter for the duration of `v`. Exporters implement `kyo.stats.internal.TraceExporter` from kyo-stats-registry, which `import kyo.*` does not bring in; kyo-stats-otlp provides one for OpenTelemetry.
 
 ### `StreamCoreExtensions`
 
@@ -972,12 +979,12 @@ val bytes: Stream[Byte, Sync & Scope] =
 
 `StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. The operators are available after `import kyo.StreamCompression.*`.
 
-- `stream.deflate(...)` compresses bytes using raw deflate and returns `Stream[Byte, Scope & Sync & Ctx]`.
-- `stream.inflate(...)` decompresses raw deflate data and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
+- `stream.deflate(...)` compresses bytes with deflate, zlib-framed by default (`noWrap = true` for raw deflate), and returns `Stream[Byte, Scope & Sync & Ctx]`.
+- `stream.inflate(...)` decompresses deflate data, zlib-framed unless `noWrap = true`, and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
 - `stream.gzip(...)` compresses bytes with the gzip framing (header + CRC-32 trailer) and returns `Stream[Byte, Scope & Sync & Ctx]`.
 - `stream.gunzip(...)` decompresses a gzip stream, validates the trailer, and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
 
-Compression behaviour is tuned through three enums nested in `StreamCompression`: `CompressionLevel` (from `NoCompression` through `BestSpeed` and `BestCompression` to `Default`), `CompressionStrategy` (`Default`, `Filtered`, `HuffmanOnly`), and `FlushMode` (`NoFlush`, `SyncFlush`, `FullFlush`, `Default`). Decompression failures surface as `StreamCompressionException`.
+Compression behavior is tuned through three enums nested in `StreamCompression`: `CompressionLevel` (`Default`, then `NoCompression`, `BestSpeed`, `Level2` through `Level8`, and `BestCompression`), `CompressionStrategy` (`Default`, `Filtered`, `HuffmanOnly`), and `FlushMode` (`Default`, `NoFlush`, `SyncFlush`, `FullFlush`). The last two also carry `BestSpeed` and `BestCompression` aliases for the settings that suit each goal. Decompression failures surface as `StreamCompressionException`.
 
 All operators default to a 32 KB buffer (`1 << 15`) and `Default` settings, so the common case requires no arguments:
 
@@ -994,7 +1001,7 @@ val decompressed: Stream[Byte, Sync & Scope & Abort[StreamCompression.StreamComp
 
 ## Putting it together
 
-The example below combines several effects from this module into one cohesive program: `KyoApp` discharges the effect row at the application boundary, `Meter.initRateLimiter` enforces a system-wide rate limit, `Async.foreach` fans out work with bounded concurrency, and `Log.info` emits structured log lines. Everything composes into a single value that `KyoApp` then runs.
+The example below combines several effects from this module into one program: `KyoApp` discharges the effect row at the application boundary, `Meter.initRateLimiter` enforces a system-wide rate limit, `Async.foreachDiscard` fans out work with bounded concurrency, and `Log.warn` reports each charge. Everything composes into a single value that `KyoApp` then runs.
 
 ```scala
 import kyo.*
@@ -1009,10 +1016,10 @@ object Checkout extends KyoApp:
         // Bounded-concurrency fan-out: rate-limit charges to 50/sec
         Meter.initRateLimiter(rate = 50, period = 1.second).map { limiter =>
             // Process each order: charge, persist receipt, log
-            Async.foreach(orders, concurrency = 16) { order =>
+            Async.foreachDiscard(orders, concurrency = 16) { order =>
                 limiter.run(charge(order)).map { txn =>
                     persistReceipt(order.id, render(order, txn)).andThen {
-                        Log.info(s"order ${order.id} -> ${txn.id}")
+                        Log.warn(s"order ${order.id} -> ${txn.id}")
                     }
                 }
             }
@@ -1026,7 +1033,7 @@ object Checkout extends KyoApp:
 end Checkout
 ```
 
-The resulting type of the `run` block is `Chunk[Unit] < (Async & Scope & Abort[Any])`, which `KyoApp` discharges.
+The `run` block's type is `Unit < (Async & Scope & Abort[Any])`, which `KyoApp` discharges; ending in `Unit` keeps `KyoApp` from printing a result.
 
 ## Low-level extension points
 
