@@ -5,7 +5,7 @@ import kyo.net.internal.util.GrowableByteBuffer
 
 /** The format-agnostic core of a wire-protocol byte writer.
   *
-  * Backed by a [[GrowableByteBuffer]] that grows automatically. Call [[toSpan]] to obtain an immutable snapshot of the written bytes; further
+  * Backed by a `GrowableByteBuffer` that grows automatically. Call [[toSpan]] to obtain an immutable snapshot of the written bytes; further
   * writes after that call do not affect the returned [[Span]]. A subclass adds the writes its protocol needs: the multi-byte integers whose
   * byte order is the protocol's, the length-prefixed and NUL-terminated strings, and any back-patching its framing needs. What lives here is
   * only what writes the same bytes for every protocol: the single-byte and raw-bytes writes, the size, and the snapshot.

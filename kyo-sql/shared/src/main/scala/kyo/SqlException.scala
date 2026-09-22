@@ -379,7 +379,7 @@ final case class SqlConnectionPasswordRequiredException(method: String)(using Fr
         s"Server requested $method authentication but no password was configured for this connection"
     ) with SqlAuthenticationFailure
 
-/** A backend whose handshake carries a user name reached the point of opening a connection with [[SqlConfig.Address.user]] absent.
+/** A backend whose handshake carries a user name reached the point of opening a connection with [[SqlConfig.Address.Network.user]] absent.
   *
   * The password sibling above reports a credential the SERVER asked for; this one reports an input the PROTOCOL requires unconditionally, so it
   * is raised before any socket is opened rather than partway through an exchange. Both PostgreSQL's startup packet and MySQL's handshake
@@ -425,6 +425,16 @@ final case class SqlConnectionInvalidTypeNameException(typeNames: Chunk[String])
         s"Invalid type name(s) for pre-registration: ${typeNames.mkString(", ")}"
     )
 
+/** A configured session search path names something that is not a schema name.
+  *
+  * Raised before the startup packet is written, so the caller reads which entry is wrong. Sent as it stands, an empty entry reaches the
+  * server as a zero-length delimited identifier, and the server answers a FATAL that names neither the setting nor the position.
+  */
+final case class SqlConnectionInvalidSearchPathException(searchPath: Chunk[String])(using Frame)
+    extends SqlConnectionException(
+        s"Invalid search path entry in: ${searchPath.map(e => s"'$e'").mkString(", ")}"
+    )
+
 /** Resetting a pooled connection failed with a server ErrorResponse. */
 final case class SqlConnectionResetFailedException(errorCode: Int, errorMessage: String)(using Frame)
     extends SqlConnectionException(
@@ -435,7 +445,7 @@ final case class SqlConnectionResetFailedException(errorCode: Int, errorMessage:
   *
   * `requested` names what the caller asked for, verbatim: the client type at a [[kyo.DB.clientAs]] narrow, or the dialect an
   * engine-only operation belongs to. `activeDriver` is the dialect the client actually speaks. `requested` is a plain string rather
-  * than an [[Idiom.Id]] because the thing asked for is not always a dialect.
+  * than an `Idiom.Id` because the thing asked for is not always a dialect.
   */
 final case class SqlConnectionBackendMismatchException(
     requested: String,

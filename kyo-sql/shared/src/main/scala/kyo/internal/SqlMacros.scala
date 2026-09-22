@@ -17,13 +17,6 @@ import scala.quoted.*
   */
 object SqlMacros:
 
-    /** Produces the SQL table name for case-class type `T`.
-      *
-      * The in-scope [[SqlNaming]] casing governs the table name exactly as it governs column names: `SnakeCase` turns `UserProfile` into
-      * `user_profile`. With no casing in scope the default is the lowercased simple type name, and the explicit table-name parameter on
-      * the query methods bypasses both. When the casing given is statically resolvable the name folds to a literal; a present but not
-      * statically resolvable given applies at runtime, never a wrong un-cased fold.
-      */
     /** Compile-time guard behind the bare `Sql.from[T]`: refuses a shape the derived-alias spelling cannot serve, with the explicit
       * alias as the pointed fix.
       *
@@ -65,6 +58,13 @@ object SqlMacros:
         '{ () }
     end validateDerivedAliasImpl
 
+    /** Produces the SQL table name for case-class type `T`.
+      *
+      * The in-scope [[SqlNaming]] casing governs the table name exactly as it governs column names: `SnakeCase` turns `UserProfile` into
+      * `user_profile`. With no casing in scope the default is the lowercased simple type name, and the explicit table-name parameter on
+      * the query methods bypasses both. When the casing given is statically resolvable the name folds to a literal; a present but not
+      * statically resolvable given applies at runtime, never a wrong un-cased fold.
+      */
     inline def tableName[T]: String = ${ tableNameImpl[T] }
 
     def tableNameImpl[T: Type](using Quotes): Expr[String] =

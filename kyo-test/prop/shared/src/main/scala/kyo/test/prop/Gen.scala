@@ -518,7 +518,7 @@ object Gen:
       *
       * Shrinking minimizes all three components independently; backs `forAll` arity 3. Uses a nested `zipWith` fold to thread the three
       * component trees: the first two components are combined, then the intermediate pair is combined with the third. The seed-split
-      * topology is preserved from the prior monadic bodies so the root values are byte-identical for any given seed (INV-004).
+      * topology is preserved from the prior monadic bodies so the root values are byte-identical for any given seed.
       *
       * @param ga
       *   the first generator
@@ -546,7 +546,7 @@ object Gen:
       *
       * Shrinking minimizes all four components independently; backs `forAll` arity 4. Uses a nested `zipWith` fold to thread the four
       * component trees. The seed-split topology is preserved from the prior monadic bodies so the root values are byte-identical for any
-      * given seed (INV-004).
+      * given seed.
       *
       * @param ga
       *   the first generator

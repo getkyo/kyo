@@ -8,11 +8,11 @@ import kyo.net.internal.transport.ReadOutcome
 /** One submitted-but-not-yet-reaped io_uring operation, keyed by a dense `user_data` value.
   *
   * Each variant pins the off-heap memory the kernel owns for the duration of the operation, which is the heart of the UAF invariant: the
-  * memory MUST stay alive until the operation's CQE is reaped. A [[Read]] pins the handle's reused `readBuffer`; a [[Write]] pins a
+  * memory MUST stay alive until the operation's CQE is reaped. A [[PendingOp.Read]] pins the handle's reused `readBuffer`; a [[PendingOp.Write]] pins a
   * per-write `Buffer` that is closed only when its send CQE arrives and additionally carries the payload `offset` of its first byte and the
-  * requested send `len`, so a partial send (`res < len`) can re-submit the unsent `[offset + res, offset + len)` tail; a [[TlsWrite]] pins
-  * the per-send ciphertext `Buffer` the same way and carries the requested send length so a partial send can be re-submitted; a [[Connect]]
-  * carries only the promise to complete (its `sockaddr` is pinned by the handle's `connectTarget`); an [[Accept]] pins the addr/addrlen
+  * requested send `len`, so a partial send (`res < len`) can re-submit the unsent `[offset + res, offset + len)` tail; a [[PendingOp.TlsWrite]] pins
+  * the per-send ciphertext `Buffer` the same way and carries the requested send length so a partial send can be re-submitted; a [[PendingOp.Connect]]
+  * carries only the promise to complete (its `sockaddr` is pinned by the handle's `connectTarget`); an [[PendingOp.Accept]] pins the addr/addrlen
   * placeholder buffers that `kyo_uring_prep_accept` requires to stay alive until the single-shot accept CQE is reaped.
   * Each accepted connection uses one SQE and one CQE; the accept loop calls [[IoUringDriver.awaitAccept]] with a fresh promise
   * after each CQE to arm the next connection. The buffers are released via `releaseBuffer` when the CQE is processed.
@@ -68,7 +68,7 @@ private[net] enum PendingOp(val handle: PosixHandle):
         noLen: Buffer[Int]
     ) extends PendingOp(h)
 
-    /** Fail the promise this op carries with `closed`. A [[Write]] op carries no promise (its failure is surfaced on the write pump), so
+    /** Fail the promise this op carries with `closed`. A [[PendingOp.Write]] op carries no promise (its failure is surfaced on the write pump), so
       * this is a no-op for it.
       */
     def failPromise(closed: Closed)(using AllowUnsafe): Unit =
@@ -83,9 +83,9 @@ private[net] enum PendingOp(val handle: PosixHandle):
 
     /** Release the off-heap memory this op pinned for the kernel. Safe to call only after the op's CQE has been reaped.
       *
-      * [[Write]] and [[Accept]] own per-op buffers and close them here. [[TlsWrite]] pins the per-handle reused flush mirror (owned by the
+      * [[PendingOp.Write]] and [[PendingOp.Accept]] own per-op buffers and close them here. [[PendingOp.TlsWrite]] pins the per-handle reused flush mirror (owned by the
       * handle, freed only in `freeResources`); closing it here would be a use-after-free because the next flush refills the same buffer.
-      * So [[TlsWrite]] is intentionally a no-op: the mirror survives the reap and is reused by the next flush.
+      * So [[PendingOp.TlsWrite]] is intentionally a no-op: the mirror survives the reap and is reused by the next flush.
       */
     def releaseBuffer()(using AllowUnsafe): Unit =
         this match

@@ -14,7 +14,7 @@ import kyo.Structure
   * handler input and output, and an optional set of user-domain error types.
   *
   * Use the companion factories to construct instances:
-  *  - [[JsonRpcRoute.apply]] for request/response routes.
+  *  - [[JsonRpcRoute.request]] for request/response routes.
   *  - [[JsonRpcRoute.notification]] for fire-and-forget notifications.
   *
   * Chain [[error]] to register typed domain errors that the handler may abort with. Domain errors
@@ -63,7 +63,7 @@ end JsonRpcRoute
 object JsonRpcRoute:
     /** Whether a route handles a request (expects a reply) or a notification (fire-and-forget).
       *
-      * [[Request]] routes return a result the engine sends back to the caller; [[Notification]]
+      * [[Kind.Request]] routes return a result the engine sends back to the caller; [[Kind.Notification]]
       * routes run for their effect only and produce no wire response.
       */
     enum Kind derives CanEqual:
@@ -134,7 +134,11 @@ object JsonRpcRoute:
         new RequestRoute[In, Out, E](name, capturedSchemaIn, capturedSchemaOut, handler, Chunk.empty)
     end request
 
-    /** Mirror of [[request]] for notification routes (no response). */
+    /** Mirror of [[request]] for notification routes (no response).
+      *
+      * A handler runs a peer's notifications one at a time in the order they arrive, and starts a request only after the
+      * notifications that arrived before it have been handled, so a notification handler that runs long delays what follows it.
+      */
     def notification[In: Schema](name: String)[E](
         handler: (In, JsonRpcRoute.Context) => Unit < (Async & Abort[E | JsonRpcResponse.Halt])
     )(using Frame): JsonRpcRoute[In, Unit, E] =

@@ -162,7 +162,7 @@ final case class Chart[A] private[kyo] (
         // the defer, so nothing escapes the bracket; the safe boundary is the `Svg.Root < Sync` return type.
         Sync.Unsafe.defer(kyo.internal.ChartLower.lower(this))
 
-    /** Lowers this chart to an `Svg.Root` together with its resolved [[Scales]].
+    /** Lowers this chart to an `Svg.Root` together with its resolved `Scales`.
       *
       * The returned `Scales` exposes the data-to-pixel projection for both axes and the
       * inner plot rectangle, so callers can build overlays, brush outlines, or annotations at

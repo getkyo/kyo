@@ -4,6 +4,11 @@ import kyo.*
 
 class LatchTest extends kyo.test.Test[Any]:
 
+    /** How many parties are waiting on `latch` right now, for a leaf that has to interrupt one of them while they wait. */
+    private def waitersOf(latch: Latch)(using Frame): Int < Sync =
+        // Unsafe: the waiter count is answered from the latch's own state, with no suspension to hang it on.
+        Sync.Unsafe.defer(latch.unsafe.await().waiters())
+
     "use" in {
         Latch.initWith(1) { latch =>
             for
@@ -58,6 +63,32 @@ class LatchTest extends kyo.test.Test[Any]:
             _     <- latch.await
             p     <- latch.pending
         yield assert(p == 0)
+    }
+
+    "a waiter's interrupt leaves the latch whole for every other waiter".pendingUntilFixed(
+        "await hands out the latch's own promise, so one waiter's interrupt completes it for all of them"
+    ) in {
+        // A latch is shared, and one party stopping is not the latch stopping. Interrupting a waiter must reach
+        // that waiter alone: the parties still waiting go on waiting, and the release that follows lets them
+        // through. Both survivors are checked, one that was already parked when the interrupt landed and one that
+        // arrived after it, because a latch broken by the interrupt fails them in different ways.
+        for
+            latch   <- Latch.init(1)
+            leaving <- Fiber.initUnscoped(latch.await)
+            parked  <- Fiber.initUnscoped(latch.await.andThen(true))
+            _       <- assertEventually(waitersOf(latch).map(_ == 2))
+            _       <- leaving.interrupt
+            _       <- leaving.getResult
+            arrived <- Fiber.initUnscoped(latch.await.andThen(true))
+            _       <- latch.release
+            first   <- parked.get
+            second  <- arrived.get
+            p       <- latch.pending
+        yield
+            assert(first, "a waiter parked when another was interrupted must be let through by the release")
+            assert(second, "a waiter that arrives after another was interrupted must be let through by the release")
+            assert(p == 0)
+        end for
     }
 
     "contention" in {

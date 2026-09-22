@@ -36,7 +36,7 @@ object FfiGenerator:
       *   extra `-I` include directories for the Native header-availability probe. A binding that
       *   declares a vendored header (e.g. `openssl/ssl.h` from a staged BoringSSL tree, not on the
       *   system include path) is emitted as `@extern` (not a stub) only when the probe finds the
-      *   header; these dirs let the probe see the staged tree (RI-006).
+      *   header; these dirs let the probe see the staged tree.
       */
     final case class Config(
         libraryId: Option[String],
@@ -195,7 +195,7 @@ object FfiGenerator:
       * rejects one or more includes or when `cc` is not found, the caller should emit runtime stubs instead of `@extern` declarations.
       *
       * `includeDirs` are added as `-I<dir>` so a vendored header (e.g. a staged BoringSSL tree not on the system path) is found and the
-      * binding is emitted as `@extern` rather than a stub (RI-006).
+      * binding is emitted as `@extern` rather than a stub.
       */
     private[codegen] def headersAvailable(headers: Seq[String], includeDirs: Seq[String] = Nil): Boolean =
         if headers.isEmpty then true

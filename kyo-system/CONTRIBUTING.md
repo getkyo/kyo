@@ -152,6 +152,12 @@ Use `FileIOException(path, operation, cause)` only when no more precise leaf des
 Preserve `Result.Panic` as a panic. Do not translate interruption, programmer defects, or unexpected
 throwables into expected filesystem failures.
 
+A write loop retries a short write from where it stopped and stops at the first write that reports no
+progress, failing with `FileWriteStalledException(path, remaining)`. A retry there would re-offer the
+same bytes at the same offset forever, which is a hung thread with no diagnostic. Every write loop
+needs that guard, and it reports the same leaf on every platform so a caller matching on it does not
+have to know which one it is running.
+
 ## Adding an operation
 
 1. Decide whether the operation needs read, write, or watch authority.

@@ -518,7 +518,7 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     /** A linear-gradient background. Each stop is a `(Color, percentage-along-the-axis)` pair; at least two stops are required. This
       * overload takes the direction as a `GradientDirection.type => GradientDirection` selector for inline use (`bgGradient(_.toRight, ...)`).
-      * Interpolates in sRGB (the CSS default); use the [[GradientColorSpace]] overload to interpolate in OKLCH/OKLAB.
+      * Interpolates in sRGB (the CSS default); use the [[Style.GradientColorSpace]] overload to interpolate in OKLCH/OKLAB.
       */
     def bgGradient(
         direction: GradientDirection.type => GradientDirection,

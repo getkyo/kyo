@@ -134,6 +134,22 @@ final class DoltTestBackend extends SqlTestBackend:
     /** Empty, deliberately: this engine's BIT handling is unmeasured, so the MySQL descriptor's case is not copied across. */
     def protocolAgreementCases: Chunk[(String, String, String)] = Chunk.empty
 
+    override def hasSecondSchema: Boolean = true
+
+    /** Dolt speaks the MySQL protocol, so a second schema is a second database, provisioned and removed the same way.
+      *
+      * Named after the leaf's own database so concurrent leaves cannot collide. No grant is needed here, unlike the MySQL descriptor: this
+      * harness connects its leaves as root.
+      */
+    override def secondSchema(schema: SqlTestBackend.Schema): Maybe[SqlTestBackend.SecondSchema] =
+        val name = s"${schema.database}_second"
+        Present(SqlTestBackend.SecondSchema(
+            name,
+            Chunk(s"CREATE DATABASE ${quoteIdent(name)}"),
+            Chunk(s"DROP DATABASE IF EXISTS ${quoteIdent(name)}")
+        ))
+    end secondSchema
+
     /** `HY000`, which is what this server actually sends, measured: a missing table (1146), a duplicate key (1062) and a syntax error
       * (1105) all arrive under the general-error state where MySQL sends `42S02`, `23000` and `42000`. Declared as the generic state rather
       * than corrected to the standard one, because the driver relays the server's own state untouched and classifies the typed family from

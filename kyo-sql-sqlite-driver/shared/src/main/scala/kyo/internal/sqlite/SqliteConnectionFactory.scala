@@ -73,11 +73,54 @@ final private[kyo] class SqliteConnectionFactory(bindings: SqliteBindings) exten
                         inFlight      <- AtomicBoolean.init(false)
                         inTransaction <- AtomicBoolean.init(false)
                         id            <- Sync.defer(SqliteConnectionFactory.nextId())
-                    yield new SqliteConnection(id, bindings, db, meter, lifetime, openFlag, inFlight, inTransaction)
+                        conn = new SqliteConnection(id, bindings, db, meter, lifetime, openFlag, inFlight, inTransaction)
+                        _ <- attachAll(conn, address, config)
+                    yield conn
                 }
             end if
         }
     end configured
+
+    /** Runs the [[kyo.SqliteAttach]] statements on a freshly opened connection, before it is lent to anyone.
+      *
+      * Here rather than as a caller's statement because `ATTACH` is per connection: issued through the pool it would reach one connection
+      * and leave the rest answering "no such table" for a name that just worked on its neighbour.
+      *
+      * Any failure closes the handle and fails the open. Admitting the connection with a schema missing would leave the pool holding
+      * sessions that disagree about which schemas exist, so which one a statement drew would decide whether it worked.
+      *
+      * The close is owed on the INTERRUPTED edge as much as the failed one, which is what puts it in a finalizer rather than in the failure
+      * arms. `SqlConnectionPool.connect` runs the whole open under `Async.timeoutWithError`, and an `ATTACH` on a locked or slow file is
+      * exactly where that budget runs out; the handle is reachable from nowhere else at that point, so nothing would ever close it.
+      */
+    private def attachAll(conn: SqliteConnection, address: SqlConfig.Address.Local, config: SqlConfig)(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
+        val statements = SqliteAttach.statementsFor(config)
+        if statements.isEmpty then ()
+        else
+            Scope.run {
+                Scope.ensure { error =>
+                    // Unsafe: the handle is this open's own until it hands the connection back, and a finalizer cannot suspend.
+                    if error.isDefined then Sync.Unsafe.defer(conn.closeNow(using summon[Frame], AllowUnsafe.embrace.danger))
+                    else ()
+                }.andThen {
+                    Abort.run[SqlException](Kyo.foreachDiscard(statements)(conn.simpleExecute(_).unit)).flatMap {
+                        case Result.Success(_) => ()
+                        // Reported as an open failure, naming the path, because that is what the caller asked for and
+                        // a statement-level error says nothing about which database it was configuring. The engine's own
+                        // message carries the SQLite code.
+                        case Result.Failure(e) =>
+                            Abort.fail(SqliteOpenFailedException(
+                                address.path,
+                                s"attaching a configured database failed: ${e.getMessage}"
+                            ))
+                        case Result.Panic(t) => Abort.panic(t)
+                    }
+                }
+            }
+        end if
+    end attachAll
 
     /** Puts a file-backed database into WAL, which is persistent in the FILE rather than per connection.
       *

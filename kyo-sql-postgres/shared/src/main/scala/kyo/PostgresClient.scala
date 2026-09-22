@@ -311,11 +311,16 @@ object PostgresClient:
       *
       * `Runtime.init` merges the URL's options under `config`, builds the pool over the connection factory, and warms it up behind a bracket
       * that closes whatever it opened on any failure edge, so a caller never receives a half-open client to clean up.
+      *
+      * The search path is rendered here purely to reach its refusal. A pool that opens nothing at warm-up would otherwise carry a malformed
+      * value until the first statement asked for a connection, reporting a config mistake as a failure to connect.
       */
     private def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException]) =
-        sanitizeTypeNames(PostgresConfig.of(config).typeNames).andThen {
+        val settings = PostgresConfig.of(config)
+        sanitizeTypeNames(settings.typeNames).andThen(settings.searchPathValue).andThen {
             Runtime.init(url, config, PostgresSqlConnection.factory(url.options)).map(rt => new PostgresClient(rt))
         }
+    end opened
 
     /** Validates that each type name in `names` does not contain characters that would break SQL literal interpolation.
       *

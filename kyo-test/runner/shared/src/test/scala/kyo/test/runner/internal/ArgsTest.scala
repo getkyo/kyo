@@ -60,7 +60,7 @@ class ArgsTest extends kyo.test.Test[Any]:
         end match
     }
 
-    // ── Test 4b: removed --halt-on-failure flag is now an unknown argument (Q-003) ────────────
+    // ── Test 4b: removed --halt-on-failure flag is now an unknown argument ───────────────────
 
     "test-4b: --halt-on-failure returns Result.Error(\"unknown argument: '--halt-on-failure'\")" in {
         // After the haltOnFailure removal, --halt-on-failure is no longer a recognized flag; it falls through to the

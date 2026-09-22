@@ -2597,18 +2597,125 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
     }
 
-    // Boundary pinned by getkyo/kyo#1748: binding the array-form given for a String key (instead of
-    // the object-form default) omits on encode but fails to decode, because the injected empty value
-    // is chosen from the declared key type and the array-form reader expects the other shape. It
-    // fails loud, never silently. When #1748 is fixed this flips to a round-trip assertion.
-    "empty String-key Dict bound to the array-form given fails to decode under omitEmptyCollections" in {
+    "empty Map[String, V] field is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTStringMapRecord].omitEmptyCollections
+        val value  = MTStringMapRecord("alice", Map.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty String-key Map must be omitted: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Map[Int, V] field (non-String key) is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTIntMapRecord].omitEmptyCollections
+        val value  = MTIntMapRecord("alice", Map.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty non-String-key Map must be omitted: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    // The wire form of a mapping field belongs to the bound given, not to the declared key type: the
+    // object-form and array-form givens of Dict, OrderedDict, and Map each declare a byte-identical
+    // structure, so an injected empty value chosen from the key type is a guess. These four leaves
+    // bind the array form for a String key, the binding no key-type guess can serve (getkyo/kyo#1748).
+
+    "empty String-key Dict bound to the array-form given round-trips under omitEmptyCollections" in {
         given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
         val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
         val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
         val out                                    = schema.encodeString[Json](value)
         assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
-        val decoded = schema.decodeString[Json](out)
-        assert(decoded.isFailure, s"decode must fail loud on the array-form String-key binding, got: $decoded")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    // A mapping's framing is part of what the bound given encodes, so a transform, which materializes
+    // the value into a Structure.Value tree and replays it, has to replay the framing it was given. It
+    // cannot re-derive it: a map node carries none and the two givens declare the same structure.
+
+    "a non-empty String-key Dict bound to the array-form given keeps the array wire form under a transform" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
+        val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(
+            out == """{"name":"alice","tags":[{"key":"x","value":1}],"count":7}""",
+            s"the bound given's array wire form must be what is written: $out"
+        )
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    // Not an omit-policy defect: any transform replays the tree, so a rename reaches the same path.
+    "a rename keeps a String-key Dict's array wire form" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema[MTStringDictRecord].rename(_.name, "who")
+        val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(
+            out == """{"tags":[{"key":"x","value":1}],"count":7,"who":"alice"}""",
+            s"the bound given's array wire form must survive a rename: $out"
+        )
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "the default String-key Dict given keeps the object wire form under a transform" in {
+        val schema = Schema[MTStringDictRecord].rename(_.name, "who")
+        val value  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"tags":{"x":1},"count":7,"who":"alice"}""", s"the object form is the default given's form: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "a non-empty String-key Map bound to the array-form given keeps the array wire form under a transform" in {
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
+        val value                                 = MTStringMapRecord("alice", Map("x" -> 1), 7)
+        val out                                   = schema.encodeString[Json](value)
+        assert(
+            out == """{"name":"alice","tags":[{"key":"x","value":1}],"count":7}""",
+            s"the bound given's array wire form must be what is written: $out"
+        )
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty String-key OrderedDict bound to the array-form given round-trips under omitEmptyCollections" in {
+        given arrayForm: Schema[OrderedDict[String, Int]] = Schema.orderedDictSchema[String, Int]
+        val schema                                        = Schema.derived[MTOrderedDictRecord].omitEmptyCollections
+        val value                                         = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+        val out                                           = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.is(value.settings), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty String-key Map bound to the array-form given round-trips under omitEmptyCollections" in {
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
+        val value                                 = MTStringMapRecord("alice", Map.empty[String, Int], 7)
+        val out                                   = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "per-field .omit(_.f).whenEmpty round-trips a String-key Dict bound to the array-form given" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema[MTStringDictRecord].omit(_.tags).whenEmpty
+        val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"per-field WhenEmpty must omit the empty field: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
     }
 
     "non-empty OrderedDict field is NOT omitted under omitEmptyCollections and keeps insertion order" in {

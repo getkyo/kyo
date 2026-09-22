@@ -16,7 +16,7 @@ package kyo
   * Server-side preset patterns live in [[JsonRpcMessageGate.server]].
   * Client-side preset patterns live in [[JsonRpcMessageGate.client]].
   *
-  * Mirrors [[kyo.HttpFilter]] at kyo-http/shared/src/main/scala/kyo/HttpFilter.scala:43.
+  * Mirrors kyo-http's `kyo.HttpFilter`.
   *
   * @see [[JsonRpcHandler.Config]]
   * @see [[JsonRpcResponse.Halt]]
@@ -29,13 +29,13 @@ object JsonRpcMessageGate:
 
     /** The three outcomes a gate may return from [[JsonRpcMessageGate.beforeDispatch]].
       *
-      * [[Allow]]: forward the message to the registered handler.
-      * [[Reject]]: send the supplied [[JsonRpcResponse]] back to the caller and skip the handler.
+      * [[Decision.Allow]]: forward the message to the registered handler.
+      * [[Decision.Reject]]: send the supplied [[JsonRpcResponse]] back to the caller and skip the handler.
       *   Construct the response via [[JsonRpcResponse.failure]]:
       *   {{{
       *   Decision.Reject(JsonRpcResponse.failure(id, JsonRpcImplementationError(-32002, "Not ready")))
       *   }}}
-      * [[Drop]]: silently discard the message with no reply.
+      * [[Decision.Drop]]: silently discard the message with no reply.
       */
     enum Decision derives CanEqual:
         case Allow
@@ -50,7 +50,7 @@ object JsonRpcMessageGate:
 
     /** Server-side gate patterns for common protocol pre-validation use cases.
       *
-      * Mirrors [[kyo.HttpFilter.server]] at kyo-http/shared/src/main/scala/kyo/HttpFilter.scala:108.
+      * Mirrors kyo-http's `kyo.HttpFilter.server`.
       */
     object server:
 
@@ -94,7 +94,7 @@ object JsonRpcMessageGate:
 
     /** Client-side gate patterns for outbound request pre-processing.
       *
-      * Mirrors [[kyo.HttpFilter.client]] at kyo-http/shared/src/main/scala/kyo/HttpFilter.scala:324.
+      * Mirrors kyo-http's `kyo.HttpFilter.client`.
       */
     object client:
         // Intentionally empty for now. Reserved for future client-side gate patterns.

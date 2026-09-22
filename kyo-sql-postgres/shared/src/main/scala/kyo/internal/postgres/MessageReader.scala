@@ -14,7 +14,7 @@ import kyo.net.Connection
   *
   * The Postgres v3 wire format (post-startup) is: Byte1(type) | Int32(length including itself) | payload
   *
-  * A single chunk delivered from the [[Connection.inbound]] channel may contain zero, one, or many complete messages, and a single message
+  * A single chunk delivered from the `Connection.inbound` channel may contain zero, one, or many complete messages, and a single message
   * may span multiple chunks. [[MessageReader]] reassembles them before handing the payload to the appropriate [[Unmarshaller]].
   *
   * State is mutable (pending buffer) and must not be shared across concurrent accesses, each [[PostgresConnection]] owns exactly one

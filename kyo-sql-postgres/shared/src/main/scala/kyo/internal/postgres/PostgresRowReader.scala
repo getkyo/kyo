@@ -25,7 +25,7 @@ import kyo.internal.postgres.types.PostgresEncoder
 /** Maps `Codec.Reader` primitive calls to column values read positionally from a [[SqlRow]].
   *
   * Each primitive method reads the next column from [[row]] at the current cursor position, advances the cursor by one, and decodes the raw
-  * wire bytes using the `format`-aware logic of the corresponding [[PostgresDecoder]] singleton. The format comes from the result set the row
+  * wire bytes using the `format`-aware logic of the corresponding `PostgresDecoder` singleton. The format comes from the result set the row
   * belongs to, so that both extended-protocol (binary) and simple-query (text) results decode correctly.
   *
   * Row reads are driven by [[kyo.SqlSchema]]'s row codec: columns are consumed in incoming order and routed to their field slots

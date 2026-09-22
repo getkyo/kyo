@@ -4,7 +4,7 @@ import caseapp.core.app.Command
 import caseapp.core.help.Help
 import caseapp.core.parser.Parser
 
-/** A case-app [[Command]] entrypoint that runs Kyo effects via [[run]] blocks.
+/** A case-app `Command` entrypoint that runs Kyo effects via [[run]] blocks.
   *
   * Register effectful work with [[run]] — typically `run { options => ... }` after case-app parsing completes. Use
   * `(options, remainingArgs)` when leftover positionals are required.

@@ -1353,7 +1353,7 @@ object Yaml:
           *
           * A path describes how to reach a node by YAML structure, not by character offset. [[Path.Segment.Key]] selects a mapping entry by
           * key text and [[Path.Segment.Index]] selects a sequence entry by zero-based position. The root path has no segments. Use
-          * [[show]] for diagnostics and user-facing edit errors.
+          * `show` for diagnostics and user-facing edit errors.
           */
         opaque type Path = Chunk[Path.Segment]
 

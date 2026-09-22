@@ -139,7 +139,7 @@ class GenEdgeBiasTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     // Gen.double edge-case behavioral checks
 
-    // Leaf 10: Gen.double size-0 no longer forces 0.0 for all seeds (INV-009)
+    // Leaf 10: Gen.double size-0 no longer forces 0.0 for all seeds
     "Gen.double size-0 no longer forces 0.0 for all seeds" in {
         val roots = (0 until 501).map(i => Gen.double.sample(Seed(i.toLong), 0).value)
         assert(
@@ -153,7 +153,7 @@ class GenEdgeBiasTest extends AsyncFreeSpec with NonImplicitAssertions:
         Future.successful(succeed)
     }
 
-    // Leaf 11: Gen.double produces special-value edges and finite non-edge values (INV-009)
+    // Leaf 11: Gen.double produces special-value edges and finite non-edge values
     "Gen.double produces special-value edges and finite non-edge values" in {
         val roots = (0 until 3001).map(i => Gen.double.sample(Seed(i.toLong), 50).value)
         assert(roots.exists(_.isNaN), "Expected at least one NaN root in Gen.double samples (size 50, seeds 0..3000)")

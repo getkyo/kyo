@@ -35,7 +35,7 @@ import kyo.test.TestResult
   * @see
   *   [[kyo.test.runner.TapReporter]] another typical delegate reporter for CI TAP output
   * @see
-  *   [[kyo.test.runner.JUnitXmlReporter]] another typical delegate reporter for JUnit XML files
+  *   `kyo.test.runner.JUnitXmlReporter` another typical delegate reporter for JUnit XML files, on the JVM
   */
 final class CombinedReporter(
     reporters: Chunk[TestReporter],

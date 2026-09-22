@@ -54,6 +54,11 @@ object SqlCodec:
       * [[kyo.SqlUnsupportedException]], which is [[kyo.KyoException]]-derived and converted to a typed `Abort` at the transport boundary.
       * The constructor `frame` field supplies the [[kyo.Frame]] used when constructing those exceptions.
       *
+      * ENCODING A VALUE MUST BE A PURE FUNCTION OF THAT VALUE, repeatable and with no effect on the value itself. The transport binds the
+      * same parameters twice whenever it has to parse a statement again, so an encoder that consumed its input or folded in state it kept
+      * sends different bytes the second time. That failure is silent and rare: the rows are correct on every attempt but the retried one,
+      * where a JSON document arrives double-stringified or a byte string as the hex of its own hex.
+      *
       * [[extension]] is the escape for a type only one dialect owns, such as Postgres `hstore`. Its [[SqlCodec.Writer.Payload]] carries the
       * owning dialect, so a writer for another dialect rejects the value with [[kyo.SqlUnsupportedTypeOnBackendException]] instead of
       * emitting bytes the server cannot read.

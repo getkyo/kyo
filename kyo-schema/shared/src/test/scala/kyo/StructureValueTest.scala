@@ -1,6 +1,6 @@
 package kyo
 
-class StructureTest extends kyo.test.Test[Any]:
+class StructureValueTest extends kyo.test.Test[Any]:
 
     "Value.primitive" - {
 
@@ -30,4 +30,4 @@ class StructureTest extends kyo.test.Test[Any]:
             }
         }
     }
-end StructureTest
+end StructureValueTest

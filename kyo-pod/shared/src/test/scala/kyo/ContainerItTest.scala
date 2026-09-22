@@ -1269,6 +1269,55 @@ class ContainerItTest extends BasePodTest:
                     }
                 }
         }
+
+        // A stdio JSON-RPC peer is a request/response session: the client writes, reads the reply, and
+        // writes again on the same stdin. The leaves around this one write once, or write and then end
+        // the input, so nothing covered a second write after output had already come back.
+        "a second write reaches stdin after output has been read" - runRuntimes { runtime =>
+            if ContainerRuntime.findSocket(runtime).isEmpty then
+                succeed(s"no $runtime socket available; precondition not met")
+            else
+                val socketPath = ContainerRuntime.findSocket(runtime).get
+                Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
+                    Container.init(alpine).map { c =>
+                        Scope.run {
+                            c.execInteractive(Command("cat")).map { session =>
+                                for
+                                    _      <- session.write("one\n")
+                                    first  <- session.read.take(1).run
+                                    _      <- session.write("two\n")
+                                    second <- session.read.take(1).run
+                                yield
+                                    assert(first.exists(_.content.contains("one")), s"first reply was $first")
+                                    assert(second.exists(_.content.contains("two")), s"second reply was $second")
+                                end for
+                            }
+                        }
+                    }
+                }
+        }
+
+        // A stdio server run with execInteractive exits on end of input, and closing its session is what gives it that: the session's
+        // connection goes away, and the runtime ends the process's stdin. Without it every such server would outlive its session in a
+        // long-lived container. The marker is written only once `cat` has read its input to the end.
+        "closing an interactive exec session ends the process's input" - runRuntimes { runtime =>
+            if ContainerRuntime.findSocket(runtime).isEmpty then
+                succeed(s"no $runtime socket available; precondition not met")
+            else
+                val socketPath = ContainerRuntime.findSocket(runtime).get
+                Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
+                    Container.init(alpine).map { c =>
+                        val marker = s"/tmp/${uniqueName("stdin-ended")}"
+                        Scope.run {
+                            c.execInteractive(Command("sh", "-c", s"cat >/dev/null; touch $marker")).map { session =>
+                                session.write("input\n")
+                            }
+                        }.andThen {
+                            assertEventually(c.exec("test", "-f", marker).map(_.isSuccess))
+                        }
+                    }
+                }
+        }
     }
 
     // =========================================================================
@@ -1292,6 +1341,65 @@ class ContainerItTest extends BasePodTest:
                                     _       <- session.write("test-input\n")
                                     entries <- session.read.take(1).run
                                 yield assert(entries.exists(_.content.contains("echo:test-input")))
+                            }
+                        }
+                    }
+                }
+        }
+
+        "binary data round-trips through stdin and stdout unchanged" - runRuntimes { runtime =>
+            // Every byte value, newline included: an attach session carries bytes, so a payload that is not valid UTF-8 must come back
+            // exactly as it went in. `head -c` copies exactly the payload's length and exits, which ends the output.
+            if ContainerRuntime.findSocket(runtime).isEmpty then
+                succeed(s"no $runtime socket available; precondition not met")
+            else
+                val socketPath = ContainerRuntime.findSocket(runtime).get
+                Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
+                    val payload = Array.tabulate[Byte](256)(i => i.toByte)
+                    val config  = Container.Config("alpine").command("head", "-c", payload.length.toString).interactive(true)
+                    Container.init(config).map { c =>
+                        Scope.run {
+                            c.attach(stdin = true, stdout = true, stderr = false).map { session =>
+                                for
+                                    _        <- session.write(Chunk.from(payload))
+                                    received <- session.stdout.run
+                                yield
+                                    val bytes = received.foldLeft(Array.emptyByteArray)(_ ++ _.toArray)
+                                    assert(bytes.length == payload.length, s"got ${bytes.length} of ${payload.length} bytes back")
+                                    assert(bytes.sameElements(payload), "the bytes must round-trip unchanged")
+                                end for
+                            }
+                        }
+                    }
+                }
+        }
+
+        "stdout and stderr keep their own source tags in one ordered stream" - runRuntimes { runtime =>
+            // The shell writes only once we tell it to, so nothing can be produced before the session is attached. No TTY, because a
+            // pseudo-terminal folds stderr into stdout and there would be no two sources to tell apart.
+            if ContainerRuntime.findSocket(runtime).isEmpty then
+                succeed(s"no $runtime socket available; precondition not met")
+            else
+                val socketPath = ContainerRuntime.findSocket(runtime).get
+                Container.withBackendConfig(_.UnixSocket(Path(socketPath))) {
+                    val config = Container.Config("alpine").command("sh").interactive(true)
+                    Container.init(config).map { c =>
+                        Scope.run {
+                            c.attach(stdin = true, stdout = true, stderr = true).map { session =>
+                                // The trailing `exit` ends the shell, and so the output.
+                                session.write("echo to-stdout\necho to-stderr >&2\nexit\n")
+                                    .andThen(session.read.run).map { entries =>
+                                        val out = entries.filter(_.source == Container.LogEntry.Source.Stdout).map(_.content)
+                                        val err = entries.filter(_.source == Container.LogEntry.Source.Stderr).map(_.content)
+                                        assert(
+                                            out.exists(_.contains("to-stdout")),
+                                            s"stdout line missing, got: ${entries.map(e => (e.source, e.content))}"
+                                        )
+                                        assert(
+                                            err.exists(_.contains("to-stderr")),
+                                            s"stderr line missing, got: ${entries.map(e => (e.source, e.content))}"
+                                        )
+                                    }
                             }
                         }
                     }
@@ -1646,8 +1754,16 @@ class ContainerItTest extends BasePodTest:
     // =========================================================================
 
     "update" - {
+        // These read `stats`, which needs a container that is still there to report them. The bare `alpine` fixture declares no command, so
+        // it runs the image's own `/bin/sh`, which has no stdin and exits at once; with autoRemove on (the default) the daemon then removes
+        // it, and the stats call races that removal. It lost that race every time on the docker-compat API, which answers 404 for a
+        // container that is gone, while podman's own API happened to still answer. Hence a command that keeps running, as the other
+        // stats leaves use.
+        val alpineRunning =
+            alpine.command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
+
         "updates memory limit and verifies via stats" - runBackends {
-            Container.init(alpine.memory(256 * 1024 * 1024L)).map { c =>
+            Container.init(alpineRunning.memory(256 * 1024 * 1024L)).map { c =>
                 for
                     s1 <- c.stats
                     _  <- c.update(memory = Present(128 * 1024 * 1024L))
@@ -1659,7 +1775,7 @@ class ContainerItTest extends BasePodTest:
         }
 
         "Absent fields leave values unchanged" - runBackends {
-            Container.init(alpine.memory(256 * 1024 * 1024L)).map { c =>
+            Container.init(alpineRunning.memory(256 * 1024 * 1024L)).map { c =>
                 for
                     s1 <- c.stats
                     _  <- c.update(Absent) // no changes

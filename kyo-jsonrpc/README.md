@@ -102,6 +102,12 @@ val logRoute = JsonRpcRoute.notification[LogMsg]("log") { (msg, _) =>
 
 > **Note:** there is no bare `JsonRpcRoute.apply` form. Always use `request` or `notification`; the kind discriminator (`Kind.Request` vs `Kind.Notification`) is implicit in the factory you choose.
 
+### Dispatch order
+
+The handler runs what one peer sends in an order that keeps state changes consistent. Notifications are handled one at a time, in the order they arrive: each notification handler starts after the previous one completes, however it completed. A request handler starts once every notification that arrived before it has been handled, so a request sees the effects of those notifications (an LSP hover after a `didChange` sees the edit). Requests run concurrently with each other, and a notification does not wait for a request that arrived before it. Cancelling a request that is still waiting for earlier notifications interrupts only that request.
+
+A notification handler that runs for a long time therefore delays the notifications and requests behind it. Hand long work to a fiber of its own when later messages must not wait for it.
+
 ### The per-request context
 
 Each route handler receives the decoded request value and a `JsonRpcRoute.Context`. The context exposes four fields:

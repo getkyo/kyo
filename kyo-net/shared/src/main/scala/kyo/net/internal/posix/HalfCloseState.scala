@@ -6,10 +6,10 @@ package kyo.net.internal.posix
   * `Connection.Status` is a total function of this state, so the close reason is derived from one
   * consistent value rather than a torn read of independent flags.
   *
-  *   - [[Open]]: no half-close observed.
-  *   - [[PeerHalfClosePending]]: a FIN/EOF edge was seen but the terminal `recv == 0` not yet delivered.
-  *   - [[PeerCleanClose]]: the peer's close_notify was consumed (orderly, RFC 8446 6.1).
-  *   - [[PeerEof]]: a bare TCP FIN with no close_notify (a truncation).
+  *   - [[HalfCloseState.Open]]: no half-close observed.
+  *   - [[HalfCloseState.PeerHalfClosePending]]: a FIN/EOF edge was seen but the terminal `recv == 0` not yet delivered.
+  *   - [[HalfCloseState.PeerCleanClose]]: the peer's close_notify was consumed (orderly, RFC 8446 6.1).
+  *   - [[HalfCloseState.PeerEof]]: a bare TCP FIN with no close_notify (a truncation).
   */
 private[kyo] enum HalfCloseState derives CanEqual:
     case Open

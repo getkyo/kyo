@@ -972,7 +972,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         case TypeRef.BufferT(_) => "null"
         case other              => throw new IllegalStateException(s"jsZeroExpr: unsupported callback return $other")
 
-    /** koffi type-name for a [[TypeRef]]. For struct types, the [[StructSpec.simpleName]] is used, matching the name used when the struct
+    /** koffi type-name for a `TypeRef`. For struct types, the `StructSpec.simpleName` is used, matching the name used when the struct
       * was registered via `koffi.struct` / `koffi.pack` in the impl companion's static block.
       */
     def primitiveTypeName(t: TypeRef): String = t match

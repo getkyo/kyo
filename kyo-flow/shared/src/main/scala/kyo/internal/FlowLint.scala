@@ -33,8 +33,8 @@ private[kyo] object FlowLint:
         }
     end duplicateNames
 
-    /** The characters the engine reserves in a node name, because it builds durable keys with them. See [[NodePath]]. */
-    val Reserved: Set[Char] = NodePath.Reserved
+    /** The characters the engine reserves in a node name, because it builds durable keys with them. See [[FlowNodePath]]. */
+    val Reserved: Set[Char] = FlowNodePath.Reserved
 
     /** The flow's own name, taken from the `Init` node every public constructor roots.
       *
@@ -113,10 +113,10 @@ private[kyo] object FlowLint:
       */
     private def underPath(path: String, names: Names): Names =
         Names(
-            NodePath.qualifyAll(path, names.result),
-            NodePath.qualifyAll(path, names.internal),
-            NodePath.qualifyAll(path, names.read),
-            names.conflicts.map(c => FlowNameConflict(NodePath.qualify(path, c.name), c.composition, c.locations))
+            FlowNodePath.qualifyAll(path, names.result),
+            FlowNodePath.qualifyAll(path, names.internal),
+            FlowNodePath.qualifyAll(path, names.read),
+            names.conflicts.map(c => FlowNameConflict(FlowNodePath.qualify(path, c.name), c.composition, c.locations))
         )
 
     /** Joins what two sides of a composition claim, and records every name they claim against each other.

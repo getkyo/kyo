@@ -26,8 +26,8 @@ import kyo.net.NetException
   * `initWith` variants surface it as `Abort.fail(HttpBindException)`, so a caller can recover it with `Abort.run[HttpBindException]` rather
   * than handling it as a defect.
   *
-  * WARNING: Binding to `0.0.0.0` (the default host) exposes the server on all network interfaces. Restrict to `127.0.0.1` for
-  * localhost-only services.
+  * The default host is `127.0.0.1`, so a server is reachable only from the local machine unless configured otherwise. WARNING: binding to
+  * `0.0.0.0` exposes the server on all network interfaces.
   *
   * @see
   *   [[kyo.HttpHandler]] The endpoint implementations to register

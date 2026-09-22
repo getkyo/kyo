@@ -132,6 +132,15 @@ final private[kyo] class MysqlSqlConnection private[mysql] (
     def ping(using Frame): Unit < (Async & Abort[SqlException]) =
         tracked(underlying.ping())
 
+    /** `COM_RESET_CONNECTION` scrubs the session, and the cache is dropped with it so this connection's record matches.
+      *
+      * Releasing prepared statements is among the command's documented effects, so a surviving entry would send `COM_STMT_EXECUTE` for an
+      * id that is gone and answer `1243` for that SQL from then on, `2014` on Dolt. This runs on its own lease, so the caller who pays is
+      * the next borrower.
+      *
+      * The drop is sequenced inside [[MysqlConnection.resetConnection]] rather than keyed on the outcome here, because that method does two
+      * things and only the first one releases the statements.
+      */
     def resetSession(using Frame): Unit < (Async & Abort[SqlException]) =
         tracked(underlying.resetConnection())
 

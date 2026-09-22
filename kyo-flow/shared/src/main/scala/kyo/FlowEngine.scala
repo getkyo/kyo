@@ -912,7 +912,7 @@ final class FlowEngine private (
     /** Which arm an error that ended an attempt belongs to.
       *
       * The two that are not a verdict on the work are worth naming. A [[FlowStoreException]] is a fact about the store, so it is
-      * infrastructure and leaves the execution as claimable as it was. An [[Interrupted]] is a designed way for an attempt to end,
+      * infrastructure and leaves the execution as claimable as it was. An [[Attempt.Interrupted]] is a designed way for an attempt to end,
       * by the engine closing or by the renewal fiber stopping an executor whose lease lapsed, and it is an ordinary throwable that
       * is no [[FlowException]], so without an arm of its own a shutdown terminalises every execution the engine was carrying.
       *
@@ -1161,7 +1161,7 @@ object FlowEngine:
         /** The unwind ran to its end, and what it ends as is a total function of the cause it ran for.
           *
           * `Failure` keeps the message and kind the forward pass produced; `Cancellation` terminalises `Cancelled`. It is separate
-          * from [[DomainFailed]] because a cancellation is not a verdict on the work and must not land as a `Failed` carrying the
+          * from [[Attempt.DomainFailed]] because a cancellation is not a verdict on the work and must not land as a `Failed` carrying the
           * cancel exception's own class name, and because a RESUMED unwind has no exception left to read a kind off: the cause its
           * interrupted attempt recorded is the only thing that still knows.
           */
@@ -1169,7 +1169,7 @@ object FlowEngine:
 
         /** There was nothing to run: the row was already terminal when the attempt reached it.
           *
-          * It writes nothing and releases nothing, unlike an empty [[Suspended]], which would say the ledger is a finished attempt's
+          * It writes nothing and releases nothing, unlike an empty [[Attempt.Suspended]], which would say the ledger is a finished attempt's
           * statement of what the execution waits for. This attempt learned nothing about the rows and holds a claim it took no work
           * under, so the claim lapses like every other ending with no verdict.
           */
@@ -1685,7 +1685,7 @@ object FlowEngine:
                 // subflow embedded twice would otherwise contribute two entries a renderer cannot tell apart.
                 def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[NodeProgress], frame: Frame, meta: Flow.Meta) =
                     Chunk(NodeProgress(name, NodeType.Subflow, NodeStatus.Pending, frame.snippetShort)) ++
-                        child.map(n => n.copy(name = NodePath.qualify(name, n.name)))
+                        child.map(n => n.copy(name = FlowNodePath.qualify(name, n.name)))
                 def onAndThen(first: Chunk[NodeProgress], second: Chunk[NodeProgress], frame: Frame) = first ++ second
                 def onZip(left: Chunk[NodeProgress], right: Chunk[NodeProgress], frame: Frame)       = left ++ right
                 def onGather(flows: Seq[Chunk[NodeProgress]], frame: Frame) = flows.foldLeft(Chunk.empty[NodeProgress])(_ ++ _)
@@ -1700,7 +1700,7 @@ object FlowEngine:
             def owner(path: String): Maybe[String] =
                 if nodeNames.contains(path) then Maybe(path)
                 else
-                    val cut = path.lastIndexWhere(c => c == '#' || c == NodePath.Separator)
+                    val cut = path.lastIndexWhere(c => c == '#' || c == FlowNodePath.Separator)
                     if cut <= 0 then Maybe.empty else owner(path.substring(0, cut))
             // Sorted so that two items of one fan-out failing paint their parent with the same message on every platform, rather
             // than with whichever the map happened to yield first.
@@ -1755,7 +1755,7 @@ object FlowEngine:
             end assignStatuses
             val walked                                                                   = assignStatuses(0, false, Chunk.empty)
             def under(nodes: Chunk[NodeProgress], instance: String): Chunk[NodeProgress] =
-                val prefix = s"$instance${NodePath.Separator}"
+                val prefix = s"$instance${FlowNodePath.Separator}"
                 nodes.filter(_.name.startsWith(prefix))
             // A recorded failure keeps its place ahead of the derivation, here as everywhere else: it is a fact the execution wrote,
             // and only the resolver decides which node owns it.

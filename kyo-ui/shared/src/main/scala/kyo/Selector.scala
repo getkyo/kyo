@@ -3,7 +3,7 @@ package kyo
 /** A CSS selector targeting elements for a [[kyo.Stylesheet]] rule.
   *
   * The primary case is a class selector ([[kyo.Selector.cls]]) targeting elements that carry a
-  * matching [[kyo.UI.cssClass]]. `id` and `data-*` selectors are also provided for the existing
+  * matching `kyo.UI.cssClass`. `id` and `data-*` selectors are also provided for the existing
   * `UI.id`/`UI.data` hooks. A pseudo-class/element variant (`:hover`, `:focus`, `::before`, ...)
   * is attached with [[kyo.Selector.pseudo]]; a descendant combinator with [[kyo.Selector.descendant]]
   * and a direct-child combinator with [[kyo.Selector.child]]. Selectors are immutable values;
@@ -12,7 +12,7 @@ package kyo
   * @see
   *   [[kyo.Stylesheet.rule]] for the rule a selector heads
   * @see
-  *   [[kyo.UI.cssClass]] for the element class a class selector matches
+  *   `kyo.UI.cssClass` for the element class a class selector matches
   */
 final case class Selector private[kyo] (css: String) derives CanEqual:
 

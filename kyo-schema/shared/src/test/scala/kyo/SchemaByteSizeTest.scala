@@ -1,6 +1,6 @@
 package kyo
 
-class SchemaTest extends kyo.test.Test[Any]:
+class SchemaByteSizeTest extends kyo.test.Test[Any]:
 
     "ByteSize schema" - {
         "round-trips representative values through the Long representation" in {
@@ -22,4 +22,4 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
-end SchemaTest
+end SchemaByteSizeTest

@@ -37,10 +37,10 @@ final case class JsonRpcUnknownMethodPolicy(
 object JsonRpcUnknownMethodPolicy:
     /** What the engine does when an inbound method name matches no registered route.
       *
-      *  - [[ReplyMethodNotFound]]: reply with a JSON-RPC `-32601` "method not found" error. A
+      *  - [[UnknownAction.ReplyMethodNotFound]]: reply with a JSON-RPC `-32601` "method not found" error. A
       *    notification has no id to reply to, so for notifications the message is dropped instead.
-      *  - [[Drop]]: silently discard the message with no reply.
-      *  - [[Reject]]: treat the unknown method as a protocol violation and close the connection.
+      *  - [[UnknownAction.Drop]]: silently discard the message with no reply.
+      *  - [[UnknownAction.Reject]]: treat the unknown method as a protocol violation and close the connection.
       */
     enum UnknownAction derives CanEqual:
         case ReplyMethodNotFound

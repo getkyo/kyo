@@ -274,12 +274,6 @@ object SqlConfig:
             path: String
         ) extends Address derives CanEqual
 
-        /** Renders the address back into the URL form it came from, so an absent user produces no `user@` component at all.
-          *
-          * The three spellings stay distinguishable, which is the point of the field being a [[Maybe]]: `postgres://alice@h:5432/db` for a named
-          * user, `postgres://@h:5432/db` for a declared empty one, and `postgres://h:5432/db` for none. Reporting an absent user as the literal
-          * `Absent`, as a bare `@`, or as an empty string before one would each put a spelling on the page that no URL parses back to.
-          */
         /** Narrows to a [[Network]] address, failing typed when handed a local one.
           *
           * A network backend narrows once at its factory entry so the layers beneath it need not re-check. The failure is unreachable
@@ -290,6 +284,12 @@ object SqlConfig:
                 case n: Network => n
                 case l: Local   => Abort.fail(SqlConnectionUrlParseException(Render.asString(l), l.scheme))
 
+        /** Renders the address back into the URL form it came from, so an absent user produces no `user@` component at all.
+          *
+          * The three spellings stay distinguishable, which is the point of the field being a [[Maybe]]: `postgres://alice@h:5432/db` for a named
+          * user, `postgres://@h:5432/db` for a declared empty one, and `postgres://h:5432/db` for none. Reporting an absent user as the literal
+          * `Absent`, as a bare `@`, or as an empty string before one would each put a spelling on the page that no URL parses back to.
+          */
         given Render[Address] = Render.from {
             case a: Network =>
                 val userInfo = a.user match

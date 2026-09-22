@@ -98,13 +98,46 @@ private[kyo] trait ContainerRuntimeBase:
         // so `docker` reports available while every operation fails at `docker pull`. These are Linux-container tests; skip on Windows.
         if kyo.internal.Platform.isWindows then Seq.empty
         else
-            val all = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+            val all      = Seq("podman" -> hasPodman, "docker" -> hasDocker).collect { case (name, true) => name }
+            val distinct = distinctDaemons(all)
             getEnv("KYO_POD_RUNTIME") match
-                case Present(rt) => if all.contains(rt) then Seq(rt) else Seq.empty
-                case Absent      => all
+                // The pin is filtered by the same rule, not exempt from it. The build forks these suites once per runtime with the name
+                // pinned here, so exempting the pin would leave both forks running against one daemon whenever the two names resolve to it,
+                // which is the whole thing distinctDaemons exists to stop. The fork for the name that loses registers no leaves, and the one
+                // that wins runs them once.
+                case Present(rt) => if distinct.contains(rt) then Seq(rt) else Seq.empty
+                case Absent      => distinct
             end match
         end if
     end available
+
+    /** Drops a runtime whose socket is the same file as one already kept, keeping the first.
+      *
+      * `podman-docker` installs `/var/run/docker.sock` as a symlink to the podman socket, so both names resolve to ONE daemon. Registering
+      * both then runs every leaf twice against it, and because the build forks the suite per runtime and those forks run concurrently, each
+      * fork sees the other's containers appear inside its leaves: the per-leaf container-leak check has no way to tell them from a leak and
+      * fails leaves that leaked nothing. The second registration also adds no coverage, the two legs being the same daemon reached the same
+      * way. Comparing the resolved paths is what tells them apart, since the two names legitimately have different paths.
+      */
+    private[kyo] def distinctDaemons(runtimes: Seq[String])(using AllowUnsafe): Seq[String] =
+        val seen = scala.collection.mutable.ListBuffer.empty[String]
+        runtimes.filter { rt =>
+            findSocket(rt).map(resolvedSocket) match
+                // A runtime with no socket path (CLI-only) is kept: there is nothing to compare, and its leaves gate on their own probes.
+                case None           => true
+                case Some(resolved) =>
+                    val duplicate = seen.contains(resolved)
+                    if !duplicate then seen += resolved
+                    !duplicate
+            end match
+        }
+    end distinctDaemons
+
+    /** The socket path with symlinks resolved, or the path itself when it cannot be resolved. */
+    private[kyo] def resolvedSocket(path: String)(using AllowUnsafe): String =
+        kyo.Path(path).unsafe.realPath()(using summon[AllowUnsafe], Frame.internal) match
+            case Result.Success(p) => p.toString
+            case _                 => path
 
     /** macOS Podman Machine sockets, lazily computed once. */
     private lazy val podmanMachineSockets: Seq[String] =

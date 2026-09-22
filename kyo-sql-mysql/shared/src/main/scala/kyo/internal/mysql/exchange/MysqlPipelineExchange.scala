@@ -81,26 +81,28 @@ object MysqlPipelineExchange:
             conn.drainPendingCloses.andThen(
                 conn.serverCapabilities.get.flatMap { caps =>
                     conn.connectionId.get.flatMap { cid =>
-                        val deprecateEof = (caps & Capabilities.CLIENT_DEPRECATE_EOF) != 0L
-                        ExtendedQueryExchange.prepareAndExecute(
-                            conn.channel,
-                            conn.preparedStmts,
-                            stmt.sql,
-                            stmt.params,
-                            deprecateEof,
-                            Maybe(cid)
-                        ).map { case (mysqlRows, affectedRows, _) =>
-                            if mysqlRows.nonEmpty then
-                                (Result.Success(SqlClient.PipelineBuilder.Outcome(
-                                    mysqlRows.map(MysqlRowCodec.row),
-                                    0L
-                                )): Result[SqlException, SqlClient.PipelineBuilder.Outcome])
-                            else
-                                (Result.Success(SqlClient.PipelineBuilder.Outcome(
-                                    Chunk.empty,
-                                    affectedRows
-                                )): Result[SqlException, SqlClient.PipelineBuilder.Outcome]
-                            )
+                        conn.preparedStmtsRef.get.flatMap { stmts =>
+                            val deprecateEof = (caps & Capabilities.CLIENT_DEPRECATE_EOF) != 0L
+                            ExtendedQueryExchange.prepareAndExecute(
+                                conn.channel,
+                                stmts,
+                                stmt.sql,
+                                stmt.params,
+                                deprecateEof,
+                                Maybe(cid)
+                            ).map { case (mysqlRows, affectedRows, _) =>
+                                if mysqlRows.nonEmpty then
+                                    (Result.Success(SqlClient.PipelineBuilder.Outcome(
+                                        mysqlRows.map(MysqlRowCodec.row),
+                                        0L
+                                    )): Result[SqlException, SqlClient.PipelineBuilder.Outcome])
+                                else
+                                    (Result.Success(SqlClient.PipelineBuilder.Outcome(
+                                        Chunk.empty,
+                                        affectedRows
+                                    )): Result[SqlException, SqlClient.PipelineBuilder.Outcome]
+                                )
+                            }
                         }
                     }
                 }

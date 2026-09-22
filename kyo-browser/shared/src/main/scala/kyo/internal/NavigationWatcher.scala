@@ -324,7 +324,7 @@ private[kyo] object NavigationWatcher:
                                 }
                             else if isTransportFailure(navUrl) then
                                 Abort.fail(
-                                    BrowserNavigationFailedException(navUrl, transportFailureReason)
+                                    BrowserNavigationTransportFailedException(navUrl)
                                 )
                             else if throwOnFailure && status >= 400 && status < 600 then
                                 Abort.fail(
@@ -446,7 +446,11 @@ private[kyo] object NavigationWatcher:
     /** Effect interpreter for a [[PendingDecision]]. Maps each decision to the same effect [[onPendingDeadline]] previously emitted
       * inline. Kept private so the public surface stays the same as before.
       */
-    private def interpretPendingDecision(decision: PendingDecision, postSettleWindow: Duration)(using
+    /** Maps each [[PendingDecision]] to the outcome the caller sees. `private[internal]` so the decision-to-exception mapping is pinned
+      * on every platform, not only where a real Chrome can drive it: which exception a transport failure raises decides whether a caller
+      * can retry it, and that is not visible from the decision alone.
+      */
+    private[internal] def interpretPendingDecision(decision: PendingDecision, postSettleWindow: Duration)(using
         Frame
     ): Loop.Outcome[Unit, Unit] < (Async & Abort[BrowserReadException]) =
         decision match
@@ -460,7 +464,7 @@ private[kyo] object NavigationWatcher:
                     s"navigation never committed (still at original URL); settle mode ${settle}"
                 ))
             case PendingDecision.AbortTransportFailure(navUrl) =>
-                Abort.fail(BrowserNavigationFailedException(navUrl, transportFailureReason))
+                Abort.fail(BrowserNavigationTransportFailedException(navUrl))
             case PendingDecision.AbortHttpError(navUrl, status) =>
                 Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
             case PendingDecision.AbortLoadEventNeverFired(urlHint) =>
@@ -510,9 +514,6 @@ private[kyo] object NavigationWatcher:
       */
     private[internal] def isTransportFailure(navUrl: String): Boolean =
         navUrl.startsWith("chrome-error://")
-
-    private[internal] val transportFailureReason: String =
-        "navigation failed below HTTP (no response); the page is Chrome's error document"
 
     /** Builds the settle-state JS template for the given settle mode and network-idle window (in ms).
       *

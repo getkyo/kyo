@@ -42,8 +42,13 @@ object PipelineExchange:
     // Unsafe: module-load init, before any live Frame exists.
     private[kyo] val writeCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
-    /** A single pipeline statement: the prepared [[PreparedStmt]] plus bound parameters. */
+    /** A single pipeline statement: the prepared [[PreparedStmt]] plus bound parameters.
+      *
+      * `cacheKey` is the entry this statement was resolved from, carried so a slot the server refuses for a statement it no longer holds
+      * can be dropped from the cache once the batch has been read out.
+      */
     final case class PipelineStmt(
+        cacheKey: String,
         stmt: PreparedStmt,
         params: Chunk[BoundParam[?]]
     )
@@ -52,6 +57,8 @@ object PipelineExchange:
       *
       * @param channel
       *   the active [[PostgresChannel]]
+      * @param stmtCache
+      *   the cache the statements were resolved from, so a slot refused for a missing statement can be dropped from it
       * @param stmts
       *   the pipeline statements (already prepared, no Parse/Describe)
       * @param onParameterStatus
@@ -63,6 +70,7 @@ object PipelineExchange:
       */
     def run(
         channel: PostgresChannel,
+        stmtCache: Cache[String, PreparedStmt],
         stmts: Chunk[PipelineStmt],
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
@@ -104,7 +112,7 @@ object PipelineExchange:
                     )
             }.andThen {
                 // 3. Read responses for each statement in order.
-                readAllResponses(channel, stmts, pid, onParameterStatus, onNotification)
+                readAllResponses(channel, stmtCache, stmts, pid, onParameterStatus, onNotification)
             }
     end run
 
@@ -122,20 +130,21 @@ object PipelineExchange:
         else
             // Resolve prepared stmts sequentially (each cache miss needs a Parse/Describe/Sync round trip).
             Kyo.foreach(stmts) { case (sql, params) =>
+                val paramOids = ExtendedQueryExchange.paramOidsOf(params)
                 ExtendedQueryExchange.prepareStmt(
                     channel,
                     stmtCache,
                     stmtCounter,
                     sql,
-                    ExtendedQueryExchange.paramOidsOf(params),
+                    paramOids,
                     pid,
                     onParameterStatus,
                     onNotification
                 ).map { stmt =>
-                    PipelineStmt(stmt, params)
+                    PipelineStmt(ExtendedQueryExchange.cacheKey(sql, paramOids), stmt, params)
                 }
             }.flatMap { pipelineStmts =>
-                run(channel, pipelineStmts, pid, onParameterStatus, onNotification)
+                run(channel, stmtCache, pipelineStmts, pid, onParameterStatus, onNotification)
             }
     end prepare
 
@@ -143,6 +152,7 @@ object PipelineExchange:
 
     private def readAllResponses(
         channel: PostgresChannel,
+        stmtCache: Cache[String, PreparedStmt],
         stmts: Chunk[PipelineStmt],
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
@@ -155,7 +165,7 @@ object PipelineExchange:
             if idx >= stmts.size then acc
             else
                 val stmt = stmts(idx)
-                readOneStatementResult(channel, stmt, pid, onParameterStatus, onNotification).flatMap { result =>
+                readOneStatementResult(channel, stmtCache, stmt, pid, onParameterStatus, onNotification).flatMap { result =>
                     loop(idx + 1, acc.appended(result))
                 }
 
@@ -166,9 +176,16 @@ object PipelineExchange:
       *
       * Always returns a pipeline result, never raises [[Abort[SqlException]]] for per-statement errors. Connection-level errors
       * (e.g. closed TCP socket) are re-raised.
+      *
+      * A slot refused because the server no longer holds its statement is dropped from the cache and reported, never retried. The batch
+      * goes out as one write and the server skips only to the failed slot's own `Sync`, so slots i+1..N have already executed by the time
+      * the client learns slot i was stale. Re-running it could only put it AFTER them, and a session scrub invalidates every hit at once,
+      * so the reordered set is usually the whole batch. Preserving the order would need a `Describe 'S'` round trip per hit before the
+      * batch is written, which is most of what the pipeline exists to avoid. Dropping the entry makes the next call heal.
       */
     private def readOneStatementResult(
         channel: PostgresChannel,
+        stmtCache: Cache[String, PreparedStmt],
         stmt: PipelineStmt,
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
@@ -220,8 +237,13 @@ object PipelineExchange:
                     // pipeline keeps draining, rather than aborting the whole cycle, so it stays outside
                     // ReadLoopSideband.handle's ErrorResponse branch (that one always aborts).
                     val ex = ServerErrors.mkServerError(errorFields, Present(stmt.stmt.sql), stmt.params.size, Present(pid))
+                    // `bindSeen` is the same gate the non-pipelined paths use: past BindComplete the statement was
+                    // bound fine and the error belongs to what it ran, so the entry is still good.
+                    val forget: Unit < Sync =
+                        if !bindSeen && StalePreparedStatement.matches(ex) then stmtCache.remove(stmt.cacheKey)
+                        else ()
                     // Record the error; still need to drain to ReadyForQuery.
-                    ReadyForQueryDrain.run(channel, onParameterStatus, onNotification).map(_ => Result.Failure(ex))
+                    forget.andThen(ReadyForQueryDrain.run(channel, onParameterStatus, onNotification).map(_ => Result.Failure(ex)))
 
                 case msg =>
                     // Connection-level error, re-raise (not a per-statement error).

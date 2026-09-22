@@ -91,4 +91,54 @@ class SqliteConnectionTest extends Test:
         }
     }
 
+    /** A transaction interrupted while its `BEGIN IMMEDIATE` waits for another connection's write lock leaves nothing open.
+      *
+      * The native call cannot be cancelled: it goes on waiting after the fiber that issued it is gone, and takes the lock once the other
+      * connection lets go. The pool's reclaim rolls back only a transaction the connection knows it opened, so a session that learned of
+      * its transaction only after BEGIN returned goes back to the pool holding the database's write lock, and every later writer waits
+      * out the busy timeout behind it. The next transaction on the same pooled connection is the observable: it must begin, not be
+      * refused as a transaction within a transaction.
+      *
+      * Each round interrupts a waiter that cannot have finished, since the holder has the lock, but whether its BEGIN was already on
+      * the wire when the interrupt landed is a race, so the scenario runs twenty times.
+      */
+    "a transaction interrupted while BEGIN waits for the write lock leaves no transaction on its connection" in {
+        Scope.run {
+            Path.run(Path.tempDir("kyo-sql-sqlite-interrupt")).map { dir =>
+                val url = s"sqlite://${(dir / "db").unsafe.show}"
+                for
+                    holder <- SqlClient.init(url, SqlConfig(maxConnections = 1))
+                    waiter <- SqlClient.init(url, SqlConfig(maxConnections = 1))
+                    _      <- holder.executeRaw("CREATE TABLE t (id INT)")
+                    _      <- waiter.query("SELECT count(*) FROM t")
+                    _      <- Kyo.foreachDiscard(1 to 20) { round =>
+                        for
+                            inside  <- Latch.init(1)
+                            release <- Latch.init(1)
+                            started <- Latch.init(1)
+                            held    <- Fiber.init(holder.transaction {
+                                holder.executeRaw(s"INSERT INTO t VALUES ($round)").andThen(inside.release).andThen(release.await)
+                            })
+                            _       <- inside.await
+                            blocked <- Fiber.init(started.release.andThen {
+                                waiter.transaction(waiter.executeRaw("INSERT INTO t VALUES (-1)"))
+                            })
+                            _           <- started.await
+                            interrupted <- blocked.interrupt
+                            _           <- release.release
+                            _           <- held.get
+                            after       <- Abort.run[SqlException](waiter.transaction(waiter.executeRaw("INSERT INTO t VALUES (0)")))
+                        yield
+                            assert(interrupted, s"round $round: the waiter cannot finish while the holder has the lock")
+                            assert(after.isSuccess, s"round $round: the next transaction on the waiter's connection must begin, got $after")
+                        end for
+                    }
+                    rows <- holder.query("SELECT count(*) FROM t WHERE id = -1")
+                    n    <- rows(0).decode[Long](0)
+                yield assert(n == 0L, s"no interrupted write may have landed, saw $n")
+                end for
+            }
+        }
+    }
+
 end SqliteConnectionTest

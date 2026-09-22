@@ -229,7 +229,7 @@ class SqliteDialect extends Idiom:
             case fs: Sql.Insert.FromSelect[?, ?, ?] if i.onConflict.nonEmpty =>
                 if i.overrides.nonEmpty then ctx.unsupported("INSERT ... SELECT with an overridden column", Absent)
                 ctx.append(insertKeyword(i.onConflict))
-                ctx.appendQuoted(i.tableName)
+                qualifiedTable(ctx, i.schemaName, i.tableName)
                 ctx.append(" (")
                 ctx.joinWith(", ")(fs.columns)(c => ctx.appendQuoted(c.sqlName))
                 ctx.append(") SELECT * FROM (")

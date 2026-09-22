@@ -11,11 +11,11 @@ import kyo.*
   * and `WriteResult.TailPartial` (tail high-water park) carry the full span and offset inline in
   * their respective states.
   *
-  *   - [[Idle]]: awaiting the next channel take.
-  *   - [[Flushing]]: a span is being written; `pending`/`offset` is the outstanding tail.
-  *   - [[AwaitingWritable]]: a partial write parked on socket writability.
-  *   - [[Backpressured]]: parked on the TLS pending-cipher / raw tail high-water bound.
-  *   - [[TornDown]]: terminal; teardown has failed any parked waiter.
+  *   - [[WriteState.Idle]]: awaiting the next channel take.
+  *   - [[WriteState.Flushing]]: a span is being written; `pending`/`offset` is the outstanding tail.
+  *   - [[WriteState.AwaitingWritable]]: a partial write parked on socket writability.
+  *   - [[WriteState.Backpressured]]: parked on the TLS pending-cipher / raw tail high-water bound.
+  *   - [[WriteState.TornDown]]: terminal; teardown has failed any parked waiter.
   */
 private[kyo] enum WriteState derives CanEqual:
     case Idle

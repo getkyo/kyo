@@ -8,8 +8,8 @@ import kyo.net.NetTlsConfig
 
 /** Opportunistic TLS orchestration for PostgreSQL, sitting ABOVE [[PostgresConnection]]'s `connect` methods.
   *
-  * A [[TlsNegotiator]] intercepts a raw plaintext [[Connection]] and either:
-  *   - upgrades it to TLS (returning a TLS-wrapped [[Connection]]), or
+  * A [[TlsNegotiator]] intercepts a raw plaintext `Connection` and either:
+  *   - upgrades it to TLS (returning a TLS-wrapped `Connection`), or
   *   - returns it unchanged (proceeding with plaintext startup).
   *
   * Under `prefer` it sends SSLRequest, upgrades on 'S', and falls back to plaintext on 'N'. The plaintext socket is reused rather than
@@ -25,12 +25,12 @@ import kyo.net.NetTlsConfig
   * sequence, and a MySQL implementation of this trait would have nothing to do but return its argument.
   */
 sealed trait TlsNegotiator:
-    /** Negotiates TLS on a raw plaintext [[Connection]].
+    /** Negotiates TLS on a raw plaintext `Connection`.
       *
       * @param conn
-      *   a freshly-opened, plaintext [[Connection]] (no bytes exchanged yet)
+      *   a freshly-opened, plaintext `Connection` (no bytes exchanged yet)
       * @return
-      *   either a TLS-upgraded [[Connection]] or the original plaintext [[Connection]], depending on mode and server response
+      *   either a TLS-upgraded `Connection` or the original plaintext `Connection`, depending on mode and server response
       */
     def negotiate(conn: Connection)(using Frame): Connection < (Async & Abort[SqlException])
 end TlsNegotiator
@@ -40,7 +40,7 @@ object TlsNegotiator:
     /** Selects the appropriate [[TlsNegotiator]] for a Postgres connection, by mode.
       *
       * @param mode
-      *   the TLS mode (must be [[TlsMode.Prefer]] for meaningful negotiation; [[TlsMode.Allow]] negotiation is a no-op, the allow-upgrade
+      *   the TLS mode (must be `TlsMode.Prefer` for meaningful negotiation; `TlsMode.Allow` negotiation is a no-op, the allow-upgrade
       *   path is handled at the backend layer)
       * @param tls
       *   the TLS configuration to use when upgrading

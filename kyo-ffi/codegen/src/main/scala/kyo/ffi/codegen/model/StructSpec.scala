@@ -21,7 +21,7 @@ final case class StructSpec(
       *
       * Mirrors [[kyo.ffi.codegen.FfiInspector]]'s top-level `Borrowed[Buffer[A]]` rule: infer the buffer extent from exactly one Int/Long
       * sibling field. Zero or multiple candidates make the inference ambiguous; the validator rejects such structs via
-      * [[kyo.ffi.internal.FfiGenErrors]].
+      * `kyo.ffi.internal.FfiGenErrors`.
       */
     def intLongSizeCandidates: List[StructField] =
         fields.filter(f => f.tpe == TypeRef.IntT || f.tpe == TypeRef.LongT)

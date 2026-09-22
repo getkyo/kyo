@@ -66,7 +66,7 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
     /** Renders the image inline for iTerm2 or Kitty terminals.
       *
       * Returns `Absent` when no supported terminal type can be detected. Width and height are expressed in terminal cells; passing zero
-      * means "auto" along that axis. The terminal type is auto-detected via [[ConsoleType.get]] (environment-based).
+      * means "auto" along that axis. The terminal type is auto-detected via [[Image.ConsoleType.get]] (environment-based).
       *
       * @param charsWidth
       *   Desired width in character cells, or `0` for automatic sizing.

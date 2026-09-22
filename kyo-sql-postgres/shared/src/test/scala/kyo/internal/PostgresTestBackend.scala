@@ -182,6 +182,25 @@ class PostgresTestBackend extends SqlTestBackend:
         ("timestamptz[]", "'{\"2026-08-25 10:00:00+00\"}'", "{\"2026-08-25 10:00:00+00:00\"}")
     )
 
+    /** PostgreSQL resolves an unqualified name against `search_path`, whose default puts `public` last and the user's own schema first; the
+      * harness connects as a role with no schema of its own, so `public` is what answers.
+      */
+    override def defaultSchemaName(schema: SqlTestBackend.Schema): String = "public"
+
+    override def hasSecondSchema: Boolean = true
+
+    /** A schema lives inside the database, so one `CREATE` reaches every session that connects afterwards, and `CASCADE` removes the tables
+      * a conformance body put in it. The per-leaf database is dropped anyway; the explicit drop keeps the leaf self-contained.
+      */
+    override def secondSchema(schema: SqlTestBackend.Schema): Maybe[SqlTestBackend.SecondSchema] =
+        val name = "kyo_second"
+        Present(SqlTestBackend.SecondSchema(
+            name,
+            Chunk(s"CREATE SCHEMA ${quoteIdent(name)}"),
+            Chunk(s"DROP SCHEMA ${quoteIdent(name)} CASCADE")
+        ))
+    end secondSchema
+
     def tableNotFoundSqlState: String = "42P01"
 
     def uniqueViolationSqlState: String = "23505"

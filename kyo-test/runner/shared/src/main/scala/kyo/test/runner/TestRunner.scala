@@ -41,8 +41,8 @@ import scala.concurrent.Future
 
 /** Pure-Kyo runner for the V3 (next) self-contained framework.
   *
-  * The ENTIRE run, discovery AND execution, is one Kyo computation. Discovery is a synchronous `Sync` walk (per RI-008 discovery is
-  * inherently sequential): each probe allocates its own [[TestContext]], instantiates the suite single-threaded, and reads the synchronous
+  * The ENTIRE run, discovery AND execution, is one Kyo computation. Discovery is a synchronous `Sync` walk (discovery is
+  * inherently sequential): each probe allocates its own [[kyo.test.internal.TestContext]], instantiates the suite single-threaded, and reads the synchronous
   * `peekRegisteredLeaf` / `peekWasGroup` accessors. Execution fans out through the process-global
   * `kyo.test.runner.internal.LeafPool`: each leaf's `Chunk[(Chunk[String], TestResult)] < Async` computation is submitted via
   * `LeafPool.submit` and the suite awaits the returned promises in INPUT ORDER. The pool drains its bounded channel with `LeafPool.globalK` detached worker fibers, so total
@@ -104,7 +104,7 @@ object TestRunner:
             expectedLeafCount = Maybe.empty
         )
         // Under the process-global pool there is no per-suite K. The meaningful run-start figure is the pool's
-        // global bound, LeafPool.globalK (Q-002 resolution): reporting the suite's requested parallelism would
+        // global bound, LeafPool.globalK: reporting the suite's requested parallelism would
         // mislead, since the pool, not the suite, sets the real degree of concurrency.
         if !effectiveConfig.countOnly then
             reporter.onRunStart(kyo.test.RunInfo(suiteCount = 1, parallelism = LeafPool.globalK))
@@ -281,7 +281,7 @@ object TestRunner:
         }
 
     /** Discover all (namePath, cursor, builderOpt) tuples under `prefix`. The DFS probes one cursor at a time (discovery is inherently
-      * sequential, RI-008), descending into groups and stopping at the first past-end (neither leaf nor group) sibling.
+      * sequential), descending into groups and stopping at the first past-end (neither leaf nor group) sibling.
       */
     private def walkNode(
         suite: Class[? <: TestBase[?]],

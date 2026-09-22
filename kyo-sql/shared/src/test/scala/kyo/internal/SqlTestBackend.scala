@@ -203,6 +203,38 @@ abstract class SqlTestBackend:
       */
     def protocolAgreementCases: Chunk[(String, String, String)]
 
+    /** The schema an unqualified table name resolves in, on the connection this suite's client holds.
+      *
+      * Every engine has one and they name it differently: PostgreSQL `public`, the MySQL lineage the database the URL named, the SQLite
+      * lineage `main`. Naming it here lets a conformance body assert that a statement qualified with it reaches the same table an
+      * unqualified one does, without the body knowing which engine answered.
+      *
+      * Defaults to the URL's database, the MySQL lineage's answer, since there a schema and a database are one thing. The two engines that
+      * disagree override it.
+      */
+    def defaultSchemaName(schema: SqlTestBackend.Schema): String = schema.database
+
+    /** How to make a SECOND schema that every connection in a pool can reach, or [[Absent]] where the engine has none.
+      *
+      * The question is not whether the engine has schemas but whether one statement can provision them for a whole pool. A server holds a
+      * schema in the database, so a single `CREATE` reaches every session that connects after it. The SQLite lineage holds its other
+      * schemas per connection behind `ATTACH`, so a statement provisions exactly the connection that ran it; those engines answer
+      * [[Absent]] and prove the same property through a connect-time attach.
+      *
+      * The backend names it rather than the caller, because the name carries a privilege. A second schema on the MySQL lineage is a second
+      * DATABASE, which the restricted user a leaf connects as may not create, and provisioning grants that user rights over this name
+      * alone. Deriving it from `schema` also keeps concurrent leaves apart, each already holding a database of its own.
+      */
+    def secondSchema(schema: SqlTestBackend.Schema): Maybe[SqlTestBackend.SecondSchema] = Absent
+
+    /** Whether [[secondSchema]] answers, as a plain flag a leaf filter can read.
+      *
+      * Separate from [[secondSchema]] because a filter chooses which backends run BEFORE any of them has been provisioned, so no
+      * [[SqlTestBackend.Schema]] exists to hand it yet. The two must agree, and a body that filtered on this and then found [[Absent]]
+      * fails loudly on the spot rather than skipping, which is what keeps them agreeing.
+      */
+    def hasSecondSchema: Boolean = false
+
     /** The SQLSTATE this engine reports when a statement references a table that does not exist (class 42). */
     def tableNotFoundSqlState: String
 
@@ -285,6 +317,25 @@ object SqlTestBackend:
         password: String,
         database: String,
         url: String
+    ) derives CanEqual
+
+    /** How one engine provisions and removes a second schema, for [[SqlTestBackend.secondSchema]].
+      *
+      * `drop` is not optional. On the MySQL lineage a second schema is a second DATABASE, which lives outside the per-leaf database the
+      * harness creates and drops, so a leaf that did not remove it would leave it behind for every later run against the same container.
+      *
+      * @param name
+      *   the schema's name, as a conformance body writes it into a qualified statement. The backend chose it, so it is a name the leaf's
+      *   connection is allowed to create.
+      * @param create
+      *   run in order before the body
+      * @param drop
+      *   run in order after it, on every exit edge
+      */
+    final case class SecondSchema(
+        name: String,
+        create: Chunk[String],
+        drop: Chunk[String]
     ) derives CanEqual
 
 end SqlTestBackend

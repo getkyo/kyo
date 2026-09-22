@@ -3,8 +3,8 @@ package kyo
 /** Cryptographically secure random bytes.
   *
   * Use this for SCRAM nonces, OAEP seeds, keys, session tokens, and any context where prediction resistance matters; for
-  * non-cryptographic randomness use [[Random]]. `SecureRandom` mirrors [[Random]]'s architecture: a safe and an unsafe tier, a [[live]]
-  * default, an ambient instance scoped with [[let]], and accessors that read the ambient. The vocabulary is deliberately one operation,
+  * non-cryptographic randomness use [[Random]]. `SecureRandom` mirrors [[Random]]'s architecture: a safe and an unsafe tier, a [[SecureRandom.live]]
+  * default, an ambient instance scoped with [[SecureRandom.let]], and accessors that read the ambient. The vocabulary is deliberately one operation,
   * because the secure use cases are byte requests.
   *
   * Each platform resolves its own source: the JVM through the JDK's `java.security.SecureRandom` provider; Native through `/dev/urandom`,

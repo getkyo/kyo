@@ -93,7 +93,7 @@ object Path extends PathPlatformSpecific:
 
     /** Selects how deeply a watcher observes a directory.
       *
-      * [[Immediate]] observes only direct children of the watched root. [[Recursive]] also observes
+      * [[WatchDepth.Immediate]] observes only direct children of the watched root. [[WatchDepth.Recursive]] also observes
       * descendants at every depth. The watched root itself is not passed through the glob filter.
       * Its disappearance is instead reported as [[Change.Invalidated]].
       *
@@ -107,8 +107,8 @@ object Path extends PathPlatformSpecific:
 
     /** Selects the case policy used when matching a watch glob.
       *
-      * [[FileSystemDefault]] delegates to the backend's native policy. [[Sensitive]] compares every
-      * glob component case sensitively. [[Insensitive]] compares every glob component without case.
+      * [[MatchCase.FileSystemDefault]] delegates to the backend's native policy. [[MatchCase.Sensitive]] compares every
+      * glob component case sensitively. [[MatchCase.Insensitive]] compares every glob component without case.
       *
       * This setting changes only event selection. It does not rewrite the paths contained in emitted
       * [[Change]] values.
@@ -123,7 +123,7 @@ object Path extends PathPlatformSpecific:
       *
       * Creation, modification, and removal events identify one path. A move identifies both its former
       * and current paths. Moves crossing a watch filter boundary are normalized to removal or creation.
-      * [[Overflow]] reports that bounded event delivery lost detail, while [[Invalidated]] reports that
+      * [[Change.Overflow]] reports that bounded event delivery lost detail, while [[Change.Invalidated]] reports that
       * the watched root is no longer usable.
       *
       * Paths use the namespace of the filesystem that acquired the watcher.
@@ -187,7 +187,7 @@ object Path extends PathPlatformSpecific:
 
     /** Selects whether a move or copy may replace its target.
       *
-      * [[Never]] fails with [[FileAlreadyExistsException]] when the target exists. [[Existing]]
+      * [[Replace.Never]] fails with [[FileAlreadyExistsException]] when the target exists. [[Replace.Existing]]
       * replaces an existing target according to the backend's normal move or copy semantics.
       *
       * This policy is shared by [[MoveOptions]] and [[CopyOptions]].
@@ -198,7 +198,7 @@ object Path extends PathPlatformSpecific:
 
     /** Selects the atomicity guarantee required from a move.
       *
-      * [[Allowed]] permits the backend's normal move operation. [[Required]] requires the backend
+      * [[Atomicity.Allowed]] permits the backend's normal move operation. [[Atomicity.Required]] requires the backend
       * or platform to guarantee an atomic move and otherwise fails with
       * [[FileAtomicMoveUnsupportedException]] before changing either path.
       *
@@ -1862,7 +1862,7 @@ object Path extends PathPlatformSpecific:
 
     /** The outcome of a single non-blocking lock attempt.
       *
-      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[Pending]] is worth
+      * Separates "no" from "not yet", which `Result` alone cannot carry. Only [[LockAttempt.Pending]] is worth
       * retrying on its own: a conflict clears when the holder releases, which is the waiting
       * caller's concern, while a pending answer clears without anyone releasing anything.
       */

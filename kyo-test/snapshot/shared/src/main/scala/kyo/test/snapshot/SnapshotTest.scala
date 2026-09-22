@@ -46,7 +46,7 @@ import kyo.test.snapshot.internal.SnapshotStore
   * @see
   *   [[kyo.test.AssertionFailed]] thrown when a snapshot exists but does not match the rendered value
   * @see
-  *   [[kyo.test.TestResult.Failed]] the leaf outcome produced when assertSnapshot fails
+  *   `kyo.test.TestResult.Failed` the leaf outcome produced when assertSnapshot fails
   */
 abstract class SnapshotTestBase[S] extends TestBase[S]:
 
@@ -368,6 +368,6 @@ end SnapshotTestBase
   * @see
   *   [[kyo.test.AssertionFailed]] thrown when a snapshot exists but does not match the rendered value
   * @see
-  *   [[kyo.test.TestResult.Failed]] the leaf outcome produced when assertSnapshot fails
+  *   `kyo.test.TestResult.Failed` the leaf outcome produced when assertSnapshot fails
   */
 abstract class SnapshotTest[S] extends SnapshotTestBase[S] with SuiteFingerprintMarker

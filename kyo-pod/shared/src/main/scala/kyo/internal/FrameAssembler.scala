@@ -17,6 +17,9 @@ import kyo.Container.LogEntry
   * Implemented as a [[Pipe]] that threads a carry-over [[Span]] across input chunks via [[Loop]], so frames whose header or payload
   * straddle a chunk boundary are correctly reassembled and emitted once the rest arrives in a later poll. Stream end discards any partial
   * residual.
+  *
+  * Payloads are emitted as bytes, never decoded here: a process writing one multi-byte UTF-8 character in two writes produces two frames, so
+  * text is decoded only after [[LineAssembler]] has joined the bytes into complete lines.
   */
 object FrameAssembler:
 
@@ -27,9 +30,9 @@ object FrameAssembler:
 
     def pipe(using
         Tag[Poll[Chunk[Span[Byte]]]],
-        Tag[Emit[Chunk[(String, LogEntry.Source)]]],
+        Tag[Emit[Chunk[(Span[Byte], LogEntry.Source)]]],
         Frame
-    ): Pipe[Span[Byte], (String, LogEntry.Source), Any] =
+    ): Pipe[Span[Byte], (Span[Byte], LogEntry.Source), Any] =
         Pipe:
             Loop(Span.empty[Byte], Undecided) { (carry, mode) =>
                 Poll.andMap[Chunk[Span[Byte]]] {
@@ -44,8 +47,7 @@ object FrameAssembler:
                                     val first = combined.slice(0, 1).toArray(0) & 0xff
                                     if first <= 2 then Multiplexed else Raw
                             if decided == Raw then
-                                val text = new String(combined.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                Emit.valueWith(Chunk((text, LogEntry.Source.Stdout)))(Loop.continue(Span.empty[Byte], decided))
+                                Emit.valueWith(Chunk((combined, LogEntry.Source.Stdout)))(Loop.continue(Span.empty[Byte], decided))
                             else
                                 val (leftover, frames) = parseFrames(combined)
                                 Emit.valueWith(frames)(Loop.continue(leftover, decided))
@@ -55,10 +57,10 @@ object FrameAssembler:
             }
 
     /** Parse all complete frames from `buf`. Returns the unconsumed suffix (a partial frame, possibly empty) and the parsed frames. */
-    private def parseFrames(buf: Span[Byte]): (Span[Byte], Chunk[(String, LogEntry.Source)]) =
+    private def parseFrames(buf: Span[Byte]): (Span[Byte], Chunk[(Span[Byte], LogEntry.Source)]) =
         val arr = buf.toArray
         val len = arr.length
-        val out = Chunk.newBuilder[(String, LogEntry.Source)]
+        val out = Chunk.newBuilder[(Span[Byte], LogEntry.Source)]
         @scala.annotation.tailrec
         def parse(offset: Int): Int =
             if offset + 8 > len then offset
@@ -70,9 +72,9 @@ object FrameAssembler:
                     (arr(offset + 7) & 0xff)
                 if offset + 8 + size > len then offset
                 else
-                    val content = new String(arr, offset + 8, size, java.nio.charset.StandardCharsets.UTF_8)
+                    val payload = buf.slice(offset + 8, offset + 8 + size)
                     val source  = if streamType == 2 then LogEntry.Source.Stderr else LogEntry.Source.Stdout
-                    out.addOne((content, source))
+                    out.addOne((payload, source))
                     parse(offset + 8 + size)
                 end if
         end parse

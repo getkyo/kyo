@@ -28,7 +28,7 @@ object Scratch:
             .flatMap(s => scala.util.Try(s.toLong).toOption)
             .getOrElse(4L * 1024L * 1024L)
 
-    /** Opt-in system property, when `true`, [[Scratch]] writes a diagnostic to stderr via [[FfiErrors.scratchSpilled]] on every oversized
+    /** Opt-in system property, when `true`, [[Scratch]] writes a diagnostic to stderr via [[FfiGenErrors.scratchSpilled]] on every oversized
       * allocation that falls off the per-thread block onto a fresh confined arena. Default is `false` because steady-state spills for
       * large-buffer APIs are expected and would be noisy under normal use; this flag is intended for operators diagnosing scratch-sizing
       * decisions.
@@ -110,7 +110,7 @@ object Scratch:
       * @param addrSeg
       *   the NULL-terminated MemorySegment carrying the C `char*`, typically already reinterpreted to `cappedBytes` by the caller.
       * @param offset
-      *   byte offset at which the C string starts inside [[addrSeg]]. Always `0L` for struct-field / multi-value reads but exposed for
+      *   byte offset at which the C string starts inside `addrSeg`. Always `0L` for struct-field / multi-value reads but exposed for
       *   parity with alternate read paths.
       * @param cappedBytes
       *   the capped reinterpret length, must equal [[stringFieldMaxBytes]] at current use-sites; parameterized so tests can provoke the
@@ -187,7 +187,7 @@ object Scratch:
             alloc(byteSize, align, "<unknown-binding>", "<unknown-method>")
 
         /** Binding-aware variant of [[alloc]]. When the allocation cannot satisfy from the per-thread block and must spill to a fresh
-          * confined arena, the spill is logged via [[FfiErrors.scratchSpilled]] to stderr if `-Dkyo.ffi.scratch.logSpills=true`. Emitted
+          * confined arena, the spill is logged via [[FfiGenErrors.scratchSpilled]] to stderr if `-Dkyo.ffi.scratch.logSpills=true`. Emitted
           * code passes the binding FQN + method name so the log names the call site.
           */
         def alloc(byteSize: Long, align: Long, bindingFqn: String, methodName: String): MemorySegment =

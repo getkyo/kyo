@@ -414,20 +414,20 @@ object WebsiteBundleMain:
     /** The four route kinds the nav fiber dispatches on, named so the classification is a pure,
       * testable decision separate from the effectful branch bodies in [[navFiber]].
       *
-      *   - [[Landing]]: the root `/` (zero path segments).
-      *   - [[Module]]: a `/<prefix>/<slug>/` page whose last segment names a known module.
-      *   - [[Intro]]: a single-segment `/<knownPrefix>/` route naming a real tree.
-      *   - [[OffTree]]: anything else (an unknown prefix, OR a multi-segment route whose last segment
+      *   - [[RouteKind.Landing]]: the root `/` (zero path segments).
+      *   - [[RouteKind.Module]]: a `/<prefix>/<slug>/` page whose last segment names a known module.
+      *   - [[RouteKind.Intro]]: a single-segment `/<knownPrefix>/` route naming a real tree.
+      *   - [[RouteKind.OffTree]]: anything else (an unknown prefix, OR a multi-segment route whose last segment
       *     is not a known module slug), which hands off to a full browser navigation.
       */
     private[website] enum RouteKind derives CanEqual:
         case Landing, Module, Intro, OffTree
 
     /** Classify a route's path segments into a [[RouteKind]], the pure decision [[navFiber]] dispatches
-      * on. A multi-segment route is a [[Module]] ONLY when its last segment is a known module slug;
-      * an unknown multi-segment slug (e.g. `/latest/does-not-exist/`) is [[OffTree]] so it full-
+      * on. A multi-segment route is a [[RouteKind.Module]] ONLY when its last segment is a known module slug;
+      * an unknown multi-segment slug (e.g. `/latest/does-not-exist/`) is [[RouteKind.OffTree]] so it full-
       * navigates to a clean server 404 instead of fetching a missing `content.html` into a broken docs
-      * shell. A single-segment route is an [[Intro]] only when it names a known prefix.
+      * shell. A single-segment route is an [[RouteKind.Intro]] only when it names a known prefix.
       */
     private[website] def classifyRoute(
         segments: Array[String],

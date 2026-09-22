@@ -68,10 +68,10 @@ abstract class Connection:
       * truncation (the TCP connection ended without a close_notify, the truncation-attack condition the close_notify exchange exists to make
       * detectable). The default delivery of a record-boundary EOF is NOT rejected (a large population of real HTTP/1.1 servers close without a
       * close_notify), but the missing close_notify is made OBSERVABLE here so a length-aware caller can treat an unexpected drop as a
-      * truncation. While the connection is still active this is [[Status.Active]].
+      * truncation. While the connection is still active this is [[Connection.Status.Active]].
       *
       * A non-TLS connection, which has no close_notify exchange, and a platform without TLS introspection support never report a truncation
-      * distinction and return [[Status.Active]]; a TLS connection reports the observed close reason.
+      * distinction and return [[Connection.Status.Active]]; a TLS connection reports the observed close reason.
       */
     def status: Connection.Status
 end Connection
@@ -81,9 +81,9 @@ object Connection:
     /** Why the connection's inbound stream is ending or has ended (see [[Connection.status]]).
       *
       * For a TLS connection this carries the security-relevant distinction RFC 8446 6.1 / RFC 5246 7.2.1 define: an orderly close terminated by
-      * the peer's authenticated close_notify ([[CleanClose]]) versus a connection that ended without one ([[Truncated]]), which is the
-      * truncation-attack condition. A length-aware caller (an HTTP layer that knows its framing) can treat a [[Truncated]] end after an
-      * incomplete message as a truncation while still accepting a [[Truncated]] end after a complete length-framed message, the interop-safe
+      * the peer's authenticated close_notify ([[Status.CleanClose]]) versus a connection that ended without one ([[Status.Truncated]]), which is the
+      * truncation-attack condition. A length-aware caller (an HTTP layer that knows its framing) can treat a [[Status.Truncated]] end after an
+      * incomplete message as a truncation while still accepting a [[Status.Truncated]] end after a complete length-framed message, the interop-safe
       * posture established stacks use (Go's `io.EOF` vs `io.ErrUnexpectedEOF`, OpenSSL's `ZERO_RETURN` vs `unexpected eof while reading`).
       *
       * This is the stream's close-reason, observable after [[Connection.status]] reports it: it is not a live open/closed connection status.

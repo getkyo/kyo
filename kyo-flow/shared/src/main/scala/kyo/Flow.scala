@@ -134,7 +134,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         AndThen(this, Step[Out, S2](name, fn, Meta(description, tags, timeout, retry), Maybe.empty))
     end step
 
-    /** Like `step`, but registers a compensation handler carrying the step's own effects. See [[outputCompensated]]. */
+    /** Like `step`, but registers a compensation handler carrying the step's own effects. See `outputCompensated`. */
     def stepCompensated[S2](
         name: String,
         description: String = "",
@@ -219,7 +219,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
 
     /** Loop with 1 state value under a declared `description`, `timeout`, `retry` and `tags`.
       *
-      * The knobs arrive as a [[Meta]] rather than as four defaulted parameters because Scala allows only one overload of a name to define
+      * The knobs arrive as a `Meta` rather than as four defaulted parameters because Scala allows only one overload of a name to define
       * default arguments, and the stateless [[loop]] is that overload. `timeout` and `retry` govern one iteration, as they do there.
       */
     def loop[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
@@ -246,7 +246,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         loop[N, A, B, V, S2](name, init1, init2, Meta())(body)
 
     /** Loop with 2 state values under a declared `description`, `timeout`, `retry` and `tags`. See the one-state [[loop]] overload for why
-      * the knobs arrive as a [[Meta]].
+      * the knobs arrive as a `Meta`.
       */
     def loop[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
@@ -272,7 +272,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
       *
       * The handler is NODE level and receives the record the loop's own value is in, which is the value the loop converged on: a loop that
       * booked a shipment per iteration undoes the booking it ended with. It is pushed only once the loop produced that value, so a loop
-      * that was cancelled between iterations has nothing to undo and registers nothing. See [[outputCompensated]] for the effect row the
+      * that was cancelled between iterations has nothing to undo and registers nothing. See `outputCompensated` for the effect row the
       * handler carries.
       */
     def loopCompensated[N <: String & Singleton, V: Tag: Schema, S2](
@@ -397,7 +397,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
       * to depend on, which is the same independence between items that makes a per-item handler the right shape in the first place. A
       * fan-out whose items must be undone in a particular order is a batch, and its handler belongs on the node that owns the batch.
       *
-      * See [[outputCompensated]] for the effect row the handler carries and why it is the body's own.
+      * See `outputCompensated` for the effect row the handler carries and why it is the body's own.
       */
     def foreachCompensated[N <: String & Singleton, E, V, S2](
         name: N,
@@ -484,7 +484,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
 
     /** Loop on a schedule with 1 state value under a declared `description`, `timeout`, `retry` and `tags`.
       *
-      * The knobs arrive as a [[Meta]] rather than as four defaulted parameters because Scala allows only one overload of a name to define
+      * The knobs arrive as a `Meta` rather than as four defaulted parameters because Scala allows only one overload of a name to define
       * default arguments, and the stateless [[loopOn]] is that overload.
       */
     def loopOn[N <: String & Singleton, A: Tag: Schema, V: Tag: Schema, S2](
@@ -509,7 +509,7 @@ sealed abstract class Flow[In, Out, S] derives CanEqual:
         loopOn[N, A, B, V, S2](name, schedule, init1, init2, Meta())(body)
 
     /** Loop on a schedule with 2 state values under a declared `description`, `timeout`, `retry` and `tags`. See the one-state [[loopOn]]
-      * overload for why the knobs arrive as a [[Meta]].
+      * overload for why the knobs arrive as a `Meta`.
       */
     def loopOn[N <: String & Singleton, A: Tag: Schema, B: Tag: Schema, V: Tag: Schema, S2](
         name: N,
@@ -789,7 +789,7 @@ object Flow:
     /** Execute multiple flows in parallel and merge all their outputs. All branches must complete.
       *
       * The branches run in their own fibers, and the `Isolate` carries a custom effect row across that boundary the same way
-      * [[zip]]'s does: captured here, restored per completed branch. Pure and `Async` rows derive an isolate automatically; a
+      * `zip`'s does: captured here, restored per completed branch. Pure and `Async` rows derive an isolate automatically; a
       * stateful row needs one in scope, and a row no isolate can be built for does not compose, deliberately. A body that needs
       * such an effect can handle it inside its own step instead.
       */
@@ -931,7 +931,7 @@ object Flow:
       * the one that holds the fields for an input.
       *
       * @see
-      *   [[kyo.FlowStore.recordWait]] which writes a row, and [[kyo.FlowStore.ExecutionState.waits]] which reads them back
+      *   `kyo.FlowStore.recordWait` which writes a row, and [[kyo.FlowStore.ExecutionState.waits]] which reads them back
       */
     enum Wake derives CanEqual, Schema:
 
@@ -1056,7 +1056,7 @@ object Flow:
 
         /** One node's compensation handler ran to completion.
           *
-          * Per NODE, where [[CompensationStarted]], [[CompensationCompleted]] and [[CompensationFailed]] are per UNWIND. An unwind that
+          * Per NODE, where [[Event.CompensationStarted]], [[Event.CompensationCompleted]] and [[Event.CompensationFailed]] are per UNWIND. An unwind that
           * is interrupted part-way leaves some handlers run and some not, and only a per-node record can tell them apart, which is what
           * a recovered execution reads to re-run exactly the handlers that never landed.
           */
@@ -1106,7 +1106,7 @@ object Flow:
 
         /** An input node found its value and went on, which is the transition that clears the wait row it had written.
           *
-          * The node's own completion, and distinct from [[InputReceived]], which is the value ARRIVING through `signal` on the other
+          * The node's own completion, and distinct from [[Event.InputReceived]], which is the value ARRIVING through `signal` on the other
           * side. A delivery and a consumption are two facts, and one event cannot stand for both: the value can arrive long before an
           * executor replays far enough to use it, and it can arrive for a node the execution never reaches.
           */
@@ -1115,12 +1115,12 @@ object Flow:
         /** A subflow's input mapper supplied a child input's value, recorded at entry before the child's first node ran.
           *
           * The third way a value reaches an input, and the three stay distinguishable in history: a start seed leaves the field and
-          * no input event at all, a `signal` leaves [[InputWaiting]], [[InputReceived]] and [[InputDischarged]], and a mapper leaves
+          * no input event at all, a `signal` leaves [[Event.InputWaiting]], [[Event.InputReceived]] and [[Event.InputDischarged]], and a mapper leaves
           * exactly one of these. `inputName` is the child input's durable path (`review~amount`), which is where the value was
           * written; the field and this event are one transition, so a reader of the history and replay reading the field never
           * disagree about whether the child ran against a recorded value.
           *
-          * Not [[InputDischarged]], which is the node's own consumption of a value it waited for. A mapper-fed input never parks, so
+          * Not [[Event.InputDischarged]], which is the node's own consumption of a value it waited for. A mapper-fed input never parks, so
           * it has no wait row to clear, and writing a discharge here would put a consumption record before the node was reached.
           */
         case InputSupplied(flowId: Flow.Id.Workflow, executionId: Flow.Id.Execution, inputName: String, timestamp: Instant)
@@ -1229,7 +1229,7 @@ object Flow:
           * so there is no per-branch question to answer. A dispatch branch that charges a premium fee is otherwise as unrecoverable as
           * a step that charges one without a handler.
           *
-          * Handlers run in reverse order when a later step fails, and only on failure, never on suspension. See [[outputCompensated]]
+          * Handlers run in reverse order when a later step fails, and only on failure, never on suspension. See `outputCompensated`
           * for the effect row the handler carries.
           */
         def otherwiseCompensated[S2](body: Record[Out] => V < S2, name: String, description: String = "")(
@@ -1380,7 +1380,7 @@ object Flow:
               * mapped record, so such a child starts from the store alone, its recorded inputs included.
               */
             def childRecord(childPath: String, mapped: Record[Any]): Record[Any] =
-                val prefix    = s"$childPath${NodePath.Separator}"
+                val prefix    = s"$childPath${FlowNodePath.Separator}"
                 val inherited = durable.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
                     if name.startsWith(prefix) then acc.update(name.substring(prefix.length), value) else acc
                 }
@@ -1398,7 +1398,7 @@ object Flow:
 
                     case n: Output[?, ?, ?, ?, ?] @unchecked =>
                         val e         = n.erased
-                        val qualified = NodePath.qualify(path, n.name)
+                        val qualified = FlowNodePath.qualify(path, n.name)
                         if fieldCompleted(ctx, n.name) then
                             e.compensate match
                                 case Present(handler) => pushComp(qualified, ctx, handler).andThen(ctx)
@@ -1417,7 +1417,7 @@ object Flow:
 
                     case n: Step[?, ?] @unchecked =>
                         val e         = n.erased
-                        val qualified = NodePath.qualify(path, n.name)
+                        val qualified = FlowNodePath.qualify(path, n.name)
                         if eventCompleted(qualified) then
                             e.compensate match
                                 case Present(handler) => pushComp(qualified, ctx, handler).andThen(ctx)
@@ -1436,21 +1436,21 @@ object Flow:
                         // wrote. Nothing else records it: a satisfied input proceeds with the value in hand and writes no progress of
                         // its own, so a row written here would be outstanding forever and keep the execution permanently ready.
                         if fieldCompleted(ctx, n.name) then
-                            interpreter.onInputDischarged(NodePath.qualify(path, n.name), n.frame, n.meta).andThen(ctx)
+                            interpreter.onInputDischarged(FlowNodePath.qualify(path, n.name), n.frame, n.meta).andThen(ctx)
                         else
-                            interpreter.onInput(NodePath.qualify(path, n.name), n.frame, n.meta)(using n.erased.tag, n.erased.schema)
+                            interpreter.onInput(FlowNodePath.qualify(path, n.name), n.frame, n.meta)(using n.erased.tag, n.erased.schema)
                                 .map(v => addField(ctx, n.name, v))
 
                     case n: Sleep =>
-                        if eventCompleted(NodePath.qualify(path, n.name)) then ctx
+                        if eventCompleted(FlowNodePath.qualify(path, n.name)) then ctx
                         else
-                            interpreter.onSleep(NodePath.qualify(path, n.name), n.duration, n.frame, n.meta)
+                            interpreter.onSleep(FlowNodePath.qualify(path, n.name), n.duration, n.frame, n.meta)
                                 .andThen(ctx)
 
                     case n: Dispatch[?, ?, ?, ?, ?] @unchecked =>
                         val d               = n.erased
                         val nameStr: String = n.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         // The handler undoes what the branch that ran did, so it is registered on the replay path too: a dispatch
                         // whose field is already stored ran its branch under an earlier attempt of this same execution.
@@ -1507,7 +1507,7 @@ object Flow:
                     case n: LoopNode[?, ?, ?, ?, ?] @unchecked =>
                         val r               = n.erased
                         val nameStr: String = r.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         import kyo.kernel.Loop.Continue
                         import kyo.kernel.Loop.Continue2
@@ -1627,7 +1627,7 @@ object Flow:
                     case n: ForEach[?, ?, ?, ?, ?] @unchecked =>
                         val r               = n.erased
                         val nameStr: String = n.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         // Items above a bound of 1 run in their own fibers. Nothing is isolated across that boundary because
                         // the AST is erased at `S`: the row is `Any` here, so the isolate is the identity, and what carries an
@@ -1742,12 +1742,12 @@ object Flow:
                         if fieldCompleted(ctx, n.name) then ctx
                         else
                             val nameStr   = n.name: String
-                            val childPath = NodePath.qualify(path, nameStr)
+                            val childPath = FlowNodePath.qualify(path, nameStr)
                             // The inputs this entry still owes the store: the ones the record does not already hold. An input the
                             // store holds is what the child ran against and is never written again and never compared with the
                             // mapper's answer, which is the same rule a recorded dispatch branch follows.
                             val owed = n.erased.childInputs.filter(input =>
-                                durable.get(NodePath.qualify(childPath, input.name)) match
+                                durable.get(FlowNodePath.qualify(childPath, input.name)) match
                                     case Present(_) => false
                                     case _          => true
                             )
@@ -1761,7 +1761,7 @@ object Flow:
                               * just refused as occupied, and if it ever did the mapper's own value is the honest fallback.
                               */
                             def record(acc: Dict[String, Any], input: ChildInput): Dict[String, Any] < S =
-                                val qualified = NodePath.qualify(childPath, input.name)
+                                val qualified = FlowNodePath.qualify(childPath, input.name)
                                 acc.get(input.name) match
                                     case Present(value) =>
                                         interpreter.onInputSupplied(qualified, value, input.frame, input.meta)(using
@@ -1911,9 +1911,9 @@ object Flow:
         /** The durable key a fan-out's item at `index` records its result under.
           *
           * An item is a composition step the way a subflow instance is, one level down, so its key is built the same way: item 2 of
-          * `charges` is `charges~2`. See [[kyo.internal.NodePath]].
+          * `charges` is `charges~2`. See [[kyo.internal.FlowNodePath]].
           */
-        def itemKey(foreach: String, index: Int): String = NodePath.qualify(foreach, index.toString)
+        def itemKey(foreach: String, index: Int): String = FlowNodePath.qualify(foreach, index.toString)
 
         /** The durable key a fan-out records how many items it had under.
           *
@@ -1922,7 +1922,7 @@ object Flow:
           * a duplicate the same refusal catches. It cannot ride `#` instead, because a progress walk reads every `name#...` as an
           * iteration of `name` and would draw the fan-out as done the moment its count landed.
           */
-        def countKey(foreach: String): String = NodePath.qualify(foreach, "count")
+        def countKey(foreach: String): String = FlowNodePath.qualify(foreach, "count")
 
         final case class BranchData[Ctx, V, S](
             name: String,

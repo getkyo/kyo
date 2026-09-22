@@ -155,7 +155,18 @@ Use `exec` for one-shot commands where you just need the exit code and output. U
 
 Each entry in `execStream`'s output is a `LogEntry(source, content)` where `source` is `Source.Stdout` or `Source.Stderr`, so you can separate streams if needed. This works identically on both backends.
 
-To attach to the container's main process instead of launching a new exec process, call `c.attach`. The returned `AttachSession` is the same bidirectional shape as `execInteractive`: `write` sends strings or bytes to stdin, `read` streams tagged stdout/stderr entries, and `resize` changes the pseudo-terminal size when the container was created with `allocateTty(true)`.
+To attach to the container's main process instead of launching a new exec process, call `c.attach`. The returned `AttachSession` is the same bidirectional shape as `execInteractive`: `write` sends strings or bytes to stdin, and `resize` changes the pseudo-terminal size when the container was created with `allocateTty(true)`.
+
+A session's output is one ordered sequence of byte chunks, each tagged with the stream it came from. Read it whichever way suits the process:
+
+```scala doctest:expect=skipped
+session.output // exact bytes, tagged Stdout or Stderr, in arrival order
+session.stdout // the stdout bytes of that sequence
+session.stderr // the stderr bytes of that sequence
+session.read   // LogEntry per non-empty line, joined across chunks and decoded as UTF-8
+```
+
+Every view consumes from the same sequence, so each chunk is delivered once. Bytes stay exact unless you ask for `read`, which is the line-oriented view: a program that streams binary (an archive, a framed protocol) uses `output` or `stdout`.
 
 ### Logs
 

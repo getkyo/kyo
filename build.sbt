@@ -62,6 +62,8 @@ inThisBuild(List(
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
+inThisBuild(ClassNameCheck.settings)
+
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 Global / commands += TestKyo.doneCommand
@@ -180,8 +182,26 @@ lazy val `kyo-settings` = Seq(
         } else {
             IO.createDirectory(out)
             log.info(s"Documenting $project with scaladoc $toolVersion")
+            // Scaladoc reports an unresolved link and carries on with exit code 0, and `-Werror` does not
+            // reach it, so the only record is a line on stderr. `OutputStrategy.CustomOutput` redirects
+            // stdout alone, which reads back empty.
+            val docLog    = log
+            val collected = scala.collection.mutable.ListBuffer.empty[String]
+            val tee       = new sbt.util.Logger {
+                def trace(t: => Throwable): Unit                               = docLog.trace(t)
+                def success(message: => String): Unit                          = docLog.success(message)
+                def log(level: sbt.util.Level.Value, message: => String): Unit = {
+                    val line = message
+                    collected.synchronized { collected += line; () }
+                    docLog.log(if (level == sbt.util.Level.Error) sbt.util.Level.Warn else level, line)
+                }
+            }
+            // Named so a module that documents locally documents on a runner: the JVM default is a
+            // quarter of physical RAM, 4G beside the 12G driver on the 16G runner that runs this.
             val exit = Fork.java(
-                ForkOptions().withRunJVMOptions(Vector("-cp", tool.mkString(sep))),
+                ForkOptions()
+                    .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
+                    .withOutputStrategy(OutputStrategy.LoggedOutput(tee)),
                 Seq(
                     "dotty.tools.scaladoc.Main",
                     "-d",
@@ -192,11 +212,32 @@ lazy val `kyo-settings` = Seq(
                     deps.mkString(sep)
                 ) ++ opts ++ classes.map(_.getAbsolutePath)
             )
+            val said = collected.synchronized(collected.toList)
             if (exit != 0) sys.error(s"scaladoc failed for $project")
             // Scaladoc exits 0 when handed nothing to read, so success alone does not mean a module
             // was documented. Without this an empty api directory reaches the published javadoc jar.
             if (PathFinder(out).allPaths.get.forall(!_.getName.endsWith(".html")))
                 sys.error(s"scaladoc produced no pages for $project")
+            // The message sits in a caret block under a `-- Warning: <file>:<line>:<col> --` header, which
+            // is the only thing carrying the position.
+            val position = """^-- (?:Warning|Error): (\S+)""".r
+            val found    = List.newBuilder[String]
+            var where    = project
+            said.foreach { raw =>
+                val line = raw.replaceAll("\\[[0-9;]*m", "")
+                position.findFirstMatchIn(line.trim).foreach(m => where = m.group(1))
+                val at = math.max(
+                    line.indexOf("Couldn't resolve a member for the given link query"),
+                    line.indexOf("Could not find any member to link for")
+                )
+                if (at >= 0) found += s"$where: ${line.substring(at)}"
+            }
+            val unresolvedLinks = found.result()
+            if (unresolvedLinks.nonEmpty)
+                sys.error(
+                    s"scaladoc could not resolve ${unresolvedLinks.size} link(s) in $project:" +
+                        unresolvedLinks.map(l => s"\n  $l").mkString
+                )
             out
         }
     }.tag(DocTag).value,
@@ -3187,12 +3228,17 @@ lazy val `kyo-zio` =
         .jvmSettings(mimaCheck(false))
         .wasmSettings(`wasm-settings`)
 
+// Every binding declares the same `kyo.compat` surface, one implementation per runtime, and the shared conformance suite compiles into
+// each one's tests. A library written against kyo-compat resolves those names from whichever binding the consumer links, so the
+// duplication is the design: `classNameGroup` records it, and `checkClassNames` then enforces what the design assumes, that no
+// classpath holds two of them.
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // Default compile under scala39Version so unidoc reads consistent TASTy with the rest of the build.
@@ -3232,6 +3278,7 @@ lazy val `kyo-compat-kyo` =
         .dependsOn(`kyo-core`, `kyo-data`)
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup           := Some("kyo-compat"),
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
@@ -3263,6 +3310,7 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3298,6 +3346,7 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3328,6 +3377,7 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3364,6 +3414,8 @@ lazy val `kyo-compat-tests` =
         .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
+            // It compiles the bindings' shared suite a sixth time, so it shares their test class names.
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
             scalaVersion                           := scala33Version,
@@ -3453,38 +3505,46 @@ lazy val `kyo-pod` =
                         connectInput = connectInput.value,
                         envVars = envsVarsValue ++ envOverrides
                     )
-                (Test / definedTests).value.flatMap { test =>
-                    // kyo-test suites cannot be reflectively instantiated to call `testNames` (the runner owns
-                    // instantiation via a thread-local). Instead, detect at config time whether the suite's source
-                    // uses the marker-registering helpers `runBackends` / `runBackendsLong` / `runRuntimes` (which
-                    // register the `[podman]` / `[docker]` runtime scopes). `runBackend` / `runBackendLong`
-                    // (single-fork, no marker) are deliberately not matched (the trailing `s` distinguishes them).
+                // kyo-test suites cannot be reflectively instantiated to call `testNames` (the runner owns
+                // instantiation via a thread-local). Instead, detect at config time whether the suite's source
+                // calls any of the helpers that reach a container daemon. Match actual CALLS (helper name
+                // immediately followed by `{` or `(`), not mere textual mentions: a suite's scaladoc can reference
+                // `runBackends` (ContainerOrchestrationItTest points readers at ContainerItTest) while the suite
+                // itself never touches a daemon.
+                val daemonHelperCall =
+                    """\b(runBackendsLong|runBackends|runBackendLong|runBackend|runRuntimes)\s*[{(]""".r
+                val (daemonTests, plainTests) = (Test / definedTests).value.partition { test =>
                     val simpleName = test.name.split('.').last
                     val srcOpt     = testSrcDirs.flatMap(d => (d ** s"$simpleName.scala").get).headOption
-                    // Match actual CALLS to the marker-registering helpers (helper name immediately followed by `{` or `(`),
-                    // not mere textual mentions. A suite's scaladoc can reference `runBackends` (ContainerOrchestrationItTest
-                    // points readers at ContainerItTest) while the suite itself only uses the single-fork `runBackend`; a plain
-                    // `contains` check then forks that http-only suite per runtime and runs it twice against one daemon.
-                    val runtimeHelperCall  = """\b(runBackendsLong|runBackends|runRuntimes)\s*[{(]""".r
-                    val usesRuntimeMarkers = srcOpt.exists { f =>
-                        runtimeHelperCall.findFirstIn(IO.read(f)).isDefined
-                    }
-                    val targetRuntimes = if (usesRuntimeMarkers) Seq("podman", "docker") else Seq.empty
-                    if (targetRuntimes.isEmpty)
-                        Seq(Tests.Group(
-                            name = test.name,
-                            tests = Seq(test),
-                            runPolicy = Tests.SubProcess(baseFork(Map.empty))
-                        ))
+                    srcOpt.exists(f => daemonHelperCall.findFirstIn(IO.read(f)).isDefined)
+                }
+                // Every daemon-touching suite shares ONE fork per runtime, rather than getting a fork each. The
+                // per-leaf container-leak check in BasePodTest diffs the daemon's whole container list, so it cannot
+                // tell a container another fork created inside its window from one the leaf leaked, and fails the
+                // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
+                // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
+                // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
+                // reach the daemon, which is what decides this. A fork pinned to a runtime that is a duplicate of
+                // another registers no leaves at all (see ContainerRuntimeBase.available), so it costs an idle JVM.
+                val daemonGroups =
+                    if (daemonTests.isEmpty) Seq.empty
                     else
-                        targetRuntimes.map { runtime =>
+                        Seq("podman", "docker").map { runtime =>
                             Tests.Group(
-                                name = s"${test.name}#$runtime",
-                                tests = Seq(test),
+                                name = s"container#$runtime",
+                                tests = daemonTests,
                                 runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
                             )
                         }
+                // Suites that never reach a daemon keep a fork each and stay parallel; they contend for nothing.
+                val plainGroups = plainTests.map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(baseFork(Map.empty))
+                    )
                 }
+                daemonGroups ++ plainGroups
             }
         )
         // No OpenSSL settings of its own: kyo-net's FFI manifest carries the prefix's `-L`, the `-l` names and

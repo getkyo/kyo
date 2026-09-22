@@ -8,16 +8,16 @@ import kyo.internal.AeronPlatform
   *
   * `Topic.run(v)` already launches a driver per scope, which is the right shape when one scope owns
   * the messaging. Reach for this instead when many clients must meet on one medium: launch the
-  * driver once, then hand [[directory]] to [[AeronClient.connect]] or `Topic.run(aeronDir)` as often
+  * driver once, then hand `directory` to [[AeronClient.connect]] or `Topic.run(aeronDir)` as often
   * as needed. A pool of worker processes talking over `aeron:ipc` is the motivating case.
   *
   * The driver owns a directory it allocates itself, and the enclosing `Scope` owns the driver: on
   * scope exit it stops the driver, joins its conductor threads, and removes the directory, whether
-  * that exit is normal, an error, or a cancellation. Clients connected to [[directory]] are the
+  * that exit is normal, an error, or a cancellation. Clients connected to `directory` are the
   * caller's to close first, exactly as they are with any externally-running driver.
   *
   * @see [[AeronDriver.launch]] to start one
-  * @see [[AeronClient.connect]] to connect a client to [[directory]]
+  * @see [[AeronClient.connect]] to connect a client to `directory`
   */
 opaque type AeronDriver = AeronDriver.State
 

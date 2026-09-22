@@ -1403,6 +1403,11 @@ object Container:
 
     /** Bidirectional connection to a container's stdin/stdout/stderr. Obtained from [[Container.attach]] or [[Container.execInteractive]];
       * the underlying connection is registered with the enclosing [[Scope]] and closes on scope exit.
+      *
+      * The process output is one ordered sequence of byte chunks, each tagged with the stream it came from ([[output]]). Every view of it
+      * ([[stdout]], [[stderr]], [[read]]) consumes from that same sequence, so each chunk is delivered once, and consuming a view again
+      * continues where the previous consumption stopped. Bytes are exact: nothing is decoded or split unless the caller asks for the
+      * line-oriented [[read]]. With a TTY every byte is stdout.
       */
     // CanEqual not derived — contains function-like methods (write, read, resize)
     abstract class AttachSession:
@@ -1412,11 +1417,33 @@ object Container:
         /** Send raw bytes to the container's stdin. */
         def write(data: Chunk[Byte])(using Frame): Unit < (Async & Abort[ContainerException])
 
-        /** Stream container output as [[LogEntry]] values; each entry's `source` distinguishes stdout from stderr. */
-        def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]]
+        /** The process output as exact byte chunks in the order the runtime delivered them, each tagged with its stream. Ends when the process
+          * closes its output (or the session closes).
+          */
+        def output(using Frame): Stream[AttachSession.Output, Async & Abort[ContainerException]]
+
+        /** The stdout bytes of [[output]]; stderr chunks met along the way are discarded. */
+        def stdout(using Frame): Stream[Span[Byte], Async & Abort[ContainerException]] =
+            output.collectPure(chunk => if chunk.source == LogEntry.Source.Stdout then Present(chunk.bytes) else Absent)
+
+        /** The stderr bytes of [[output]]; stdout chunks met along the way are discarded. */
+        def stderr(using Frame): Stream[Span[Byte], Async & Abort[ContainerException]] =
+            output.collectPure(chunk => if chunk.source == LogEntry.Source.Stderr then Present(chunk.bytes) else Absent)
+
+        /** Stream container output as [[LogEntry]] values, one per non-empty line; each entry's `source` distinguishes stdout from stderr.
+          * Lines are joined across chunk boundaries per stream before they are decoded as UTF-8, and a last line without a trailing newline is
+          * emitted when the output ends.
+          */
+        def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
+            internal.AttachOutput.lines(output)
 
         /** Resize the attached pseudo-terminal — only meaningful when the container was created with `allocateTty(true)`. */
         def resize(width: Int, height: Int)(using Frame): Unit < (Async & Abort[ContainerException])
+    end AttachSession
+
+    object AttachSession:
+        /** One chunk of process output: exact bytes and the stream they came from. */
+        final case class Output(source: LogEntry.Source, bytes: Span[Byte])
     end AttachSession
 
     // --- Info ---

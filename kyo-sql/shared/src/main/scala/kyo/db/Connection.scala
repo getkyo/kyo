@@ -201,6 +201,13 @@ abstract class Connection:
       */
     def closeNow(using Frame, AllowUnsafe): Unit
 
+    /** How many prepared statements this session has parsed again because the server no longer held them, taken and reset.
+      *
+      * The pool reads it at each lease's exit and folds it into `prepared_statements_reprepared`. That counter is the only sign an
+      * operator gets, since the recovery itself is silent. Zero on an engine where a cached statement cannot go missing.
+      */
+    private[kyo] def takeReprepares()(using AllowUnsafe): Long = 0L
+
 end Connection
 
 /** Companion of [[Connection]]: how a session is opened, and the policy every implementation shares.

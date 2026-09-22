@@ -6,7 +6,7 @@ import kyo.*
   * KyoException, leaves are top-level + prefixed, each leaf is one failure mode with raw structured
   * fields, Frame captured. The whole family lives in this one `WebsiteException.scala` file, matching
   * how the kyo substrate organizes its exception hierarchies ([[kyo.FileSystemException]],
-  * [[kyo.HttpException]], [[kyo.BrowserException]]).
+  * [[kyo.HttpException]], `kyo.BrowserException`).
   */
 sealed abstract class WebsiteException(message: => String = "", cause: String | Throwable = "")(using Frame)
     extends KyoException(message, cause)
@@ -19,7 +19,7 @@ final case class WebsiteReadmeException(path: Path, detail: WebsiteReadmeExcepti
 
 object WebsiteReadmeException:
     /** Typed README-parse failure modes. Nested in this exception's companion (its owner), mirroring
-      * how [[kyo.BrowserIFrameInvalidException.Reason]] scopes its detail enum to its owning exception
+      * how `kyo.BrowserIFrameInvalidException.Reason` scopes its detail enum to its owning exception
       * rather than sitting as a free-standing top-level type.
       */
     enum ReadmeFailure derives CanEqual:

@@ -62,7 +62,7 @@ class GenZipTest extends AsyncFreeSpec with NonImplicitAssertions:
         Future.successful(succeed)
     }
 
-    // ── Leaf 3: zip root tuple is seed-stable (topology preserved, INV-004) ──
+    // ── Leaf 3: zip root tuple is seed-stable (topology preserved) ──
 
     "zip root tuple is seed-stable (deterministic, topology preserved)" in {
         val seed   = Seed(7L)

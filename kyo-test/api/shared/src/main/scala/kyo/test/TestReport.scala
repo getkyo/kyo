@@ -61,7 +61,7 @@ end TestReport
 object TestReport:
     /** Accumulated counts for all 7 result kinds across a set of leaf results.
       *
-      * Produced by [[TestReport.counts]] via a single fold and also used directly by [[kyo.test.runner.internal.Summary]].
+      * Produced by [[TestReport.counts]] via a single fold and also used directly by kyo-test-runner's summary.
       *
       * @param passed
       *   number of [[TestResult.Passed]] leaves

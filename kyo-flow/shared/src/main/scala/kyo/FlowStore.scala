@@ -620,7 +620,7 @@ object FlowStore:
 
         /** Executions holding at least one sleep row.
           *
-          * Payload-free, and the asymmetry with [[WaitingForInput]] is deliberate: input names are the CALLER's vocabulary, since `signal`
+          * Payload-free, and the asymmetry with [[ExecutionFilter.WaitingForInput]] is deliberate: input names are the CALLER's vocabulary, since `signal`
           * takes them, while a sleep's name is the flow author's internal business.
           */
         case Sleeping

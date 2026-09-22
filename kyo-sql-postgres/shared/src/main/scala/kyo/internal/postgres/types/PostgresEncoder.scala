@@ -100,7 +100,7 @@ object PostgresEncoder:
     /** The encoder a NULL parameter carries, declaring [[OID_UNSPECIFIED]] so the server infers the parameter's type from the position it is
       * used in.
       *
-      * A NULL slot is signalled by a length of `-1` and no bytes, so [[write]] is unreachable: `BoundParam.encoded` answers `Absent` for a
+      * A NULL slot is signalled by a length of `-1` and no bytes, so `write` is unreachable: `BoundParam.encoded` answers `Absent` for a
       * NULL and the marshaller never asks an encoder to produce anything. What the encoder still decides is the OID in the `Parse` message,
       * and that one is load-bearing. Naming a concrete type there tells the server the parameter IS that type, so a NULL destined for a
       * `TEXT` column arrives declared as `INT4` and the insert is rejected on a type mismatch that the caller never wrote. Oid 0 is the

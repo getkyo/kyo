@@ -717,7 +717,7 @@ final private[kyo] class ShellBackend(
                             ): Unit < (Async & Abort[Closed]) =
                                 Scope.run(
                                     byteStream
-                                        .mapChunkPure { bytes => Seq(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                                        .mapChunkPure { bytes => Seq(Span.fromUnsafe(bytes.toArray)) }
                                         .into(LineAssembler.pipe)
                                         .foreachChunk { lines =>
                                             Kyo.foreachDiscard(lines.toSeq.filter(_.trim.nonEmpty)) { line =>
@@ -800,13 +800,12 @@ final private[kyo] class ShellBackend(
                             "Shell backend does not support interactive stdin — use HTTP backend"
                         ))
 
-                    def read(using Frame): Stream[LogEntry, Async & Abort[ContainerException]] =
+                    // The CLI process's stdout, as the exact bytes each read delivered.
+                    def output(using Frame): Stream[AttachSession.Output, Async & Abort[ContainerException]] =
                         Stream {
                             Scope.run {
                                 proc.stdout.mapChunk { bytes =>
-                                    val text  = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    val lines = text.split("\n").filter(_.trim.nonEmpty)
-                                    Chunk.from(lines.map(line => LogEntry(LogEntry.Source.Stdout, line)))
+                                    Chunk(AttachSession.Output(LogEntry.Source.Stdout, Span.fromUnsafe(bytes.toArray)))
                                 }.emit
                             }
                         }
@@ -949,14 +948,14 @@ final private[kyo] class ShellBackend(
                 if mergeStreams then Command((cmd +: args.toSeq)*).redirectErrorStream(true)
                 else Command((cmd +: args.toSeq)*)
 
-            // Per-stream state: lines spanning chunk boundaries are re-assembled by `LineAssembler.pipe`.
-            // No flush on termination — matches prior behavior of dropping trailing partial lines.
+            // Per-stream state: lines spanning chunk boundaries are re-assembled by `LineAssembler.pipe`, which also emits an unterminated last
+            // line when the stream ends.
             Scope.run {
                 Abort.runWith[CommandException](logsCmd.spawn) {
                     case Result.Success(proc) =>
                         val byteStream = if source == LogEntry.Source.Stderr then proc.stderr else proc.stdout
                         byteStream
-                            .mapChunkPure { bytes => Seq(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)) }
+                            .mapChunkPure { bytes => Seq(Span.fromUnsafe(bytes.toArray)) }
                             .into(LineAssembler.pipe)
                             .mapChunkPure { lines =>
                                 lines.collect { case line if line.nonEmpty => parseLogLine(line, source, timestamps) }
