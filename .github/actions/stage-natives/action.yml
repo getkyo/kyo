@@ -125,9 +125,17 @@ runs:
         path: kyo-sql-doltlite/build/doltlite/staged
         key: natives-doltlite-${{ steps.key.outputs.prefix }}-${{ hashFiles('kyo-sql-doltlite/scripts/build-doltlite.sh') }}
 
-    # Only a miss on a tree that is built needs the toolchain: cmake and Go for BoringSSL, cmake and
-    # the -luuid link target for the Aeron driver. SQLite and DoltLite's published archives need
-    # neither. A skipped restore reports no hit, so each clause is also gated on its input.
+    # Not part of the toolchain below, and needed on a hit as much as on a miss: the kyo-aeron shim
+    # links -luuid itself when the build compiles it against the staged archive, and the package
+    # carrying the libuuid.so link target is not preinstalled. macOS takes uuid from libSystem.
+    - name: Install the libaeron link target
+      if: ${{ inputs.stage == 'true' && inputs.aeron == 'true' && runner.os == 'Linux' }}
+      shell: bash
+      run: bash scripts/apt-install.sh --if-missing uuid-dev
+
+    # Only a miss on a tree that is built needs the toolchain: cmake and Go for BoringSSL, cmake for
+    # the Aeron driver. SQLite and DoltLite's published archives need neither. A skipped restore
+    # reports no hit, so each clause is also gated on its input.
     - name: Install the native build toolchain
       if: >-
         ${{ inputs.stage == 'true' && (
@@ -137,7 +145,7 @@ runs:
       run: |
         case "$RUNNER_OS" in
           Linux)
-            bash scripts/apt-install.sh --if-missing cmake go:golang-go uuid-dev
+            bash scripts/apt-install.sh --if-missing cmake go:golang-go
             ;;
           macOS)
             command -v cmake >/dev/null 2>&1 || brew install cmake
