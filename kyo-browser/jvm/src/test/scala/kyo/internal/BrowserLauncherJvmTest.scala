@@ -48,72 +48,71 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         }
     }
 
-    // `launch` registers the temp directory's removal before it spawns Chrome, and that removal sweeps by the directory's
-    // unique name first, so a Chrome the spawn step handed to a continuation the stop dropped is still found and killed
-    // when the scope closes. The rounds stop the launch at staggered sub-millisecond offsets from the step before it,
-    // across the spawn and the port poll after it; each round's Chrome carries a unique flag Chrome ignores, so the
-    // count afterwards is of this round's tree alone.
-    "a launch stopped around its spawn leaves no Chrome behind" in {
+    // The launch is stopped once the operating system shows its Chrome, which is during the port poll after the spawn.
+    // The Chrome carries a unique flag Chrome ignores, so the count is of this launch's tree alone, and a process that
+    // is never reaped ends this leaf as its timeout. The token starts with dashes, so it follows a `--`: without it
+    // `pgrep` rejects the pattern as an option, prints nothing, and the count reads zero whatever is running. Exit 1
+    // is `pgrep`'s "no match"; any other failure fails the leaf rather than counting zero.
+    "a launch stopped while its Chrome is up leaves no Chrome behind".times(40) in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val rounds                            = 40
-        def alive(token: String): Int < Async =
-            Abort.run[CommandException](Command("pgrep", "-f", token).textWithExitCode).map {
-                case Result.Success((out, _)) => out.linesIterator.count(_.trim.nonEmpty)
-                case _                        => 0
+        val token                                          = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
+        def alive: Int < (Async & Abort[CommandException]) =
+            Command("pgrep", "-f", "--", token).textWithExitCode.map {
+                case (out, ExitCode.Success)  => out.linesIterator.count(_.trim.nonEmpty)
+                case (_, ExitCode.Failure(1)) => 0
+                case (out, code)              => fail(s"pgrep could not count the launch's processes: $code $out")
             }
-        def kill(token: String): Unit < Async =
-            Abort.run[CommandException](Command("pkill", "-9", "-f", token).textWithExitCode).unit
+        // A Chrome this leaf fails to reap would otherwise run for the rest of the suite.
+        def kill: Unit < Async =
+            Abort.run[CommandException](Command("pkill", "-9", "-f", "--", token).textWithExitCode).unit
         Abort.run[BrowserSetupException](SharedChrome.chromeConfig).map { obtained =>
-            val base = obtained match
-                case Result.Success(cfg) => cfg
-                case other               => cancel(s"no Chrome to launch here: $other")
-            Loop.indexed { i =>
-                if i >= rounds then Loop.done(succeed)
-                else
-                    val token     = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"
-                    val cfg       = base.copy(extraArgs = Chunk(token))
-                    val launching = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    for
-                        fiber <- Fiber.initUnscoped(Abort.run[BrowserSetupException](Scope.run(
-                            Sync.defer(launching.set(true)).andThen(BrowserLauncher.launch(cfg)).andThen(Async.never)
-                        )))
-                        _ <- Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !launching.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 500_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }
-                        _    <- fiber.getResult
-                        gone <- Abort.run[Timeout](Async.timeout(10.seconds)(assertEventually(alive(token).map(_ == 0))))
-                        _    <- if gone.isSuccess then Kyo.unit else kill(token)
-                    yield
-                        assert(gone.isSuccess, s"round $i: a Chrome process outlived the launch that was stopped")
-                        Loop.continue
-                    end for
-            }
+            val cfg = obtained match
+                case Result.Success(base) => base.copy(extraArgs = Chunk(token))
+                case other                => cancel(s"no Chrome to launch here: $other")
+            Scope.run(Scope.ensure(kill).andThen {
+                for
+                    fiber <- Fiber.initUnscoped(Abort.run[BrowserSetupException](Scope.run(
+                        BrowserLauncher.launch(cfg).andThen(Async.never)
+                    )))
+                    _ <- assertEventually(alive.map(_ > 0))
+                    _ <- fiber.interrupt
+                    _ <- fiber.getResult
+                    _ <- assertEventually(alive.map(_ == 0))
+                yield succeed
+            })
         }
     }
 
     // Chrome's helpers (zygotes, GPU process, network service) outlive the main process by a few milliseconds and write
     // into the user-data-dir as they go down, so a removal that runs as soon as the main process is dead can find the
-    // directory re-created behind it.
+    // directory re-created behind it. `terminateTree` returns once none of the tree is left, so the survivors are counted
+    // the moment it returns. The quoted `mkdir` text picks out the shell and its subshell, whose argv carry the script:
+    // the `mkdir` each iteration forks has the path unquoted in its own argv and is not part of the tree.
     "terminateTree leaves no descendant alive to write into the directory" in {
         assume(!Platform.isWindows, "POSIX process tree")
-        val outerTmp                = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
-        val dir                     = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
-        val script                  = s"mkdir -p '$dir'; (while true; do mkdir -p '$dir/x'; sleep 0.005; done) & wait"
+        val outerTmp                                           = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
+        val dir                                                = outerTmp.resolve(s"kyo-browser-jvm-test-${UUID.randomUUID()}")
+        val step                                               = s"mkdir -p '$dir/x'"
+        val script                                             = s"mkdir -p '$dir'; (while true; do $step; sleep 0.005; done) & wait"
+        def survivors: Int < (Async & Abort[CommandException]) =
+            Command("pgrep", "-f", "--", step).textWithExitCode.map {
+                case (out, ExitCode.Success)  => out.linesIterator.count(_.trim.nonEmpty)
+                case (_, ExitCode.Failure(1)) => 0
+                case (out, code)              => fail(s"pgrep could not count the tree's processes: $code $out")
+            }
         def removeDir: Unit < Async =
             Abort.run[FileSystemException](Path.run(Path(dir.toString).removeAll)).unit
         Scope.run {
             Scope.ensure(removeDir).andThen {
                 for
-                    proc <- Command("sh", "-c", script).spawnUnscoped
-                    _    <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
-                    _    <- BrowserLauncher.terminateTree(proc)
-                    _    <- removeDir
-                    _    <- Async.sleep(300.millis)
-                yield assert(!Files.exists(dir), s"a descendant survived terminateTree and re-created $dir")
+                    proc   <- Command("sh", "-c", script).spawnUnscoped
+                    _      <- assertEventually(Sync.defer(Files.exists(dir.resolve("x"))))
+                    before <- survivors
+                    _      <- BrowserLauncher.terminateTree(proc)
+                    left   <- survivors
+                yield
+                    assert(before > 0, "the process count never saw the tree, so a zero afterwards would prove nothing")
+                    assert(left == 0, s"terminateTree returned with $left process(es) of the tree still alive")
             }
         }
     }

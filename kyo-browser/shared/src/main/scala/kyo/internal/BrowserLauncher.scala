@@ -92,9 +92,10 @@ private[kyo] object BrowserLauncher:
         } {
             // Released by `terminateTree` rather than by `Command.spawn`'s own release, which kills the main process and
             // returns: Chrome is a process tree, and the directory removal registered before this must not run while any
-            // of it is still alive.
-            Command(args*).inheritStderr.spawnUnscoped.map { proc =>
-                Scope.acquireRelease(proc)(terminateTree).andThen(BrowserLauncherPlatform.registerShutdownHook(proc)).andThen(proc)
+            // of it is still alive. The spawn is the bracket's acquire, so the release registers in the step the process
+            // arrives and a stop cannot park between the two.
+            Scope.acquireRelease(Command(args*).inheritStderr.spawnUnscoped)(terminateTree).map { proc =>
+                BrowserLauncherPlatform.registerShutdownHook(proc).andThen(proc)
             }
         }
     end spawnChrome

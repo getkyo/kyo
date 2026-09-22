@@ -350,14 +350,25 @@ private[kyo] object CdpBackend:
     private[kyo] def runtimeEvaluate(backend: CdpBackend, params: EvalParams)(using
         Frame
     ): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params))
+
+    /** [[runtimeEvaluate]] for an expression that leaves something on the page, owed `release` on `finalizer` from the moment its
+      * reply arrives: see [[CdpBackend.acquire]].
+      */
+    private[kyo] def runtimeEvaluateAcquire(backend: CdpBackend, finalizer: Scope.Finalizer, params: EvalParams)(
+        release: EvalResult => Unit < (Async & Abort[BrowserReadException])
+    )(using Frame): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.acquire[EvalParams, EvalResult](finalizer, RuntimeEvaluateMethod, params)(release))
+
+    private def recoverEvaluate(evaluate: => EvalResult < (Async & Abort[BrowserReadException]))(using
+        Frame
+    ): EvalResult < (Async & Abort[BrowserReadException]) =
         recoverContextDestroyed {
             Abort.recover[BrowserProtocolErrorException] { e =>
                 if e.error.contains(CdpErrorStrings.UnreturnableValueErrorMessage) then
                     EvalResult(RemoteObject.`undefined`(), Absent)
                 else Abort.fail(e)
-            } {
-                backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params)
-            }
+            }(evaluate)
         }
 
     private[kyo] def setDeviceMetricsOverride(backend: CdpBackend, params: ViewportParams)(using
@@ -506,8 +517,8 @@ private[kyo] object CdpBackend:
     private[kyo] def initUnscoped(
         transport: JsonRpcTransport,
         launchCfg: Browser.LaunchConfig,
-        // Test seam: handed the dialog queue during init, so a test can observe the unscoped dialog drainer parked on
-        // it after an interrupt at the version probe abandons init before it yields the backend. A no-op in production.
+        // Test seam: handed the dialog queue during init, the only way to observe whether the dialog drainer is still
+        // parked on it when an init is abandoned before it yields the backend. A no-op in production.
         dialogQueueProbe: Channel[(Boolean, String, Maybe[SessionId])] => Unit = _ => ()
     )(using
         Frame
@@ -688,8 +699,18 @@ private[kyo] object CdpBackend:
       * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
       * allocator, per INV-018), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
+      *
+      * The spawn is the bracket's acquire, so the drainer is owed its stop to the scope its endpoint lives in from the step it is
+      * live. The backend's close stops it too, but an init abandoned before it yields a backend has no close to run.
       */
     private def buildDialogDrainer(
+        endpoint: JsonRpcHandler,
+        dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
+        dialogIdCounter: AtomicInt
+    )(using Frame): Fiber[Unit, Any] < (Sync & Scope) =
+        Scope.acquireRelease(spawnDialogDrainer(endpoint, dialogQueue, dialogIdCounter))(_.interrupt.unit)
+
+    private def spawnDialogDrainer(
         endpoint: JsonRpcHandler,
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         dialogIdCounter: AtomicInt
