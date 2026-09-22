@@ -14,9 +14,6 @@ import scala.annotation.publicInBinary
 
 /** One node of a suspended computation, the reification of a single combinator.
   *
-  * With [[kyo.kernel.Arrow]] these are the whole of what a computation is made of, so a new node kind implies a new combinator rather than
-  * a patch to the evaluator.
-  *
   * The nodes are abstract classes so each construction site implements the members anonymously and keeps its own types, which lets a node
   * hold a primitive input without boxing it.
   */
@@ -49,8 +46,6 @@ object Pending:
         def contB = Arrow.id
 
     /** An operation waiting for a handler to answer it.
-      *
-      * `tag` names the effect, which is what a region matches on as the evaluator walks outward looking for a handler.
       */
     sealed abstract class Suspend[E <: Effect, A, B, S] extends Pending[B, S]:
         Debugger.onAlloc(this)
@@ -59,7 +54,7 @@ object Pending:
         def cont: Arrow[A, B, S]
 
         /** This request on its own, as the computation that raises it again: what a masking region's clause is handed in place of an input it
-          * cannot interpret. Each kind of suspension rebuilds itself, so the evaluator does not have to.
+          * cannot interpret.
           */
         private[kyo] def reraise: A < E
 
@@ -129,7 +124,6 @@ object Pending:
     abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
         extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
 
-    /** Enters a region: builds the node that installs `handler` with `state` over `v`. */
     def handle[State, E <: Effect, A, B, S](v: A < (E & S), handler: Handler.ArrowHandler[State, E, A, B, S], state: State): B < S =
         v match
             case kyo: Pending[A, E & S] @unchecked =>
@@ -146,9 +140,6 @@ object Pending:
                 handler.onDone(state, Nested.unnest[A](v))
 
     /** A region entry: a computation together with the handler installed over it.
-      *
-      * The evaluator pushes the handler when it reaches this node and pops it when the computation inside is done, which is what makes the
-      * region's extent exactly the extent of `value`.
       */
     sealed abstract class Handle[E <: Effect, A, C, -S] extends Pending[C, S]:
         Debugger.onAlloc(this)
@@ -194,7 +185,7 @@ object Pending:
 
     /** A slice of computation set aside with what it needs to run again elsewhere, or later.
       *
-      * `entries` is the snapshot of regions to reinstall before `value` resumes (each carrying its own release), so a parked slice carries
+      * `entries` is the snapshot of regions to reinstall before `value` resumes, so a parked slice carries
       * its own context. `entryOwed`, aligned with `entries`, carries the remainders each region owed, so they re-own to the reinstalled
       * region rather than flattening to the eval root. `releases` and `owedRemainders` are the evaluation's own lanes, owed below those
       * regions, handed to the stack it resumes on. Empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the

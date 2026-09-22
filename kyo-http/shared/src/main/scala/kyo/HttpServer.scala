@@ -123,8 +123,6 @@ object HttpServer:
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException]) =
-        // The cell the bind fills is a throwaway here (only `init`'s
-        // scope reads it); the bind's own lost-handoff branch closes a listener a lost async handoff abandons.
         Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map(serverCell => initInto(config, serverCell)(handlers*))
 
     private def initInto(config: HttpServerConfig, serverCell: AtomicRef.Unsafe[Maybe[HttpServer]])(handlers: HttpHandler[?, ?, ?]*)(using
@@ -158,7 +156,7 @@ object HttpServer:
             val bound = Promise.Unsafe.init[HttpServer, Abort[HttpBindException]]()
             listenFiber.onComplete { result =>
                 result.foldError(
-                    // The fiber's payload is a settled `Unsafe < Any`; `eval` reads the bound server. The cell is set in
+                    // The cell is set in
                     // the same step `bound` completes, so `init`'s finalizer finds it whether or not the caller took the handoff.
                     serverComp =>
                         val server = serverComp.eval.safe

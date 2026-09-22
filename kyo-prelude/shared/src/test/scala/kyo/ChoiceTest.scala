@@ -365,8 +365,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket inside the region around the choice point is live in every branch and releases once, after the handler ends" in {
-            // The choice suspension crosses the bracket, so the bracket is shared by every branch: each branch and the
-            // step after the bracket run against the live resource, and the release runs once, when `Choice.run` ends.
             var log = Chunk.empty[String]
             val v   = Choice.run {
                 Bracket("res") { _ =>
@@ -410,9 +408,6 @@ class ChoiceTest extends kyo.test.Test[Any]:
         }
 
         "a bracket inside the streamed choice is held across every branch and released once" in {
-            // runStream pulls each branch through a handleFirst region and continues it in its own loop, so the
-            // bracket travels with each branch's remainder. The region declares escaping and repeated, so the
-            // bracket is held across every branch and discharged once by the scope below.
             var log = Chunk.empty[String]
             val v   =
                 Choice.runStream {

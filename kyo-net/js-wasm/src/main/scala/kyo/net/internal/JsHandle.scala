@@ -22,8 +22,7 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
     var peerCloseGrace: Duration = Duration.Infinity
 
-    // Set true by JsTransport.upgradeToTls before it detaches this handle for a STARTTLS handshake, and read by JsIoDriver.onInboundClosedDuringRead
-    // so a plaintext read the pump pulled off the socket a moment before the detach is salvaged for the handshake rather than dropped. Never reset:
+    // Never reset:
     // the upgraded connection wraps a fresh JsHandle over the TLSSocket, so this handle is discarded whether the upgrade succeeds or fails.
     var upgrading: Boolean = false
 

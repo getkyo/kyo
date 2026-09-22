@@ -65,8 +65,7 @@ object Command:
           * If the scope closes before `waitFor` completes, the process is forcibly killed.
           */
         def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
-            // The fork is the acquire, so the release registers in the step that produces the process: a stop during
-            // the fork cannot leave it unowned. `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
+            // `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
             // `.map` a stop could park on between the fork and `acquireRelease`'s `ensureMap`.
             Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
                 Sync.Unsafe.defer {

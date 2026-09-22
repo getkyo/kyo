@@ -43,13 +43,11 @@ sealed trait Arrow[-A, +B, -S] extends Kyo[B, S]:
 
     /** Taking the rest of the computation as an argument is what lets the JIT fuse a chain of transformations into straight-line code: every
       * `map` and [[Arrow.apply]] expands to its own class with the body inlined into `apply`, so the receiver at each site is monomorphic and
-      * the JIT can inline through it. Answering with the intermediate value instead would route every step back through the evaluator's loop,
-      * far too large to inline and seeing every effect in the program, so nothing downstream would fuse.
+      * the JIT can inline through it.
       *
       * The next step is reached as `cont.head(result, cont.tail)`, not `cont(result)`: that runs a composed continuation's first link with the
       * second behind it, and an atom with [[Arrow.id]] behind it, the same expression either way. Calling `cont` directly would reach the
-      * composition node, which can only build a node and hand it back to the evaluator, ending fusion at every composition boundary. It also
-      * keeps a deferral to one node, carrying both halves rather than a node plus a composition.
+      * composition node, which can only build a node and hand it back to the evaluator, ending fusion at every composition boundary.
       */
     def apply[C, S2](v: A < S2, cont: Arrow[B, C, S2]): C < (S & S2)
 
@@ -70,8 +68,7 @@ end Arrow
 
 object Arrow:
 
-    /** The arrow that returns its input untouched. Reach for [[id]] rather than constructing one: a single instance is shared across every
-      * type.
+    /** The arrow that returns its input untouched.
       */
     class Id[A] private[Arrow] () extends Step[A, A, Any]:
         def frame                                          = Frame.internal

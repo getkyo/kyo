@@ -134,8 +134,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
                 // The slot's give-back is registered on the enclosing Scope BEFORE the take, which claims the slot in
-                // the step it completes in. The Scope also closes when the connect fails, which is what prevents a
-                // slot leak.
+                // the step it completes in.
                 Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
                     Scope.ensure {
                         Sync.Unsafe.defer {
@@ -237,13 +236,12 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 }
                 slotChans.clear()
                 idleConns.foreach(_.closeNow)
-                // `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
+                // `remove` is the atomic claim, so a reclaim resolving at the same instant sees false, not a double-close.
                 quarantined.forEach { conn =>
                     if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
                 }
                 // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
-                // counters were still worth reporting, and a pool that outlived its registration would report another pool's
-                // state under this one's name.
+                // counters were still worth reporting.
                 diagRegistration.close()
             }
         }(drain(gracePeriod))
@@ -414,10 +412,6 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // The permit is owned by a finalizer before it is taken: the give-back is registered first, on a scope
             // opened around the take, and `takeSlot` claims the permit into `held` in the step the take completes in,
             // so there is no moment at which a taken permit has no owner.
-            // The give-back is a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers the interrupt and panic
-            // edges but NOT a typed `Abort` handled outside its region: that finalizer parks until the calling FIBER
-            // ends, so an ordinary statement failure would strand the permit until the caller's whole program finished.
-            // `Scope.run` closes its scope as part of evaluating the body, so the finalizer fires on that edge too.
             Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
                 Scope.run {
                     Scope.ensure {
@@ -438,10 +432,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                         case Result.Success(a)                     => a
                                         case Result.Failure(e: SqlServerException) =>
                                             // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
-                                            // decides what it is. At ERROR this fills an operator's dashboard with entries
-                                            // for a program behaving correctly, and on a stdio transport anything the
-                                            // library writes on its own initiative is a candidate for corrupting the
-                                            // channel.
+                                            // decides what it is.
                                             Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                                 .andThen(Abort.fail[SqlException](e))
                                         case Result.Failure(e) => Abort.fail[SqlException](e)

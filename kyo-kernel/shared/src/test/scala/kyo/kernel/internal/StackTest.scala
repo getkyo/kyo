@@ -100,7 +100,6 @@ class StackTest extends AnyFreeSpec:
             assert(stack.continuation(0) == null, "the popped slot still holds its continuation")
         }
 
-        // The same, one level down, so a fix that clears more than it should fails here rather than passing.
         "popping the inner entry leaves the outer one intact" in {
             val stack = new Stack
             val kept  = askHandler

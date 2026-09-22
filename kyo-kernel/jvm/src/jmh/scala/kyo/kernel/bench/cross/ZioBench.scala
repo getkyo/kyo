@@ -14,20 +14,14 @@ import zio.{Scope as _, *}
   * parked caller, a thread handoff kyo's `eval` never pays. The entry cost is measured, not factored
   * out.
   *
-  * Tier B substitution: kyo's Ask suspension becomes a `FiberRef.get`, ZIO's ambient-value
+  * kyo's Ask suspension becomes a `FiberRef.get`, ZIO's ambient-value
   * substrate, with the answer as the FiberRef's initial value so no per-run install is paid; the
   * stateful row uses `FiberRef.modify`. A kyo region installed for an extent becomes `locally`, the
   * scoped install with its restore. Rows suffixed `Alt` record the other spellings (`ZIO.service`
   * over a ZEnvironment, the per-run `locally` install, a shared `Ref`) and stay out of the headline
   * tables.
   *
-  * Rows with no ZIO counterpart are absent rather than approximated: a continuation captured and
-  * resumed by a handler (foreignCrossingsPayRotation, handleContResumesOnce, handleContResumesTwice,
-  * handleFirstPeelsRemainder), a handler clause that performs another effect
-  * (emittingClausesPayRegionRebuild), a suspension with its continuation fused into the node
-  * (suspensionFusesContinuation: `FiberRef.getWith` is `get.flatMap`), a region with the following
-  * map fused into it (handleLoopFusesContinuation), masking (maskTunnelsPastInnerHandler) and the
-  * isolate state crossing without a fiber (isolateCrossingPerRound).
+  * Rows with no ZIO counterpart are absent rather than approximated.
   */
 @State(org.openjdk.jmh.annotations.Scope.Benchmark)
 @BenchmarkMode(Array(Mode.AverageTime))
@@ -169,7 +163,7 @@ class ZioBench:
         runSync(loop(seed - 1).provideEnvironment(env))
     end suspensionBaselineAltEnv
 
-    /** Recorded alternative: the per-run `locally` install, a full uninterruptible bracket. */
+    /** Recorded alternative: the per-run `locally` install. */
     @Benchmark
     def suspensionBaselineAltInstall: Int =
         def loop(i: Int): UIO[Int] =
@@ -234,9 +228,6 @@ class ZioBench:
         runSync(loop(0, seed))
     end fusionAfterSuspension
 
-    /** The one row where the per-run install is the substance: the ambient is installed for the
-      * extent but never read.
-      */
     @Benchmark
     def idleHandlerAddsNothing: Int =
         def loop(i: Int, acc: Int): UIO[Int] =
@@ -268,7 +259,7 @@ class ZioBench:
     end trailingMapsStayLinear
 
     /** ZIO reifies a Mapped node per link, so the row measures node build plus the interpreter over
-      * those nodes. Shape from zio-blocks' AsyncChainBench.
+      * those nodes.
       */
     @Benchmark
     def dynamicChainOfMapsStaysLinear: Int =

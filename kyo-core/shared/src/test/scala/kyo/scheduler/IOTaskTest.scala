@@ -9,10 +9,6 @@ class IOTaskTest extends kyo.test.Test[Any]:
 
     "current task" - {
 
-        // A spawning fiber reads the task running on its thread to link its children before they are scheduled, so a parent
-        // interrupted while they launch reaches them. The task is a ThreadLocal entry, and on Scala Native a class of kyo's own
-        // once shadowed the javalib's java.lang.ref.WeakReference, which ThreadLocal keys its table with: every entry was lost
-        // when the table grew.
         "the current task survives the thread's ThreadLocal table growing within the slice" in {
             Fiber.initUnscoped {
                 Sync.defer {
@@ -86,8 +82,6 @@ class IOTaskTest extends kyo.test.Test[Any]:
                 _ <- fiber.interrupt
                 _ <- fiber.getResult
             yield
-                // A spinning fiber stands at no suspension, so the frame comes from the deferral in front
-                // of it: the arrow that applies a `Sync.defer` body names where the user wrote it.
                 assert(rendered.contains("IOTaskTest.scala:"), s"the spin loop named no user frame: $rendered")
                 assert(rendered.contains("IOTaskTest.loop"), s"the frame is not the spinning deferral: $rendered")
             end for
@@ -100,9 +94,6 @@ class IOTaskTest extends kyo.test.Test[Any]:
                 Sync.defer(1).map(userStep).map(_ => Async.use(blocker)(_ => ())).map(_ => ())
             val iotask = IOTask.detached(work)
             for
-                // A forked reader hammers fiberTrace() while the worker rewrites `curr`: the fiber parks
-                // (a frame to render), resumes (the remainder is replaced), then completes (`curr` is
-                // cleared).
                 reader <- Fiber.initUnscoped(Sync.defer((0 until 2000).map(_ => iotask.fiberTrace()).toVector))
                 _      <- Sync.defer(blocker.completeDiscard(Result.succeed(())))
                 reads  <- reader.get
@@ -128,9 +119,6 @@ class IOTaskTest extends kyo.test.Test[Any]:
     }
 
     "fatal error in a guarded body" - {
-        // A fatal error must still run the computation's finalizers: here one completes `probe`, standing in
-        // for a promise awaited elsewhere, so a skipped finalizer expires the await.
-        //
         // InternalError because the scheduler gates on `IsFatal`, which counts only `VirtualMachineError` and
         // `ControlThrowable`. JVM-only: it relies on one worker taking the fatal while the timeout fires on
         // another, which the single-worker Native and single-threaded JS runtimes do not provide.

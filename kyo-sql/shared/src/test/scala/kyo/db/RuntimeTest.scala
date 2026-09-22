@@ -150,14 +150,6 @@ class RuntimeTest extends Test:
         }
     }
 
-    // The clean edge is the one the failure bracket does not cover: warm-up succeeded, so the bracket's finalizer does
-    // nothing and its scope closes, and from that instant the warmed pool belongs to nobody until the caller registers
-    // a close for it. Every caller has steps between the two, `SqlClient.openScoped` included, and an interrupt taken
-    // in any of them strands `minConnections` established sessions.
-    //
-    // The park is what makes that window deterministic instead of a race: it stands in for those steps, so the
-    // interrupt lands with the pool warm and the caller's registration not yet made. Nothing here is timed; the gates
-    // order it.
     "init closes what it opened when an interrupt lands before the caller registers".timeout(15.seconds) in {
         // Unsafe: test-only gates, completed from inside the computation under test and awaited from the leaf.
         import AllowUnsafe.embrace.danger
@@ -178,7 +170,6 @@ class RuntimeTest extends Test:
             _ <- handed.safe.get
             _ <- fiber.interrupt
             _ <- fiber.getResult
-            // Retried, not read once: the interrupt spawns the scope's drain rather than waiting for it.
             _ <- assertEventually(Sync.defer(factory.opened.size == 2 && factory.opened.forall(_.closed)))
         yield succeed
         end for

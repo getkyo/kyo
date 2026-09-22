@@ -24,8 +24,6 @@ final class ConsoleDebugger extends Debugger:
         java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Any, java.lang.Boolean]))
     reported.add(Arrow.id)
 
-    // Every node and arrow should pass through onAlloc before any other hook sees it. One that has not is a
-    // construction site missing its Debugger.onAlloc; without this it would be a silent hole in the trace.
     private def checkReported(vs: Any*): Unit =
         for v <- vs do
             if (v.isInstanceOf[Pending[?, ?]] || v.isInstanceOf[Arrow[?, ?, ?]]) && !reported.contains(v) then

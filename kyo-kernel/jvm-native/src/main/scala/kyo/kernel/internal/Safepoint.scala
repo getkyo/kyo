@@ -9,8 +9,8 @@ import scala.annotation.tailrec
   * through.
   *
   * Fusion runs transformations on the caller's stack, so an unbounded fused run would overflow it. Each fused step takes a unit of budget;
-  * when it runs out the combinator builds a node instead and the evaluator picks it up, costing heap rather than a frame. That is stack
-  * safety on the fused path (the tail-recursive loop supplies it elsewhere). The same check covers preemption: a scheduler arms a thread's
+  * when it runs out the combinator builds a node instead and the evaluator picks it up, costing heap rather than a frame.
+  * The same check covers preemption: a scheduler arms a thread's
   * slot, and the next poll that sees it parks the computation and answers the remainder as a value, so a run becomes a slice without the
   * computation knowing.
   *

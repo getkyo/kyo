@@ -132,8 +132,8 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     // Set right after selector.close() in close(): from then on implCloseSelector has killed every channel, so a queued release is true
     // regardless of isRegistered(). Read after an offer by releaseListener and by the poll carrier's re-offer, paired with close()'s write
     // before its drain, so an entry that misses the closing drain is completed by the carrier that offered it: volatile ordering makes at
-    // least one side observe the other, the same store-load pairing the rebuild's compensating wakeup relies on.
-    // Unsafe: construction-time bridge, like closedFlag.
+    // least one side observe the other.
+    // Unsafe: construction-time bridge.
     private val selectorClosed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // Diagnostics dump so a connection this driver still holds shows up in kyo-test's end-of-run leak report (LeakCheck reads Diagnostics.dumpAll).
@@ -1139,8 +1139,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 s"$label closing driver, failing ${pendingReads.size()} reads, ${pendingWritables.size()} writes, ${pendingConnects.size()} connects, ${pendingAccepts.size()} accepts"
             )
             // Failing a promise runs its callbacks inline, so the selector teardown is in a `finally`: a throw from one of them must not
-            // leave the selector open or the queued listener releases pending. Closing the selector runs implCloseSelector, which
-            // deregisters and kills every channel, so each queued release is true once it returns. The flag is set before the drain so a
+            // leave the selector open or the queued listener releases pending. The flag is set before the drain so a
             // release armed after this drain completes itself.
             try failPendingOps()
             finally
@@ -1178,7 +1177,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         pendingAccepts.clear()
         // Drop any handles awaiting deferred registration: the driver is gone, so the poll carrier will never drain them. Their downstream
         // awaitX promises (if any were armed during the deferred window) are already failed by the pending-op-map cleanup above; the channels
-        // are owned and closed by the caller (the upgrade teardown). Clearing prevents a stranded queue entry from outliving the driver.
+        // are owned and closed by the caller (the upgrade teardown).
         pendingRegistrations.clear()
         // Fail any STARTTLS upgrade whose bootstrap arm was enqueued but not yet applied: the driver is gone, so drainUpgradeArms will never run.
         // Such a handle is not yet in pendingReads (applyUpgradeArm puts it), so the loop above did not fail its handshake waiter; the waiter

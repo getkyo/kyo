@@ -27,8 +27,7 @@ abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
-    /** Reads the value bound for this context effect. The effect joins the row (evaluating only once the row is empty), so this read cannot be
-      * reached until a handler has bound a value.
+    /** Reads the value bound for this context effect.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](inline effectTag: Tag[E])(using inline _frame: Frame): A < E =
@@ -56,8 +55,7 @@ object ContextEffect:
                     case kyo: Pending[A, S2] @unchecked => Effect.defer(kyo, this, cont2)
                     case _                              => cont2(f(Nested.unnest[A](v)), Arrow.id)
 
-    /** Reads the bound value, falling back to `defaultValue` when nothing has bound one. The effect stays out of the row (it cannot fail), so
-      * a computation using it can evaluate with nothing bound around it at all.
+    /** Reads the bound value, falling back to `defaultValue` when nothing has bound one.
       */
     @nowarn("msg=anonymous")
     inline def suspend[A, E <: ContextEffect[A]](

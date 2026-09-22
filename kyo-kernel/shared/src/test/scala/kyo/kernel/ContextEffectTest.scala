@@ -548,8 +548,6 @@ class ContextEffectTest extends AnyFreeSpec:
          */
 
         /* Disabled: needs ContextEffect.handle's done hook plus a completing helper, which this kernel does not provide (it has release instead).
-        // A binding owns nothing to release: what a throw or a discarded continuation leaves behind is a bracket's
-        // to release, and a binding's done runs only at a normal end.
         "done does not run when the computation throws, and the failure still leaves" in {
             var completed = false
             val v         = completing(1, _ => completed = true)(count.map(_ => (throw new RuntimeException("boom")): Int))

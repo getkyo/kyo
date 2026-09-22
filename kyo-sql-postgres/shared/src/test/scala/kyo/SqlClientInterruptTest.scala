@@ -96,8 +96,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }.andThen(succeed)
     }
 
-    /** The scoped lease behind `streamQuery` takes its permit through the same forked, timeout-bounded take as a statement, so a caller
-      * interrupted on that take's join must leave the permit owned by the give-back registered before the take. A stranded permit is
+    /** A stranded permit is
       * observable through `close`: it waits its whole `closeGrace` for a permit that never comes back, so each cycle, close included, is
       * bounded well under that grace and a leak fails the cycle by name rather than by the suite timeout.
       */
@@ -147,11 +146,6 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     end containerUrl
 
-    /** `Runtime.init` warms the pool under an inner `Scope.run` whose finalizer closes the pool only on a failure edge; the clean edge hands
-      * the pool on through that run's drain await and two more steps before `openScoped` registers the client's close. An interrupt on any
-      * of those leaves a pool holding `minConnections` established sessions that nothing closes. The sessions are counted on the server by
-      * the `application_name` the URL sets: a close still in flight drains within the bound, a leaked pool's sessions never go away.
-      */
     "an interrupt landing as the warmed pool is handed over strands no session" in {
         val rounds = 30
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
@@ -177,11 +171,6 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** `withAdvisoryLock` takes the lock in a server round trip and registers its release in the step after the reply lands. An interrupt
-      * landing between the grant and that step leaves the lock on the pooled session, which the pool reclaims and hands to the next
-      * borrower still locked. The lock is read back from `pg_locks` through a second client once the interrupted fiber has settled: a
-      * release still in flight clears it within the bound, a lock nobody registered stays for the session's life.
-      */
     "an interrupt landing as the advisory lock is granted strands no lock" in {
         val rounds = 40
         val key    = 7340031L
@@ -248,12 +237,6 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** `closeAll` / `Runtime.close` extract the idle ring and install the force-close of what they extracted with no poll
-      * between, so a stop landing there cannot abandon connections the pool no longer holds, out of the ring and unclosed.
-      * Each round stops the fiber that is closing a warm client. A round whose stop landed before the close began proves
-      * nothing and closes the client itself; one whose close began must see the server's session count for the client's
-      * `application_name` reach zero within the bound.
-      */
     "a close whose caller is stopped strands no session" in {
         val rounds = 120
         val warm   = SqlConfig(maxConnections = 2, minConnections = 2, acquireTimeout = 10.seconds, queryTimeout = 10.seconds)
@@ -285,12 +268,6 @@ class SqlClientInterruptTest extends SqlContainerTest:
         }
     }
 
-    /** A lease owns what the pool hands it from the step it is handed: a reservation is claimed into a flag whose release was registered
-      * before the ring was asked, and a pooled connection's exit registers in the step that takes custody of it. A stop landing on any
-      * poll in between must not leave a slot the pool cannot hand out again, or after enough such stops a pool of two refuses every
-      * acquire. The leaf stops leases against one pool of two, back to back, and then asks the pool for a statement within its acquire
-      * budget: a refused acquire is the failure. Closing the pool afterwards must complete and leave no session behind.
-      */
     "stopped leases leave a pool that still serves and closes clean" in {
         val rounds = 200
         val two    = SqlConfig(maxConnections = 2, minConnections = 0, acquireTimeout = 2.seconds, queryTimeout = 10.seconds)

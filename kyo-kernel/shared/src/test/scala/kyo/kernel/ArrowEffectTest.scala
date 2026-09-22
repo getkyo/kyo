@@ -469,7 +469,6 @@ class ArrowEffectTest extends Test:
 
                 val flattened                           = flatten(result)
                 val finalResult: Int < NestedTestEffect = handle(flattened)
-                // The region is a node, so its answer is observable at eval rather than evalNow.
                 assert(ArrowEffect.handleCont(nestedTag, finalResult)([C] => (input, cont) => cont(input)).eval == 50)
             }
         }
@@ -570,7 +569,6 @@ class ArrowEffectTest extends Test:
 
         "handlePartial on Nested" - {
 
-            // Eval.partial takes a computation with no effects left in the row, so the region closes first.
             def handle[A](v: A < NestedTestEffect): A < Any =
                 Eval.partial(
                     ArrowEffect.handleCont(nestedTag, v)([C] => (input, cont) => cont(input * 10), a => Kyo.lift(a))
@@ -1741,9 +1739,6 @@ class ArrowEffectTest extends Test:
             assert(r.eval == -7)
         }
 
-        // The recovering region's continuation runs where the guard is re-entered, after the region is popped, not from
-        // inside the guard's catch: a throw from the continuation's first link is the enclosing region's to answer, and
-        // raised from the catch it would leave the eval unrecovered.
         "a throw from the continuation of a recovered region reaches the enclosing region" in {
             object Again extends RuntimeException("again", null, false, false)
             val body: Int < Ask  = ask.map(_ => (throw Boom): Int)

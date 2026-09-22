@@ -17,7 +17,6 @@ private[kyo] class Nested[+A](val value: A)
 
 @publicInBinary private[kyo] object Nested:
 
-    /** Removes one layer, if there is one. */
     def unnest[A](v: Any): A =
         v match
             case v: Nested[A] @unchecked => v.value

@@ -825,9 +825,7 @@ lazy val `kyo-kernel` =
             // The kernel's lift is a same-module splice macro, and a resident doctest driver
             // reusing one compiler across blocks trips dotty's denotation validation on the
             // suspended-unit retries. A fresh driver per block sidesteps it.
-            doctestFreshDriver := true,
-            // Bytecode-shape pins read method
-            // sizes through javassist.
+            doctestFreshDriver                    := true,
             libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
             // Benchmarks run on default JVM flags: Jmh extends Test, which carries
             // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout

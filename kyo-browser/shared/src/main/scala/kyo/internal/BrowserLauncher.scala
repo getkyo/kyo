@@ -31,9 +31,7 @@ private[kyo] object BrowserLauncher:
 
     /** Best-effort recursive removal of the Chrome user-data temp directory.
       *
-      * Runs after [[terminateTree]] has released the Chrome process tree, so nothing that writes into the directory is alive by then.
-      * `killOrphans` still sweeps by the directory's unique name first, for a process of an earlier launch that escaped its scope (a JVM
-      * that died before its finalizers ran). `removeAll` is retried for the brief OS file-reaping window. Residual failures are swallowed
+      * `removeAll` is retried for the brief OS file-reaping window. Residual failures are swallowed
       * so a leaked temp dir cannot fail a scope teardown.
       */
     private def removeTmpDir(tmpDir: Path, removalSchedule: Schedule)(using Frame): Unit < Async =

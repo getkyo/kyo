@@ -93,7 +93,6 @@ class NioIoDriverTest extends Test:
         end try
     }
 
-    /** A bound, non-blocking server channel: the shape `NioListener` registers with the driver. */
     private def openServer(): ServerSocketChannel =
         val ssc = ServerSocketChannel.open()
         ssc.configureBlocking(false)
@@ -102,7 +101,7 @@ class NioIoDriverTest extends Test:
     end openServer
 
     // `releaseListener` is armed for a channel that has been closed while registered: its SelectionKey is cancelled and its fd close deferred
-    // to the selector's next deregistration pass. Each leaf pins one of the paths that can run that pass, and `isRegistered` afterwards is
+    // to the selector's next deregistration pass. `isRegistered` afterwards is
     // the same observation the driver completes on.
     "listener release" - {
         "completes after the running loop's deregistration pass" in {
@@ -112,7 +111,7 @@ class NioIoDriverTest extends Test:
             val ssc = openServer()
             assert(driver.registerServerChannel(ssc))
             // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
-            // close. The never-started leaves below pin that a release does not complete before a pass.
+            // close.
             ssc.close()
             val released = Promise.Unsafe.init[Unit, Any]()
             driver.releaseListener(ssc, released)

@@ -16,7 +16,6 @@ class FatalFiberTest extends kyo.test.Test[Any]:
                     case other             => fail(s"unexpected outcome: $other")
         }
 
-        // Scala treats a LinkageError as fatal and kyo does not.
         "a LinkageError is carried as a Panic rather than rethrown" in {
             val ex                                    = new LinkageError("simulated NoClassDefFoundError")
             val body: Int < (Sync & Abort[Throwable]) = Sync.defer { throw ex; 0 }

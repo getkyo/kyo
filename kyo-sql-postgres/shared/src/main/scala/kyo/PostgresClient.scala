@@ -314,8 +314,6 @@ object PostgresClient:
       *
       * The search path is rendered here purely to reach its refusal. A pool that opens nothing at warm-up would otherwise carry a malformed
       * value until the first statement asked for a connection, reporting a config mistake as a failure to connect.
-      *
-      * The row carries [[kyo.Scope]] because `Runtime.init` registers the pool's release against it as the pool is allocated.
       */
     private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException] & Scope) =
         val settings = PostgresConfig.of(config)

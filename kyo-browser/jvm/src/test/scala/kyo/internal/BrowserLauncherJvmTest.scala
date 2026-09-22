@@ -48,11 +48,8 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
         }
     }
 
-    // The launch is stopped once the operating system shows its Chrome, which is during the port poll after the spawn.
-    // The Chrome carries a unique flag Chrome ignores, so the count is of this launch's tree alone, and a process that
-    // is never reaped ends this leaf as its timeout. The token starts with dashes, so it follows a `--`: without it
-    // `pgrep` rejects the pattern as an option, prints nothing, and the count reads zero whatever is running. Exit 1
-    // is `pgrep`'s "no match"; any other failure fails the leaf rather than counting zero.
+    // The Chrome carries a unique flag Chrome ignores, so the count is of this launch's tree alone. The token starts with dashes, so it follows a `--`: without it
+    // `pgrep` rejects the pattern as an option, prints nothing, and the count reads zero whatever is running.
     "a launch stopped while its Chrome is up leaves no Chrome behind".times(40) in {
         assume(!Platform.isWindows, "POSIX process tree")
         val token                                          = s"--kyo-launch-probe-${UUID.randomUUID().toString.take(8)}"

@@ -40,9 +40,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     private def interrupted: Boolean = status.isInterrupted
 
-    /** The one place an ending of the body completes the promise: a value, an abort, a throw of its own.
-      *
-      * It completes only while the ending is still the body's to settle: not after the abort arm settled it and
+    /** It completes only while the ending is still the body's to settle: not after the abort arm settled it and
       * answered with a placeholder. By name, so a value is not restored for an ending nobody settles.
       */
     private def finish(result: => Result[E, A < S2]): Unit =
@@ -186,7 +184,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     taken()
                                     true
                                 }) || loop()
-                            // Already `Done` or holding an earlier interrupt: refuse.
                             case Absent => false
             end if
         end loop
@@ -216,9 +213,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                 case Absent     => ""
         catch case _: Throwable => ""
 
-    /** A deferral's payload is a value,
-      * not a body, so this runs none of the fiber's computation.
-      */
     private def currentFrame(v: Unit < Any): Maybe[Frame] =
         @tailrec def loop(x: Any, fuel: Int): Maybe[Frame] =
             if fuel == 0 then Absent
@@ -297,8 +291,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                             throw ex
                         end if
                         cleared
-            // Every exit from the slice is a CAS out of the state this owner left the word in: one that fails found an
-            // interrupt there, and the owner releases on its behalf.
             val s = status
             s.parkedPromise match
                 case Present(promise) =>
@@ -324,7 +316,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                         // An interrupt landed on this slice. What the stop left is the remainder, unless the body
                         // reached its own ending first, in which case its value was dropped by the boundary's failed
                         // claim on the word and its finalizers already ran, so there is nothing to release and the
-                        // promise is still pending. Either way `release` settles the promise with the interrupt.
+                        // promise is still pending.
                         curr = if next.evalNow.isDefined then cleared else next
                         release()
                         Task.Done
@@ -336,7 +328,6 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     else
                         curr = next
                         if !isPending() then
-                            // Completed mid-slice, and nobody will resume the remainder.
                             abandon(Absent)
                             Task.Done
                         else if casStatus(Status.running(thread), Status.Idle) then
@@ -360,10 +351,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
 
     /** A parked computation carries its owed releases rather than running them, and this fiber will not resume, so
       * they are run here. The link comes first: an interrupt arriving as the fiber reached its join can find a
-      * remainder standing at one whose promise is not yet tied to this fiber. The walk reaches the join through the
-      * nodes and runs no step of the remainder to get there: a join behind a step that never ran is not waited on yet
-      * and is not linked. Nothing is delivered: an acquire that has not reached its region's `done` owns nothing, and
-      * whoever produced a value that arrived meanwhile owns it until a handoff the owner registered before waiting.
+      * remainder standing at one whose promise is not yet tied to this fiber.
       * The completion comes last: the cascade to what this fiber linked, and every observer of its result, run only
       * once its finalizers have.
       *
@@ -455,9 +443,6 @@ object IOTask:
     // fiber task is created, so a leaf that later hangs has the scheduler's live worker state in its Diagnostics.dumpAll() instead of blank.
     SchedulerDiagnostics.init()
 
-    /** The boundary is built before the fiber exists,
-      * so it asks here rather than closing over one, and a spawning fiber reads it to link its children.
-      */
     private[kyo] val current: ThreadLocal[IOTask[?, ?, ?]] = new ThreadLocal[IOTask[?, ?, ?]]
 
     private[kyo] def currentTask(): Maybe[IOTask[?, ?, ?]] = Maybe(current.get())
@@ -481,9 +466,6 @@ object IOTask:
             runtime
         )
 
-    /** Spawns a fiber detached from its caller, crossing nothing: what it hands over carries no effects of
-      * its own, so there is no state to capture and nothing to restore.
-      */
     def detached[E, A](
         body: A < (Abort[E] & Async),
         parent: Maybe[IOPromise[?, ?]] = Absent,

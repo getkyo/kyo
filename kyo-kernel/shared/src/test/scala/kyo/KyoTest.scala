@@ -29,7 +29,7 @@ class KyoTest extends Test:
     // Inline because Kyo.lift's match on the lifted type cannot reduce for an abstract A.
     inline def widen[A](inline v: A): A < Any = Kyo.lift(v)
 
-    // Pins the rendering: a suspension is Kyo(<tag>, <site>) and each map nests it in a Defer node. The sites
+    // The sites
     // embed file:line:col, so adding or removing a line anywhere above breaks these strings and they have to
     // be re-read from the failure rather than recomputed.
     "toString" in {

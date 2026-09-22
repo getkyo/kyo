@@ -369,7 +369,6 @@ final private[kyo] class NioTransport private (
                 val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
                 if !promise.complete(Result.succeed(listener)) then
-                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
                     listener.close()
             end if
         catch
@@ -1123,7 +1122,6 @@ final private[kyo] class NioTransport private (
                 listener.onClose(() => dischargeListenerHandshakes(listener))
                 startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
                 if !promise.complete(Result.succeed(listener)) then
-                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
                     listener.close()
             end if
         catch
@@ -1387,7 +1385,6 @@ final private[kyo] class NioTransport private (
                 val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
                 if !promise.complete(Result.succeed(listener)) then
-                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
                     listener.close()
             end if
         catch

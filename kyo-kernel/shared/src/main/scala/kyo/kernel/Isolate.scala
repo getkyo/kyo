@@ -222,7 +222,7 @@ object Isolate:
 
     /** The effect that marks a computation as unable to cross an isolation boundary.
       *
-      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect (see [[Region]]). The derivation refuses
+      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect. The derivation refuses
       * it with an explanation instead of looking for an instance, so moving such a computation to another fiber does not compile.
       */
     sealed abstract class Disallowed extends Effect
@@ -259,8 +259,7 @@ object Isolate:
             def restore[A, S](v: A < S)(using Frame)                       = v
         end Identity
 
-        // Carries the context across a fork: snapshots the context regions, runs the isolated computation over a
-        // forked snapshot, and joins each region back through its own fork and join strategy. Reached through
+        // Reached through
         // `crossing`, at the sites that leave one fiber for another, never as the base case of a composition: an
         // isolate asked for in place forks nothing.
         private[kernel] object Contextual extends Isolate[Any, Any, Any]:
@@ -299,7 +298,6 @@ object Isolate:
                                     cont2(av, Arrow.id)
                 }
 
-            // Marks a region's handler as the fork of `origin`, so `join` can find the region it was forked from.
             final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
                 extends Handler.ContextHandler[State, E, A, S]:
                 def tag = origin.tag

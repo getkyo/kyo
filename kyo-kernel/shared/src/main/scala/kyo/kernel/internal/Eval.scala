@@ -24,15 +24,8 @@ import scala.annotation.tailrec
 
 /** The evaluator: unfolds a computation's nodes until it produces a value, or until there is nothing further it can do without an answer.
   *
-  * A computation is a value built by composition; this runs such values, it does not define what they mean. Every branch below is the
-  * operational reading of an equation expressible in the public combinators, so a gap here is a missing value, not a missing instruction.
-  *
-  * `loop` is the whole machine: it carries the node in hand and two continuations, and each arm reduces the node and loops, pushes a region,
-  * or hands an answer to a handler. Being tail-recursive rather than a recursive walk is where stack safety comes from: depth costs heap, not
-  * call frames.
-  *
   * There is no separate context: a context read resolves from the stack the way an operation does, and a region's release lives in its own
-  * stack entry. The stack is borrowed for one evaluation.
+  * stack entry.
   *
   * The loop is far too large to inline and every effect passes through it, so its dispatch is megamorphic. That is why the combinators fuse
   * at their own call sites and reach the loop only when they must, and why cold work here is kept out of line rather than in the arms.
@@ -82,7 +75,6 @@ import scala.annotation.tailrec
                         case kyo: Pending.SuspendContext[VX, CX, T, CX & S2] @unchecked =>
                             val idx = stack.find(kyo.tag)
                             if idx < 0 then
-                                // no binding: the defaulted form answers itself, the required form is unreachable
                                 val state = kyo.default.getOrElse(unhandled(kyo, stack))
                                 loop(kyo.cont(state, contA.chain(contB)), Arrow.id, Arrow.id)
                             else
@@ -111,7 +103,7 @@ import scala.annotation.tailrec
                                 stack.handler(idx) match
                                     // Single-shot (the default): the dumped regions travel with the continuation and close at their own end
                                     // where the clause resumes it, and the remainder is owed to this region, which drains it at its exit if
-                                    // the clause never resumed (settled xor drained, as a peel's). Repeated: the dumped regions are held and
+                                    // the clause never resumed (settled xor drained). Repeated: the dumped regions are held and
                                     // released once at this region's end, so every resumption runs against the live resource.
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
                                         val repeated = handler.repeated
@@ -320,9 +312,7 @@ import scala.annotation.tailrec
                     loop(kyo.value, Arrow.id, Arrow.id)
 
                 case kyo: Pending.HandleContext[VX, CX, T, S2] @unchecked =>
-                    val handler = kyo.handler
-                    // the value an outer region of the same tag bound, for the derive, resolved from the stack like a
-                    // read: Absent when nothing binds it or a mask shadows it
+                    val handler  = kyo.handler
                     val outerIdx = stack.find(handler.tag)
                     val outer    =
                         if outerIdx < 0 then Absent
@@ -397,7 +387,6 @@ import scala.annotation.tailrec
             end match
         end loop
 
-        /** Stops the evaluation and answers what is left as a value that can be resumed anywhere. */
         def park[T, B, C, S2](v: T < S2, contA: Arrow[T, B, S2], contB: Arrow[B, C, S2]): A < S =
             val parked: Any < Any =
                 if contA.isInstanceOf[Arrow.Id[?]] && contB.isInstanceOf[Arrow.Id[?]] then v.asInstanceOf[Any < Any]
@@ -475,7 +464,7 @@ import scala.annotation.tailrec
             install(0)
         end installed
 
-        // A clean end runs what it owed, told the extent ended without a failure. `drainClean` is for a holder's or the
+        // `drainClean` is for a holder's or the
         // evaluation's own end, whose releases are captured closures moved onto it: a held/discarded release's region did
         // not complete in place and the holder already has, so a throw is reported, not propagated past a done computation.
         def drainClean(releases: Stack.Releases): Unit =
@@ -524,7 +513,6 @@ import scala.annotation.tailrec
             end if
         end arrowExit
 
-        /** Unwinds the stack for a throwable, offering it to each region's recover arm from the innermost outward. */
         @tailrec def recovered(ex: Throwable): A < S =
             if stack.isEmpty then
                 drainFailed(stack.takeEvalReleases(), ex)
@@ -627,8 +615,6 @@ import scala.annotation.tailrec
         entries
     end dumped
 
-    // The unwind of a failed region runs what it owed with the failure, a throw from a release attached as suppressed
-    // rather than replacing it.
     private def drainFailed(releases: Stack.Releases, ex: Throwable): Unit =
         releases.run(Maybe(ex))(t => if t ne ex then ex.addSuppressed(t))
 

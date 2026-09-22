@@ -5,10 +5,6 @@ import kyo.kernel.Bracket
 
 /** Interrupts landing inside an acquire, and scope exit over a child still holding a resource.
   *
-  * Each acquire leaf interrupts its own fiber and then takes one more step before producing its value, so the interrupt is pending when
-  * that step completes. An acquire whose value arrives in the same node as the interrupt request always releases, and the window a
-  * multi-node acquire opens is a race, so the leaves run rounds rather than once.
-  *
   * `ScopeTest`'s "acquire-time registration (#1820)" block covers `Scope.acquireRelease`; these cover `Sync.acquireReleaseWith` and
   * `Scope.acquire`.
   */
@@ -17,7 +13,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
     final class Handle(closes: JAtomicInteger) extends java.lang.AutoCloseable:
         def close(): Unit = discard(closes.incrementAndGet())
 
-    /** Runs `body` on its own fiber `rounds` times, handing each fiber to its own body so the acquire can interrupt itself. */
     def selfInterrupting(rounds: Int)(body: Fiber[Unit, Any] => Unit < (Sync & Async))(using Frame): Unit < (Sync & Async) =
         Loop.indexed { i =>
             if i >= rounds then Loop.done
@@ -302,9 +297,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // Fiber.use is `initUnscoped(v).map(fiber => Sync.ensure(fiber.interrupt)(f(fiber)))`: the fiber is already
-    // running while the ensure that would interrupt it is one dispatch away, and an interrupt landing in that gap
-    // leaves nothing to interrupt the child. The gap is inside the spawn, so it is raced rather than held open.
     "Fiber.use interrupts the fiber it spawned when an interrupt lands on the spawn" in {
         val rounds = 40
         for
@@ -323,13 +315,10 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
                     _      <- if round % 2 == 0 then started.get else Kyo.unit
                     _      <- parent.interrupt
                     _      <- parent.getResult
-                    // A child that never started holds nothing and tears nothing down.
-                    ran <- started.done
-                    // A deadline here would make a slow worker read as a leak, while an orphan
-                    // never clears the flag.
-                    _ <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
-                    _ <- gate.release
-                    _ <- if ran then exercised.incrementAndGet.unit else Kyo.unit
+                    ran    <- started.done
+                    _      <- if ran then assertEventually(childAlive.get.map(!_)) else Kyo.unit
+                    _      <- gate.release
+                    _      <- if ran then exercised.incrementAndGet.unit else Kyo.unit
                 yield ()
                 end for
             }
@@ -394,10 +383,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // A remainder handed out by a peel (`Emit.runFirst`) carries the regions the peeled body had installed. Handed
-    // to a child fiber and run there while the peeling scope ends, the resource stays with the child's run: the
-    // child either completes its use with the resource still held, releasing it at its own exit, or is refused
-    // with Closed.
     "a peeled remainder running on a child fiber is not released under it when the peeling scope ends" in {
         for
             released <- AtomicBoolean.init(false)

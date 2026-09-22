@@ -22,8 +22,6 @@ import scala.util.control.NoStackTrace
   *
   * @param elements
   *   The reconstructed frames, outermost last.
-  * @param dropped
-  *   How many frames the walk stopped short of, bounded by `maxTraceFrames`.
   * @param physical
   *   The original JVM frames, filtered of plumbing, cached because splicing can be reached more than once.
   * @param seen
@@ -93,9 +91,6 @@ private[kernel] object EffectTrace:
     end reconstruct
 
     /** Puts the reconstructed frames onto the throwable's own stack trace, where anything that prints it will show them.
-      *
-      * Called as a failure leaves the evaluator. A fatal throwable and one marked `NoStackTrace` are left alone: the first is not ours to
-      * decorate, and the second asked for no trace at all.
       */
     def splice(ex: Throwable): Unit =
         if !IsFatal(ex) && !ex.isInstanceOf[NoStackTrace] then

@@ -563,9 +563,6 @@ class HubTest extends kyo.test.Test[Any]:
     }
     "a listener closing during a publish" - {
 
-        // `Listener.close` removes the listener from the set and then closes its channel, and the publisher holds the
-        // snapshot it took for the value in flight, so a put to a closing listener fails Closed, or is failed while parked
-        // on its full buffer. That is the listener leaving, not a delivery failure: the publisher goes on to the others.
         "a listener closed while the publisher is parked on its full buffer does not stop delivery to the others" in {
             Hub.initWith[Int](8) { hub =>
                 for

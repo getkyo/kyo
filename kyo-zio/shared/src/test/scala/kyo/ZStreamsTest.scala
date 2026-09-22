@@ -268,9 +268,7 @@ class ZStreamsTest extends kyo.test.Test[Any]:
                 _ = assert(!streamFinalized.isCompleted)
                 _      <- started.await
                 result <- fiber.interrupt
-                // Awaited, not read: a finalizer that was registered trips this, and one that was never registered
-                // leaves it untripped, which the leaf timeout reports.
-                _ <- ZIO.fromFuture(_ => streamFinalized.future)
+                _      <- ZIO.fromFuture(_ => streamFinalized.future)
             yield
                 // Verify ZIO interruption was received
                 assert(result.isInterrupted)

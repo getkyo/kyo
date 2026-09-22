@@ -407,8 +407,8 @@ class TransportStartTlsTest extends Test:
     }
 
     /** A server that upgrades only AFTER the peer's first TLS flight (the ClientHello) has already landed in the plaintext inbound channel, so the
-      * upgrade's replay path (preRead) is guaranteed non-empty. This is the ordinary STARTTLS shape (a fast client sends its ClientHello the instant
-      * it sees `R`) made deterministic by waiting on `inbound.size()`. `serverTls.handshakeTimeout` is expected to be lowered so a dropped replay
+      * upgrade's replay path (preRead) is guaranteed non-empty.
+      * `serverTls.handshakeTimeout` is expected to be lowered so a dropped replay
       * surfaces as a fast timeout rather than the 30s default.
       */
     private def startTlsEchoServerAfterStaged(transport: Transport, serverTls: NetTlsConfig)(using

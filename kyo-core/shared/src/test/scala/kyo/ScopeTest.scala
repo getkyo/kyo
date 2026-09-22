@@ -243,8 +243,6 @@ class ScopeTest extends kyo.test.Test[Any]:
                     yield a == 1 && r == 1
                 }
             yield
-                // Comparing the counters to each other would hold at zero
-                // before the fiber has acquired anything.
                 assert(result.panic.exists(_.isInstanceOf[Closed]), s"registering on a closed scope must panic Closed: $result")
                 assert(
                     result.panic.exists(_.getMessage.contains(s"Finalizer created at ${scopeFrame.position.show} is closed.")),
@@ -637,8 +635,6 @@ class ScopeTest extends kyo.test.Test[Any]:
     "acquireRelease safety (#1224)" - {
         case object TestAcquireException extends scala.util.control.NoStackTrace
 
-        // The fiber interrupts itself in the same Sync node that performs the claim, so the earliest the
-        // interrupt can be delivered is after the acquire has returned.
         "a self-interrupt inside the acquire still releases what the acquire produced" in {
             val rounds = 500
             Kyo.foreach(1 to rounds) { _ =>
@@ -753,9 +749,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // An interrupt completes the fiber's promise at once, but the body still has to unwind for its brackets
-        // to run, and a parked fiber has no slice in flight to notice: the task is rescheduled for exactly that
-        // reason.
         "an interrupted parked fiber runs its brackets" in {
             for
                 ran     <- AtomicInt.init(0)
@@ -973,8 +966,6 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "drain completeness" - {
 
-        // One finalizer failing must not cost the others theirs: the drain logs each release's error rather
-        // than raising it.
         "a finalizer that aborts does not stop the ones registered before it" in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
@@ -1001,8 +992,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // The parallel drain groups the finalizers, so a failure in one group must not cost another its
-        // releases. Counted rather than ordered, since parallelism leaves order undefined.
+        // Counted rather than ordered, since parallelism leaves order undefined.
         "every finalizer runs when the close is parallel and one of them fails" in {
             for
                 ran <- AtomicInt.init(0)
@@ -1017,8 +1007,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // #1928: the closing computation parks on `await`, and interrupting it must not reach the drain. The
-        // interrupt waits for the finalizer to report it is running, since not-done holds from the first instant.
+        // The interrupt waits for the finalizer to report it is running, since not-done holds from the first instant.
         "a finalizer that suspends still completes when the closing computation is interrupted" in {
             for
                 entered  <- Promise.init[Unit, Any]
@@ -1079,8 +1068,6 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        // Both of Scope.run's close paths can fire for the same scope, the abandonment backstop and the one that
-        // runs when the body settles; a finalizer must run once, never twice. The abort selects the settled path.
         "a finalizer runs exactly once when the body aborts" in {
             for
                 ran <- AtomicInt.init(0)
@@ -1130,10 +1117,6 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "acquire-time registration (#1820)" - {
 
-        // With the release registered in a suspension that follows the acquire, an interrupt pending when the
-        // acquire completes parks the evaluation before that registration is dispatched, leaving the acquired
-        // value held by nobody. `ensureMap` records the release in the step the value arrives in.
-        //
         // The acquire interrupts its own fiber and then produces its value, so delivery lands at the next
         // safepoint, after the acquire and at or before the registration. Rounds, since the window is narrow.
         "an interrupt requested inside the acquire still releases what it produced" in {
@@ -1416,7 +1399,6 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "hierarchical scopes (#1131)" - {
 
-        // The child can park for good because `Fiber.init` interrupts it and waits for its release.
         "a scoped fiber's nested run releases when the scope it was spawned in closes" in {
             for
                 released <- AtomicInt.init(0)
@@ -1459,8 +1441,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
         // A run opened inside a fork is a root: the enclosing scope does not end the fiber carrying it, so closing
         // it from there takes a resource from an owner still using it, such as a service started lazily under
-        // `Fiber.initUnscoped`. Registration still reaches the scope the fork was made in;
-        // membership is what a fork withholds.
+        // `Fiber.initUnscoped`.
         "a run opened inside an unscoped fiber outlives the scope the fiber was spawned in" in {
             for
                 released <- AtomicInt.init(0)
@@ -1523,8 +1504,6 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "finalizer context" - {
 
-        // The drain is spawned from the region's release, which the kernel runs on a stack of its own; the
-        // finalizers must still see the regions the run was opened under.
         "a finalizer reads the Local the run was opened under" in {
             val local = Local.init("default")
             for
@@ -1559,8 +1538,7 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "under a handler that replays" - {
 
-        // `Choice.run` outside `Scope.run` answers the choice inside the scope's body twice, so the body runs
-        // twice and each branch registers a finalizer. The bracket contract under a replaying handler
+        // The bracket contract under a replaying handler
         // is that every branch runs against the live region and the release runs
         // once after all of them; a scope's registrations are the counterpart, each running once.
         "every branch of a replaying handler registers its finalizer and each runs once" in {
@@ -1611,8 +1589,6 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "racing scopes (#1735)" - {
 
-        // #1735 as reported: four items, a resource that is an item taken from the channel and released by putting
-        // it back, and four concurrent users.
         "the reporter's program leaves every item in the channel" in {
             val expected = (1 to 4).map(_.toString).toSet
             Scope.run {
@@ -1684,9 +1660,6 @@ class ScopeTest extends kyo.test.Test[Any]:
     }
 
     "runUnowned" - {
-        // The whole point of the shape: the value leaves with its release still armed and nobody to fire it, which
-        // is what lets an `initUnscoped`-style entry hand out a resource the caller owns. A backstop that runs on
-        // every ending, which `Sync.ensure` does, releases it on the way out unless it is guarded on the error.
         "does not release when the body reaches its end" in {
             for
                 closes <- AtomicInt.init(0)
@@ -1722,14 +1695,11 @@ class ScopeTest extends kyo.test.Test[Any]:
                 )
                 _ <- started.await
                 _ <- fiber.interrupt
-                // The interrupt spawns the drain rather than waiting for it, so this is retried, not read once.
                 _ <- assertEventually(closes.get.map(_ == 1))
                 n <- closes.get
             yield assert(n == 1, s"an abandoned acquisition kept its resource: closes=$n")
         }
 
-        // A child would be closed by the enclosing scope, which is the same resource released under a caller that
-        // was handed it to keep.
         "is a root, so an enclosing scope ending does not release it" in {
             for
                 closes <- AtomicInt.init(0)

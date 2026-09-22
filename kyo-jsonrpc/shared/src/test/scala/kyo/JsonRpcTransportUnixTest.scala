@@ -24,8 +24,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
         }
 
-    // `unixDomain` binds the listener (and its socket file) on a fiber the caller joins; the listener must be owned
-    // whichever side of the join a stop lands on. Each round interrupts and then waits for the socket file to go: a
+    // Each round interrupts and then waits for the socket file to go: a
     // release in flight removes it, a listener nobody owns keeps it, and the leaf timeout is what reports the latter.
     //
     // The probe reads a path whose socket may still be open, because the interrupt spawns the scope's drain rather

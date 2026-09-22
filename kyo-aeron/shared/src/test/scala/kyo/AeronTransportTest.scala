@@ -1453,10 +1453,6 @@ class AeronTransportTest extends Test:
         }
     }
 
-    // The add completes by producing the publication, and Topic.publish registers its closer with `ensureMap` in
-    // that same step, so an interrupt taken as the publication arrives finds the closer installed and closes the
-    // publication on abandonment. A plain `map` would make the registration a step of its own, with the interrupt
-    // parking in front of it and the publication left open.
     "an interrupt on a completed add closes the publication the add produced" in {
         val transport = new InterruptOnDoneTransport
         Latch.initWith(1) { gate =>
@@ -1530,7 +1526,6 @@ class AeronTransportTest extends Test:
         }
     }
 
-    /** Confirms every add on its first poll and counts what it hands out and what comes back. */
     final private class HandoffTransport extends AeronTransport:
         type Publication  = Int
         type Subscription = Int
@@ -1560,9 +1555,7 @@ class AeronTransportTest extends Test:
         def fatalError(using AllowUnsafe): Maybe[String]                           = Absent
     end HandoffTransport
 
-    // The add-deadline guard hands the publication on at its clean end and closes nothing, and Topic's `ensureMap`
-    // takes it over in the step the add's value arrives: `Sync.ensure` raises the guard's recorded abort as that
-    // value arrives, so no poll separates the hand-off from the owner. The transport never connects, so the publisher
+    // The transport never connects, so the publisher
     // stays in its offer loop holding the publication: the leaf stops it once the transport has handed the publication
     // out, and the publication must then be closed. One left open ends this leaf as its timeout.
     "a publisher stopped while it holds its publication closes it".times(80) in {

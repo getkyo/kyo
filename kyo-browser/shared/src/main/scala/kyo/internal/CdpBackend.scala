@@ -88,7 +88,7 @@ final private[kyo] class CdpBackend private[kyo] (
       *
       * The release registers as the reply arrives. The call is detached: a caller abandoned at the join has the call
       * release what it created rather than dropping the late reply. `finalizer` is a parameter, not the innermost scope,
-      * so a caller can own the reply across a scope of its own that ends earlier (the settlement wait around an override).
+      * so a caller can own the reply across a scope of its own that ends earlier.
       */
     private[kyo] def acquire[P: Schema, R: Schema](finalizer: Scope.Finalizer, method: String, params: P)(
         release: R => Unit < (Async & Abort[BrowserReadException])

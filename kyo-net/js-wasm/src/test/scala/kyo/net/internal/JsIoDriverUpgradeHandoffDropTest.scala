@@ -24,7 +24,6 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
     // `require` is not defined.
     private def net: sjs.Dynamic = NodeNet.asInstanceOf[sjs.Dynamic]
 
-    /** Open a connected loopback pair on Node. Returns (serverSocket, clientSocket); the server socket is PAUSED and wrapped in nothing yet. */
     private def openPair()(using Frame): (sjs.Dynamic, sjs.Dynamic) < (Async & Abort[Closed]) =
         val p = new IOPromise[Closed, (sjs.Dynamic, sjs.Dynamic)]
         Sync.defer {
@@ -79,7 +78,6 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                 discard(clientSock.write(buffer(chunkA)))
 
                 Sync.ensure(cleanup) {
-                    // Chunk A has landed and the pump has re-armed.
                     assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
                         discard(clientSock.write(buffer(chunkB)))
 

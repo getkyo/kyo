@@ -25,7 +25,6 @@ class CompileTimeFlagTest extends AnyFreeSpec:
         val key = "kyo.CompileTimeFlagTest.setAtRuntime"
         java.lang.System.setProperty(key, "true"): Unit
         try
-            // A flag read at runtime would answer true here.
             assert(!CompileTimeFlag.boolean("kyo.CompileTimeFlagTest.setAtRuntime", false))
         finally
             java.lang.System.clearProperty(key): Unit

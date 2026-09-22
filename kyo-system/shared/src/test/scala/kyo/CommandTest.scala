@@ -281,9 +281,8 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
-    // `spawn` is the acquire of its own bracket, so the process has an owner from the step that forks it. The spawner is
-    // stopped once the operating system shows the process, by a unique argv, and the process must then be gone. One
-    // that outlives its scope ends as the leaf's timeout.
+    // The spawner is
+    // stopped once the operating system shows the process, by a unique argv, and the process must then be gone.
     "a process whose spawner is interrupted does not outlive it".times(80) in {
         assumeUnix() // sleep / pgrep / kill have no Windows equivalent
         val seconds                                                  = 300 + scala.util.Random.nextInt(100000)

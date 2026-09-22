@@ -1151,9 +1151,6 @@ class ActorTest extends kyo.test.Test[Any]:
     }
 
     "resource safety under interruption" - {
-        // This is the `PubSub.subscribe` window, pinned through a raw actor. The actor has added the subscriber by the
-        // time it replies, and a caller stopped at that reply never runs another step, so the removal has to be
-        // registered before the ask, as `PubSub.subscribe` does; removing a subscriber that was never added is a no-op.
         // The reply-promise probe lands the stop deterministically: an `onComplete` registered after the caller parked
         // fires LIFO before the caller's resume.
         "a subscriber that registers its removal before the ask is not left in the set when stopped at the reply" in {

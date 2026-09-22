@@ -62,8 +62,8 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                         // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
                         //
                         // Removal is asynchronous: the scope's `remove` returns when the daemon has accepted it, not when the
-                        // container is gone, and under load the daemon takes seconds over it (leaves failed on a container reported
-                        // Running with no teardown warning logged for it). The check waits on the daemon through the leaf's barrier
+                        // container is gone, and under load the daemon takes seconds over it.
+                        // The check waits on the daemon through the leaf's barrier
                         // rather than a fixed window, and still demands every candidate be gone: a container that really leaked
                         // never goes, since nothing else is going to remove it.
                         def stillHere: Chunk[Container.Summary] < (Async & Abort[Any]) =

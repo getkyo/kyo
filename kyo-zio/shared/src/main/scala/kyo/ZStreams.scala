@@ -86,7 +86,6 @@ object ZStreams:
                     ZIOs.run(Abort.run[Closed](channel.take)).flatMap {
                         case Result.Success(chunk) => ZIO.succeed(ZChunk.fromArray(chunk.toArray))
                         case _                     =>
-                            // closed: the producer finished, and its result says how
                             ZIOs.run(fiber.getResult).flatMap {
                                 case Result.Success(_) => ZIO.fail(None)
                                 case Result.Failure(e) => ZIO.fail(Some(e))

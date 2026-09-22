@@ -4,8 +4,7 @@ import CdpTypes.*
 import kyo.*
 
 /** Interrupts landing on the round trips a [[CdpBackend]] and the tab setup make, driven over an in-memory CDP wire whose browser side
-  * this suite plays. Each leaf gates one reply, stops the caller while it waits on it, releases the reply, and reads what the browser side
-  * saw afterwards: the calls a fixed caller makes on its way out, or the silence of an abandoned one.
+  * this suite plays.
   */
 class CdpBackendInterruptTest extends BaseBrowserTest:
 
@@ -24,7 +23,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             case "Target.attachToTarget" =>
                 summon[Schema[AttachResult]].toStructureValue(AttachResult("session-1"))
             case "Runtime.evaluate" =>
-                // Only `screenshotElement`'s box-stable eval reaches this wire in this suite.
                 summon[Schema[EvalResult]].toStructureValue(EvalResult(RemoteObject.`string`(elementClipReplyJson), Absent))
             case _ =>
                 summon[Schema[CdpNoParams]].toStructureValue(CdpNoParams())
@@ -61,9 +59,6 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(wire.seen.get.map(_.contains(method))))).map(_.isSuccess)
 
-    /** Whether `method` shows up at least `n` times within a bounded wait; `false` on timeout. Most sites re-send their
-      * apply method for the restore, so "fired again" is a count, not a second name the way `withViewport`'s pair is.
-      */
     private def sawEventuallyCount(wire: Wire, method: String, n: Int)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.seen.get.map(_.count(_ == method) >= n)))).map(_.isSuccess)
 
@@ -78,9 +73,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
     private val evalDoneJson: String = """{"tag":"done"}"""
 
     /** Browser side for the freeze/marks leaves, where apply and restore both go through `Runtime.evaluate`, so the
-      * method name cannot pick out the call to gate. `gateOn` marks the call whose reply is withheld until `gate` opens
-      * (recording `Runtime.evaluate:gate-hit` before waiting), `removeOn` marks the restore (recording
-      * `Runtime.evaluate:remove-hit`); every other eval gets an immediate [[evalDoneJson]] reply.
+      * method name cannot pick out the call to gate.
       */
     private def serveEval(
         browserEnd: JsonRpcTransport,

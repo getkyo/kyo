@@ -44,9 +44,6 @@ import scala.language.implicitConversions
   *   - a `Pending` node, the family in `PendingInternal` reifying one combinator;
   *   - a `Nested` wrapper, which is what the lift puts around a computation used as a value. Without an arm of its own, `Nothing < S`
   *     erases to `Pending` and a position holding a nested computation could not carry it.
-  *
-  * The combinators build `Arrow` and `Defer` nodes and leave the stack-depth budget to the evaluator, which is why their function
-  * parameters take no `Safepoint` evidence.
   */
 opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
@@ -426,7 +423,6 @@ object `<` extends Implicits:
     @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
-        // A lifted value is wrapped in Nested, not a Pending, so it needs its own case to render as Kyo(...).
         def asString(value: APendingS): String = value match
             case sus: Pending[?, ?] => sus.toString
             case nested: Nested[?]  => s"Kyo(${nested.value})"

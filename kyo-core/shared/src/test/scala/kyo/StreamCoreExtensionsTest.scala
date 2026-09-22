@@ -1368,8 +1368,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             )("NoEscape")
         }
 
-        // splitAt's rest is bounded by the scope that peeled it, which is why it is private[kyo] and
-        // splitAtWith is the public form. A scope cannot tell a remainder nobody will resume from one someone
+        // A scope cannot tell a remainder nobody will resume from one someone
         // still intends to resume, so it releases at its own exit: one release, and the late consumer refused.
         "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
             AtomicInt.init(0).map { released =>

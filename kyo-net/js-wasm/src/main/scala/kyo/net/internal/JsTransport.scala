@@ -881,7 +881,6 @@ final private[kyo] class JsTransport private (
             { () =>
                 listener.setAddress(-1, path)
                 if !promise.complete(Result.succeed(listener)) then
-                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
                     listener.close()
             }: js.Function0[Unit]
         ))
@@ -1051,7 +1050,7 @@ final private[kyo] class JsTransport private (
             // tls_wrap.wrap makes the TLSWrap the TCP handle's sole stream listener and its queued initRead reads the whole raw
             // buffer (the unshifted flight plus any kernel bytes) straight into the engine, then drives the handle itself. A raw
             // resume() before that handoff flows the flight as "data" to no listener and discards it, stranding the handshake to
-            // its deadline (the STARTTLS handoff drop); with kDataListening cleared above, the socket also stays non-flowing on
+            // its deadline; with kDataListening cleared above, the socket also stays non-flowing on
             // its own at the next tick.
             val tlsModule = NodeTls.asInstanceOf[js.Dynamic]
 

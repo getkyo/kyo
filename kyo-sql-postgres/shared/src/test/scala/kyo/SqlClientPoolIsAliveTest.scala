@@ -516,10 +516,6 @@ class SqlClientPoolIsAliveTest extends SqlContainerTest:
                                     // slot's give-back is registered on a scope that encloses the one owning the
                                     // destroy, and a close runs its children before its own. So the permit returning
                                     // implies the destroy already counted, which makes it the edge to wait on.
-                                    //
-                                    // Waiting on the permit is also what keeps the count readable. `Counter.get` is
-                                    // `sumThenReset`, so the read that waits is the read that consumes; the counter
-                                    // is read once, afterwards, and reports what it accumulated.
                                     assertEventually(permits(client).map((available, capacity) => available == capacity)).andThen {
                                         discarded(client).flatMap { count =>
                                             permits(client).map { case (available, capacity) =>

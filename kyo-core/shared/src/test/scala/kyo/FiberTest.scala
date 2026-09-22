@@ -169,9 +169,7 @@ class FiberTest extends kyo.test.Test[Any]:
                     assert(r.failure.contains("Winner"))
                 }
             }
-            // The race interrupts each loser from the winner's completion callback while the loser may be mid-slice on
-            // another worker, never parking: the stop has to be observed by the loser's next safepoint poll or at its
-            // next slice entry. Each round races an immediate winner against a spinning loser that owes a finalizer;
+            // Each round races an immediate winner against a spinning loser that owes a finalizer;
             // the flag stops a loser the race failed to on the leaf's way out, so a lost stop ends as this leaf's
             // timeout rather than a carrier spinning under the rest of the suite.
             "interrupts a losing computation that never parks" in {

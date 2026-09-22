@@ -50,7 +50,7 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
                         |```
                         |""".stripMargin
             withTempFile("README.md", md) { kyoFile =>
-                // The doctest-out* dirs under the shared tmp dir. Sibling suites (OrchestratorTest, CorpusTest, DriverTest)
+                // Sibling suites
                 // create their own there concurrently, so the check is on the dirs that appeared during this run: each is
                 // gone once its run ended, ours the moment Scope.run returned, and a dir ours leaked never goes.
                 val tempDirBase                                                               = Path.basePaths.tmp

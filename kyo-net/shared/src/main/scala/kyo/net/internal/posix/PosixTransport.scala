@@ -2560,7 +2560,7 @@ end PosixTransport
   * `pendingAccepts` / `activeFds` entries for this listen fd (and removes the poller interest while the fd is still open, so EV_DELETE / epoll_ctl
   * DEL land on a live fd). Without it, a closed listen fd's stale `pendingAccepts` entry survives; when the OS recycles that fd number for a new
   * CLIENT connection, the recycled fd's read-readiness is routed to the stale accept dispatch instead of the connection's ReadPump, and the
-  * connection's read never completes (the lost-wakeup hang). Idempotent: a second `close()` is a no-op.
+  * connection's read never completes (the lost-wakeup hang).
   */
 final private[net] class PosixListener(
     private[posix] val serverFd: Int,
@@ -2582,7 +2582,7 @@ final private[net] class PosixListener(
 
     private[posix] def onClose(f: () => Unit): Unit = teardownAccept = Present(f)
 
-    // Unsafe: created at construction with no ambient AllowUnsafe, like the listener flags; completed on whichever carrier closes the fd:
+    // Unsafe: created at construction with no ambient AllowUnsafe; completed on whichever carrier closes the fd:
     // this one on the readiness drivers, the reap carrier on io_uring. Uninterruptible because awaiting a fiber links the awaiter's
     // interrupt to it: an awaiter that gives up must not be able to settle a fact about the descriptor for every other awaiter.
     private[posix] val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)

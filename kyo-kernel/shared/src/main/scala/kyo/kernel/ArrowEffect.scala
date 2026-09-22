@@ -76,8 +76,7 @@ object ArrowEffect:
       * steps that follow it. Never applying the continuation abandons the remainder (an early exit), and this region drains what it owed at
       * its end. Applying it a second time is refused at the first region it re-enters, as a use after release; a clause that resumes more
       * than once uses [[handleContRepeated]]. The rows place the clause inside the region it serves (result at `E & S & S2`), so an `E`
-      * operation the clause performs is answered by this same handler: it is re-entrant. The continuation carries [[Region.NoEscape]],
-      * confining it to the clause.
+      * operation the clause performs is answered by this same handler: it is re-entrant.
       */
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -252,7 +251,6 @@ object ArrowEffect:
       * The continuation never becomes a value the clause holds, so each occurrence is answered exactly once or not at all. The rows place the
       * clause outside the region it serves: the outcome sits at `S & S2`, the answer inside it at `E & S & S2`, so only the answer handed back
       * is region currency, a `Loop.done` result bypasses the region, and an effect the clause performs is answered by a handler further out.
-      * Contrast [[handleCont]], which hands over the continuation itself.
       */
     inline def handleLoop[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -679,7 +677,7 @@ object ArrowEffect:
         /** The boundary where masked operations re-raise for the handlers outside, removing `Mask[S]` from the row. */
         def run[S](using Frame)[A, S2](v: A < (Mask[S] & S2))(using tag: Tag[Mask[S]]): A < (S & S2) =
             handleCont(tag, v) {
-                // As in `apply`: a `map` would park a settled answer in front of `cont`'s install under a stop.
+                // a `map` would park a settled answer in front of `cont`'s install under a stop.
                 [C] => (input, cont) => Effect.defer(input, cont)
             }
     end Mask
@@ -757,7 +755,6 @@ object ArrowEffect:
 
     // Mask must re-suspend an operation it cannot inspect, so the clause is handed the operation, not its input.
 
-    /** Handles an arrow effect with a clause that receives the suspended operation itself rather than its input. */
     private[kyo] inline def handleMasking[E <: Effect, A, S, S2](
         inline effectTag: Tag[E],
         v: A < (E & S)
@@ -766,7 +763,6 @@ object ArrowEffect:
     )(using inline _frame: Frame): A < (S & S2) =
         handleMasking(effectTag, v)(handle, a => a)
 
-    /** [[handleMasking]] with a `done` arm. */
     @nowarn("msg=anonymous")
     private[kyo] inline def handleMasking[E <: Effect, A, B, S, S2](
         inline effectTag: Tag[E],

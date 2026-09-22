@@ -186,8 +186,7 @@ abstract class Listener:
 
     /** Stop accepting new connections and close the listener. Idempotent. Does not close already-accepted connections.
       *
-      * Returning does NOT mean the descriptor is released; [[released]] is that signal. The NIO floor hands the real close to the
-      * selector's next pass, io_uring to its reap carrier, and Node to the server handle's close.
+      * Returning does NOT mean the descriptor is released; [[released]] is that signal.
       */
     def close()(using AllowUnsafe, Frame): Unit
 

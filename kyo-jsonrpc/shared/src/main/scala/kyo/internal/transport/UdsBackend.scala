@@ -8,8 +8,7 @@ import kyo.net.NetPlatform
   *
   * Binds a listener on `sockPath` through the platform transport and serves a single client: the first accepted connection completes `first` and
   * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, waits for the
-  * listener's descriptor to be released, and removes the socket file (kyo-net does not unlink it). A single backend path that runs everywhere
-  * kyo-net's transport runs.
+  * listener's descriptor to be released, and removes the socket file (kyo-net does not unlink it).
   */
 private[kyo] object UdsBackend:
 
@@ -26,7 +25,7 @@ private[kyo] object UdsBackend:
             // The teardown finalizer is registered BEFORE the listen launches, reading the listen fiber from a cell the
             // launch fills in the same unsafe step: `listenUnix` binds a socket (and its file) synchronously on the JVM,
             // so a finalizer on the far side of the join leaves a window where an interrupt strands the bound listener.
-            // Registered first, it closes the listener and removes the socket file on any exit; `Scope.acquireRelease` has the same window.
+            // `Scope.acquireRelease` has the same window.
             Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[kyo.Fiber[kyo.net.Listener, Abort[NetException]]])).map { listenCell =>
                 Scope.ensure { _ =>
                     wire.close.andThen {

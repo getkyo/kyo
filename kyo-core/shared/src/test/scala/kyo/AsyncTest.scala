@@ -2018,8 +2018,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 started     <- Promise.init[Unit, Any]
                 interrupted <- Promise.init[Unit, Any]
-                // The deadline is far beyond any run.
-                fiber <- Fiber.initUnscoped(Async.timeout(1.hour)(
+                fiber       <- Fiber.initUnscoped(Async.timeout(1.hour)(
                     Sync.ensure(interrupted.completeUnitDiscard)(
                         started.completeUnitDiscard.andThen(Async.never)
                     )

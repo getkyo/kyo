@@ -116,10 +116,7 @@ private[kyo] object AeronPlatformTransport:
         // generated binding raises as FfiNullPointer. On JS that completes the fiber with a
         // Panic; on the JVM and Native the blocking bridge runs the downcall on the calling
         // thread, so it throws out of `clientConnect` itself. The call therefore has to stay
-        // inside the recover, whose panic arm covers both. A `@Ffi.blocking` binding returns
-        // `Fiber.Unsafe[A, Any]`, whose second parameter is the effect row, not an error type:
-        // `Any` is the empty row, so the join is `A < Async` and carries no typed failure. Only
-        // the panic branch can fire, which is why onFail is uninhabited here.
+        // inside the recover, whose panic arm covers both.
         Abort.recover[Nothing](
             onFail = (never: Nothing) => never,
             onPanic = mapConnectPanic

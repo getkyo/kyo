@@ -334,7 +334,7 @@ object JsonRpcEndpointImpl:
                                                     // The writer channel only closes when the handler's finalizer shuts down, and its
                                                     // writer fiber is already interrupted, so a failed put is a message dropped by an
                                                     // in-progress close, not a transport fault. Reporting it as a JsonRpcTransportError
-                                                    // would, via Exchange.apply's shutdownWithError, complete the exchange's done promise
+                                                    // would complete the exchange's done promise
                                                     // with that error before the finalizer completes it with Closed, so later calls read
                                                     // the stale error back instead of Closed. Drop it; the finalizer fails the call.
                                                     ()
@@ -654,7 +654,6 @@ object JsonRpcEndpointImpl:
                                                                                     ),
                                                                                     extras
                                                                                 )
-                                                                        // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
                                                                         pendingInbound.get(id) match
                                                                             case running: InboundEntry.Running =>
                                                                                 // Unsafe: AtomicBoolean.Unsafe.init for suppress flag

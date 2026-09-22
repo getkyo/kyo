@@ -7,8 +7,7 @@ import java.lang.ProcessBuilder as JProcessBuilder
   *
   * Scala Native's `ProcessBuilder` creates a child's pipes with `pipe`, without `O_CLOEXEC`, and its spawn closes only that child's own
   * pipe ends in the child. A child spawned by another thread between this spawn's `pipe` and its `posix_spawn` therefore inherits these
-  * pipe ends, and a read of this child's output never reaches EOF while that other child lives. The JVM's pipes carry `FD_CLOEXEC`, so
-  * its counterpart guards nothing.
+  * pipe ends, and a read of this child's output never reaches EOF while that other child lives.
   *
   * The section held is the builder's setup and the spawn itself, microseconds, never a wait on the child.
   */

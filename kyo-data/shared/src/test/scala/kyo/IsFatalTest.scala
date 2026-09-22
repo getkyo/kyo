@@ -3,8 +3,6 @@ package kyo
 class IsFatalTest extends kyo.test.Test[Any]:
 
     "fatal" - {
-        // `VirtualMachineError`'s four subclasses are named
-        // one by one rather than through the parent, so a change to the set has to be made here too.
         "OutOfMemoryError" in assert(IsFatal(new OutOfMemoryError("boom")))
         "StackOverflowError" in assert(IsFatal(new StackOverflowError("boom")))
         "InternalError" in assert(IsFatal(new InternalError("boom")))
@@ -18,9 +16,6 @@ class IsFatalTest extends kyo.test.Test[Any]:
     }
 
     "not fatal" - {
-        // These two kyo answers differently from `scala.util.control.NonFatal`, which is why this object exists:
-        // a class that fails to link says the program is wrong, not that the JVM is, and an interrupt is something
-        // kyo delivers itself. Under Scala's answer both end a scheduler worker and lose every release still owed.
         "LinkageError, which Scala calls fatal" in {
             val ex = new LinkageError("boom")
             assert(!IsFatal(ex))

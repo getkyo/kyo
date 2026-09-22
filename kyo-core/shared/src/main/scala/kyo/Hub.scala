@@ -184,8 +184,6 @@ final class Hub[A] private[kyo] (
                         discard(listeners.add(listener))
                         closed.map {
                             case true =>
-                                // The hub closed between the outer check and the add: remove the just-added listener and
-                                // fail. The finalizer above still runs on unwind, a harmless second close.
                                 Sync.defer {
                                     discard(listeners.remove(listener))
                                     fail

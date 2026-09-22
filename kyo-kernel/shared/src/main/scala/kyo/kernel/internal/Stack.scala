@@ -119,9 +119,6 @@ final private[kernel] class Stack:
         else owedRemainders(i - 1) = owedRemainders(i - 1).append(snapshot)
     end oweRemainderBelow
 
-    /** Passes remainders owed to a region down to the scope below, for an escaping region that hands its continuation out: they stay owed
-      * downward until a non-escaping region drains them.
-      */
     def oweRemaindersBelow(i: Int, snapshots: Chunk[Stack.Snapshot]): Unit =
         if !snapshots.isEmpty then
             owes = true

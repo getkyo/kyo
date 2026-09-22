@@ -18,8 +18,6 @@ import scala.util.NotGiven
   * A round's body answers with an [[Loop.Outcome]]: [[Loop.continue]] carrying the state for the next round, or [[Loop.done]] carrying the
   * loop's result. Up to four state values can be carried, through the `Continue` variants, so a multi-value loop allocates no tuple per
   * round.
-  *
-  * The combinators take no `Safepoint` evidence, because the evaluator polls the budget itself.
   */
 object Loop:
 
@@ -146,7 +144,6 @@ object Loop:
         new Continue:
             def _1 = ()
 
-    // Answers as a computation, since a clause may suspend before continuing.
     /** Creates an outcome signaling continuation with no state value.
       *
       * This is a convenience method for continuing a loop without maintaining any state between iterations. It's particularly useful for

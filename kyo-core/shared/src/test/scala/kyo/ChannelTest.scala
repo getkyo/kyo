@@ -151,7 +151,7 @@ class ChannelTest extends kyo.test.Test[Any]:
         }
 
         // A taker parked on an empty channel is a promise in the channel's take queue. Its fiber may be interrupted while parked, and
-        // the kernel then abandons the fiber without resuming it (see IOTask.abandon): a value delivered into that promise as the
+        // the kernel then abandons the fiber without resuming it: a value delivered into that promise as the
         // interrupt lands has to go back to the channel, and a delivery after the interrupt has to be refused.
         "parked take under interruption" - {
             "a take interrupted while parked leaves a later value in the channel" in {
@@ -231,9 +231,7 @@ class ChannelTest extends kyo.test.Test[Any]:
                             putter <- Fiber.initUnscoped(c.put(i))
                             _      <- taker.interrupt
                             r      <- taker.getResult
-                            // the interrupted taker either consumed the value before the interrupt landed, or the
-                            // value was handed back and the next take receives it
-                            v <- ((r match
+                            v      <- ((r match
                                 case Result.Success(x) => x
                                 case _                 => c.take
                             ): Int < (Async & Abort[Closed]))
@@ -417,7 +415,6 @@ class ChannelTest extends kyo.test.Test[Any]:
         // `strand` delivers a value and interrupts the taker in one step so the interrupt can land before the taker
         // resumes; a round where the taker resumed first is inconclusive and repeats, so the rounds loop inside the body.
         "a value delivered to a taker interrupted before it resumed" - {
-            // Present(value) once a round stranded the value, Absent when no round did within the bound.
             def strand(c: Channel[Int], rounds: Int)(using kyo.test.AssertScope): Maybe[Int] < (Async & Abort[Closed]) =
                 Loop.indexed { i =>
                     if i >= rounds then Loop.done(Absent)

@@ -1338,7 +1338,6 @@ object Flow:
                 ctx: Record[Any],
                 handler: internal.Handler[Any]
             ): Unit < Sync =
-                // The cast is the row erasure `Compensation` describes: the value is the same function.
                 compsRef.getAndUpdate(Compensation(name, ctx, handler.asInstanceOf[Record[Any] => Any < Any]) +: _).unit
 
             /** Runs the handlers this attempt registered, in reverse order of registration, skipping the ones already recorded.

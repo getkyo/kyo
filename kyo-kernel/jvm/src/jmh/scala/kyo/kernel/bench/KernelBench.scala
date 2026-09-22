@@ -704,10 +704,8 @@ object KernelBench:
 
     sealed trait Cfg3 extends ContextEffect[Int]
 
-    /** The shared cell of statefulAnswersPaySuccessorAltRef; it accumulates across runs, as the other ports' cells do. */
     val cell: AtomicInteger = new AtomicInteger(0)
 
-    /** The failure recoverAnswersThrow raises: allocated once and without a stack trace, so the row measures the unwind. */
     object Boom extends Exception with NoStackTrace
 
     /** The crossing a spawn composes in front of its isolate: `derive` yields the pass-through instance for a lone context

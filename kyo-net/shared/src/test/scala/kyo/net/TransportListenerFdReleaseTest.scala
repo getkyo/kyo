@@ -13,7 +13,7 @@ import kyo.*
   * Release is asserted through the public API, with no JVM-only fd counting: close, await `released`, then re-bind the port exactly once. A
   * fresh `listen` on the same port does a synchronous `bind()` BEFORE it registers accept interest, so a descriptor still open makes that bind
   * fail (address in use) without the re-listen's own activity waking the original selector and masking it. A `released` that never completes
-  * shows as the leaf's timeout. Run over every registered backend via [[eachBackend]].
+  * shows as the leaf's timeout.
   */
 class TransportListenerFdReleaseTest extends Test:
 

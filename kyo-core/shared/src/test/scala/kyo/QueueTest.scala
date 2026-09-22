@@ -1051,8 +1051,7 @@ class QueueTest extends kyo.test.Test[Any]:
     }
 
     // `q.closed` only reports true once the close's first instruction landed, so an interrupt requested after it
-    // reaches the drain rather than the commit. The scaladoc's guarantee for that is that the backlog is discarded
-    // and the queue still closes.
+    // reaches the drain rather than the commit.
     "a close interrupted after it committed leaves the queue closed" in {
         for
             q      <- Queue.Unbounded.init[Int]()

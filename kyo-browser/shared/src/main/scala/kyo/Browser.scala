@@ -2319,8 +2319,6 @@ object Browser:
                                     // features list with empty media drops every prefers-* override back to the environment value.
                                     CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
                         )
-                    // The override is owed its restore on this scope; the restore registers as the override's reply
-                    // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
                     ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
                         MutationSettlement.afterAction {
                             tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
@@ -3054,7 +3052,6 @@ object Browser:
             )
         }
 
-    /** Validates `toPath` and records the policy on the tab, ahead of the CDP call that applies it. */
     private def recordDownloadPolicy(tab: BrowserTab, behavior: Browser.DownloadBehavior, toPath: Maybe[String])(using
         Frame
     ): Unit < (Sync & Abort[BrowserReadException]) =
@@ -3808,7 +3805,7 @@ object Browser:
                         BrowserSnapshot.captureSnapshot(state).map { snapshot =>
                             BrowserTabSetup.createChildTab(state).map { tab =>
                                 BrowserSnapshot.restoreSnapshot(tab, snapshot).andThen {
-                                    // Reset activeIFrameLocal; handle is session-pinned to parent tab.
+                                    // handle is session-pinned to parent tab.
                                     activeIFrameLocal.let(Maybe.empty[IFrameHandle])(Env.run(tab)(v))
                                 }
                             }

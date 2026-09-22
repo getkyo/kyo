@@ -191,7 +191,7 @@ class PubSubTest extends kyo.test.Test[Any]:
                         _     <- assertEventually(topic.subscriberCount.map(_ == 1))
                         _     <- fiber.interrupt
                         _     <- fiber.getResult
-                        // Retried rather than read once, for the reason given on the init leaf: the interrupt spawns
+                        // Retried rather than read once: the interrupt spawns
                         // the scope's drain without waiting for it. Reading once happens to pass here only because
                         // the count is an actor round trip, which is usually long enough for the drain to have landed.
                         _ <- assertEventually(topic.subscriberCount.map(_ == 0))

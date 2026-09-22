@@ -367,8 +367,7 @@ object Fiber:
 
         /** Interrupts the Fiber with a specific error and waits until it has released what it held. */
         inline def interruptAwait(inline error: => Result.Error[E])(using Frame): Unit < Async =
-            // One defer: the interrupt is a synchronous promise write and the join that follows awaits the result. The
-            // result is discarded, so the fiber's own effects are never run here, and the wait itself is pure `Async`.
+            // The result is discarded, so the fiber's own effects are never run here, and the wait itself is pure `Async`.
             Sync.Unsafe.defer {
                 discard(self.lower.interrupt(error))
                 Async.useResult(self.lower)(_ => ())
@@ -927,7 +926,7 @@ object Fiber:
             if total == 0 || max <= 0 then Fiber.succeed(Chunk.empty)
             else
                 Sync.Unsafe.defer {
-                    // unlike foreachIndexed, what a child produces IS its fiber's value, so the restore packed into it arrives
+                    // what a child produces IS its fiber's value, so the restore packed into it arrives
                     // here and the array holds the pending computations
                     class State extends IOPromise[Any, Chunk[A] < (Abort[E] & S2)]
                         with Function2[Int, Result[E, A < S2], Unit]:

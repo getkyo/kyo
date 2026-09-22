@@ -204,7 +204,6 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
     protected def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
         settleInterrupt(p, v)
 
-    /** Completes a pending state with an interrupt: the CAS, then the observers, which already see the final state. */
     final protected def settleInterrupt(p: Pending[E, A], v: Error[E]): Boolean =
         compareAndSet(p, v) && {
             onComplete()

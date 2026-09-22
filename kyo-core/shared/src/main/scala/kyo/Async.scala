@@ -237,7 +237,6 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
-        // the isolate is forwarded rather than applied: Fiber does the crossing where it spawns
         Fiber.internal.race(iterable).map(_.get)
     end race
 

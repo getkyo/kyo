@@ -915,10 +915,6 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    // The engine records a request's handler proxy, spawns the handler and links the proxy to it as the fiber arrives
-    // (`ensureMap`), and a proxy the close settled first has its interrupt forwarded to the fiber, so no step separates
-    // a recorded handler from the close that must reach it. The leaf closes the serving endpoint once the handler has
-    // entered: the handler must be released and its caller must see a failure.
     "closing the endpoint interrupts a handler that is running".times(60) in {
         for
             entered  <- Latch.init(1)
@@ -1013,9 +1009,6 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             case other => fail(s"expected (Closed, Closed) during and after close, got $other")
     }
 
-    // An in-flight call registered before the close drains as JsonRpcLifecycleError(Close): the finalizer completes both
-    // its pending promise and its abort signal with that error, so neither race arm can report a transport error a
-    // losing send would have raised.
     "an in-flight call registered before close(0) drains as JsonRpcLifecycleError(Close)".notJs.notWasm in {
         Fiber.Promise.init[Unit, Any].map { gate =>
             val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }

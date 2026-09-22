@@ -92,7 +92,7 @@ object PubSub:
                 closed.get.map {
                     case true  => Abort.fail(Closed("PubSub", frame))
                     case false =>
-                        // Registered BEFORE the add, for the same reason as the linearized form: an interrupt between the
+                        // Registered BEFORE the add: an interrupt between the
                         // two would otherwise strand a subscriber nothing removes. Removal from a set is idempotent, so
                         // the reverse order costs nothing.
                         Scope.ensure(state.updateAndGet(_ - subscriber).unit)

@@ -62,9 +62,6 @@ private[mysql] object LocalInfileExchange:
         Latch.init(1).flatMap { latch =>
             channel.beginCleanup(latch).andThen {
                 // Register a cleanup finalizer that fires on error exit (including timeout/interrupt).
-                // A failure the terminator can still speak to gets the graceful cleanup: empty terminator plus
-                // drain, inside Async.uninterruptible so the cleanup cannot itself be interrupted, under a
-                // 5-second timeout so a server that stops responding cannot hang it forever.
                 // The latch is always released at the end of this block so waiting callers unblock.
                 Scope.ensure {
                     case Maybe.Present(error) =>
@@ -82,8 +79,8 @@ private[mysql] object LocalInfileExchange:
                         if cancellationLike then
                             // No round-trip on this edge. Its result is not trusted either way, since the branch below marks the
                             // channel corrupted even when the terminator appears to succeed, so waiting on a server still consuming
-                            // the upload only spends the budget holding this connection's pool permit (returned when the lease's
-                            // scope closes) and makes the next caller wait on cleanup it did not ask for, possibly failing to acquire
+                            // the upload only spends the budget holding this connection's pool permit
+                            // and makes the next caller wait on cleanup it did not ask for, possibly failing to acquire
                             // a connection at all instead of being handed this one and failing fast as unusable. Closing the socket
                             // ends the load by itself: the server sees the EOF.
                             channel.markCorrupted(OperationName).andThen(channel.endCleanup()).andThen(latch.release)

@@ -249,9 +249,6 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // A handler resuming the same cont more than once replays the regions it carries. A bracket's
-        // extent is over once the first resumption completes it, so the release would already have run
-        // when the next arrives. Where the bracket sits decides the outcome.
         "under a handler that replays" - {
 
             "every branch of a replaying handler runs against the live resource, released once after all of them" in {
@@ -271,8 +268,6 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // handleContRepeated holds the region it dumps: the release moves to the holder and runs once, after
-            // every shot, so a clause that resumes twice runs both against the live resource with no refusal.
             "a replaying handler holds the region, releasing once after every shot" in {
                 import kyo.kernel.ArrowEffect
                 for
@@ -310,8 +305,6 @@ class SyncTest extends kyo.test.Test[Any]:
                 end for
             }
 
-            // The bracket's extent is the suspension itself, so it ends the moment the choice is
-            // answered. Held, that ending only records: the release runs once, after every branch.
             "a bracket whose extent ends at the choice point still outlives every branch" in {
                 for
                     released <- AtomicInt.init(0)
@@ -330,8 +323,6 @@ class SyncTest extends kyo.test.Test[Any]:
             }
         }
 
-        // The fiber boundary answers a join in place, or parks at it carrying the region, rather than
-        // handing a continuation out and moving the release onto the boundary.
         "whose use suspends on an async join releases at its own end" in {
             for
                 released <- AtomicInt.init(0)
@@ -594,7 +585,7 @@ class SyncTest extends kyo.test.Test[Any]:
 
     "ensure under interruption" - {
 
-        // Cleanup that always occurs, for a computation that never got a slice. Holds only while nothing
+        // Holds only while nothing
         // deferred sits above the region, since the abandonment walk stops at one.
         "runs its finalizer for a fiber abandoned before its first slice" in {
             Async.foreachDiscard(1 to 20, 20) { _ =>
@@ -616,8 +607,7 @@ class SyncTest extends kyo.test.Test[Any]:
 
         // The finalizer runs as the region ends, and the step that raises the recorded abort applies as the value
         // arrives, so a stop delivered while the finalizer runs, here requested by the finalizer itself, cannot
-        // separate the region's clean end from the caller's `ensureMap`. A guard that hands its value on at a clean
-        // end closes nothing, and the caller must own the value.
+        // separate the region's clean end from the caller's `ensureMap`.
         "a caller's ensureMap after the region runs when the interrupt lands as the region ends" in {
             for
                 handoff <- Promise.init[Fiber[Unit, Any], Any]

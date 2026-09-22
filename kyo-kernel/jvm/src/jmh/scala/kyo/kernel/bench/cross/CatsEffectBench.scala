@@ -17,11 +17,10 @@ import scala.util.control.NoStackTrace
   * context: the fiber runs on the calling thread and the result queue is already filled when the
   * caller polls it, so no thread handoff is paid, as with kyo's `eval` and ZIO's `unsafe.run`. On the
   * global work-stealing runtime the same call schedules the fiber onto the pool and parks the caller,
-  * a handoff per run that kyo's rows never make. The entry still allocates the fiber and the queue;
-  * entryFloorBatch makes that visible. Fiber tracing stays at its default (cached); the tracing-off
-  * variant is a separate sensitivity run.
+  * a handoff per run that kyo's rows never make. The entry still allocates the fiber and the queue.
+  * Fiber tracing stays at its default (cached).
   *
-  * Tier B substitution: kyo's Ask suspension answered by an installed handler becomes an
+  * kyo's Ask suspension answered by an installed handler becomes an
   * `IOLocal.get`, whose constructor default is what a fresh fiber reads, so no per-run install is
   * paid. The stateful row uses `IOLocal.modify`, fiber-local state threading like kyo's stateful
   * region. A kyo region installed for an extent becomes the scoped install `IOLocal#asLocal` spells
@@ -43,7 +42,7 @@ class CatsEffectBench:
 
     private var seed = 1
 
-    /** The suspension with fifty transformations chained after it, built once; only answering it is timed. */
+    /** The suspension with fifty-one transformations chained after it, built once; only answering it is timed. */
     private val accumulatedChain: IO[Int] =
         ask.get.map(a => a & 63)
             .map(v => (v + 1) & 63).map(v => (v + 1) & 63).map(v => (v + 1) & 63)
@@ -221,9 +220,6 @@ class CatsEffectBench:
         runSync(loop(0, seed))
     end fusionAfterSuspension
 
-    /** The one row where the per-run install is the substance: the ambient is installed for the
-      * extent but never read.
-      */
     @Benchmark
     def idleHandlerAddsNothing: Int =
         def loop(i: Int, acc: Int): IO[Int] =
@@ -333,7 +329,6 @@ class CatsEffectBench:
         runSync(IO.asyncForIO.iterateWhileM(seed - 1)(i => IO.pure(i + 1))(_ <= Depth))
     end pureIterationViaLoop
 
-    /** Iteration through a step held as a value, so the loop body outlives the expression that built it. */
     @Benchmark
     def pureIterationViaArrow: Int =
         lazy val step: Int => IO[Int] = i =>
@@ -410,8 +405,8 @@ class CatsEffectBench:
         runSync(IO.pure(seed).map(_ + 1))
     end evalFixedOverhead
 
-    /** A read of the outermost of three nested bindings, under an idle binding innermost, as in the
-      * kyo row; an IOLocal read is a map lookup, so the nesting is carried for shape, not cost.
+    /** A read of the outermost of three nested bindings, under an idle binding innermost;
+      * an IOLocal read is a map lookup, so the nesting is carried for shape, not cost.
       */
     @Benchmark
     def contextReadsUnderBindings: Int =

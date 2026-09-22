@@ -198,7 +198,6 @@ class EffectTraceTest extends AnyFreeSpec:
         loop(depth, innerStep(ask))
     end deepChain
 
-    // A chain whose every step comes from one call site, so the frames the walk meets are all the same instance.
     def repeatedChain(depth: Int): Int < Ask =
         @tailrec def loop(i: Int, acc: Int < Ask): Int < Ask =
             if i == 0 then acc

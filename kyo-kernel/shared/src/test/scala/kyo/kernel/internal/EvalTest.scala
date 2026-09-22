@@ -829,8 +829,6 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List("release cfg 1", "release cfg 1"))
         }
 
-        // The region an `ensuring` installs from the start is entered before its body's first step runs, so the park
-        // taken in that step carries the entered cell, and the second walk finds it already run.
         "a double abandonment reaches an ensuring region stopped in its first step once" in {
             val seen         = ListBuffer[Maybe[Throwable]]()
             val v: Int < Any =
@@ -999,9 +997,6 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.map(_ * 10).eval == 420)
         }
 
-        // An operation issued under a region answers back through the region its clause sits in, and the crossing
-        // parks the answer as a deferral in front of the operation's own continuation, under the regions it crosses
-        // into.
         "a stop pending as a crossing answer arrives parks in front of the step receiving it, the crossed regions still owning what they hold" in {
             var registered      = Maybe.empty[Int]
             var outcome         = Maybe.empty[Maybe[Throwable]]
@@ -1055,8 +1050,6 @@ class EvalTest extends AnyFreeSpec:
             assert(outcome.exists(_.isEmpty), s"the bracket saw $outcome")
         }
 
-        // The computation an answer carries is produced under the regions the operation was issued under: a context
-        // read in it sees the crossed region's binding, not the default it would take where the clause is.
         "an answer carrying a computation is produced under the crossed regions" in {
             var registered        = Maybe.empty[Int]
             val body: Int < Fetch =
@@ -1075,8 +1068,6 @@ class EvalTest extends AnyFreeSpec:
             assert(registered == Maybe(7), s"the read was not produced under the crossed region, it saw $registered")
         }
 
-        // A throw in the step receiving a crossing answer unwinds through the crossed regions, which is why the step
-        // runs once the regions are reinstalled rather than where the clause is.
         "a throw in the step receiving a crossing answer unwinds through the crossed regions" in {
             val boom            = new RuntimeException("boom")
             var seen            = Maybe.empty[Maybe[Throwable]]
@@ -1131,9 +1122,7 @@ class EvalTest extends AnyFreeSpec:
             assert(later)
         }
 
-        // #1820. The acquire's value reaches the bracket's region in the region's own hook, with no poll between the
-        // acquire's last step and the region owning what it produced: a stop landing on that step parks after the
-        // value is owned, and an abandonment then releases it.
+        // #1820.
         "a stop landing on the acquire's last step hands the value to the bracket before parking" in {
             var released     = Maybe.empty[Int]
             var used         = false
@@ -1168,8 +1157,6 @@ class EvalTest extends AnyFreeSpec:
             assert(released.exists(_.isEmpty), s"the bracket saw $released")
         }
 
-        // The acquire's last step under a region of the acquire's own: the region ends in place as the value flows
-        // to the bracket, its release told a clean end, so the value is owned before the park all the same.
         "a stop landing on the acquire's last step under the acquire's own region hands the value to the bracket before parking" in {
             var inner              = Maybe.empty[Maybe[Throwable]]
             var released           = Maybe.empty[Int]
@@ -1475,8 +1462,6 @@ class EvalTest extends AnyFreeSpec:
             assert(log.toList == List(7))
         }
 
-        // A resource that is itself a computation is carried boxed once it settles, and every settled arm unnests
-        // before delivering; the region's hook receives it unnested too.
         "a release for a resource that is itself a computation receives the computation, not its box" in {
             val resource: Int < Ask = ask
             var released            = Maybe.empty[Any]
@@ -1890,8 +1875,6 @@ class EvalTest extends AnyFreeSpec:
         }
     }
 
-    // A release reports the first operation under what it is tearing down, which is how a fiber's interrupt reaches
-    // the join it would have awaited.
     "release reports the first operation" - {
         val walked = new RuntimeException("walked")
 
@@ -1980,7 +1963,6 @@ class EvalTest extends AnyFreeSpec:
             assert(seen == "deep")
         }
 
-        // Nothing under a deferral that never ran is reported, since nothing there is waited on yet.
         "does not run a deferral to reach the operation behind it" in {
             var seen  = ""
             var built = false

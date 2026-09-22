@@ -471,9 +471,6 @@ class PendingTest extends Test:
         // handled and does not leak past its handler.
         // One leaf per operation.
 
-        // `ensureMap` reaches a function recording an obligation the value has already created (a spawned fiber,
-        // an opened handle) even when the safepoint is denied, where `map` polls first and defers, dropping the
-        // recording and leaking the value.
         "ensureMap applies its function at a denied safepoint, where map defers it" in {
             var mapped         = false
             var ensureMapped   = false

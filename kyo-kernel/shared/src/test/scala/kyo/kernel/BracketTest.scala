@@ -142,16 +142,12 @@ class BracketTest extends AnyFreeSpec:
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
             Eval.release(parked, Boom)
             assert(count == 1)
-            // re-evaluating an abandoned park re-enters a released region, which is refused
             discard(intercept[kyo.Closed](parked.eval))
             assert(count == 1)
         }
 
         // The acquire's value reaches the bracket through a continuation composed with what follows the bracket, the
-        // shape of every bracket that is not the last thing a computation does. A composition applied to a settled
-        // value has to reach its first link as the value arrives: reified as a deferral instead, the loop polls before
-        // dispatching it, and a stop pending there parks with the value settled and the region never installed, so the
-        // abandonment walk has nothing to release.
+        // shape of every bracket that is not the last thing a computation does.
         "a stop landing as a handler answers the acquire still installs the region behind a composed continuation" in {
             var count              = 0
             val acquire: Int < Ask = ArrowEffect.suspendWith[Any](Tag[Ask], ()) { _ =>
@@ -321,9 +317,6 @@ class BracketTest extends AnyFreeSpec:
             assert(count == 1)
         }
 
-        // A fiber's regions stand above its boundary, so an operation the boundary answers dumps them into
-        // the continuation it parks with, and the park itself holds only what stood at or below the
-        // answering region.
         "releases a region dumped into the continuation of a park at a region below it" in {
             var seen               = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask    = Bracket(Effect.defer(7))(a => ask.map(_ + a))((_, outcome) => seen = Maybe(outcome))
@@ -345,8 +338,6 @@ class BracketTest extends AnyFreeSpec:
     }
 
     "captured continuations" - {
-        // A single-shot clause's dumped regions travel with the continuation and close at their own end where it
-        // resumes: the release runs before the step that follows the bracket, not at the handler's end.
         "a continuation resumed once in tail position releases before the step after the bracket" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask =
@@ -558,7 +549,6 @@ class BracketTest extends AnyFreeSpec:
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
-            // both shots run against the live resource (7); the bracket releases once, where the holder ends
             assert(r.eval == 809)
             assert(outcomes.toList == List(Maybe.empty))
         }
@@ -853,7 +843,6 @@ class BracketTest extends AnyFreeSpec:
         }
 
         "an isolated child built inside a bracket and evaluated after the bracket ended is not refused" in {
-            // The shape of a spawned fiber: built in the parent's extent, evaluated after the bracket released.
             var released        = false
             var child           = Maybe.empty[Int < Any]
             val body: Int < Any =
@@ -1419,8 +1408,6 @@ class BracketTest extends AnyFreeSpec:
             assert(outcome.exists(_.exists(_ eq Boom)), s"the release was told: $outcome")
         }
 
-        // The recovering overload exists so a clause needing both does not have to drop to `handleCont` for the
-        // recovery and lose the holding, which is not a convenience: it changes when the dumped regions discharge.
         "a recovering multi-shot clause still holds its regions" in {
             var events = List.empty[String]
             val v      =
@@ -1649,8 +1636,6 @@ class BracketTest extends AnyFreeSpec:
                 )
             assert(answerAsk(0)(outer(peeled)).eval == -1)
             assert(parked.isInstanceOf[Pending.Park[?, ?]])
-            // the resume is refused with Closed, or the use completes on a resource the
-            // region's exit did not release under it.
             val resumed = scala.util.Try(parked.eval)
             val refused = resumed.failed.toOption.exists(_.isInstanceOf[Closed])
             assert(
@@ -1845,9 +1830,6 @@ class BracketTest extends AnyFreeSpec:
             assert(events == List("release 1"))
         }
 
-        // Every resumption re-enters the region, and the re-entered region repeats as the outer one does: a bracket
-        // acquired inside one resumption and captured by an inner occurrence's continuation is held across that
-        // clause's resumptions and released where the re-entered region ends, before the outer clause resumes again.
         "a bracket inside a re-entered region is released where that region ends, before the next resumption" in {
             var events = List.empty[String]
             val v      =

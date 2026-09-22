@@ -40,7 +40,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
       * Single-shot (the default): the clause resumes at most once, so the dumped regions travel with the continuation and close at their
       * own end where it resumes (this region drains them if the clause drops it). [[repeated]] (`handleContRepeated`): the clause may resume
       * more than once, so the dumped regions are held and their releases run once, at this region's end, keeping a shared resource live
-      * across every resumption. A single-shot clause that resumes twice is refused at the region it re-enters.
+      * across every resumption.
       */
     abstract class ContHandler[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends ArrowHandler[Unit, E, A, B, S]:
         def run[X](input: I[X], cont: Arrow[O[X], A, E & S]): A < (E & S)
@@ -107,9 +107,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
                     EffectTrace.attach(ex, kyo, stack)
                     throw ex
 
-        /** A `Continue` rebuilds the region as a fresh `Handle` over the answer, making resumption the same operation as entry rather than a
-          * separate evaluator path.
-          */
         def clauseDispatch: Arrow[Outcome[A < (E & S), B < S], B, S] =
             type OutT = Outcome[A < (E & S), B < S]
             new Arrow.Step[OutT, B, S]:
@@ -245,9 +242,7 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
 
         /** Called when the region's extent runs to a clean end, whether in place or under a handler that resumed the remainder holding it.
           * It records the clean end but does not fire; [[release]], run here or by the scope that holds the region, fires and reads what was
-          * recorded to tell a clean ending apart from a drop. The default records nothing; a handler overrides when a clean end differs from
-          * a drop, as a bracket does to mark that its extent ran (so its release tells a clean ending, not the discard signal, and a later
-          * refused re-entry can say which way its cell fired).
+          * recorded to tell a clean ending apart from a drop.
           */
         def complete(state: State): Unit = ()
 
@@ -315,7 +310,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         end new
     end attachReentry
 
-    /** [[attachReentry]] for a region that carries its state through the outcome. */
     def attachReentry2[State, I[_], O[_], E <: ArrowEffect[I, O], A, B, S, X0](
         reentry: Arrow[O[X0], A, E & S]
     ): Arrow[Outcome2[State, O[X0] < (E & S), B < S], Outcome2[State, A < (E & S), B < S], S] =
@@ -343,7 +337,6 @@ sealed abstract private[kernel] class Handler[E <: Effect, A, -S]:
         armed: Boolean,
         slot: Safepoint.Slot
     ): Outcome[A < (E & S), B < S] < S =
-        // The walk fuses across operations of different types, so the input and cont in flight are erased.
         var in: Any                                 = input0
         var k: Arrow[Any, Any, Any]                 = k0.asInstanceOf[Arrow[Any, Any, Any]]
         var result: Outcome[A < (E & S), B < S] < S = null.asInstanceOf[Outcome[A < (E & S), B < S] < S]

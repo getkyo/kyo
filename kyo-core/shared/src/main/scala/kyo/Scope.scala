@@ -159,8 +159,7 @@ object Scope:
                 // than once. A close at the end of the body would run at the end of every branch and the next one would
                 // register on a closed scope. `Sync.ensure` records the first abort of the run and hands it to the
                 // release, so the finalizers see the real error; the abort is re-raised after the region, behind the wait
-                // for the drain. That wait is the backpressure on a run that ended in place; a branch that ends with the
-                // region still open owes none.
+                // for the drain.
                 .handle(Sync.ensure[A, Any, Async & S](finalizer.close))
                 .handle(Abort.run[Any])
                 .map { result =>
@@ -176,12 +175,6 @@ object Scope:
       * [[run]] for the acquisition would close the resource at the end of it, which is the opposite of handing it
       * over. Registering nothing leaves an acquisition abandoned partway holding whatever it had opened.
       *
-      * This covers the second case without causing the first: registrations made inside are run on a failure and
-      * never on a clean end, so the value leaves with them still armed and nobody to fire them.
-      *
-      * An abandonment is covered: a body interrupted while parked unwinds through the backstop, which closes what it
-      * had registered.
-      *
       * The scope is a root even when one encloses it. A child would be closed by the enclosing scope, which is the
       * same resource released under a caller that was handed it to keep.
       *
@@ -191,13 +184,11 @@ object Scope:
       */
     private[kyo] def runUnowned[A, S](v: A < (Scope & S))(using frame: Frame): A < (Async & S) =
         Finalizer.init(1).map { finalizer =>
-            // Unsafe: the handover flag is allocated and read outside an effect. `defer` supplies the capability to
-            // its body, so the grant stays inside the block.
+            // Unsafe: the handover flag is allocated and read outside an effect.
             Sync.Unsafe.defer {
                 // Whether the value reached the step that delivers it. The release below runs on every ending, and
                 // `Absent` does not identify one: a clean end carries it, and so does a remainder dropped with nothing
-                // recorded against it. Closing on `Absent` would release the value on its way out; not closing on it
-                // would leave a dropped acquisition holding everything it had opened. This flag is the difference,
+                // recorded against it. This flag is the difference,
                 // and it is set as the value arrives, with no polled step between the write and the delivery.
                 val delivered = AtomicBoolean.Unsafe.init(false)
                 ContextEffect.handle(
@@ -212,8 +203,6 @@ object Scope:
                             a
                         }
                     }
-                    // The close is the region's release, as in `run`; a failure closes with the error `Sync.ensure`
-                    // recorded, and only a failure waits for the drain.
                     .handle(Sync.ensure[A, Any, Async & S](error => if delivered.get() then Kyo.unit else finalizer.close(error)))
                     .handle(Abort.run[Any])
                     .ensureMap { result =>
@@ -231,15 +220,8 @@ object Scope:
     sealed abstract class Finalizer:
         def ensure(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame): Unit < Sync
 
-        /** Registers a finalizer without suspending, for `acquireRelease`: a suspension in the step the acquire's value
-          * arrives could be parked by an interrupt and leave the value unreleased. Every other caller wants [[ensure]].
-          */
         private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        /** Registers `v` if this scope is open, else does nothing. Failing is safe here, unlike [[ensureUnsafe]] which
-          * raises on a leak: the caller is a nested run asking to be waited for, and if this scope has closed there is
-          * nobody to wait and the run still closes itself.
-          */
         private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
         /** Records a nested run as the scope it opened, not a wait. A wait would deadlock: it completes only when the
@@ -254,9 +236,6 @@ object Scope:
           */
         private[kyo] def forked: Finalizer
 
-        /** Closes this scope: closes the runs nested in it and waits for them, then releases its own resources in
-          * reverse registration order.
-          */
         def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync
 
         /** Completes when this scope has finished releasing. */
@@ -379,7 +358,6 @@ object Scope:
                       * abandonment finds it claimed and rightly leaves it alone, so the finalizers in it never run (#1928). Inside
                       * the fiber the handover is awaited rather than continued, because an `ensure` that began before this close may
                       * still be committing its task.
-                      * Spawning keeps this `Sync`, which a bracket release needs.
                       */
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {

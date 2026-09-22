@@ -25,13 +25,11 @@ import kyo.kernel.internal.*
   */
 object Bracket:
 
-    // The region a bracket runs its use body under.
     sealed private[kyo] trait Finalize extends ContextEffect[Cell]
 
     // The exactly-once release guard, in two shapes rather than one with a flag: a bracket's own, and the inert one
     // handed to an isolated child (a recording instance would carry one crossing's state into the next).
     sealed abstract private[kyo] class Cell extends AtomicBoolean:
-        // Fires the release once, whichever ending reaches it first.
         private[kyo] def run(failure: Maybe[Throwable]): Unit
         // Records that the extent ran to a clean end, so the release, run here or by the scope that holds it, tells a
         // clean ending rather than a discard. Does not fire.
@@ -128,8 +126,7 @@ object Bracket:
             def release(state: Cell, failure: Maybe[Throwable]) = state.run(failure)
             override def complete(state: Cell): Unit            = state.complete()
             // A remainder resumed after its bracket's resource was released is a use-after-release: the cell has fired,
-            // so refuse rather than run the body against a released resource. The two ways it gets re-entered want
-            // different advice, and guessing wrong sends the reader after the wrong cause.
+            // so refuse rather than run the body against a released resource.
             override def reenter(state: Cell): Unit =
                 if state.get() then
                     val why =

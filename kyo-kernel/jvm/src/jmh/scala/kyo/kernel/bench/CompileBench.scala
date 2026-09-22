@@ -7,7 +7,7 @@ import org.openjdk.jmh.annotations.*
 
 /** Compiles one fixture file with an in-process dotc per benchmark invocation. The classpath is
   * this forked JVM's own, so fixtures compile against exactly the kernel classes the bench runs
-  * with, and a fork per fixture isolates shared-JVM state. A compile with diagnostics fails the
+  * with, and a fork per fixture isolates shared-JVM state. A compile with errors fails the
   * run, so a broken fixture cannot masquerade as a fast one. Fixtures live outside the kyo package
   * so Frame derivation is the real per-site macro cost, and each isolates one compile-cost driver.
   */

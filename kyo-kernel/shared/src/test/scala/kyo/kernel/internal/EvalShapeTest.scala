@@ -18,7 +18,6 @@ class EvalShapeTest extends Test:
     sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
     def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    // an effect a clause may perform, answered outside every region under test
     sealed trait Say extends ArrowEffect[Const[String], Const[Unit]]
     def say(s: String): Unit < Say = ArrowEffect.suspend[Any](Tag[Say], s)
 

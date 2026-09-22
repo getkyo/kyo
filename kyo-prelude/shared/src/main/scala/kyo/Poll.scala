@@ -151,7 +151,7 @@ object Poll:
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
       *
-      * This method provides a single input value to the Poll effect and stops after the first poll. It returns the continuation that
+      * It returns the continuation that
       * consumes the Maybe[V] result of the poll
       *
       * @param v
@@ -169,7 +169,6 @@ object Poll:
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input and continuation
                         Right(cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation

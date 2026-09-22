@@ -194,8 +194,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(completed.fired == 0)
         }
 
-        // The shape a task uses: the hook takes the interrupt and leaves the promise pending, `preInterrupt`
-        // refuses the next one, and the retry that follows a refused attempt asks it rather than spinning.
         "a hook that takes the interrupt without completing refuses the next through preInterrupt" in {
             class TakingPromise extends IOPromise[Nothing, Int]:
                 var taken = Maybe.empty[Result.Error[Nothing]]

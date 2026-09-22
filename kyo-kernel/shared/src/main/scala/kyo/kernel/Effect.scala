@@ -72,9 +72,6 @@ object Effect:
             defer(v, cont1, cont2.chain(cont3))
 
     /** Defers a block so it runs where the evaluator reaches it rather than where it is written.
-      *
-      * Taking the block by name and making it a node is the way to move ordinary code into a computation: what the block does happens when
-      * the computation runs, once per run, instead of at the point the value is built.
       */
     def defer[A, S](f: => A < S)(using Frame): A < S =
         deferInline(f)
