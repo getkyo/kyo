@@ -14,7 +14,7 @@ abstract class Test extends kyo.test.Test[Any]:
     // Idempotent: every suite in the process derives the same value from the same env var, so concurrent construction on Native races harmlessly.
     locally:
         if java.lang.System.getProperty("kyo.net.backend") == null then
-            sys.env.get("KYO_NET_ONLY").foreach(name => java.lang.System.setProperty("kyo.net.backend", name))
+            Test.isolationEnv("KYO_NET_ONLY").foreach(name => discard(java.lang.System.setProperty("kyo.net.backend", name)))
 
     // 60s per-leaf budget for the whole module. CI runners are far slower than a local box, and the heaviest leaves here
     // drive software TLS over BoringSSL/OpenSSL with dozens of concurrent connections (a few seconds idle on the JVM,
@@ -148,7 +148,7 @@ abstract class Test extends kyo.test.Test[Any]:
             // KYO_NET_TLS_ONLY=<provider> restricts the matrix to one TLS provider (mirrors KYO_NET_ONLY for backends), so a single
             // (backend, provider) cell can be isolated WITHOUT the concurrent dual-provider leaves confounding per-round attribution.
             // Inert by default (unset = every registered provider).
-            provider <- TlsProviderPlatform.registered.filter(p => sys.env.get("KYO_NET_TLS_ONLY").forall(_ == p.name))
+            provider <- TlsProviderPlatform.registered.filter(p => Test.isolationEnv("KYO_NET_TLS_ONLY").forall(_ == p.name))
         do
             s"[${entry.name} / ${provider.name}]" in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
@@ -195,5 +195,18 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
         Sync.defer(entry.transport).map(transport => scenario(transport))
     end withTransport
+
+end Test
+
+object Test:
+
+    /** An isolation variable's value, or `Absent` when it is unset.
+      *
+      * Read through `FlagPlatform` rather than `sys.env`, which is `System.getenv` and answers null for every name
+      * under Scala.js. Read through `sys.env`, a `KYO_NET_ONLY=node` run on the JS or Wasm axis would restrict nothing
+      * and run the whole matrix, reporting success for a fan-out the operator believed was narrowed to one cell.
+      */
+    private[net] def isolationEnv(name: String): Maybe[String] =
+        Maybe(FlagPlatform.env(name)).filter(_.nonEmpty)
 
 end Test

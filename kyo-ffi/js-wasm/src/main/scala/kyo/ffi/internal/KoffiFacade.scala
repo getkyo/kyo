@@ -11,10 +11,10 @@ import scala.scalajs.js
   * a `@JSImport` binding as a module-level `require("koffi")` / `import ... from "koffi"` that Node evaluates at bundle LOAD, before any Scala
   * code runs. A static import would make merely LINKING a koffi-using module (kyo-net's posix transport, and every module that transitively
   * depends on it) crash at load on a host without koffi installed, and it would defeat the degrade-to-Node-floor contract: the failure
-  * happens before any Scala frame exists, so it cannot reach the [[kyo.net.internal.backend.CapabilityProbe]] that classifies an
-  * [[FfiLoadError]] into a backend demotion. So the koffi module is required at the first call the same way [[NativeLoader.tryKoffiLoad]]
-  * does, and a missing koffi surfaces as a catchable [[FfiLoadError.LibraryNotFound]] (libraryId "koffi"). The resolved value is koffi's
-  * `module.exports` (a CommonJS native addon); its members (`.load`, `.func`, `.version`, ...) are read off it directly.
+  * happens before any Scala frame exists, so it cannot reach a caller that classifies an [[FfiLoadError]] into a degrade. So the koffi
+  * module is required at the first call, and a missing koffi surfaces as a catchable
+  * [[FfiLoadError.LibraryNotFound]] carrying [[KoffiRuntime.LibraryId]]. The resolved value is koffi's `module.exports` (a CommonJS native
+  * addon); its members (`.load`, `.func`, `.version`, ...) are read off it directly.
   *
   * Members mirror the real koffi API surface used by generated code and by user-facing helpers in [[KoffiFacade]]. Runtime correctness
   * (semantics, out-param marshalling, callback lifetime) is validated only in the scripted integration tests against a real Node + koffi
@@ -25,36 +25,33 @@ private[ffi] object Koffi:
     // Resolved koffi module, cached after the first successful resolution. `null` until first use, so nothing forces an eager module-load.
     private var cached: js.Dynamic = null
 
-    /** The koffi module, resolved dynamically on first use. Throws [[FfiLoadError.LibraryNotFound]] (libraryId "koffi") when koffi is not
-      * installed / resolvable, which [[kyo.net.internal.backend.CapabilityProbe]] classifies as a NotBundled demotion to the Node floor.
+    /** The koffi module, resolved dynamically on first use. Throws [[FfiLoadError.LibraryNotFound]] carrying [[KoffiRuntime.LibraryId]] when
+      * koffi is not installed or not resolvable.
       */
     private[ffi] def dynamic: js.Dynamic =
         if cached == null then cached = resolve()
         cached
 
     private def resolve(): js.Dynamic =
-        var lastErr: Throwable | Null                = null
-        def attempt(f: () => js.Dynamic): js.Dynamic =
+        var lastErr: Throwable | Null = null
+        val loaded: js.Dynamic =
             try
-                val k = f()
-                if js.isUndefined(k) || k == null then null else k
+                NodeRequire.find() match
+                    case None => null
+                    case Some(req) =>
+                        val k = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+                        if js.isUndefined(k) || k == null then null else k
             catch
                 case t: Throwable =>
                     lastErr = t
                     null
-        // CommonJSModule leg: `require` is available as a process global. ESModule leg (every Wasm axis, kyo-ffi's own js axis): no `require`
-        // global, so build one from `node:module`.createRequire anchored at cwd; NODE_PATH supplies the resolution search path for the Wasm
-        // test env. createRequire also works under CommonJS, so it is a universal fallback when the `require` global is absent.
-        val loaded = attempt(cjsRequire) match
-            case null => attempt(esmRequire)
-            case k    => k
         if loaded != null then
             configureAsyncPool(loaded)
             loaded
         else
             throw new FfiLoadError.LibraryNotFound(
-                "koffi",
-                Chunk("require(\"koffi\")", "createRequire(process.cwd())(\"koffi\")"),
+                KoffiRuntime.LibraryId,
+                Chunk("require(\"koffi\")"),
                 "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native FFI backend",
                 lastErr
             )
@@ -85,24 +82,6 @@ private[ffi] object Koffi:
                 )
         end try
     end configureAsyncPool
-
-    private def cjsRequire(): js.Dynamic =
-        val req = js.Dynamic.global.selectDynamic("require")
-        if js.isUndefined(req) || req == null then null
-        else req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-    end cjsRequire
-
-    private def esmRequire(): js.Dynamic =
-        val proc = js.Dynamic.global.selectDynamic("process")
-        if js.isUndefined(proc) || proc == null then null
-        else
-            val nodeModule = proc.applyDynamic("getBuiltinModule")("node:module")
-            val cwd        = proc.applyDynamic("cwd")().asInstanceOf[String]
-            val require    =
-                nodeModule.applyDynamic("createRequire")((cwd + "/").asInstanceOf[js.Any]).asInstanceOf[js.Function1[String, js.Dynamic]]
-            require("koffi")
-        end if
-    end esmRequire
 
     /** koffi 2.x helper that pins a JS value to a specific koffi type. Used for variadic call sites where each vararg must be typed at call
       * time rather than the prototype.

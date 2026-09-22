@@ -78,7 +78,8 @@ object NativeLoader:
                 s"${libraryId.toUpperCase.replace('-', '_')}_PATH to an absolute path, install the '$packagePrefix' " +
                 s"package for $os-$arch, or install the '$libraryId' system library. Tried, in order: " +
                 s"${candidates.mkString("; ")}.",
-            null
+            null,
+            s"$os-$arch"
         )
     end jsResolve
 
@@ -90,33 +91,34 @@ object NativeLoader:
     /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */
     private def requireResolve(resolvePath: String): Option[String] =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then null
-            else
-                val r = req.applyDynamic("resolve")(resolvePath)
-                if js.isUndefined(r) || r == null then null
-                else r.asInstanceOf[String]
-            end if
+            NodeRequire.find() match
+                case None      => null
+                case Some(req) =>
+                    val r = req.applyDynamic("resolve")(resolvePath)
+                    if js.isUndefined(r) || r == null then null
+                    else r.asInstanceOf[String]
         }.toOption.flatMap(Option(_))
 
     /** Probe whether koffi can load `name` (an installed system library by SONAME / default search). `false` when
       * koffi is unavailable or the load fails. Used only as the last presence gate; the caller loads for real.
       *
-      * koffi is required DYNAMICALLY (`require("koffi")`), not through the static `@JSImport` facade, so this
-      * loader keeps no static dependency on the koffi package: a runtime with no koffi installed just makes the
-      * probe return `false` instead of failing to load this module.
+      * koffi is reached through [[Koffi.dynamic]] rather than a require of its own, and that is what orders this
+      * against the async-pool configuration. koffi refuses `config` once any library has been loaded ("Cannot
+      * change Koffi configuration once a library has been loaded"), and this probe loads one. Resolving through
+      * the shared accessor configures the pool on first use, before the load below; reaching for the module
+      * directly would lock the configuration at koffi's default of 256 instead of the configured pool, halve the
+      * meter bound to match, and report it as another koffi user in the process when the other user is this one.
+      *
+      * The accessor raises when koffi is absent, which `Try` turns back into `false`: this is a presence gate, and
+      * a runtime with no koffi installed answers no rather than failing the caller.
       */
     private def tryKoffiLoad(name: String): Boolean =
         Try {
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
+            val koffi = Koffi.dynamic
+            if js.isUndefined(koffi) || koffi == null then false
             else
-                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                if js.isUndefined(koffi) || koffi == null then false
-                else
-                    val lib = koffi.applyDynamic("load")(name)
-                    !js.isUndefined(lib) && lib != null
-                end if
+                val lib = koffi.applyDynamic("load")(name)
+                !js.isUndefined(lib) && lib != null
             end if
         }.getOrElse(false)
 
@@ -165,15 +167,25 @@ object NativeLoader:
     private def detectOs(): String =
         val p = js.Dynamic.global.process.platform
         if js.isUndefined(p) || p == null then "unknown"
-        else
-            p.asInstanceOf[String] match
-                case "darwin"  => "darwin"
-                case "linux"   => "linux"
-                case "win32"   => "windows"
-                case "freebsd" => "freebsd"
-                case other     => other
-        end if
+        else detectOsWith(p.asInstanceOf[String], fileExists)
     end detectOs
+
+    /** The os half of the tag a bundle is resolved under, for `platform` as Node reports it.
+      *
+      * `process.platform` says `linux` for both glibc and musl, and the two are separate poles: a glibc library does
+      * not load under musl, so an Alpine host resolving `linux-<arch>` finds a library it cannot open. musl is
+      * identified by its dynamic loader, which is what the JVM loader keys on too, so the two agree on which pole a
+      * host is. Takes `exists` so the branches are testable off their own host.
+      */
+    private[internal] def detectOsWith(platform: String, exists: String => Boolean): String =
+        platform match
+            case "darwin" => "darwin"
+            case "linux"  =>
+                if exists("/lib/ld-musl-x86_64.so.1") || exists("/lib/ld-musl-aarch64.so.1") then "linux-musl"
+                else "linux"
+            case "win32"   => "windows"
+            case "freebsd" => "freebsd"
+            case other     => other
 
     private def detectArch(): String =
         val a = js.Dynamic.global.process.arch
