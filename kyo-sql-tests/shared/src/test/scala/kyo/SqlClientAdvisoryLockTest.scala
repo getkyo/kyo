@@ -33,6 +33,12 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
     private def oneConnection: SqlConfig =
         SqlConfig(maxConnections = 1, acquireTimeout = 3.seconds, queryTimeout = 20.seconds)
 
+    /** Bounds for the mid-statement leaf, where a regression is a session that answers nothing rather than one that answers wrongly. Both
+      * bounds only turn a hang into a red leaf; what the leaf asserts on is the rows it read and the lock it took.
+      */
+    private def midStatement: SqlConfig =
+        SqlConfig(maxConnections = 4, acquireTimeout = 10.seconds, queryTimeout = 20.seconds)
+
     "a held lock excludes a concurrent session until the body releases it" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
         // Both engines make `withAdvisoryLock` block until the lock is granted, so exclusion shows up as an ordering.
         // The contender attempts only once the holder is inside, and it cannot acquire until the holder releases, which
@@ -134,6 +140,43 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
         yield assert(outcome == 42, "the contender must acquire a lock an interrupted holder released")
         end for
     }
+
+    "a holder interrupted with a statement in flight frees the lock and leaves the session clean" -
+        forEachBackend(midStatement, where = _.hasAdvisoryLocks, timeout = Present(90.seconds)) { (_, client, _) =>
+            // The interrupt the leaf above delivers lands on an idle wire, which is the easy half. Here it lands
+            // with the session in the middle of an exchange, and the unlock must not be written there: its own read
+            // would take the abandoned statement's response and leave its real one queued, so the next borrower of
+            // that pooled session decodes a leftover packet or waits for bytes that already arrived. The two
+            // assertions name the two shapes that has: a statement on a later session that fails or hangs, and a
+            // lock no one can take again.
+            //
+            // The interrupted statement is a cross join, so the response is large enough that the interrupt has a
+            // whole multi-packet read to land inside rather than a single small frame.
+            val key = 606060L
+            for
+                _      <- client.executeRaw("CREATE TABLE lockprobe (body VARCHAR(64) NOT NULL)")
+                _      <- Kyo.foreachDiscard(1 to 60)(i => Sql.insert[LockProbe].values(LockProbe(s"row-$i")).run)
+                counts <- Kyo.foreach(1 to 10) { _ =>
+                    for
+                        inside <- Latch.init(1)
+                        holder <- Fiber.init {
+                            client.withAdvisoryLock(key) {
+                                inside.release.andThen(client.query(sql"SELECT a.body, b.body FROM lockprobe a, lockprobe b"))
+                            }
+                        }
+                        _    <- inside.await
+                        _    <- holder.interrupt
+                        _    <- holder.getResult
+                        rows <- Sql.from[LockProbe]("p").select(c => c.p.body).run
+                        _    <- client.withAdvisoryLock(key)(())
+                    yield rows.size
+                }
+            yield assert(
+                counts == Chunk.fill(10)(60),
+                s"every round must read the table back and take the lock again after the interrupted holder, saw $counts"
+            )
+            end for
+        }
 
     "an engine without advisory locks refuses the acquire rather than blocking" - forEachBackend(where = !_.hasAdvisoryLocks) {
         (_, client, _) =>

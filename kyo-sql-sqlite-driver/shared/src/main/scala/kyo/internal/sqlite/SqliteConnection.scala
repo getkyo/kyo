@@ -135,9 +135,19 @@ final private[kyo] class SqliteConnection(
                     // IMMEDIATE takes the write lock up front. A DEFERRED transaction that later writes can fail to
                     // upgrade against a concurrent reader, surfacing at COMMIT rather than at the statement that caused it.
                     val begin = if readOnly then "BEGIN" else "BEGIN IMMEDIATE"
-                    exec(begin).andThen {
-                        if readOnly then exec("PRAGMA query_only = ON") else Kyo.unit
-                    }.andThen(Sync.defer(inTransactionFlag.unsafe.set(true)(using AllowUnsafe.embrace.danger)))
+                    // The flag goes up BEFORE BEGIN is sent. An interrupt landing while BEGIN waits for another connection's
+                    // write lock abandons this continuation, and the native call still takes the lock once it frees: raised
+                    // after BEGIN returns, the flag would stay down, the reclaim would skip its rollback, and the pool would
+                    // hand out a session holding the database's write lock. The reclaim's ROLLBACK queues behind the native
+                    // BEGIN on the handle's mutex, so it runs once BEGIN has resolved, and a BEGIN that failed leaves it
+                    // nothing to undo.
+                    Sync.Unsafe.defer(inTransactionFlag.unsafe.set(true)).andThen {
+                        Abort.run[SqlException](exec(begin)).map {
+                            case Result.Success(_) => if readOnly then exec("PRAGMA query_only = ON") else Kyo.unit
+                            case Result.Failure(e) => clearTransaction.andThen(Abort.fail(e))
+                            case Result.Panic(t)   => Abort.panic(t)
+                        }
+                    }
                 }
 
     def commitTransaction(using Frame): Unit < (Async & Abort[SqlException]) =
