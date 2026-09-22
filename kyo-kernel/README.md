@@ -594,7 +594,7 @@ val conn = Ask.run(1)(acquired).eval
 assert(registry.result() == Chunk(conn))
 ```
 
-The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else, since skipping the poll also means the computation cannot be preempted at that point.
+The connection exists and the registry knows about it, with nothing schedulable in between. Under no interruption that is exactly what `map` would have done, which is why no example can show the difference: it is about the one scheduling in which the two diverge. Reach for it only for that pairing, a resource opened and its release registered, or a fiber spawned and its handle stored, and use `map` everywhere else, since skipping the poll also means the computation cannot be preempted at that point. `Arrow.ensure(f)` is the same guarantee as an `Arrow` value, and `ensureMap` is built on it.
 
 ### `Bracket`: acquire, use, release
 
@@ -706,7 +706,7 @@ def sumAsk(i: Int, acc: Int): Int < Ask =
 assert(Ask.run(0)(sumAsk(0, 0)).eval == 3)
 ```
 
-`Loop` is that recursion with the state passed as parameters and the rounds made cheaper. A body that answers without suspending stays in a plain tail-recursive loop and allocates no continuation node, only the small `Loop.continue` answer per round; one that does suspend reuses a single step arrow across every round, where the recursion above builds a fresh `map` node per call. That reuse holds for `Loop.apply`, `foreach`, `forever`, and `whileTrue`; `Loop.indexed` and `Loop.repeat` build a node per suspension. It takes the initial state and a body answering, per round, either the next state or a final value:
+`Loop` is that recursion with the state passed as parameters and the rounds made cheaper. A body that answers without suspending stays in a plain tail-recursive loop and allocates no continuation node, only the small `Loop.continue` answer per round; one that does suspend reuses a single step arrow across every round, where the recursion above builds a fresh `map` node per call. That reuse holds for `Loop.apply`, `foreach`, and `forever`, and for the body of `whileTrue`, whose condition is bound with `map` and so builds a node per round when it suspends; `Loop.indexed` and `Loop.repeat` build a node per suspension. It takes the initial state and a body answering, per round, either the next state or a final value:
 
 ```scala
 val counted: Int < Ask =
