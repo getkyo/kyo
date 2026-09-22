@@ -19,6 +19,7 @@ class PollerIoDriverIdleTest extends kyo.net.Test:
     import AllowUnsafe.embrace.danger
 
     private def newDriver(using Frame): PollerIoDriver =
+        if !PosixConstants.isLinux && !PosixConstants.isMacOrBsd then cancel("no posix poller on this OS; the Node floor serves it")
         val backend = PollerBackend.default()
         PollerIoDriver.init(backend, backend.create(), Ffi.load[SocketBindings])
 
