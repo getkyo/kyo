@@ -172,12 +172,15 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     _      <- assertEventually(Sync.defer(captured.get().isDefined))
                     q = captured.get().get
                     // A stopped taker stays in the channel's take count until a put polls it, so the count says nothing
-                    // about the drainer; a dialog put after the stop stays queued only when no drainer is parked to take it.
-                    _    <- q.put((true, "", Absent))
-                    left <- q.size
+                    // about the drainer; a dialog put stays queued only when no drainer is parked to take it. The stop
+                    // spawns the scope's drain without waiting for it, so the drainer can still take puts for a moment
+                    // after `getResult`: the leaf puts until one stays, and a leaked drainer consumes every put in the bound.
+                    idle <- Abort.run[Timeout | Closed](
+                        Async.timeout(1.second)(assertEventually(q.put((true, "", Absent)).andThen(q.size.map(_ > 0))))
+                    ).map(_.isSuccess)
                 yield
                     assert(probed, "the init never reached the version probe")
-                    assert(left == 1, "the dialog drainer is still consuming the dialog queue after the init that spawned it was stopped")
+                    assert(idle, "the dialog drainer is still consuming the dialog queue after the init that spawned it was stopped")
                 end for
             }
         }
