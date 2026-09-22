@@ -623,6 +623,34 @@ class ChannelTest extends kyo.test.Test[Any]:
                 yield assert(r == Chunk(2, 3, 101, 102))
             }
         }
+        // A zero-capacity channel pairs a parked producer with a parked taker only under its transfer claim, and a flush that
+        // loses the claim returns at once. A close landing while a transfer holds the claim therefore finds both parked, and
+        // its closing drain fails the producer without first handing its value to the taker that is waiting for it. The
+        // leaf holds the claim itself, which is the only deterministic way to have both parked when the close runs.
+        "a close that finds a producer and a taker both parked on a zero-capacity channel".pendingUntilFixed(
+            "the closing drain fails the parked put and the parked take without pairing them"
+        ) in {
+            Sync.Unsafe.defer {
+                val c = Channel.Unsafe.init[Int](0)
+                c match
+                    case z: Channel.Unsafe.ZeroCapacityUnsafe[Int] @unchecked =>
+                        z.batchInProgress.set(true)
+                        val put  = z.putFiber(1)
+                        val take = z.takeFiber()
+                        discard(z.close())
+                        z.batchInProgress.set(false)
+                        for
+                            delivered <- take.safe.getResult
+                            accepted  <- put.safe.getResult
+                        yield assert(
+                            delivered == Result.succeed(1) && accepted == Result.succeed(()),
+                            s"the taker got $delivered and the producer got $accepted"
+                        )
+                        end for
+                    case other => fail(s"a zero-capacity channel is a ZeroCapacityUnsafe, not $other")
+                end match
+            }
+        }
     }
     "takeExactly" - {
         "should return empty chunk if n <= 0" in {
