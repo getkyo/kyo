@@ -1,41 +1,58 @@
 # kyo-combinators
 
-Every Kyo computation has the shape `A < S`: a value of type `A` pending one or more effects `S`. `kyo-combinators` is a layer of fluent extension methods on top of that one shape. Instead of writing `Abort.run(eff).map(...)`, `Fiber.init(eff)`, or `Async.sleep(d).andThen(eff)`, you write `eff.result`, `eff.fork`, or `eff.delay(d)`. The library adds no new core type and no new effect: it adds a postfix vocabulary for the effects already in `kyo-prelude` and `kyo-core` (`Abort`, `Async`, `Choice`, `Emit`, `Env`, `Scope`, `Sync`, `Stream`), plus a `Kyo.*` companion for constructing computations.
+Every Kyo computation has the shape `A < S`: a value of type `A` pending one or more effects `S`. `kyo-combinators` is a layer of fluent extension methods on top of that one shape. Instead of writing `Abort.run(eff).map(...)`, `Fiber.init(eff)`, or `Async.sleep(d).andThen(eff)`, you write `eff.result`, `eff.fork`, or `eff.delay(d)`. The library adds no new core type and no new effect: it adds a postfix vocabulary for the effects already in `kyo-prelude` and `kyo-core` (`Abort`, `Async`, `Choice`, `Emit`, `Poll`, `Env`, `Scope`, `Sync`, `Memo`) and for converting emitted values into a `Stream`, plus a `Kyo.*` companion for constructing computations.
 
 The combinators cluster by which effect row they target. The receiver of each extension carries a type-pattern that constrains where it applies: `.fork` is defined on `A < (Abort[E] & Async & S)`, `.maybe` is defined on `A < (Abort[Absent] & S)`, `.handleChoice` is defined on `A < (S & Choice)`. The same call-site idiom (postfix method on the effect value) handles construction, handling, recovery, retry, repetition, lifecycle, parallel composition, and stream conversion.
 
-```scala
-import kyo.*
+The examples share a small order-processing domain:
 
-case class Order(id: Long)
+```scala doctest:setup
+enum Status:
+    case Pending, Completed
+
+case class Item(sku: String, qty: Int)
+case class Order(id: Long, total: BigDecimal = BigDecimal(0), items: Seq[Item] = Seq.empty, status: Status = Status.Pending)
+case class Profile(name: String)
 case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-object OrderRepo:
-    def lookup(id: Long): Option[Order] = None
-val orderId: Long = 42L
 
+trait OrderRepo:
+    def lookup(id: Long): Option[Order] < Sync
+    def load(id: Long): Order < Abort[OrderNotFound]
+
+enum ShipmentEvent:
+    case Shipped(sku: String)
+
+val orderId: Long                                = 42L
+val order: Order                                 = Order(orderId, BigDecimal(100), Seq(Item("sku1", 1), Item("sku2", 2)))
+val repo: OrderRepo                              = ???
+val load: Order < (Abort[OrderNotFound] & Async) = ???
+val profileFor: Long => Profile < Async          = _ => ???
+
+val shipments: Unit < Emit[ShipmentEvent] =
+    Kyo.foreachDiscard(order.items)(item => Kyo.emit(ShipmentEvent.Shipped(item.sku)))
+```
+
+With it, a lookup that may find nothing becomes a typed failure, is retried with backoff, and falls back to a default:
+
+```scala
 val resilient: Order < Async =
-    Kyo.fromOption(OrderRepo.lookup(orderId))
+    repo.lookup(orderId).map(found => Kyo.fromOption(found))
         .absentToFailure(OrderNotFound(orderId))
         .retry(Schedule.exponential(100.millis, 2.0).take(3))
         .recover(_ => Order(0L))
 ```
 
-The rest of this README walks the combinators by cluster, starting with construction (lifting plain values into the effect row) through dependency injection (handling `Env[E]`), and ends with one chain that crosses all of them.
+The rest of this README walks the combinators by cluster, starting with construction (lifting plain values into the effect row) through dependency injection (handling `Env[E]`), and ends with one chain that crosses several of them.
 
 ## Construction
 
-The `Kyo.` companion is the entry door for lifting plain values, callbacks, futures, optionality types, sequences, and resources into the right effect row. You reach for these BEFORE any combinator applies: every combinator is an extension method on `A < S`, so you need an `A < S` first.
+The `Kyo` companion is the entry point for lifting plain values, callbacks, futures, optionality types, sequences, and resources into the right effect row. Every combinator is an extension method on `A < S`, so you need an `A < S` first.
 
 ### Lifting plain values and side-effects
 
 `Kyo.defer` suspends a thunk under `Sync`. `Kyo.fail` lifts an error value into `Abort[E]`. `Kyo.attempt` catches any `Throwable` thrown by the body into `Abort[Throwable]`.
 
 ```scala
-import kyo.*
-
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
 val timestamp: Long < Sync =
     Kyo.defer(java.lang.System.currentTimeMillis())
 
@@ -51,12 +68,6 @@ val parsed: Int < Abort[Throwable] =
 `Kyo.sleep(duration)` pauses under `Async`. `Kyo.never` is an `Async` computation that never completes (useful as a sentinel in races and timeouts). `Kyo.async` bridges a callback API into `Async`: the body receives a "register" function that the callback eventually calls with the result.
 
 ```scala
-import kyo.*
-
-case class Order(id: Long, items: Seq[String])
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
 trait LegacyClient:
     def fetchOrder(id: Long, cb: Either[Throwable, Order] => Unit): Unit
 val legacyClient: LegacyClient = ???
@@ -70,67 +81,55 @@ val fromCallback: Order < (Abort[OrderNotFound] & Async) =
         legacyClient.fetchOrder(
             orderId,
             {
-                case Right(order) => register(order)
+                case Right(found) => register(found)
                 case Left(err)    => register(Kyo.fail(OrderNotFound(orderId)))
             }
         )
     }
 ```
 
-> **Note:** `register` may be called from any thread, typically the callback API's own. Each computation passed to it runs on a fiber of its own, and the first one to finish completes the result; later calls have no effect. Interrupting the fiber waiting on `Kyo.async` also interrupts the registered computation, so a caller that gives up does not leave it running.
+> **Note:** `register` may be called from any thread, typically the callback API's own. Each call runs the computation passed to it on a fiber of its own, and the first one to finish completes the result; a later call still runs its computation, but its result is ignored. Interrupting the fiber waiting on `Kyo.async` also interrupts the registered computations, so a caller that gives up does not leave them running.
 
 ### Lifting standard-library types
 
 Each `fromX` constructor lifts a standard-library result-or-optionality type into the corresponding `Abort`-or-`Choice`-typed effect.
 
 ```scala
-import kyo.*
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.Promise
 
-case class Order(id: Long, items: Seq[Item])
-case class Item(sku: String, qty: Int)
-case class OrderNotFound(id: Long)      extends Exception(s"Order $id not found")
 case class ValidationError(msg: String) extends Exception(msg)
-val orderId: Long = 42L
-val order: Order  = Order(orderId, Seq(Item("sku1", 1)))
-
-object OrderRepo:
-    def lookup(id: Long): Option[Order] = None
 
 object orderCache:
     def get(id: Long): Maybe[Order] = Absent
 
-object Order:
-    def validate(raw: String): Either[ValidationError, Order] = Left(ValidationError("bad"))
-
-trait Repo:
+trait LegacyRepo:
+    def lookupNow(id: Long): Option[Order]
+    def validate(raw: String): Either[ValidationError, Order]
     def lookupResult(id: Long): Result[OrderNotFound, Order]
     def lookupOrThrow(id: Long): Order
     def lookupAsync(id: Long): Future[Order]
-end Repo
-val repo: Repo                   = ???
+val legacy: LegacyRepo           = ???
 val rawJson: String              = "{}"
 val orderPromise: Promise[Order] = Promise[Order]()
 
 val fromOpt: Order < Abort[Absent] =
-    Kyo.fromOption(OrderRepo.lookup(orderId))
+    Kyo.fromOption(legacy.lookupNow(orderId))
 
 val fromMb: Order < Abort[Absent] =
     Kyo.fromMaybe(orderCache.get(orderId))
 
 val fromEi: Order < Abort[ValidationError] =
-    Kyo.fromEither(Order.validate(rawJson))
+    Kyo.fromEither(legacy.validate(rawJson))
 
 val fromRes: Order < Abort[OrderNotFound] =
-    Kyo.fromResult(repo.lookupResult(orderId))
+    Kyo.fromResult(legacy.lookupResult(orderId))
 
 val fromTr: Order < Abort[Throwable] =
-    Kyo.fromTry(scala.util.Try(repo.lookupOrThrow(orderId)))
+    Kyo.fromTry(scala.util.Try(legacy.lookupOrThrow(orderId)))
 
 val fromFut: Order < Async =
-    Kyo.fromFuture(repo.lookupAsync(orderId))
+    Kyo.fromFuture(legacy.lookupAsync(orderId))
 
 val fromPr: Order < Async =
     Kyo.fromPromiseScala(orderPromise)
@@ -141,6 +140,8 @@ val fromSq: Item < Choice =
 
 `fromOption` and `fromMaybe` both route absence to `Abort[Absent]`; the choice between them is the input type. `fromEither` and `fromResult` preserve the error type; `fromTry` collapses to `Abort[Throwable]` because `Try` only carries `Throwable`.
 
+`fromOption`, `fromMaybe`, `fromEither`, and `fromResult` take an already-computed value. To retry or repeat the lookup that produces it, lift the lookup itself and map into the constructor, as the opening example does with `repo.lookup(orderId).map(found => Kyo.fromOption(found))`; retrying `Kyo.fromOption(value)` only re-checks the same value.
+
 `fromSeq` expands each element of the sequence into a non-deterministic branch of `Choice`. The downstream computation will be evaluated for every element (see [Non-determinism](#non-determinism-choice)).
 
 ### Resource lifecycle (constructing the resource)
@@ -149,34 +150,28 @@ Lifecycle constructors register cleanup with `Scope`. The acquired value is in s
 
 ```scala
 import java.sql.Connection
-import kyo.*
 
-case class Order(id: Long)
-val orderId: Long = 42L
-val url: String   = "jdbc:postgresql://localhost/db"
+val url: String = "jdbc:postgresql://localhost/db"
 
 trait Database:
     def begin: Connection < Sync
 val db: Database = ???
 
-class RepoHandle(conn: Connection):
-    def load(id: Long): Order < Sync = Kyo.defer(Order(id))
-
-object OrderRepo:
-    def using(conn: Connection): RepoHandle = new RepoHandle(conn)
+def loadWith(conn: Connection, id: Long): Order < Sync = Kyo.defer(Order(id))
 
 val open: Connection < (Scope & Sync) =
     Kyo.fromAutoCloseable(java.sql.DriverManager.getConnection(url))
 
+// Closing rolls back anything the body did not commit.
 val txn: Connection < (Scope & Sync) =
-    Kyo.acquireRelease(db.begin)(conn => Kyo.defer(conn.commit()))
+    Kyo.acquireRelease(db.begin)(conn => Kyo.defer(conn.close()))
 
 val installShutdown: Unit < (Scope & Sync) =
     Kyo.addFinalizer(Kyo.logInfo("server shutting down"))
 
 val scoped: Order < (Async & Sync) =
     Kyo.scoped {
-        txn.map(conn => OrderRepo.using(conn).load(orderId))
+        txn.map(conn => loadWith(conn, orderId).map(loaded => Kyo.defer(conn.commit()).andThen(loaded)))
     }
 ```
 
@@ -186,74 +181,50 @@ val scoped: Order < (Async & Sync) =
 
 ### Env constructors (reading dependencies)
 
+When a computation needs a service the caller supplies, read it from `Env`. `Kyo.service[D]` returns the service itself; `Kyo.serviceWith[D](f)` reads it and continues with `f` in one step.
+
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
-trait Database
-val db: Database = new Database {}
-
-class OrderRepo(val database: Database):
-    def load(id: Long): Order < Abort[OrderNotFound] = ???
-
 val readRepo: OrderRepo < Env[OrderRepo] =
     Kyo.service[OrderRepo]
 
 val loadOrder: Order < (Env[OrderRepo] & Abort[OrderNotFound]) =
-    Kyo.serviceWith[OrderRepo].apply(repo => repo.load(orderId))
-
-val withRepo =
-    Kyo.provideFor(OrderRepo(db))(loadOrder)
+    Kyo.serviceWith[OrderRepo](_.load(orderId))
 ```
 
-> **Note:** `Kyo.serviceWith[D]` returns a polymorphic function. The call-site idiom is `Kyo.serviceWith[D].apply(fn)`, not `Kyo.serviceWith[D](fn)`. The polymorphic shape lets the compiler infer the return effect row from `fn` independently.
+Supplying the service is covered under [Dependency injection](#dependency-injection-env).
 
 ### Parallel fan-out
 
 `Kyo.foreachPar`, `foreachParDiscard`, `collectAllPar`, `collectAllParDiscard` run a sequence of effects in parallel with a bounded concurrency.
 
 ```scala
-import kyo.*
-
-case class Item(sku: String, qty: Int)
-case class Order(id: Long, items: Seq[Item])
 case class Stock(sku: String, available: Int)
-case class Profile(name: String)
-val order: Order = Order(1L, Seq(Item("sku1", 1)))
 
 object inventory:
     def check(sku: String): Stock < (Abort[Throwable] & Async) = ???
     def record(sku: String): Unit < (Abort[Throwable] & Async) = ???
 
-object profiles:
-    def lookup(sku: String): Profile < Async = ???
-    def touch(sku: String): Unit < Async     = ???
-
 val stockChecks: Chunk[Stock] < (Abort[Throwable] & Async) =
-    Kyo.foreachPar(order.items, Async.defaultConcurrency)(item => inventory.check(item.sku))
+    Kyo.foreachPar(order.items)(item => inventory.check(item.sku))
 
-val stockChecksDiscard: Unit < (Abort[Throwable] & Async) =
-    Kyo.foreachParDiscard(order.items, Async.defaultConcurrency)(item => inventory.record(item.sku))
+val recorded: Unit < (Abort[Throwable] & Async) =
+    Kyo.foreachParDiscard(order.items, concurrency = 4)(item => inventory.record(item.sku))
 
-val collected: Seq[Profile] < Async =
-    Kyo.collectAllPar(order.items.map(i => profiles.lookup(i.sku)), Async.defaultConcurrency)
+val profiles: Seq[Profile] < Async =
+    Kyo.collectAllPar(Seq(profileFor(1L), profileFor(2L)))
 
-val collectedDiscard: Unit < Async =
-    Kyo.collectAllParDiscard(order.items.map(i => profiles.touch(i.sku)), Async.defaultConcurrency)
+val warmed: Unit < Async =
+    Kyo.collectAllParDiscard(Seq(profileFor(1L), profileFor(2L)).map(_.unit), concurrency = 2)
 ```
 
-> **Note:** All four take a `concurrency: Int = Async.defaultConcurrency` parameter as the default. The limit applies even when the iterable is small. Forgetting the second argument silently caps fan-out at `Async.defaultConcurrency`, which is intentional but easy to miss when copying a snippet without its imports and defaults.
+`concurrency` defaults to `Async.defaultConcurrency`; pass a value to raise or lower the cap.
 
 ### Emit and Poll
 
-```scala
-import kyo.*
+`Emit` and `Poll` are the push and pull halves of streaming. `Kyo.emit` and `Kyo.poll` are their single-value constructors, for building a producer or consumer by hand.
 
+```scala
 case class Heartbeat(ts: Long)
-case class Order(id: Long)
 
 val ping: Unit < Emit[Heartbeat] =
     Kyo.emit(Heartbeat(java.lang.System.currentTimeMillis()))
@@ -262,15 +233,13 @@ val one: Maybe[Order] < Poll[Order] =
     Kyo.poll[Order]
 ```
 
-`Kyo.emit` produces a single value into the `Emit[A]` effect; multiple `emit` calls in sequence produce a stream of values (see [Emit, streaming, and conversion](#emit-streaming-and-conversion)). `Kyo.poll` reads one value from a `Poll[A]` channel.
+`Kyo.emit` produces a single value into the `Emit[A]` effect; multiple `emit` calls in sequence produce a sequence of values (see [Emit, streaming, and conversion](#emit-streaming-and-conversion)). `Kyo.poll` requests one value through the `Poll[A]` effect and returns `Absent` once the producer is done.
 
 ### Console logging
 
-```scala
-import kyo.*
+`Kyo.log*` are shortcuts for kyo-core's `Log` at each level.
 
-case class Order(id: Long)
-val order: Order  = Order(42L)
+```scala
 val ex: Throwable = new RuntimeException("payment failed")
 
 val logInfo2: Unit < Sync  = Kyo.logInfo("processing order")
@@ -284,20 +253,11 @@ Each variant has a `(String)` and `(String, Throwable)` overload. All run under 
 
 ## Sequencing and combining
 
-These extensions live on `A < S` for ANY effect row. They compose two effects sequentially, gate one on another, or weave a side effect through a result.
+These extensions live on `A < S` for any effect row. They compose two effects sequentially, gate one on another, or weave a side effect through a result.
 
 ### Sequential zip: `*>`, `<*`, `<*>`
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class Profile(name: String)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long                                = 42L
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-val profileFor: Long => Profile < Async          = _ => ???
-
 val ignoreFirst: Order < (Abort[OrderNotFound] & Async) =
     Kyo.logInfo("loading") *> load
 
@@ -310,19 +270,13 @@ val both: (Order, Profile) < (Abort[OrderNotFound] & Async) =
 
 `*>` keeps the second result; `<*` keeps the first; `<*>` keeps both as a tuple. `<*>` uses a `Zippable` typeclass to flatten nested tuples: `a <*> b <*> c` produces `(A, B, C)`, not `((A, B), C)`.
 
-> **Unlike** the parallel siblings `&>`, `<&`, `<&>` under [Concurrency](#concurrency-and-forking), the sequential operators evaluate the second effect AFTER the first. The only call-site signal between sequential and parallel is the ampersand: `a *> b` is sequential, `a &> b` runs both fibers concurrently. Pick deliberately.
+> **Note:** the parallel siblings `&>`, `<&`, `<&>` under [Concurrency](#concurrency-and-forking) look almost the same. The sequential operators evaluate the second effect after the first; `a &> b` runs both on separate fibers. The ampersand is the only call-site signal, so pick deliberately.
 
 ### `tap`: side-effect on the success value
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
-val logged: Order < (Abort[OrderNotFound] & Async & Sync) =
-    load.tap(order => Kyo.logInfo(s"loaded $order"))
+val logged: Order < (Abort[OrderNotFound] & Async) =
+    load.tap(loaded => Kyo.logInfo(s"loaded $loaded"))
 ```
 
 `tap` runs `fn(a)` for its effect and discards the result, returning the original `a`. The function may itself be effectful; the tap's effect row is added to the carrier's.
@@ -330,14 +284,7 @@ val logged: Order < (Abort[OrderNotFound] & Async & Sync) =
 ### `when` / `unless`: conditional execution
 
 ```scala
-import kyo.*
-
-case class Order(id: Long, total: BigDecimal)
 case class Receipt(orderId: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long                                = 42L
-val order: Order                                 = Order(orderId, BigDecimal(100))
-val load: Order < (Abort[OrderNotFound] & Async) = ???
 
 def sendReceipt(o: Order): Receipt < (Abort[Throwable] & Async) = ???
 object orderCache:
@@ -346,11 +293,11 @@ object orderCache:
 val maybeNotify: Maybe[Receipt] < (Abort[Throwable] & Async) =
     sendReceipt(order).when(order.total > BigDecimal(0))
 
-val maybeRetry: Maybe[Order] < (Abort[OrderNotFound] & Async) =
+val loadIfUncached: Maybe[Order] < (Abort[OrderNotFound] & Async) =
     load.unless(orderCache.contains(orderId))
 ```
 
-> **Note:** `when` and `unless` return `Maybe[A]`, not `Unit`. When the condition is true, `when` wraps the result in `Present`; when false, it returns `Absent`. Users coming from Cats `whenA` or ZIO `whenZIO` may expect `Unit` and lose the result. If you only care about the side-effect, follow with `.unit` (or chain into a `tap`).
+> **Note:** `when` and `unless` return `Maybe[A]`, not `Unit`. When the effect runs, the result is wrapped in `Present`; when it is skipped, the result is `Absent`. Users coming from Cats `whenA` or ZIO `whenZIO` may expect `Unit`. If you only care about the side-effect, follow with `.unit`.
 
 ## Repetition
 
@@ -359,13 +306,7 @@ Repetition primitives are orthogonal to error handling: they re-run an effect by
 ### `repeat`: by count or schedule
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
-val ten: Order < (Abort[OrderNotFound] & Async) =
+val elevenRuns: Order < (Abort[OrderNotFound] & Async) =
     load.repeat(10)
 
 val backedOff: Order < (Abort[OrderNotFound] & Async) =
@@ -375,37 +316,35 @@ val polled: Order < (Abort[OrderNotFound] & Async) =
     load.repeatAtInterval(i => (i * 100).millis, limit = 5)
 ```
 
-> **Note:** Two overloads of `repeat` exist with different effect rows. `repeat(Int)` is pure (just a loop counter); `repeat(Schedule)` adds `Async` because the schedule may insert delays. If you switch from a count to a schedule, expect the effect row to grow.
+All three return the last run's result, and each runs the effect once more than its count:
+
+- `repeat(n)` runs the effect once and then repeats it `n` times, so `repeat(10)` runs it eleven times.
+- `repeat(schedule)` runs the effect once per schedule step, waiting the step's delay first, and once more when the schedule ends.
+- `repeatAtInterval(backoff, limit)` sleeps `backoff(i)` before each of the first `limit` runs, then runs once more.
+
+> **Note:** `repeat(Int)` adds no effect to the row; `repeat(Schedule)` adds `Async` because the schedule inserts delays. If you switch from a count to a schedule, expect the effect row to grow.
 
 ### `repeatWhile` / `repeatUntil`: predicate-driven
 
 ```scala
-import kyo.*
-
-enum Status:
-    case Pending, Completed
-case class Order(id: Long, status: Status)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val pollPending: Order < (Abort[OrderNotFound] & Async) =
     load.repeatWhile(_.status == Status.Pending)
 
 val pollWithDelay: Order < (Abort[OrderNotFound] & Async) =
-    load.repeatWhile { (order, iter) =>
-        (order.status == Status.Pending, (iter * 50).millis)
+    load.repeatWhile { (loaded, iter) =>
+        (loaded.status == Status.Pending, (iter * 50).millis)
     }
 
 val waitForCompletion: Order < (Abort[OrderNotFound] & Async) =
     load.repeatUntil(_.status == Status.Completed)
 
 val waitWithDelay: Order < (Abort[OrderNotFound] & Async) =
-    load.repeatUntil { (order, iter) =>
-        (order.status == Status.Completed, (iter * 50).millis)
+    load.repeatUntil { (loaded, iter) =>
+        (loaded.status == Status.Completed, (iter * 50).millis)
     }
 ```
 
-The simpler overload takes `A => Boolean`. The richer overload takes `(A, Int) => (Boolean, Duration)`: the second `Int` is the iteration index and the returned `Duration` is the sleep interval before the next iteration. The richer overload adds `Async` to the effect row because of the sleep.
+The simpler overload takes a predicate `A => Boolean < S1`, which may itself be effectful. The richer overload takes `(A, Int) => (Boolean, Duration) < S1`: the `Int` is the iteration index and the returned `Duration` is the sleep before the next iteration. `repeatUntil` adds `Async` to the row in both forms; `repeatWhile` adds it only in the richer one, because of the sleep.
 
 ### `forever`: infinite repetition
 
@@ -419,33 +358,19 @@ The return type is `Nothing` because the loop never produces a final value.
 ### `delay`: postpone before running
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val later: Order < (Abort[OrderNotFound] & Async) =
     load.delay(500.millis)
 ```
 
-`delay` is the one-shot sibling to `repeatAtInterval`'s per-iteration backoff: it sleeps once before evaluating the effect.
-
-> **Note:** `delay` adds `Async` to the effect row because it sleeps before evaluating, just like `repeat(Schedule)` above.
+`delay` sleeps once before evaluating the effect, and adds `Async` to the effect row because of the sleep.
 
 ## Error handling
 
-Everything below applies to `A < (Abort[E] & S)`. The combinators are organised by what they DO to the error: handle it (to a `Result` or `Maybe`), recover from it, fold over it, transform its type, route it to a different effect, retry on it, or convert it to a panic.
+Everything below applies to `A < (Abort[E] & S)`. The combinators are organized by what they do to the error: handle it (to a `Result` or `Maybe`), recover from it, fold over it, transform its type, route it to a different effect, retry on it, or convert it to a panic.
 
 ### `result`: handle to a `Result`
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val handled: Result[OrderNotFound, Order] < Async =
     load.result
 ```
@@ -455,12 +380,6 @@ val handled: Result[OrderNotFound, Order] < Async =
 Two siblings exist for partial handling:
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val partial: Result.Partial[OrderNotFound, Order] < (Abort[Nothing] & Async) =
     load.resultPartial
 
@@ -468,18 +387,11 @@ val partialThrowing: Result.Partial[OrderNotFound, Order] < Async =
     load.resultPartialOrThrow
 ```
 
-`resultPartial` returns a `Result.Partial` (no `Panic` branch) but leaves panics tracked as `Abort[Nothing]`. `resultPartialOrThrow` returns a `Result.Partial` AND throws on panic synchronously, discharging the `Abort[Nothing]` row.
+`resultPartial` returns a `Result.Partial` (no `Panic` branch) but leaves panics tracked as `Abort[Nothing]`. `resultPartialOrThrow` returns a `Result.Partial` and throws on panic, discharging the `Abort[Nothing]` row.
 
 ### `recover` and `recoverSome`: replace failures
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long                                = 42L
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val safe: Order < Async =
     load.recover(_ => Order(0L))
 
@@ -489,33 +401,27 @@ val partialRecovery: Order < (Abort[OrderNotFound] & Async) =
     }
 ```
 
-`recover` handles ALL failures of type `E`; the result no longer tracks `Abort[E]`. `recoverSome` takes a `PartialFunction`: unmatched failures stay in the `Abort[E]` row. Use `recover` when you have a total handler, `recoverSome` when you handle only some failure shapes.
+`recover` handles all failures of type `E`; the result no longer tracks `Abort[E]`. `recoverSome` takes a `PartialFunction`: unmatched failures stay in the `Abort[E]` row. Use `recover` when you have a total handler, `recoverSome` when you handle only some failure shapes.
 
 ### `foldAbort` / `foldAbortOrThrow`: fold over outcome
 
 ```scala
-import kyo.*
-
-case class Order(id: Long, total: BigDecimal)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val rendered: String < Async =
     load.foldAbort(
-        onSuccess = order => s"order ${order.id}: ${order.total}",
+        onSuccess = loaded => s"order ${loaded.id}: ${loaded.total}",
         onFail = err => s"failed: $err"
     )
 
 val renderedWithPanic: String < Async =
     load.foldAbort(
-        onSuccess = order => s"order ${order.id}",
+        onSuccess = loaded => s"order ${loaded.id}",
         onFail = err => s"failed: $err",
         onPanic = thr => s"panic: ${thr.getMessage}"
     )
 
 val renderedThrowing: String < Async =
     load.foldAbortOrThrow(
-        onSuccess = order => s"order ${order.id}",
+        onSuccess = loaded => s"order ${loaded.id}",
         onFail = err => s"failed: $err"
     )
 ```
@@ -525,14 +431,9 @@ Three panic strategies: leave `Abort[Nothing]` in the row (two-arm `foldAbort`);
 ### `mapAbort` and `swapAbort`: transform the error type
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
 sealed trait ServiceError
 object ServiceError:
     case class NotFound(id: Long) extends ServiceError
-val load: Order < (Abort[OrderNotFound] & Async) = ???
 
 val mapped: Order < (Abort[ServiceError] & Async) =
     load.mapAbort(notFound => ServiceError.NotFound(notFound.id))
@@ -546,12 +447,6 @@ val swapped: OrderNotFound < (Abort[Order] & Async) =
 ### `orPanic` / `orThrow` / `unpanic`: collapse to panic or back
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val panickingTracked: Order < (Abort[Nothing] & Async) =
     load.orPanic
 
@@ -562,45 +457,36 @@ val caughtAgain: Order < (Async & Abort[Throwable]) =
     panickingUntracked.unpanic
 ```
 
-> **Caution:** `orThrow` throws synchronously and DOES NOT track the panic in the effect row. Inside `Sync` or `Async`, that panic becomes invisible to the type system: a code path you didn't expect to fail will fail at runtime with no compile-time hint. `Sync` and `Async` track panics as `Abort[Nothing]`; preserve that tracking by using `orPanic` instead. The scaladoc for `orThrow` makes this point explicit: it's intended for pure (non-`Sync`/non-`Async`) effects only.
+> **Caution:** `orThrow` throws and does not track the panic in the effect row. Inside `Sync` or `Async`, that panic becomes invisible to the type system: a code path you didn't expect to fail will fail at runtime with no compile-time hint. `Sync` and `Async` track panics as `Abort[Nothing]`; preserve that tracking by using `orPanic` instead. `orThrow` is intended for pure (non-`Sync`, non-`Async`) effects.
 
 `unpanic` is the inverse: catch any `Throwable` thrown at runtime (e.g. from `orThrow` or from a panicking sub-effect) and lift it back into `Abort[Throwable]`.
 
 ### `abortToChoiceDrop`, `abortToAbsent`, `abortToThrowable`: route to other effects
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-// A non-Throwable error type is required for abortToThrowable
-case class OrderNotFound(id: Long)
-val load: Order < (Abort[OrderNotFound] & Async) = ???
+// abortToThrowable requires an error type that is not a Throwable
+case class Missing(id: Long)
+val find: Order < (Abort[Missing] & Async) = ???
 
 val asChoice: Order < (Async & Choice) =
-    load.abortToChoiceDrop
+    find.abortToChoiceDrop
 
 val asAbsent: Order < (Async & Abort[Absent]) =
-    load.abortToAbsent
+    find.abortToAbsent
 
 val asThrown: Order < (Async & Abort[Throwable]) =
-    load.abortToThrowable
+    find.abortToThrowable
 ```
 
 The first drops failures as empty `Choice` branches. The second collapses any failure to `Absent` (you lose the specific error value). The third lifts `E` into `Abort[Throwable]`, wrapping non-`Throwable` failures in `PanicException(error)`.
 
-> **Note:** `abortToThrowable` requires `NotGiven[E <:< Throwable]` and will NOT compile on `Abort[Throwable]`. The constraint exists because the implementation would otherwise produce an ambiguous wrap. If `E` already extends `Throwable`, you don't need a conversion; you already have `Abort[Throwable]`.
+> **Note:** `abortToThrowable` requires `NotGiven[E <:< Throwable]` and does not compile on an error type that already extends `Throwable`. If `E` is already a `Throwable`, you don't need a conversion; you already have `Abort[Throwable]`.
 
-> **Note:** Code that catches `Throwable` downstream of `abortToThrowable` / `orThrow` / `orPanic` will receive a `PanicException(originalError)` for non-`Throwable` original errors, NOT the original error value. Unwrap with a pattern match if you need to recover the original.
+> **Note:** Code that catches `Throwable` downstream of `abortToThrowable` / `orThrow` / `orPanic` will receive a `PanicException(originalError)` for non-`Throwable` original errors, not the original error value. Unwrap with a pattern match if you need to recover the original.
 
 ### `retry`: re-run on failure
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val retriedN: Order < (Abort[OrderNotFound] & Async) =
     load.retry(3)
 
@@ -611,25 +497,20 @@ val retriedForever: Order < Async =
     load.retryForever
 ```
 
-`retry(Int)` retries up to `n` times on failure; after the budget, the last failure is re-raised. `retry(Schedule)` re-runs with delays driven by the schedule. `retryForever` returns a computation with no `Abort[E]` row because the only way to exit is success.
+`retry(n)` runs the effect and, on a failure or a panic, runs it again up to `n` more times; after the budget, the last failure is re-raised. `retry(Schedule)` re-runs with delays driven by the schedule. `retryForever` returns a computation with no `Abort[E]` row because the only way to exit is success.
 
-`recover` and `retry` together solve different problems. `recover` is "replace the error with a value." `retry` is "do it again." Combine them: `load.retry(3).recover(_ => Order.empty(orderId))` retries three times and falls back if all retries fail.
+`recover` and `retry` together solve different problems. `recover` is "replace the error with a value." `retry` is "do it again." Combine them: `load.retry(3).recover(_ => Order(0L))` retries three times and falls back if all attempts fail.
 
 ### `forAbort[E1]`: handle one branch of a union
 
-When the error type is a union (`Abort[A | B | C]`), `forAbort[A]` enters a narrowing DSL that lets you handle ONLY one branch and leave the others in the effect row.
+When the error type is a union (`Abort[A | B | C]`), `forAbort[A]` enters a narrowing DSL that lets you handle only one branch and leave the others in the effect row.
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long)         extends Exception(s"Order $id not found")
 case class InventoryEmpty()                extends Exception("Inventory empty")
 case class PaymentDeclined(reason: String) extends Exception(reason)
 sealed trait ServiceError
 object ServiceError:
     case class Payment(reason: String) extends ServiceError
-val orderId: Long = 42L
 
 type OrderError = OrderNotFound | InventoryEmpty | PaymentDeclined
 
@@ -656,9 +537,7 @@ val asChoice: Order < (Abort[InventoryEmpty | PaymentDeclined] & Async & Choice)
     orderEffect.forAbort[OrderNotFound].toChoiceDrop
 ```
 
-`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. The only difference is the type narrowing: each method applies to the SELECTED branch `E1` and leaves the other branches `ER` in the residual effect row.
-
-> **Note:** `ForAbortOps.recover` and `ForAbortOps.recoverSome` return polymorphic functions (just like `Kyo.serviceWith[D]`). The call site is `effect.forAbort[E1].recover.apply(fn)`, but in practice Scala 3 picks up the apply automatically: `effect.forAbort[E1].recover(fn)` works.
+`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. The only difference is the type narrowing: each method applies to the selected branch `E1` and leaves the other branches `ER` in the residual effect row.
 
 ### `PanicException`: the panic wrapper
 
@@ -671,66 +550,51 @@ val asChoice: Order < (Abort[InventoryEmpty | PaymentDeclined] & Async & Choice)
 Pattern-matching on the original error is straightforward:
 
 ```scala
-import kyo.*
+// Non-Throwable error types, as abortToThrowable requires
+case class Missing(id: Long)
+case class OutOfStock()
+case class Declined(reason: String)
 
-case class Order(id: Long)
-// Non-Throwable error types are required for abortToThrowable
-case class OrderNotFound(id: Long)
-case class InventoryEmpty()
-case class PaymentDeclined(reason: String)
-val orderId: Long = 42L
-type OrderError = OrderNotFound | InventoryEmpty | PaymentDeclined
-val orderEffect: Order < (Abort[OrderError] & Async) = ???
+val attempt: Order < (Abort[Missing | OutOfStock | Declined] & Async) = ???
 
 val recovered: Order < Async =
-    orderEffect.abortToThrowable.recover {
-        case PanicException(OrderNotFound(id)) => Order(id)
-        case _                                 => Order(orderId)
+    attempt.abortToThrowable.recover {
+        case PanicException(Missing(id)) => Order(id)
+        case _                           => Order(orderId)
     }
 ```
 
 ## Optionality (Absent)
 
-`Absent` is the canonical "no value" failure, and `Abort[Absent]` is the absence-as-error effect. The combinators below are specific to `Abort[Absent]`: every error-handling combinator described above also works on `Abort[Absent]`, but these are the convenient shapes when you DON'T need to carry an error message.
+`Absent` is the canonical "no value" failure, and `Abort[Absent]` is the absence-as-error effect. The combinators below are specific to `Abort[Absent]`: every error-handling combinator described above also works on `Abort[Absent]`, but these are the convenient shapes when you don't need to carry an error message.
 
 ### `maybe`: handle to `Maybe[A]`
 
 ```scala
-import kyo.*
+val lookup: Order < (Abort[Absent] & Sync) =
+    repo.lookup(orderId).map(found => Kyo.fromOption(found))
 
-case class Order(id: Long)
-val orderId: Long = 42L
-object orderCache:
-    def get(id: Long): Option[Order] = None
-
-val lookup: Order < (Abort[Absent] & Async) =
-    Kyo.fromOption(orderCache.get(orderId))
-
-val asMaybe: Maybe[Order] < Async =
+val asMaybe: Maybe[Order] < Sync =
     lookup.maybe
 ```
 
-`maybe` is the `Absent`-specific analogue of `result`: it discharges the `Abort[Absent]` row and returns a `Maybe[A]`. Use it when "missing" is a normal control-flow outcome and you don't want to type-erase to a `Result.Failure(Absent)`.
+`maybe` is the `Absent`-specific analogue of `result`: it discharges the `Abort[Absent]` row and returns a `Maybe[A]`. Use it when "missing" is a normal control-flow outcome and you don't want to inspect a `Result` whose only failure is `Absent`.
 
-`maybe` only applies when `E` is exactly `Absent`. If you have `Abort[MyError]`, use `result` (returns `Result[MyError, A]`) instead. The two read as alternates but their constraints are different.
+`maybe` only applies when `E` is exactly `Absent`. If you have `Abort[MyError]`, use `result` (returns `Result[MyError, A]`) instead.
 
 ### Routing absence to other effects
 
 ```scala
-import kyo.*
+val lookup: Order < (Abort[Absent] & Sync) =
+    repo.lookup(orderId).map(found => Kyo.fromOption(found))
 
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long                           = 42L
-val lookup: Order < (Abort[Absent] & Async) = Kyo.fromOption(None)
-
-val asChoice: Order < (Async & Choice) =
+val asChoice: Order < (Sync & Choice) =
     lookup.absentToChoice
 
-val asNoSuchEl: Order < (Async & Abort[NoSuchElementException]) =
+val asNoSuchEl: Order < (Sync & Abort[NoSuchElementException]) =
     lookup.absentToThrowable
 
-val asDomain: Order < (Async & Abort[OrderNotFound]) =
+val asDomain: Order < (Sync & Abort[OrderNotFound]) =
     lookup.absentToFailure(OrderNotFound(orderId))
 ```
 
@@ -743,61 +607,46 @@ Forking launches a computation into its own fiber. The Kyo runtime schedules the
 ### `fork`, `forkUnscoped`, `forkUsing`
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-
-// fork and forkUsing work on effects that have Abort[E] & Async in their row.
-val loadSync: Order < (Abort[Nothing] & Async & Sync) = Kyo.defer(Order(1L))
-
+// All three apply to effects with Abort[E] & Async in their row.
 val forked =
-    loadSync.fork
+    load.fork
 
-val forkedUnsafe =
-    loadSync.forkUnscoped
+val forkedUnscoped =
+    load.forkUnscoped
 
 val usedFiber =
-    loadSync.forkUsing { fiber =>
-        fiber.join.map(o => s"got ${o.id}")
+    load.forkUsing { fiber =>
+        fiber.join.map(loaded => s"got ${loaded.id}")
     }
 ```
 
-> **Caution:** `fork` requires `Scope` in the effect row and registers the fiber to be interrupted when the scope closes. `forkUnscoped` does NOT register interruption: if the parent finishes before the child, the child keeps running as an orphan fiber. The shapes are identical (both return `Fiber[A, ...]`) but the lifetime guarantees are opposite. Reach for `fork` by default; use `forkUnscoped` only when you explicitly want the fiber to outlive the current scope.
+> **Caution:** `fork` requires `Scope` in the effect row and registers the fiber to be interrupted when the scope closes. `forkUnscoped` registers nothing: if the parent finishes before the child, the child keeps running as an orphan fiber. The shapes are identical (both return `Fiber[A, ...]`) but the lifetime guarantees are opposite. Reach for `fork` by default; use `forkUnscoped` only when you explicitly want the fiber to outlive the current scope.
 
 `forkUsing` is the scoped form: it forks, hands you the fiber inside a function, and guarantees interruption when the function returns. Use it when you only need the fiber long enough to wait on it or race it with another effect.
 
 ### Parallel zip: `&>`, `<&`, `<&>`
 
 ```scala
-import kyo.*
+val orderEff: Order < Sync     = Kyo.defer(order)
+val profileEff: Profile < Sync = Kyo.defer(Profile("alice"))
 
-case class Order(id: Long)
-case class Profile(name: String)
+val ignoreFirstPar =
+    orderEff &> profileEff
 
-// Parallel zip composes with extra effects beyond Abort[E] & Async.
-val orderEff   = Sync.defer(Order(1L))
-val profileEff = Sync.defer(Profile("alice"))
+val ignoreSecondPar =
+    orderEff <& profileEff
 
-val ignoreFirstPar = orderEff &> profileEff
-
-val ignoreSecondPar = orderEff <& profileEff
-
-val bothPar = orderEff <&> profileEff
+val bothPar =
+    orderEff <&> profileEff
 ```
 
-Both effects launch on separate fibers via `Fiber.initUnscoped`. The combinator awaits both, then assembles the requested shape. The error type widens to `E | E1` because either fiber can fail. Compare with the sequential `*>`, `<*`, `<*>` under [Sequencing and combining](#sequencing-and-combining): the only call-site difference is the ampersand.
+Each side runs on a fiber of its own, so the two proceed concurrently. Effects other than `Abort` and `Async` that a side carries (here `Sync`) cross to its fiber through an `Isolate`, which the compiler must be able to find for them. `<&>` returns both results as a tuple, flattened by `Zippable` like `<*>`; `&>` and `<&` return one side's result. The error type widens to `E | E1`.
 
 ### `Fiber#join` and `Fiber#await`
 
 Once you have a `Fiber[A, ...] < S` (typically from `.fork`), two combinators let you wait on it:
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val joined: Order < (Sync & Async & Scope & Abort[OrderNotFound]) =
     load.fork.join
 
@@ -816,11 +665,6 @@ val awaited: Result[OrderNotFound, Order] < (Sync & Async & Scope) =
 ### `handleChoice`: handle to `Seq[A]`
 
 ```scala
-import kyo.*
-
-case class Item(sku: String, qty: Int)
-case class Order(id: Long, items: Seq[Item])
-val order: Order = Order(1L, Seq(Item("sku1", 1), Item("sku2", 2)))
 object inventory:
     def check(item: Item): Item < Async = Kyo.defer(item)
 
@@ -836,11 +680,6 @@ val all: Seq[Item] < Async =
 ### `filterChoice`: drop branches by predicate
 
 ```scala
-import kyo.*
-
-case class Item(sku: String, qty: Int)
-case class Order(id: Long, items: Seq[Item])
-val order: Order = Order(1L, Seq(Item("sku1", 1), Item("sku2", 2)))
 object inventory:
     def check(item: Item): Item < Async        = Kyo.defer(item)
     def available(sku: String): Boolean < Sync = Kyo.defer(true)
@@ -857,18 +696,10 @@ val inStock: Item < (Choice & Async) =
 ### `choiceDropToAbsent`, `choiceDropToThrowable`, `choiceDropToFailure`
 
 ```scala
-import kyo.*
-
-case class Item(sku: String, qty: Int)
-case class Order(id: Long, items: Seq[Item])
 case class NoMatchingItems(orderId: Long) extends Exception("no matching items")
-val orderId: Long = 42L
-val order: Order  = Order(orderId, Seq(Item("sku1", 1)))
-object inventory:
-    def check(item: Item): Item < Async = Kyo.defer(item)
 
 val branches: Item < (Choice & Async) =
-    Kyo.fromSeq(order.items).map(item => inventory.check(item))
+    Kyo.fromSeq(order.items)
 
 val nonEmptyAbsent: Item < (Choice & Async & Abort[Absent]) =
     branches.choiceDropToAbsent
@@ -880,121 +711,86 @@ val nonEmptyDomain: Item < (Choice & Async & Abort[NoMatchingItems]) =
     branches.choiceDropToFailure(NoMatchingItems(orderId))
 ```
 
-> **Note:** These all trigger only when `handleChoice` would return an EMPTY `Seq`. They do NOT trigger when individual branches are dropped (e.g. by `filterChoice`); they trigger when the entire `Choice` reduces to no surviving branch. Easy to misread the name as "convert every per-branch drop to an error."
+> **Note:** These trigger only when `handleChoice` would return an empty `Seq`, that is, when the entire `Choice` reduces to no surviving branch. Individual branches dropped along the way (e.g. by `filterChoice`) do not trigger them. Easy to misread the name as "convert every per-branch drop to an error."
 
 ## Emit, streaming, and conversion
 
-`Emit[A]` produces values one at a time, similar to `yield` in Python or `IEnumerable` in C#. The combinators below either HANDLE the emit effect (collect, foreach, pipe to a channel) or CONVERT it into a `Stream[A, S]` for downstream stream operators.
+`Emit[A]` produces values one at a time, similar to `yield` in Python or `IEnumerable` in C#. The combinators below either handle the emit effect (collect, foreach, pipe to a channel) or convert it into a `Stream[A, S]` for downstream stream operators. The examples use the `shipments` producer from the shared domain, which emits one `ShipmentEvent` per order item.
 
 ### `handleEmit`, `handleEmitDiscarding`, `foreachEmit`
 
 ```scala
-import kyo.*
-
-enum ShipmentEvent:
-    case Shipped(sku: String)
-case class Item(sku: String, qty: Int)
-case class Order(id: Long, items: Seq[Item])
-val order: Order = Order(1L, Seq(Item("sku1", 1), Item("sku2", 2)))
-
-val emitting: Unit < Emit[ShipmentEvent] =
-    order.items.foldLeft[Unit < Emit[ShipmentEvent]](Kyo.unit) { (acc, item) =>
-        acc *> Kyo.emit(ShipmentEvent.Shipped(item.sku))
-    }
-
 val collected: (Chunk[ShipmentEvent], Unit) < Any =
-    emitting.handleEmit
+    shipments.handleEmit
 
 val collectedOnly: Chunk[ShipmentEvent] < Any =
-    emitting.handleEmitDiscarding
+    shipments.handleEmitDiscarding
 
 val sideEffect: Unit < Sync =
-    emitting.foreachEmit(ev => Kyo.logInfo(s"event: $ev"))
+    shipments.foreachEmit(ev => Kyo.logInfo(s"event: $ev"))
 ```
 
-`handleEmit` returns `(Chunk[A], B)` where `B` is the original effect's result. `handleEmitDiscarding` keeps only the chunk. `foreachEmit` runs a function per emitted value and ignores the values themselves.
+`handleEmit` returns `(Chunk[A], B)` where `B` is the original effect's result. `handleEmitDiscarding` keeps only the chunk. `foreachEmit` passes each emitted value to a function as it is emitted, and returns the original effect's result.
 
 ### `emitToChannel`: pipe to a `Channel[A]`
 
 ```scala
-import kyo.*
-
-enum ShipmentEvent:
-    case Shipped(sku: String)
-val emitting: Unit < Emit[ShipmentEvent] =
-    Kyo.emit(ShipmentEvent.Shipped("sku1"))
-
 val piped: Unit < (Sync & Scope & Async & Abort[Closed]) =
-    Channel.init[ShipmentEvent](16).map(channel => emitting.emitToChannel(channel))
+    Channel.init[ShipmentEvent](16).map(channel => shipments.emitToChannel(channel))
 ```
 
-The channel must be initialised separately. If the channel is closed before the emit completes, the computation fails with `Abort[Closed]`.
+The channel must be initialized separately. If the channel is closed before the emit completes, the computation fails with `Abort[Closed]`.
 
-### `emitChunked`: re-emit as fixed-size chunks
+### `emitChunked`: re-emit as chunks
 
 ```scala
-import kyo.*
-
-enum ShipmentEvent:
-    case Shipped(sku: String)
-val emitting: Unit < Emit[ShipmentEvent] =
-    Kyo.emit(ShipmentEvent.Shipped("sku1"))
-
 val chunkedEmits: Unit < Emit[Chunk[ShipmentEvent]] =
-    emitting.emitChunked(32)
+    shipments.emitChunked(32)
 ```
 
-`emitChunked` accumulates emitted values in a buffer until the buffer reaches `chunkSize`, then emits a `Chunk[A]`. The LAST partial chunk is flushed at the end. The output effect changes from `Emit[A]` to `Emit[Chunk[A]]`.
-
-> **Note:** Chunks emitted by `emitChunked` are AT MOST `chunkSize`; the final chunk may be smaller. Don't assume strict sizes.
+`emitChunked` accumulates emitted values in a buffer until the buffer reaches `chunkSize`, then emits a `Chunk[A]`, and flushes the last partial chunk at the end. The output effect changes from `Emit[A]` to `Emit[Chunk[A]]`. Chunks are at most `chunkSize`; the final one may be smaller.
 
 ### Convert to `Stream`
 
-Six conversion variants exist, distinguished by three axes: chunked vs single-value emit, discarding vs retaining the original result, with-result tuple form.
+Six conversions cover two input shapes and three ways of treating the original effect's result:
+
+| Input | Result is `Unit` | Non-`Unit` result, discarded | Result kept as `B < Async` |
+|---|---|---|---|
+| `Emit[Chunk[A]]` | `emitToStream` | `emitToStreamDiscarding` | `emitToStreamAndResult` |
+| `Emit[A]` | `emitChunkedToStream(n)` | `emitChunkedToStreamDiscarding(n)` | `emitChunkedToStreamAndResult(n)` |
 
 ```scala
-import kyo.*
-
-enum ShipmentEvent:
-    case Shipped(sku: String)
-val emitting: Unit < Emit[ShipmentEvent] =
-    Kyo.emit(ShipmentEvent.Shipped("sku1"))
-val nonUnitEmitting: Long < Emit[ShipmentEvent] =
-    Kyo.emit(ShipmentEvent.Shipped("sku1")).map(_ => 42L)
+val counted: Long < Emit[ShipmentEvent] =
+    shipments.map(_ => 42L)
 val chunkedEmits: Unit < Emit[Chunk[ShipmentEvent]] =
-    emitting.emitChunked(32)
+    shipments.emitChunked(32)
 
-// Emit[Chunk[A]] -> Stream[A, S], when B = Unit: use emitToStream
 val s1: Stream[ShipmentEvent, Any] =
-    emitting.emitChunked(32).emitToStream
-// Emit[A] -> Stream[A, S], discarding non-Unit result B
-val s2: Stream[ShipmentEvent, Any] =
-    nonUnitEmitting.emitChunkedToStreamDiscarding(32) // discards B
+    chunkedEmits.emitToStream
 
-// Emit[Chunk[A]] -> Stream[A, S], retaining result as a separate Async effect
+val s2: Stream[ShipmentEvent, Any] =
+    counted.emitChunked(32).emitToStreamDiscarding
+
 val s3: (Stream[ShipmentEvent, Async], Unit < Async) < Async =
     chunkedEmits.emitToStreamAndResult
 
-// Emit[A] -> Stream[A, S], chunked by chunkSize
 val s4: Stream[ShipmentEvent, Any] =
-    emitting.emitChunkedToStream(32)
+    shipments.emitChunkedToStream(32)
 
-// Emit[Chunk[A]] -> Stream[A, S], discarding non-Unit result B (pre-chunked variant)
 val s5: Stream[ShipmentEvent, Any] =
-    nonUnitEmitting.emitChunked(32).emitToStreamDiscarding
+    counted.emitChunkedToStreamDiscarding(32)
 
 val s6: (Stream[ShipmentEvent, Async], Unit < Async) < Async =
-    emitting.emitChunkedToStreamAndResult(32)
+    shipments.emitChunkedToStreamAndResult(32)
 ```
 
-> **Note:** `emitToStreamDiscarding` requires `NotGiven[B =:= Unit]`. If the original computation's result is `Unit`, the discarding form would silently throw away nothing and is forbidden by the constraint. For `Unit < Emit[Chunk[A]] & S`, use `emitToStream` instead (it's defined on a different extension shape with no `NotGiven` requirement).
+> **Note:** the `Discarding` forms require `NotGiven[B =:= Unit]`: for a `Unit` result there is nothing to discard, so use the first column instead.
+
+> **Note:** in the `AndResult` forms, the `B < Async` completes only once the stream has been run. Consume the stream before waiting on the result, or the wait never ends.
 
 ### `unwrapStream`: flatten an effectful stream
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
 val streamInEffect: Stream[Order, Async] < Async = ???
 
 val flattened: Stream[Order, Async] =
@@ -1005,17 +801,11 @@ val flattened: Stream[Order, Async] =
 
 ## Resource lifecycle
 
-The Construction cluster has `Kyo.acquireRelease`, `addFinalizer`, `scoped`, and `fromAutoCloseable`: those CREATE resources and register cleanup at acquisition time. The combinators below are the symmetric side: attaching cleanup to an in-flight computation.
+The Construction cluster has `Kyo.acquireRelease`, `addFinalizer`, `scoped`, and `fromAutoCloseable`: those create resources and register cleanup at acquisition time. The combinators below are the symmetric side: attaching cleanup to an in-flight computation.
 
 ### `ensuring` and `ensuringError`
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val load: Order < (Abort[OrderNotFound] & Async) = ???
-
 val withCleanup: Order < (Async & Scope & Sync & Abort[OrderNotFound]) =
     load.ensuring(Kyo.logInfo("load complete"))
 
@@ -1030,134 +820,92 @@ val withErrorAwareCleanup: Order < (Async & Scope & Sync & Abort[OrderNotFound])
 
 > **Note:** The finalizer is registered before the effect's first step, so it runs even if the effect is interrupted before it starts. It runs when the scope closes, not when the effect ends: in a scope that goes on to do more work, the finalizer waits for all of it. Wrap the effect in its own `Kyo.scoped` when cleanup must follow the effect directly.
 
-When you reach for `ensuring`: you have an existing effect and want to add cleanup AFTER it. When you reach for `Kyo.acquireRelease`: you're building the resource from scratch and want cleanup paired with construction. The latter is the better default; reach for `ensuring` when you can't restructure the surrounding code.
+Reach for `ensuring` when you have an existing effect and want to add cleanup to it. Reach for `Kyo.acquireRelease` when you're building the resource and want cleanup paired with construction. The latter is the better default; reach for `ensuring` when you can't restructure the surrounding code.
 
 ## Dependency injection (Env)
 
 `Env[E]` is the read-only context effect; you read dependencies with `Kyo.service[E]` / `Kyo.serviceWith[E]` (under [Construction](#env-constructors-reading-dependencies)) and supply them with the combinators below.
 
-### `provideValue`: supply a single dependency
+### `provideValue` and `Kyo.provideFor`: supply a single dependency
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
-trait Database
-val db: Database = new Database {}
-class OrderRepo(val database: Database):
-    def load(id: Long): Order < Abort[OrderNotFound] = ???
-
 val loadOrder: Order < (Env[OrderRepo] & Abort[OrderNotFound]) =
-    Kyo.serviceWith[OrderRepo].apply(repo => repo.load(orderId))
+    Kyo.serviceWith[OrderRepo](_.load(orderId))
 
-val withRepo: Order < (Abort[OrderNotFound]) =
-    loadOrder.provideValue(OrderRepo(db))
+val withRepo: Order < Abort[OrderNotFound] =
+    loadOrder.provideValue(repo)
+
+val withRepoPrefix =
+    Kyo.provideFor(repo)(loadOrder)
 ```
 
-Use when you have a concrete instance of one dependency. The `Env[E]` is removed from the effect row for that single type; if the effect requires more than one dependency, you'll need to chain `provideValue` calls or use `provideLayer`/`provide`.
+Use these when you have a concrete instance of one dependency. The `Env[E]` is removed from the effect row for that single type; if the effect requires more than one dependency, chain the calls or use `provideLayer` / `provide`. `Kyo.provideFor(value)(effect)` is the prefix form of `provideValue`.
 
 ### `provideLayer`: supply via a `Layer`
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
-class OrderRepo:
-    def load(id: Long): Order < Abort[OrderNotFound] = ???
-object OrderRepo:
-    val layer: Layer[OrderRepo, Any] = Layer(new OrderRepo)
+val repoLayer: Layer[OrderRepo, Any] = Layer(repo)
 
 val loadOrder: Order < (Env[OrderRepo] & Abort[OrderNotFound]) =
-    Kyo.serviceWith[OrderRepo].apply(repo => repo.load(orderId))
+    Kyo.serviceWith[OrderRepo](_.load(orderId))
 
 val configured: Order < (Memo & Abort[OrderNotFound]) =
-    loadOrder.provideLayer(OrderRepo.layer)
+    loadOrder.provideLayer(repoLayer)
 ```
 
-A `Layer[E, S]` is a deferred construction of `E` that may itself depend on other effects. `provideLayer` runs the layer to produce the dependency, then supplies it. The resulting effect row adds `Memo` because layers are memoised.
+A `Layer[E, S]` is a deferred construction of `E` that may itself depend on other effects. `provideLayer` runs the layer to produce the dependency, then supplies it. The resulting effect row adds `Memo` because layers are memoized.
 
 ### `provide`: supply all required `Env` with multiple layers
 
 ```scala
-import kyo.*
-
-case class Order(id: Long)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-val orderId: Long = 42L
-
-class OrderRepo:
-    def load(id: Long): Order < Abort[OrderNotFound] = ???
-object OrderRepo:
-    val layer: Layer[OrderRepo, Any] = Layer(new OrderRepo)
+val repoLayer: Layer[OrderRepo, Any] = Layer(repo)
 
 val loadOrder: Order < (Env[OrderRepo] & Abort[OrderNotFound]) =
-    Kyo.serviceWith[OrderRepo].apply(repo => repo.load(orderId))
+    Kyo.serviceWith[OrderRepo](_.load(orderId))
 
 val fullyConfigured: Order < (Abort[OrderNotFound] & Memo) =
-    loadOrder.provide(OrderRepo.layer)
+    loadOrder.provide(repoLayer)
 ```
 
-`provide` is a `transparent inline` macro that takes a variable number of layers and supplies ALL of the effect's `Env[*]` requirements. Its result type is computed at the call site: the `Env` requirements are gone, and what remains is the effect's other effects plus `Memo` from the layers, as in the example above.
-
-> **Caution:** Because `provide` is `transparent inline`, under-provisioning produces a macro-flavoured compile error rather than a typed residue. If you forget a layer, the error message will reference `Env.runLayer` macro expansion rather than naming the missing dependency clearly. Read the error carefully or temporarily switch to chained `provideLayer` calls to localise which dependency is missing.
-
-`Kyo.provideFor` (in [Construction](#construction)) is the companion form for single-dependency wiring: it accepts a dependency value and an effect, complementing the extension methods `.provideValue`, `.provideLayer`, and `.provide` shown above.
+`provide` is a `transparent inline` macro that takes a variable number of layers and supplies all of the effect's `Env[*]` requirements. Its result type is computed at the call site: the `Env` requirements are gone, and what remains is the effect's other effects plus `Memo` from the layers, as in the example above. If a layer is missing, the call fails to compile with `Missing Input: T`, naming the absent type and the layer that needs it.
 
 ## Putting it together
 
 The clusters above are orthogonal. A single chain can cross construction, sequencing, concurrency, error handling, and resource lifecycle without any intermediate types.
 
 ```scala
-import kyo.*
-
-case class Order(id: Long, total: BigDecimal)
-case class Profile(name: String, tier: String)
-case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
-
-object OrderRepo:
-    def lookup(id: Long): Option[Order] = None
-
 trait Transaction:
     def commit: Unit < Sync
     def close: Unit < Sync // rolls back anything not committed
 
 trait Database:
     def begin: Transaction < Sync
+val db: Database = ???
 
-val db: Database                        = ???
-val orderId: Long                       = 42L
-val profileFor: Long => Profile < Async = _ => ???
-
-// Construction: lift a fallible operation into Abort[OrderNotFound]
-val load: Order < (Abort[OrderNotFound] & Async) =
-    Kyo.fromOption(OrderRepo.lookup(orderId))
+// Construction: lift a lookup that may find nothing into Abort[OrderNotFound]
+val found: Order < (Abort[OrderNotFound] & Sync) =
+    repo.lookup(orderId).map(result => Kyo.fromOption(result))
         .absentToFailure(OrderNotFound(orderId))
 
-// Sequencing: log then load
-val logged: Order < (Abort[OrderNotFound] & Async) =
-    Kyo.logInfo("loading order") *> load
+// Sequencing: log, then look up
+val logged: Order < (Abort[OrderNotFound] & Sync) =
+    Kyo.logInfo("loading order") *> found
 
 // Concurrency: fork a profile fetch and join after loading the order
 val withProfile: (Order, Profile) < (Abort[OrderNotFound] & Async & Scope & Sync) =
     for
         fiber   <- profileFor(orderId).fork
-        order   <- load
+        loaded  <- found
         profile <- fiber.join
-    yield (order, profile)
+    yield (loaded, profile)
 
-// Error handling: retry on failure, recover with a fallback if all retries fail
-val resilient: Order < Async =
-    load.retry(3).recover(_ => Order(0L, BigDecimal(0)))
+// Error handling: retry on failure, recover with a fallback if all attempts fail
+val resilient: Order < (Sync & Async) =
+    found.retry(3).recover(_ => Order(0L))
 
-// Resource lifecycle: the transaction closes with the scope, and commits only if the load succeeded
+// Resource lifecycle: the transaction closes with the scope, and commits only if the lookup succeeded
 val transactional: Order < (Abort[OrderNotFound] & Async & Scope & Sync) =
     Kyo.acquireRelease(db.begin)(_.close).map { txn =>
-        load.tap(_ => txn.commit)
+        found.tap(_ => txn.commit)
     }
 ```
