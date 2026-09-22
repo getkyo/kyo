@@ -13,9 +13,9 @@ import kyo.net.internal.backend.SelectionReport
   * It stays a named subtype rather than collapsing into the descriptor because it is what bounds the TLS domain: [[selectFor]] ranges over
   * `P <: TlsProvider`, which is what keeps an I/O backend out of a TLS registry even though the two carry the same identity.
   *
-  * Each platform registers its TLS providers as registry entries for selection. This shared trait is FFI-free so it compiles on every
-  * platform (including Wasm and JS, which have no FFI); the FFI-coupled engine-building surface lives in the `jvm-native` `TlsEngineProvider`
-  * subtype.
+  * Each platform registers its TLS providers as registry entries for selection. This shared trait is FFI-free so that selection reads the
+  * same identity everywhere without naming an engine type; the FFI-coupled engine-building surface lives in the `jvm-native`
+  * `TlsEngineProvider` subtype.
   */
 private[net] trait TlsProvider extends CapabilityDescriptor
 

@@ -97,7 +97,9 @@ class JsConcurrentEchoTest extends Test:
     end driveConnection
 
     private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[NetException | Closed] & Scope) =
-        val transport                         = NetPlatform.transport
+        // The Node transport by name: NetPlatform.transport selects the koffi posix transport wherever its native loads, and TLS there is
+        // BoringSSL's, not Node's.
+        val transport                         = kyo.net.internal.JsTransport.init(poolSize = 1)
         val serverHandler: Connection => Unit = serverConn =>
             // Echo loop using the Unsafe API: take a span from inbound, offer it back to outbound, repeat. Each connection's echo runs as its
             // own onComplete chain on the single event loop, interleaved with every other connection's by Node.

@@ -13,12 +13,20 @@ class CapabilityOutcomeTest extends Test:
 
     "describe" - {
 
-        "NotBundled names the classifier line that fixes it" in {
+        // Asserted per runtime because the remedy is per runtime. There is no classpath on Node and no classifier
+        // artifact to add there, so the line that helps a JVM reader is the line that misdirects a Node one.
+        "NotBundled names the remedy that fixes it on this runtime" in {
             val described = CapabilityOutcome.NotBundled("kyonet_posix_uring", "darwin-aarch64").describe
             assert(described.contains("kyonet_posix_uring"))
-            // The classifier string appears as the value of the `classifier` argument, not only as a platform tag in prose.
-            assert(described.contains("""classifier "darwin-aarch64""""))
-            assert(described.contains(""""io.getkyo" %% "kyo-net""""))
+            if kyo.internal.Platform.isJS || kyo.internal.Platform.isWasm then
+                assert(described.contains("KYO_FFI_KYONET_POSIX_URING_PATH"))
+                assert(described.contains("@kyo/ffi-native"))
+                assert(!described.contains("classpath"), s"a Node reader has no classpath to add to: $described")
+            else
+                // The classifier string appears as the value of the `classifier` argument, not only as a platform tag in prose.
+                assert(described.contains("""classifier "darwin-aarch64""""))
+                assert(described.contains(""""io.getkyo" %% "kyo-net""""))
+            end if
         }
 
         "the other outcomes stay one short line each" in {

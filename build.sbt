@@ -2674,7 +2674,7 @@ lazy val `kyo-net` =
             ),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
-        // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
+        // Wasm runs the same koffi posix transport on Node as JS (koffi is required on first use, never statically), so it needs the identical koffi bootstrap
         // and native-path env; only the NodeJSEnv args differ (the WASM backend needs `--experimental-wasm-exnref`, Node 24+, matching
         // `wasm-settings`).
         .wasmSettings(

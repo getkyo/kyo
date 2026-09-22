@@ -1,5 +1,6 @@
 package kyo.ffi.internal
 
+import kyo.discard
 import kyo.ffi.FfiLoadError
 import scala.scalajs.js
 
@@ -25,7 +26,18 @@ object NativeFacade:
         else
             WasmFacadeRegistry.get(libraryId) match
                 case Some(provider) => provider(fns)
-                case None           =>
+                // Outside a browser koffi is the only route left, so take it rather than report the gate's answer.
+                // `koffiAvailable` is a boolean: it cannot say whether koffi is absent or present and failing to
+                // load, which is what a prebuilt addon against the wrong libc does. Loading for real raises
+                // LibraryNotFound carrying that failure as its cause, where reporting the gate would name a
+                // browser on a machine that is not one and bury the reason koffi did not come up.
+                //
+                // koffi is resolved before the library because every native needs it: resolving the library first
+                // would, on a host missing both, name the native package to add and leave koffi for the next attempt.
+                case None if !NativeLoader.detectBrowser() =>
+                    discard(Koffi.dynamic)
+                    KoffiFacade.load(NativeLoader.jsResolve(libraryId), fns)
+                case None =>
                     throw new FfiLoadError.Unsupported(
                         s"No way to reach native library '$libraryId' on this JS runtime. koffi is unavailable, " +
                             "which is expected in a browser, and no WebAssembly provider is registered for this " +
@@ -48,15 +60,19 @@ object NativeFacade:
     /** Whether koffi can be required in this runtime. A presence check on `require` and the module itself rather
       * than a browser heuristic: a bundler can leave a `require` shim in a browser bundle, and a Node process can
       * be missing the optional koffi dependency.
+      *
+      * This is the gate that decides whether the koffi path is taken at all, so it has to agree with
+      * [[KoffiFacade]] about what "reachable" means. Asking only for the global `require` disagrees on every
+      * ESModule bundle, where the answer is a flat `false` and the caller reports a native-less runtime rather
+      * than a module kind it did not look for.
       */
     private def koffiAvailable(): Boolean =
         try
-            val req = js.Dynamic.global.selectDynamic("require")
-            if js.isUndefined(req) || req == null then false
-            else
-                val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
-                !js.isUndefined(koffi) && koffi != null
-            end if
+            NodeRequire.find() match
+                case None      => false
+                case Some(req) =>
+                    val koffi = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
+                    !js.isUndefined(koffi) && koffi != null
         catch case _: Throwable => false
 
 end NativeFacade
