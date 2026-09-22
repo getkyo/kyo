@@ -43,20 +43,7 @@ val withCleanup: String < Sync =
     }
 ```
 
-`Sync.acquireReleaseWith` is the lightweight bracket for `Sync`-only resources (no `Scope` effect involved):
-
-```scala
-import kyo.*
-
-val read: String < Sync =
-    Sync.acquireReleaseWith(new java.io.BufferedReader(new java.io.FileReader("data.txt")))(reader =>
-        reader.close()
-    ) { reader =>
-        reader.readLine()
-    }
-```
-
-For resources whose lifetime spans more than a single `acquire`/`use` block, use `Scope` instead (covered below).
+`Sync.ensure` and its sibling `Sync.acquireReleaseWith` are the lightweight brackets; [Resource safety](#resource-safety) covers when to use them and when to use `Scope` instead.
 
 ### Adding fibers with `Async`
 
@@ -120,6 +107,13 @@ For full integration outside an application entry point, `KyoApp.Unsafe.runAndBl
 
 > **Sequential vs parallel:** the `Async.*` collection operations below run inputs concurrently. For sequential execution, reach for the `Kyo.*` companion (`Kyo.collectAll`, `Kyo.foreach`, `Kyo.fill`, `Kyo.zip`, `Kyo.when`, `Kyo.unless`), defined in [kyo-prelude](../kyo-prelude/README.md). Mental model: `Kyo.*` for sequential, `Async.*` for parallel.
 
+From here on, the examples share a small order-processing domain:
+
+```scala doctest:setup
+case class Item(sku: String, qty: Int, price: BigDecimal)
+case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
+```
+
 ### First success vs first finish
 
 Both `Async.race` and `Async.raceFirst` run a collection of computations concurrently and interrupt the rest when one finishes. The difference is when "finishes" counts.
@@ -143,8 +137,6 @@ The "when to reach for which" rule: use `race` when you want a successful answer
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 // Bound an order lookup by a deadline, surfacing whichever finishes first
 val withDeadline: Order < (Async & Abort[Timeout]) =
@@ -165,8 +157,6 @@ When several upstreams race to satisfy a request and you want the first few that
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val orders: Chunk[Order] < Async =
     Async.gather(max = 3)(
@@ -188,8 +178,6 @@ For mapping over a sequence with a concurrency cap, use `Async.foreach`, `Async.
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 case class Txn(id: String)
 class ChargeError extends Exception
 def charge(o: Order): Txn < (Async & Abort[ChargeError]) = ???
@@ -217,8 +205,6 @@ When several independent values are needed before downstream code can proceed, `
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val assembled: (Order, Order, Order) < Async =
     Async.zip(
@@ -258,11 +244,31 @@ Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResu
 
 > **Note:** `Fiber` is a low-level primitive; the public-facing recommendation is to write application code against `Async`'s structured combinators and reach for `Fiber.init` only when none of them fit.
 
-## Resource lifetimes with `Scope`
+## Resource safety
 
-`Scope` pairs an acquisition with its release. The release runs deterministically on success, failure, or interruption, exactly once. Resources stack: nested acquisitions release in LIFO order when the enclosing `Scope.run` exits.
+A release that has been registered runs exactly once, whether the computation succeeds, fails, or is interrupted. Everything in this section follows from that sentence and from its one condition: the guarantee starts at registration. The tools differ in where the release is registered, how long it stays owed, and what it may do when it runs.
 
-### `acquireRelease` and `acquire`
+### Choosing the tool
+
+| You have | Reach for | The release runs |
+| --- | --- | --- |
+| A resource used within one expression, with a release that does not park | `Sync.acquireReleaseWith`, `Sync.ensure` | inline, when the expression ends |
+| A resource that outlives the expression that opened it, or a release that parks | `Scope.acquireRelease`, `Scope.acquire`, `Scope.ensure` | when the enclosing `Scope.run` closes |
+
+The `Sync` brackets need no `Scope` in the effect row, and their release is a `Sync` computation evaluated to completion in place:
+
+```scala
+import kyo.*
+
+val firstLine: String < Sync =
+    Sync.acquireReleaseWith(new java.io.BufferedReader(new java.io.FileReader("data.txt")))(_.close()) { reader =>
+        reader.readLine()
+    }
+```
+
+A `Scope` release may be `Async`: it can flush over the network, wait on a fiber, or drain a queue. It is owed until the scope closes, so the value can be handed around, stored, and used by later steps.
+
+### `acquireRelease`, `acquire`, and `ensure`
 
 ```scala
 import java.io.FileWriter
@@ -289,39 +295,54 @@ val read: String < (Async & Sync) =
     }
 ```
 
-### `Scope.ensure`
-
-Register a finalizer without acquiring a corresponding resource:
+`Scope.ensure` registers a release with no resource attached. Its overload hands the release the outcome, `Absent` when the scope's body completed and `Present(error)` when it failed or was interrupted, so a release can commit or roll back:
 
 ```scala
 val withCleanup: Int < (Async & Sync & Scope) =
-    Scope.ensure(Log.info("computation completed")).andThen {
-        compute
-    }
+    Scope.ensure { (outcome: Maybe[Result.Error[Any]]) =>
+        outcome match
+            case Absent        => Log.info("committed")
+            case Present(fail) => Log.warn(s"rolled back: $fail")
+    }.andThen(compute)
 
 def compute: Int < Sync = ???
 ```
 
-The overload `Scope.ensure(f: Maybe[Error[Any]] => Any < ...)` exposes the outcome (`Absent` on success, `Present` on failure) so the finalizer can branch on it.
+### Closing a scope
 
-### `Scope.run` and parallel cleanup
+`Scope.run` discharges `Scope` and closes it when its body ends. Its result is delivered after every release has run, and a failure from the body is raised again after them, so the caller never observes a half-closed scope. Releases run in reverse registration order. A failing release is logged with `Log.error` and the rest still run, so a release can never mask the body's own result or error.
 
-`Scope.run(v)` discharges the `Scope` effect, running finalizers sequentially. `Scope.run(closeParallelism)(v)` runs up to `closeParallelism` finalizers in parallel, useful when many resources have independent slow shutdowns (database pools, network connections).
+A `Scope.run` nested inside another is its child: it closes at its own end, releasing its resources before the enclosing scope's own. `Scope.run(closeParallelism)` runs up to that many releases at once, for scopes holding many independent slow shutdowns such as connection pools. Releases still start in reverse order, but one may finish after a release registered before it.
 
 ```scala
-// Up to 8 finalizers run concurrently on shutdown
-val app: Result[Throwable, Unit] < Async =
+val app: Unit < Async =
     Scope.run(closeParallelism = 8) {
         openAllPools.andThen(serve)
     }
 
-def openAllPools: Unit < (Scope & Sync)    = ???
-def serve: Result[Throwable, Unit] < Async = ???
+def openAllPools: Unit < (Scope & Sync) = ???
+def serve: Unit < Async                 = ???
 ```
 
-> **Note:** Scope finalizers run exactly once. Failures are logged via `Log.error`, not raised, so a finalizer failure does not mask the primary computation's result.
+### Fibers and scopes
 
-The lower-level `Scope.Finalizer` and `Scope.Finalizer.Awaitable` types are surfaced for library code that wants to drive finalizer lifecycles directly.
+`Fiber.init` ties the fiber to the enclosing scope as one of its releases. When the scope reaches it, the release interrupts the fiber, waits for it to stop, and then releases what the fiber registered, before moving on to anything registered ahead of the fiber. The combinators in [Structured concurrency](#structured-concurrency) fork the same way, and a resource acquired inside one of their branches belongs to the scope the combinator was called in.
+
+Two cases need care:
+
+- **Interrupting a fiber does not wait for it.** `fiber.interrupt` returns once the interrupt is requested. When the caller must observe the fiber stopped, and its releases run, follow it with `fiber.getResult`.
+- **A fiber that outlives its scope cannot register on it.** A registration on a closed scope runs the release at once, detached, and fails the registering computation with `Closed`: the resource was released instead of leaked, but its user is told it no longer has one. This happens to `Fiber.initUnscoped` fibers that capture a scope, and it is the reason to prefer `Fiber.init`.
+
+### Where the guarantee starts and stops
+
+`acquireRelease` registers the release in the same step that delivers the acquired value, so no interrupt can land between the two. The edges of that guarantee are specific:
+
+- **Only the returned value is covered.** If the acquire opens a socket and then a session, and is interrupted between them, the socket is the acquire's to clean up. Split it into two `acquireRelease` calls, one per resource.
+- **An acquire that joins a fiber or a promise is not covered.** An interrupt that lands after the join and before the acquiring fiber resumes drops the value with nothing registered. Register the release inside the fiber that produces the value, or continue from the join with `ensureMap`, which applies its function in the step the value arrives rather than after a preemption point as `map` does.
+- **`*Unscoped` constructors hand over a resource with nothing registered.** Between receiving it and registering a release, the caller is unprotected. Prefer the scoped constructor wherever one exists.
+- **Work that must finish once started goes in `Async.uninterruptible`.** An interrupt that arrives meanwhile is delivered after the protected computation returns.
+
+Under a handler that runs the rest of the computation more than once, such as `Choice.run`, a scope opened around the choice point is shared by every branch: each branch's registrations are kept, and all of them release once, after the last branch. A scope opened inside a branch closes at the end of that branch. [kyo-kernel's README](../kyo-kernel/README.md#bracket-acquire-use-release) covers the underlying bracket semantics, including why a computation resumed after its scope has closed is refused rather than run against released resources.
 
 ## Talking between fibers
 
@@ -333,8 +354,6 @@ When two fibers need a hand-off with backpressure, reach for `Channel`. It expos
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
     Channel.init[Order](capacity = 64).map { channel =>
@@ -360,7 +379,7 @@ The `access` parameter at `Channel.init` selects an internal representation tune
 - `Access.SingleProducerMultiConsumer`: one producer, many consumers.
 - `Access.SingleProducerSingleConsumer`: most restrictive, often fastest.
 
-> **Note:** On the JVM, `Channel` capacity is rounded up to the next power of two for performance. Capacity 10 becomes 16.
+> **Note:** `Channel` capacity is rounded up to the next power of two on every platform. Capacity 10 becomes 16.
 
 > **Caution:** A `Channel` has no upper bound on the number of fibers suspended on it. In an HTTP-per-request pattern the queue of waiters can grow unbounded even when the channel's element capacity is bounded. Combine with `Admission` or `Meter` at the boundary if request rate is unbounded.
 
@@ -370,8 +389,6 @@ The `access` parameter at `Channel.init` selects an internal representation tune
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 val channel: Channel[Order] = ???
 
 val remaining: Maybe[Seq[Order]] < Async = channel.close
@@ -381,8 +398,6 @@ val remaining: Maybe[Seq[Order]] < Async = channel.close
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 val channel: Channel[Order] = ???
 
 val drained: Boolean < Async = channel.closeAwaitEmpty
@@ -396,8 +411,6 @@ The "when to reach for which" rule: `close` when consumers should learn the sour
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val q: Queue[Order] < (Sync & Scope) =
     Queue.init[Order](capacity = 1024)
@@ -421,8 +434,6 @@ When one producer needs to feed many independent listeners (log auditors, metric
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
     Hub.init[Order](capacity = 64).map { hub =>
@@ -532,8 +543,6 @@ Use `meter.run(v)` to execute a computation under the meter, blocking until a pe
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 case class Txn(id: String)
 case class ChargeError() extends Exception
 val orders: Chunk[Order]                                 = Chunk.empty
@@ -567,8 +576,6 @@ When the scheduler reports congestion and you'd rather shed load than queue it, 
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 case class ChargeError() extends Exception
 val order: Order                                           = Order(1L, 100L, Chunk.empty, BigDecimal(0))
 def charge(o: Order): Order < (Async & Abort[ChargeError]) = ???
@@ -616,8 +623,6 @@ Across fibers, state lives in atomics, contended-write counters, or a CLOCK-evic
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 
 val counter: Long < Sync =
     AtomicLong.init(0).map { ref =>
@@ -754,8 +759,6 @@ val fastForward: Result[Throwable, Unit] < (Async & Sync) =
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 case class NotFound() extends Exception
 
 val resilient: Order < (Async & Abort[NotFound]) =
@@ -771,9 +774,9 @@ val customSchedule: Order < (Async & Abort[NotFound]) =
 def loadOrder(id: Long): Order < (Async & Abort[NotFound]) = ???
 ```
 
-`Retry[E](v)` uses `Retry.defaultSchedule`: exponential backoff starting at 100ms, factor 2, max 5 seconds, 0.2 jitter, capped at 3 attempts. `Retry[E](schedule)(v)` accepts any `Schedule`.
+`Retry[E](v)` uses `Retry.defaultSchedule`: exponential backoff starting at 100ms, factor 2, max 5 seconds, 0.2 jitter, and at most 3 retries, so 4 attempts in all. `Retry[E](schedule)(v)` accepts any `Schedule`.
 
-`Schedule` is defined in `kyo-prelude`; common combinators are `exponentialBackoff`, `fixed`, `take`, `jitter`, and `and`/`or` for combining policies.
+`Schedule` is defined in `kyo-data`. Policies are built from `fixed`, `linear`, `exponential`, `exponentialBackoff`, or `fibonacci`, bounded with `take` or `maxDuration`, randomized with `jitter`, sequenced with `andThen`, and combined with `max` (the longer delay of two, stopping when either stops) or `min` (the shorter delay, continuing while either does).
 
 ### `Timeout`
 
@@ -868,8 +871,6 @@ For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; 
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 val orders: Chunk[Order] = Chunk.empty
 
 val example: Unit < Sync =
@@ -896,8 +897,6 @@ Handle them per-effect with `Abort.run[Closed]`, `Abort.recover[Timeout]`, and s
 
 ```scala
 import kyo.*
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 val channel: Channel[Order] = ???
 
 val handled: Maybe[Order] < (Async & Sync) =
@@ -945,9 +944,14 @@ val missing: Maybe[Counter] < Sync   = orders.findCounter("processsed") // Absen
 
 ### `StreamCoreExtensions`
 
-`StreamCoreExtensions` adds async `Channel`-driven stream operators. `Stream.emitChunks`, `Stream.fromChannel`, async `mapPar`, and `Stream`-level `StreamHub` for fan-out. The default `defaultAsyncStreamBufferSize` is 1024.
+`StreamCoreExtensions` adds the stream operators that need fibers, imported with `kyo.*`:
 
-The companion methods are imported with `kyo.*` and become available on the `Stream` companion and on existing `Stream` values.
+- **Concurrent mapping:** `mapPar` and `mapChunkPar` keep input order, and `mapParUnordered` and `mapChunkParUnordered` emit results as they complete.
+- **Merging:** `Stream.collectAll` runs many streams at once, and `merge`, `mergeHalting`, `mergeHaltingLeft` and `mergeHaltingRight` combine two, differing in which side's end stops the result.
+- **Fan-out:** `broadcast2` through `broadcast5` and `broadcastN` split one stream into a fixed number of copies, and `broadcastDynamic` returns a `StreamHub` that later subscribers join.
+- **Batching:** `groupedWithin(maxSize, maxTime)` emits a batch when it is full or when the time runs out, whichever comes first.
+
+Operators that buffer between fibers default to a buffer of 1024 elements.
 
 `Stream.fromInputStream` turns a `java.io.InputStream` into scoped byte chunks and closes it when the enclosing `Scope` ends:
 
@@ -995,8 +999,6 @@ The example below combines several effects from this module into one cohesive pr
 ```scala
 import kyo.*
 
-case class Order(id: Long, customerId: Long, items: Chunk[Item], total: BigDecimal)
-case class Item(sku: String, qty: Int, price: BigDecimal)
 case class Txn(id: String)
 class ChargeError extends Exception
 
@@ -1030,8 +1032,4 @@ The resulting type of the `run` block is `Chunk[Unit] < (Async & Scope & Abort[A
 
 Every public type in kyo-core has a companion `Unsafe` object (`Sync.Unsafe`, `Async`-by-way-of `Fiber.Unsafe`, `Channel.Unsafe`, `Queue.Unsafe`, `Cache.Unsafe`, `Exchange.Unsafe`, `Console.Unsafe`, `Latch.Unsafe`, ...). The `Unsafe` API skips the effect-tracking layer and works against raw values, gated by an `AllowUnsafe` evidence import. Application code should use the safe surface; the `Unsafe` API is for library integrations, performance-critical inner loops, and bridging into non-Kyo code.
 
-The `KyoApp` lifecycle is extensible via `KyoApp.Base[S]`, `KyoAppRunner`, `KyoAppInterrupts`, and `KyoAppRunnerWithInterrupts`. Override these to customise initialization, interrupt handling, or the effect set the `run` block accepts.
-
-`Async.Join` is the arrow effect that backs `Async.race`, `Async.gather`, and `Async.zip` internally. Library code implementing custom structured-concurrency primitives can use it directly as an escape hatch when none of the built-in combinators fit.
-
-Deprecated type aliases preserved for migration: `Resource` (use `Scope`) and `IO` (use `Sync`). Both will be removed in 1.0.
+Modules that provide their own application entry point, such as kyo-case-app, build on `kyo.internal.KyoAppRunner`, the trait `KyoApp` itself uses to register and run its `run` blocks.
