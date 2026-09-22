@@ -7,15 +7,17 @@ import kyo.net.NetPlatform
 /** Unix-domain-socket backend over kyo-net, shared across JVM, JS, Native, and Wasm.
   *
   * Binds a listener on `sockPath` through the platform transport and serves a single client: the first accepted connection completes `first` and
-  * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, and removes the
-  * socket file (kyo-net does not unlink it). A single backend path that runs everywhere kyo-net's transport runs.
+  * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, waits for the
+  * listener's descriptor to be released, and removes the socket file (kyo-net does not unlink it). A single backend path that runs everywhere
+  * kyo-net's transport runs.
   */
 private[kyo] object UdsBackend:
 
     def connect(
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
-        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        releaseTimeout: Duration = JsonRpcTransport.DefaultReleaseTimeout
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
@@ -30,19 +32,26 @@ private[kyo] object UdsBackend:
                     wire.close.andThen {
                         Sync.Unsafe.defer(listenCell.get()).map {
                             case Present(listenFiber) =>
-                                listenFiber.interrupt.andThen(listenFiber.getResult).map {
-                                    case Result.Success(listener) => Sync.Unsafe.defer(listener.close())
-                                    case _                        => ()
-                                }
+                                // The unlink below has to follow the descriptor's release, not just the close: a platform that refuses
+                                // to unlink a socket file whose descriptor is open fails otherwise. A listen still in flight is awaited
+                                // rather than interrupted, since interrupting it hands the listener's close to the transport with no
+                                // release to wait on. The whole wait is bounded because this finalizer runs uninterruptibly, so a
+                                // listen or a release that never arrives must not wedge the scope; on expiry the bound interrupts the
+                                // listen, the transport closes what it bound, and the unlink is attempted either way.
+                                Abort.run[Timeout] {
+                                    Async.timeout(releaseTimeout) {
+                                        listenFiber.getResult.map {
+                                            case Result.Success(listener) =>
+                                                Sync.Unsafe.defer { listener.close(); listener.released.safe }.map(_.get)
+                                            case _ => ()
+                                        }
+                                    }
+                                }.unit
                             case Absent => ()
                         }
                     }.andThen {
-                        // KNOWN GAP, deliberately not papered over: `Listener.close()` returns before the descriptor is
-                        // released (it wakes the selector to force the deferred kill, but does not wait for that pass),
-                        // and a platform that refuses to unlink a socket file whose descriptor is open will fail here.
-                        // The fix belongs in the listener, which must expose a completion to await; retrying the unlink
-                        // until the race resolves only hides it. The failure is logged rather than swallowed, because a
-                        // socket file left behind is what the next bind on the same path trips over.
+                        // A socket file left behind is what the next bind on the same path trips over, so the failure is logged rather
+                        // than swallowed.
                         Abort.run[FileSystemException](Path.run(sockPath.remove)).map(_.foldError(
                             _ => (),
                             error => Log.error(s"UdsBackend: could not remove the socket file at $sockPath", error.exception)
@@ -50,14 +59,16 @@ private[kyo] object UdsBackend:
                     }
                 }.andThen {
                     Sync.Unsafe.defer {
-                        val listenFiber =
+                        val listening =
                             NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
                                 if !first.complete(Result.succeed(conn)) then conn.close()
-                            }.safe
-                        listenCell.set(Maybe(listenFiber))
-                        listenFiber
-                    }.map { listenFiber =>
-                        listenFiber.get.map(_ => JsonRpcTransport.fromWire(wire, framer, codec))
+                            }
+                        listenCell.set(Maybe(listening.safe))
+                        // Awaiting a fiber links the awaiter's interrupt to it. The caller awaits a mirror that refuses interrupts, so a
+                        // stop on the caller cannot settle the listen: its listener stays the finalizer's to close and to wait out.
+                        listening.uninterruptible().safe
+                    }.map { listened =>
+                        listened.get.map(_ => JsonRpcTransport.fromWire(wire, framer, codec))
                     }
                 }
             }

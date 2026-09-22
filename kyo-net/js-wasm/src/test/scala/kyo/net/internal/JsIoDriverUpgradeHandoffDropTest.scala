@@ -57,16 +57,6 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
       */
     private def inertSocket(): sjs.Dynamic = sjs.Dynamic.literal()
 
-    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "JsIoDriver STARTTLS upgrade-handoff" - {
 
         "salvages a plaintext ReadPump chunk parked on a full inbound channel when detachForUpgrade races it" in {
@@ -79,18 +69,24 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                 val chunkA = Array[Byte](1, 2, 3, 4, 5)
                 val chunkB = Array[Byte](9, 8, 7)
 
+                def cleanup: Unit < Sync =
+                    Sync.defer {
+                        discard(clientSock.destroy())
+                        driver.closeHandle(handle)
+                        driver.close()
+                    }
+
                 discard(clientSock.write(buffer(chunkA)))
 
-                awaitCondition(5.seconds)(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).map { armed =>
-                    assert(armed, "chunk A never landed and the pump never re-armed (a hang, not the race under test)")
+                Sync.ensure(cleanup) {
+                    // Chunk A has landed and the pump has re-armed.
+                    assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
+                        discard(clientSock.write(buffer(chunkB)))
 
-                    discard(clientSock.write(buffer(chunkB)))
-
-                    // Chunk B's 'data' clears the pending read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
-                    // re-arm while parked, so pendingRead stays empty.
-                    awaitCondition(5.seconds)(handle.pendingRead.isEmpty).map { parked =>
-                        assert(parked, "chunk B was never delivered / its put never parked (a hang, not the race under test)")
-
+                        // Chunk B's 'data' clears the pending read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
+                        // re-arm while parked, so pendingRead stays empty.
+                        assertEventually(handle.pendingRead.isEmpty)
+                    }.andThen {
                         handle.upgrading = true
                         val buffered = conn.detachForUpgrade().poll() match
                             case Present(Result.Success(v)) => v.eval
@@ -102,23 +98,17 @@ class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
                             s"detachForUpgrade must return the already-buffered chunk A, got ${bufferedBytes.toSeq}"
                         )
 
-                        // The parked put's onComplete (which invokes onInboundClosedDuringRead)
-                        // is a raw IOPromise callback that runs synchronously inside inbound.close() on this single-threaded platform, so the
-                        // leftover is already staged by the time this runs; the poll is a harmless guard, not a wait for a rescheduled callback.
-                        awaitCondition(5.seconds)(handle.hasLeftover).map { salvaged =>
-                            val leftover = handle.dequeueLeftover() match
-                                case Present(JsHandle.Leftover(buf, off, len)) => java.util.Arrays.copyOfRange(buf, off, off + len)
-                                case Absent                                    => Array.emptyByteArray
-                            discard(clientSock.destroy())
-                            driver.closeHandle(handle)
-                            driver.close()
-                            assert(salvaged, "chunk B was dropped instead of salvaged into the handle's leftover queue")
-                            assert(
-                                leftover.toSeq == chunkB.toSeq,
-                                s"salvaged leftover bytes ${leftover.toSeq} did not match chunk B ${chunkB.toSeq}"
-                            )
-                            succeed
-                        }
+                        // The parked put's onComplete (which invokes onInboundClosedDuringRead) is a raw IOPromise callback that runs
+                        // synchronously inside inbound.close() on this single-threaded platform, so the leftover is staged by now.
+                        assert(handle.hasLeftover, "chunk B was dropped instead of salvaged into the handle's leftover queue")
+                        val leftover = handle.dequeueLeftover() match
+                            case Present(JsHandle.Leftover(buf, off, len)) => java.util.Arrays.copyOfRange(buf, off, off + len)
+                            case Absent                                    => Array.emptyByteArray
+                        assert(
+                            leftover.toSeq == chunkB.toSeq,
+                            s"salvaged leftover bytes ${leftover.toSeq} did not match chunk B ${chunkB.toSeq}"
+                        )
+                        succeed
                     }
                 }
             }

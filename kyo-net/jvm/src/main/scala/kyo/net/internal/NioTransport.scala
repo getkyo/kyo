@@ -59,9 +59,8 @@ final private[kyo] class NioTransport private (
 ) extends TransportImpl[NioHandle]:
 
     /** The driver pool powering this transport. A single-driver pool wrapping `driver`: connect, listen, accept, and the TLS handshake all run
-      * on that one driver, and `close()` shuts it down through the pool (no additional driver seam is introduced). Mirrors PosixTransport's
-      * single-driver pool: NIO runs exactly one driver, so the pool is a one-element wrapper that implements the abstract `TransportImpl.pool`
-      * member without an eager constructor-threaded field.
+      * on that one driver. Mirrors PosixTransport's single-driver pool: NIO runs exactly one driver, so the pool is a one-element wrapper that
+      * implements the abstract `TransportImpl.pool` member without an eager constructor-threaded field.
       */
     override val pool: IoDriverPool[NioHandle] =
         import AllowUnsafe.embrace.danger
@@ -71,9 +70,8 @@ final private[kyo] class NioTransport private (
     /** In-flight accept-side TLS handshakes, keyed by the promise that carries the handshake's outcome and valued by the listener that accepted
       * the connection.
       *
-      * A connection whose handshake has not completed has no [[Connection]] yet, so it is invisible to the [[connections]] registry that
-      * `close()` sweeps: nothing else knows the channel and handle exist. Without this, a peer that completed the TCP accept and then stalled
-      * held its channel and handle until the process exited, since a listener close tears down only its accept and its own server channel, and
+      * A connection whose handshake has not completed has no [[Connection]] yet, so nothing else knows the channel and handle exist. Without
+      * this, a peer that completed the TCP accept and then stalled held its channel and handle until the process exited, since a listener close tears down only its accept and its own server channel, and
       * the process-shared transport is never closed at all.
       *
       * Discharging an entry means failing its promise, which runs the teardown arm the handshake already installs, so there is one teardown path
@@ -112,7 +110,7 @@ final private[kyo] class NioTransport private (
       * The recheck is the reason this is a function rather than a bare `put`. [[dischargeListenerHandshakes]] runs on the closing carrier and
       * fails only the entries present at that instant, while a registration runs on the selector carrier, so a listener closing anywhere in
       * that window would leave an entry nothing ever reclaims: a second `close()` is a CAS no-op, the accept loop's own `!listener.isClosed`
-      * guard is check-then-act, and the transport-wide sweep runs only from `close()`, which the process-shared transport never sees. The
+      * guard is check-then-act, and the process-shared transport is never closed, so no later sweep exists. The
       * channel, handle and driver registration would then be held until the process exits, the default on this path since a handshake deadline
       * of `Infinity` arms no timer. Gating the discharge on the map removal makes it exactly-once against a sweep that did observe the entry.
       *
@@ -370,7 +368,9 @@ final private[kyo] class NioTransport private (
 
                 val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -1122,7 +1122,9 @@ final private[kyo] class NioTransport private (
                 // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
                 listener.onClose(() => dischargeListenerHandshakes(listener))
                 startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -1384,7 +1386,9 @@ final private[kyo] class NioTransport private (
 
                 val listener = new NioListener(serverChannel, -1, path, driver, NetAddress.Unix(path), frame)
                 startAcceptLoop(serverChannel, handler, listener, config)
-                promise.completeDiscard(Result.succeed(listener))
+                if !promise.complete(Result.succeed(listener)) then
+                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                    listener.close()
             end if
         catch
             case e: IOException =>
@@ -1790,8 +1794,14 @@ final private[net] class NioListener(
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    // Unsafe: same construction-time bridge as closedFlag; the driver completes it on the carrier that observes the descriptor gone.
+    // Uninterruptible because awaiting a fiber links the awaiter's interrupt to it: an awaiter that gives up must not be able to settle a
+    // fact about the descriptor for every other awaiter.
+    private val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)
 
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = releasedPromise
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -1799,14 +1809,11 @@ final private[net] class NioListener(
             // remaining chance to release, since the transport itself may never be closed.
             onCloseHook.foreach(_())
             driver.cleanupAccept(serverChannel, createdAt)
+            // serverChannel.close() cancels the channel's SelectionKey but defers the real fd close (kill()) to the selector's next
+            // deregistration pass. The driver forces that pass and completes `released` once it has run.
             try serverChannel.close()
             catch case _: IOException => ()
-                // serverChannel.close() cancels the channel's SelectionKey but, on JDK 11+, defers the real fd close (kill()) until the selector
-                // deregisters the cancelled key on its next select(). The driver loop selects with no timeout, so an idle driver (no other channel
-                // activity) never runs that pass and the listen socket leaks in LISTEN indefinitely. Wake the selector unconditionally so the
-                // deferred deregistration + kill runs now, whether or not an accept was pending at close.
-            end try
-            driver.wakeup()
+            driver.releaseListener(serverChannel, releasedPromise)
         end if
     end close
 end NioListener

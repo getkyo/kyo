@@ -186,9 +186,18 @@ abstract class Listener:
 
     /** Stop accepting new connections and close the listener. Idempotent. Does not close already-accepted connections.
       *
-      * Returning does NOT mean the descriptor is released. The NIO implementation hands the real close to the selector's next pass on
-      * JDK 11+, so a caller that needs the descriptor actually gone, to unlink a socket file on a platform that refuses while it is open,
-      * has to wait for it rather than assume this call did it.
+      * Returning does NOT mean the descriptor is released; [[released]] is that signal. The NIO floor hands the real close to the
+      * selector's next pass, io_uring to its reap carrier, and Node to the server handle's close.
       */
     def close()(using AllowUnsafe, Frame): Unit
+
+    /** Completes once the OS has released this listener's descriptor, which is strictly later than [[close]] returns on every backend that
+      * hands the release to its event loop. Pending until [[close]] is called, never fails, and completes exactly once.
+      *
+      * A caller that must not observe the descriptor still open awaits this: unlinking a Unix socket file on a platform that refuses while
+      * the descriptor is open is the case that needs it. It completes on the backend's event-loop carrier, so await it as an `Async`
+      * suspension; a blocking wait from that carrier deadlocks. On Node the server handle closes only after every accepted connection has
+      * ended, so there this also waits on connections this listener does not own; close them first.
+      */
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
 end Listener

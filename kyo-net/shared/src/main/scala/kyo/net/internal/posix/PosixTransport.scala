@@ -101,14 +101,6 @@ final private[net] class PosixTransport private[posix] (
       */
     private val maxTransientAcceptRetries = 8
 
-    /** Every live listener this transport opened. `close()` closes them all (so their accept loops terminate) before the pool shuts down, and a
-      * listener removes itself once closed; without this, a transport shutdown would strand accept loops parked in a blocking `accept`.
-      */
-    // Concurrent-collection audit: a raw ConcurrentHashMap-backed key-set tracking the open listeners so close() can wind them all down.
-    // kyo has no concurrent-set/map type, and its effect-based collections cannot back this set, which is added to on each listen carrier and
-    // read without suspension. Retained as a documented no-equivalent exception.
-    private val listeners = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixListener]()
-
     /** In-flight handshake fd/engine-teardown obligations (accept-side server TLS, connect-side client TLS, and STARTTLS upgrade), keyed by an
       * opaque per-handshake token. A handshake in flight has no [[Connection]] yet, so nothing else knows its fd and engine exist: the
       * driver-level fd-close fix (`PollerIoDriver`/`IoUringDriver`'s terminal sweep) only guarantees a submitted `closeHandle` obligation is
@@ -117,7 +109,9 @@ final private[net] class PosixTransport private[posix] (
       * so a listener-close discharge can never double-free a handshake that completes at the same moment. Removed by [[unregisterHandshake]]
       * once the outcome is known, so this process-lifetime transport does not accumulate one entry per handshake forever.
       */
-    // Concurrent-collection audit: same no-Kyo-equivalent rationale as `listeners` above.
+    // Concurrent-collection audit: a raw ConcurrentHashMap. kyo has no concurrent-map type, and its effect-based collections cannot back
+    // this map, which is written on the accept and connect carriers and read without suspension. Retained as a documented no-equivalent
+    // exception.
     private val pendingHandshakes   = new java.util.concurrent.ConcurrentHashMap[Long, PosixTransport.PendingHandshake]()
     private val pendingHandshakeSeq = new java.util.concurrent.atomic.AtomicLong(0)
 
@@ -134,8 +128,8 @@ final private[net] class PosixTransport private[posix] (
         // Insertion-after-sweep recheck. [[dischargeListenerHandshakes]] runs on the closing carrier and discharges only what is present at
         // that instant, while this insertion runs on the driver carrier at the end of handleAccepted, a window that spans buildEngine (TLS
         // context construction, cert file reads). A listener closing anywhere in that window leaves this entry with nothing that would ever
-        // discharge it: a second close() is a CAS no-op and the transport-wide sweep runs only from close(), which the process-shared
-        // transport never sees. The fd and engine would then be held for the life of the process, which is the default whenever no deadline
+        // discharge it: a second close() is a CAS no-op and the process-shared transport is never closed, so no later sweep exists. The
+        // fd and engine would then be held for the life of the process, which is the default whenever no deadline
         // is armed (kyo-http's accept side). Rechecking here is safe rather than a double-free risk: the stored thunk is the same
         // exactly-once disarm-gated one the sweep runs, so if the sweep did observe this entry, whichever call loses the gate does nothing.
         if owner.exists(_.isClosed) then dischargePendingHandshake(token)
@@ -998,15 +992,15 @@ final private[net] class PosixTransport private[posix] (
                                         address,
                                         frame,
                                         sockets,
-                                        listeners,
                                         AtomicBoolean.Unsafe.init(false)
                                     )
-                                discard(listeners.add(listener))
                                 // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
                                     Log.live.unsafe.warn(s"listen: failed to set listen fd non-blocking fd=$fd")
                                 startAcceptLoop(listener, handler, tls, config)
-                                promise.completeDiscard(Result.succeed(listener))
+                                if !promise.complete(Result.succeed(listener)) then
+                                    // The listen was interrupted before delivery: nobody holds this listener, so close it.
+                                    listener.close()
                             end if
                         end if
                     end if
@@ -1044,14 +1038,21 @@ final private[net] class PosixTransport private[posix] (
         // reliably interrupt an accept on Linux); it is harmless where the accept already failed (ENOTCONN on a listener is discarded).
         listener.onClose { () =>
             // Reclaim any handshake this listener accepted that is still in flight. This is the reclamation point that actually happens for a
-            // server: the transport-wide sweep runs only from close(), which the process-shared transport never sees.
-            dischargeListenerHandshakes(listener)
-            driver.closeListener(
-                handle,
-                () =>
-                    discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
-                    discard(sockets.close(listener.serverFd))
-            )
+            // server: the transport-wide sweep runs only from close(), which the process-shared transport never sees. The fd teardown
+            // follows in a `finally`: the reclaim runs handshake teardown thunks, and a throw from one must not strand the listen fd.
+            try dischargeListenerHandshakes(listener)
+            finally
+                driver.closeListener(
+                    handle,
+                    () =>
+                        // The release completes after the fd close on this same carrier, which on io_uring is the reap carrier behind
+                        // the engine FIFO: the descriptor is gone by the time the promise is observed.
+                        try
+                            discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
+                            discard(sockets.close(listener.serverFd))
+                        finally listener.releasedPromise.completeDiscard(Result.succeed(()))
+                )
+            end try
         }
 
         def scheduleNextAccept()(using AllowUnsafe, Frame): Unit =
@@ -2559,8 +2560,7 @@ end PosixTransport
   * `pendingAccepts` / `activeFds` entries for this listen fd (and removes the poller interest while the fd is still open, so EV_DELETE / epoll_ctl
   * DEL land on a live fd). Without it, a closed listen fd's stale `pendingAccepts` entry survives; when the OS recycles that fd number for a new
   * CLIENT connection, the recycled fd's read-readiness is routed to the stale accept dispatch instead of the connection's ReadPump, and the
-  * connection's read never completes (the lost-wakeup hang). The close also removes itself from the owning transport's listener registry so a
-  * transport shutdown does not try to close it twice. Idempotent: a second `close()` is a no-op.
+  * connection's read never completes (the lost-wakeup hang). Idempotent: a second `close()` is a no-op.
   */
 final private[net] class PosixListener(
     private[posix] val serverFd: Int,
@@ -2569,7 +2569,6 @@ final private[net] class PosixListener(
     val address: NetAddress,
     val createdAt: Frame,
     private val sockets: SocketBindings,
-    private val registry: java.util.Set[PosixListener],
     // CAS-guarded close flag: close() flips it so a second close() is a no-op (idempotent listener teardown).
     closedFlag: AtomicBoolean.Unsafe
 ) extends NetListener:
@@ -2583,11 +2582,17 @@ final private[net] class PosixListener(
 
     private[posix] def onClose(f: () => Unit): Unit = teardownAccept = Present(f)
 
+    // Unsafe: created at construction with no ambient AllowUnsafe, like the listener flags; completed on whichever carrier closes the fd:
+    // this one on the readiness drivers, the reap carrier on io_uring. Uninterruptible because awaiting a fiber links the awaiter's
+    // interrupt to it: an awaiter that gives up must not be able to settle a fact about the descriptor for every other awaiter.
+    private[posix] val releasedPromise = Promise.Unsafe.initUninterruptible[Unit, Any]()(using AllowUnsafe.embrace.danger)
+
     def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = releasedPromise
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
-            discard(registry.remove(this))
             teardownAccept match
                 case Present(teardown) =>
                     // The accept loop's driver-sequenced teardown owns the whole close: it cancels the accept interest while the fd is still
@@ -2597,8 +2602,10 @@ final private[net] class PosixListener(
                     teardown()
                 case Absent =>
                     // No accept loop ever wired (listenImpl failed before startAcceptLoop): nothing is registered anywhere, close directly.
-                    discard(sockets.shutdown(serverFd, PosixConstants.SHUT_RDWR))
-                    discard(sockets.close(serverFd))
+                    try
+                        discard(sockets.shutdown(serverFd, PosixConstants.SHUT_RDWR))
+                        discard(sockets.close(serverFd))
+                    finally releasedPromise.completeDiscard(Result.succeed(()))
             end match
     end close
 

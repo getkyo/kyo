@@ -1007,10 +1007,14 @@ final private[net] class IoUringDriver private[posix] (
       */
     override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         submitEngineOp { () =>
-            cancel(handle)
-            handle.requestClose()
-            flushSubmits()
-            closeFd()
+            // The engine drain contains a throwing op and carries on, so `closeFd` is in a `finally`: a throw from the cancel's inline
+            // promise callbacks must not leave the listen fd open with its release never reported.
+            try
+                cancel(handle)
+                handle.requestClose()
+                flushSubmits()
+            finally closeFd()
+            end try
         }
     end closeListener
 

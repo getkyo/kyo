@@ -412,7 +412,8 @@ class TransportStartTlsTest extends Test:
       * surfaces as a fast timeout rather than the 30s default.
       */
     private def startTlsEchoServerAfterStaged(transport: Transport, serverTls: NetTlsConfig)(using
-        Frame
+        Frame,
+        kyo.test.AssertScope
     ): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
@@ -420,13 +421,9 @@ class TransportStartTlsTest extends Test:
                     Abort.run[Closed | NetException] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
-                                // Wait, bounded by the caller's handshake deadline, for the ClientHello to land in the plaintext channel before the detach.
-                                Loop(()) { _ =>
-                                    Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1)).map { staged =>
-                                        if staged >= 1 then Loop.done(())
-                                        else Async.sleep(1.milli).andThen(Loop.continue(()))
-                                    }
-                                }.andThen {
+                                // The detach must find the ClientHello already staged: an empty plaintext channel would exercise the ordinary
+                                // upgrade path instead of the replay path this leaf covers.
+                                assertEventually(Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1) >= 1)).andThen {
                                     transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
                                         Loop.foreach {
                                             tlsConn.inbound.safe.take.flatMap { data =>
