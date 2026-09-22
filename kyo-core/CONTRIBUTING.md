@@ -76,10 +76,12 @@ or any other blocking primitive. Use Async suspension instead:
 - Synchronize a group of fibers: `Gate.pass`
 
 A `synchronized` block is tolerated only when it guards a short constant-time update
-and never waits inside the lock. The one real wait is the log drain in the JVM
-shutdown hook (`jvm-native/.../internal/LogPlatformSpecific.scala`): it runs on a raw
-hook thread where no fiber suspension is reachable, and it is bounded by
-`shutdownDrainBudget`. A new wait needs the same justification in a comment at the site.
+and never waits inside the lock.
+
+The one blocking wait in the module is the log drain's `CountDownLatch.await` in the
+JVM and Native shutdown hook (`jvm-native/.../internal/LogPlatformSpecific.scala`): it
+runs on a raw hook thread where no fiber suspension is reachable, and it is bounded by
+`Log.asyncLogging.shutdownDrainBudget`. A new wait needs the same justification in a comment at the site.
 
 `IOPromise.block` parks the calling thread through `LockSupport.park`; it is what
 `Fiber.block` runs on. The js-wasm `LockSupport` stub (`js-wasm/src/main/scala/kyo/AsyncStubs.scala`)
@@ -97,12 +99,12 @@ A suspending operation tries the non-suspending Unsafe path first and parks only
 that path reports it cannot proceed:
 
 ```scala
-def put(v: A)(using Frame): Unit < (Abort[Closed] & Async) =
+def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
     Sync.Unsafe.defer {
-        self.offer(v).foldError(
+        self.offer(value).foldError(
             {
                 case true  => ()
-                case false => self.putFiber(v).safe.get
+                case false => self.putFiber(value).safe.get
             },
             Abort.error
         )
@@ -183,38 +185,32 @@ behavior that JS and Wasm cannot express, `jvm/` or `native/` when the behavior 
 exclusive to one platform, `js-wasm/` for the JS and Wasm side. Test placement follows
 the root guide's "Platform-Conditional Tests" section.
 
-A platform file holds only the part that differs, named `<Type>PlatformSpecific`, and
-shared code calls into it. One example per tree:
+Platform code takes one of three shapes:
 
-- `jvm-native/`: `AsyncPlatformSpecific` adds `fromCompletionStage`, which JS and Wasm
-  cannot express.
-- `jvm/`: `StreamCompression` wraps `java.util.zip`.
-- `native/`: `hubsStubs.scala` supplies a `CopyOnWriteArraySet` that Scala Native lacks.
-- `js-wasm/`: `AsyncStubs.scala` supplies the `LockSupport` stub.
+- A `<Type>PlatformSpecific` split holds only the part of a shared type that differs,
+  and shared code calls into it. `AsyncPlatformSpecific` in `jvm-native/` adds
+  `fromCompletionStage`, which JS and Wasm cannot express.
+- A type that exists on one platform only has no shared counterpart.
+  `StreamCompression` in `jvm/` wraps `java.util.zip`.
+- A JDK stub supplies a class the platform lacks so shared code links.
+  `hubsStubs.scala` in `native/` supplies `CopyOnWriteArraySet`, and `AsyncStubs.scala`
+  in `js-wasm/` supplies `LockSupport`.
 
 ### The OsSignal pattern as a template
 
-`OsSignal` (`shared/src/main/scala/kyo/internal/OSSignal.scala`) defines the
-abstract shape and the `Handler.Noop` fallback. Three platform leaves implement
-`OsSignalPlatformSpecific` (files named `OSSignalPlatformSpecific.scala`): JVM uses
-`sun.misc.Signal` via reflection with a `Noop` fallback on missing classes, Native uses
-POSIX signals, JS-Wasm is `Noop`. New OS capabilities should follow this same
-three-leaf pattern.
+`OsSignal` (`shared/src/main/scala/kyo/internal/OSSignal.scala`) extends
+`OsSignalPlatformSpecific` and defines the `Handler` type with its `Handler.Noop`
+fallback. Each platform leaf defines `OsSignalPlatformSpecific` with a `handle: Handler`
+(files named `OSSignalPlatformSpecific.scala`): JVM uses `sun.misc.Signal` via
+reflection with a `Noop` fallback on missing classes, Native uses POSIX signals, JS-Wasm
+is `Noop`. A kyo-core internal that needs a per-platform implementation follows this
+template; OS capabilities for applications belong in kyo-system.
 
 ---
 
 ## Test patterns
 
-### Test base class
-
-All kyo-core tests extend `kyo.test.Test[Any]`, not ScalaTest directly:
-
-```scala
-class ChannelTest extends kyo.test.Test[Any]:
-```
-
-`kyo.test.Test` is provided by the `kyo-test` module. Do not mix in raw ScalaTest
-traits.
+The test base class is the root guide's "Framework" section.
 
 ### Deterministic concurrency testing
 
@@ -224,9 +220,9 @@ virtual time through `Clock.withTimeControl`, and rendezvous through `Latch`,
 
 ### Primitive lifecycles in tests
 
-Prefer `use` in tests: it closes the primitive when the block ends and leaves no
-`Scope` in the row. `init` and `initWith` register the close on the enclosing scope,
-so a test using them runs under `Scope.run`.
+Prefer `use` in tests: it closes the primitive when the block ends. `init` and
+`initWith` register the close on the test's own scope, which the base handles, so the
+primitive stays open until the whole test ends.
 
 ```scala
 Channel.use[Int](10) { c =>
@@ -245,7 +241,6 @@ for example to close the primitive at a chosen point and assert on what follows.
 - [ ] Every `import AllowUnsafe.embrace.danger` and every non-standard bridge carries a `// Unsafe:` comment.
 - [ ] New platform-specific code is in the narrowest tree that fits (`shared/` first, then `jvm-native/`, then `jvm/`, `native/`, or `js-wasm/`).
 - [ ] No `Thread.sleep`, wait inside `synchronized`, or other blocking primitive on a path a fiber can reach; a lock guards only a short constant-time update.
-- [ ] A change to fiber completion, interrupt delivery, or `Scope` closing keeps the invariants in "Scope and fiber lifecycle", and the tests pinning them pass: the `Scope*Test` family, `FiberTest`, and `scheduler/IOTaskTest` and `scheduler/FinalizersTest` under `shared/src/test/scala/kyo/`.
-- [ ] Tests extend `kyo.test.Test`, not raw ScalaTest.
+- [ ] A change to fiber completion, interrupt delivery, or `Scope` closing keeps the invariants in "Scope and fiber lifecycle", and the tests covering fiber completion, interrupts, and scope close pass.
 - [ ] Concurrency tests use `Latch`, `Channel`, or `Clock.withTimeControl` for determinism, not real-time sleeps.
 - [ ] A change to the `async.concurrency.default` flag keeps the loud failure for malformed values.
