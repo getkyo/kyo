@@ -29,18 +29,10 @@ Every API in this module is cross-platform (JVM, Scala.js, Wasm, Scala Native) u
 
 ## Kyo primitives mandate
 
-Use Kyo types throughout `kyo-core`:
-
-| Use this   | Not this             |
-|------------|----------------------|
-| `Maybe`    | `Option`             |
-| `Result`   | `Either` / `Try`     |
-| `Chunk`    | `List` / `Seq`       |
-| `Span`     | `Array` (public ADT) |
-
-Raw `java.util.Arrays.copyOf` / `java.lang.System.arraycopy` are permitted
-inside performance-critical private implementation paths, because `Chunk` does not
-expose a fast-arraycopy path for partial buffer slices.
+The type rules are the root guide's "Types" section. One module-local exception: a
+private hot path may fill a raw array and hand it to `Chunk.fromNoCopy`, trimming a
+partial buffer with `java.util.Arrays.copyOf`. The handover skips the defensive copy
+`Chunk.from` makes, so the array must not be touched after it is wrapped.
 
 ---
 
@@ -53,9 +45,7 @@ Safe-tier methods delegate into their `Unsafe` counterpart through `Sync.Unsafe.
 that is the standard step and needs no comment. A `// Unsafe:` comment is required
 where code steps outside that pattern: an `import AllowUnsafe.embrace.danger`, or a
 bridge that evaluates or completes something the safe tier cannot express. The comment
-names which safe-tier contract the site is bridging. kyo-core itself uses
-`AllowUnsafe.embrace.danger` in its runtime internals (the `Scope` finalizer, the
-scheduler's `Finalizers`), and each such site carries the marker.
+says why the site cannot stay in the safe tier.
 
 ---
 
@@ -76,8 +66,8 @@ bridging into code that must have a value synchronously.
 ### The no-blocking rule in kyo-core
 
 Code reachable from a fiber must not block a thread. Forbidden on those paths:
-`Thread.sleep`, `synchronized`, `Future.await`, `CountDownLatch.await`, or any
-other blocking primitive. Use Async suspension instead:
+`Thread.sleep`, `Future.await`, `CountDownLatch.await`, a wait inside `synchronized`,
+or any other blocking primitive. Use Async suspension instead:
 
 - Wait for channel space: `Channel.put` / `Channel.take`
 - Wait for a count to reach zero: `Latch.await`
@@ -85,10 +75,11 @@ other blocking primitive. Use Async suspension instead:
 - Join a forked fiber: `Fiber.get`
 - Synchronize a group of fibers: `Gate.pass`
 
-A few sites outside fiber paths hold a short lock or wait with a timeout, each for a
-reason a fiber primitive cannot serve: the time-control queue in `Clock`, the
-diagnostics registries, OS-signal callbacks on Native, and the log drain at JVM
-shutdown. A new one needs the same justification in a comment at the site.
+A `synchronized` block is tolerated only when it guards a short constant-time update
+and never waits inside the lock. The one real wait is the log drain in the JVM
+shutdown hook (`jvm-native/.../internal/LogPlatformSpecific.scala`): it runs on a raw
+hook thread where no fiber suspension is reachable, and it is bounded by
+`shutdownDrainBudget`. A new wait needs the same justification in a comment at the site.
 
 `IOPromise.block` parks the calling thread through `LockSupport.park`; it is what
 `Fiber.block` runs on. The js-wasm `LockSupport` stub (`js-wasm/src/main/scala/kyo/AsyncStubs.scala`)
@@ -97,25 +88,15 @@ there, since a single-threaded platform cannot park the one thread it has.
 
 ### Adding a new concurrent primitive
 
-Follow the four-layer pattern used by `Channel`, `Queue`, and `Gate`.
+The opaque-type-over-`Unsafe` shape, the `Sync.Unsafe.defer` and `Abort.get` bridge,
+and the `init`/`initWith`/`use`/`initUnscoped` factory chain are the root guide's
+"Unsafe Boundary" section ("The Two-Tier API Pattern" and "Closeable Resource
+Pattern"). `Channel` and its companion are the reference implementation in this module.
 
-**Layer 1: opaque type aliased to Unsafe.** The public type is the safe surface and
-the underlying value is the Unsafe object:
-
-```scala
-opaque type Foo[A] = Foo.Unsafe[A]
-```
-
-**Layer 2: safe-tier extension block.** Each public operation delegates into Unsafe
-via `Sync.Unsafe.defer`. Non-suspending operations use `Abort.get(self.method())`
-to surface typed failures. Suspending operations try the non-suspending path first
-and fall back to `self.fooFiber().safe.get`, which converts `Fiber.Unsafe` to
-`Fiber` and parks the current fiber only when it must:
+A suspending operation tries the non-suspending Unsafe path first and parks only when
+that path reports it cannot proceed:
 
 ```scala
-def offer(v: A)(using Frame): Boolean < (Abort[Closed] & Sync) =
-    Sync.Unsafe.defer(Abort.get(self.offer(v)))
-
 def put(v: A)(using Frame): Unit < (Abort[Closed] & Async) =
     Sync.Unsafe.defer {
         self.offer(v).foldError(
@@ -128,26 +109,7 @@ def put(v: A)(using Frame): Unit < (Abort[Closed] & Async) =
     }
 ```
 
-**Layer 3: Unsafe tier.** A `sealed abstract class Unsafe[A]` whose methods take
-`(using AllowUnsafe)` and return bare values or `Fiber.Unsafe` for suspending
-operations. Include `def safe: Foo[A] = this` so the Unsafe object is addressable
-as the safe opaque type. Prefix the class and its companion with the standard
-warning comment used by `Channel.Unsafe`:
-
-```scala
-/** WARNING: Low-level API meant for integrations, libraries, and
-  * performance-sensitive code. See AllowUnsafe for more details. */
-sealed abstract class Unsafe[A] extends Serializable:
-    def safe: Foo[A] = this
-```
-
-**Layer 4: init pattern.** Provide `init` and `initWith`; `init` delegates to
-`initWith(identity)`. `initWith` is `inline`, constructs the Unsafe object inside
-`Sync.Unsafe.defer`, and registers cleanup with `Scope.ensure`. Provide `use` for a
-bracket that closes the primitive when a block ends without putting `Scope` in the
-row, and `initUnscoped` / `initUnscopedWith` for callers that manage the lifecycle
-themselves. `Channel`'s companion is the reference implementation. The Scope-managed
-`init` is the default: users reach for it first and it must never leak resources.
+The fast path allocates no fiber, so an uncontended `put` costs one Unsafe call.
 
 `Hub` is a `final class` rather than an opaque type because it owns a `Channel` plus
 a long-running broadcast `Fiber`. Use a `final class` when the primitive owns a fiber
@@ -218,43 +180,26 @@ no collection.
 Source defaults to `shared/src`. Use a platform tree only when a JVM, Native, or JS
 primitive has no cross-platform Kyo wrapper: `jvm-native/` when JVM and Native share
 behavior that JS and Wasm cannot express, `jvm/` or `native/` when the behavior is
-exclusive to one platform, `js-wasm/` for the JS and Wasm side. Never move a test into
-a platform tree to avoid a cross-platform failure; fix the failure instead.
+exclusive to one platform, `js-wasm/` for the JS and Wasm side. Test placement follows
+the root guide's "Platform-Conditional Tests" section.
 
-### What lives where
+A platform file holds only the part that differs, named `<Type>PlatformSpecific`, and
+shared code calls into it. One example per tree:
 
-**`jvm-native/`**: `AsyncPlatformSpecific` (`fromCompletionStage` and
-`fromCompletableFuture`), `KyoAppPlatformSpecific` and `KyoAppRunnerPlatform` (the OS
-exit hook), `LogPlatformSpecific`, `ConsolePlatformSpecific`, and
-`scheduler/SchedulerDiagnostics`.
-
-**`jvm/`**: `OSSignalPlatformSpecific` (installs handlers via `sun.misc.Signal`
-through reflection, with a `Handler.Noop` fallback when the class is absent),
-`StreamCompression` (deflate and gzip via `java.util.zip`), and
-`SecureRandomPlatformSpecific`.
-
-**`native/`**: `OSSignalPlatformSpecific` (POSIX `signal()`), stubs for Java classes
-absent on Native such as `CopyOnWriteArraySet`, and `SecureRandomPlatformSpecific` with
-its `java.security.SecureRandom` shim.
-
-**`js-wasm/`**: `AsyncPlatformSpecific` (empty; `CompletionStage` does not exist
-there), `AsyncStubs.scala` (the `LockSupport` stub), `OSSignalPlatformSpecific`
-(`Handler.Noop`), `KyoAppPlatformSpecific`, `KyoAppRunnerPlatform`, `LogPlatformSpecific`,
-`ConsolePlatformSpecific`, Node-backed console input (`CoreNodeFs`, `NodeLineReader`), `SecureRandomPlatformSpecific` with its
-`java.security.SecureRandom` shim, `SchedulerDiagnostics`, and stubs and service-loader
-implementations for JVM classes that do not exist on JS.
-
-The scheduler's `IOTaskPlatformSpecific` and `IOPromisePlatformSpecific` exist on every
-platform: they supply the atomic access to the task status word and the promise state
-field, which each platform implements differently.
+- `jvm-native/`: `AsyncPlatformSpecific` adds `fromCompletionStage`, which JS and Wasm
+  cannot express.
+- `jvm/`: `StreamCompression` wraps `java.util.zip`.
+- `native/`: `hubsStubs.scala` supplies a `CopyOnWriteArraySet` that Scala Native lacks.
+- `js-wasm/`: `AsyncStubs.scala` supplies the `LockSupport` stub.
 
 ### The OsSignal pattern as a template
 
 `OsSignal` (`shared/src/main/scala/kyo/internal/OSSignal.scala`) defines the
 abstract shape and the `Handler.Noop` fallback. Three platform leaves implement
-`OSSignalPlatformSpecific`: JVM uses `sun.misc.Signal` via reflection with a `Noop`
-fallback on missing classes, Native uses POSIX signals, JS-Wasm is `Noop`. New OS
-capabilities should follow this same three-leaf pattern.
+`OsSignalPlatformSpecific` (files named `OSSignalPlatformSpecific.scala`): JVM uses
+`sun.misc.Signal` via reflection with a `Noop` fallback on missing classes, Native uses
+POSIX signals, JS-Wasm is `Noop`. New OS capabilities should follow this same
+three-leaf pattern.
 
 ---
 
@@ -292,21 +237,15 @@ Channel.use[Int](10) { c =>
 Use `initUnscoped` or `initUnscopedWith` when the test itself owns the lifecycle,
 for example to close the primitive at a chosen point and assert on what follows.
 
-### Where platform-specific tests may live
-
-A test goes in a platform tree only when it tests behavior that exists only on that
-platform, and it sits in the narrowest tree that has the behavior. Everything else
-belongs in `shared/src/test/scala/kyo/` and must pass on every platform.
-
 ---
 
 ## Pre-submission checklist (kyo-core-specific)
 
-- [ ] New concurrent primitives follow the four-layer pattern: opaque type, safe-tier extension block, `sealed abstract class Unsafe`, and `init`/`initWith`/`use`.
+- [ ] New concurrent primitives follow the root two-tier and closeable-resource patterns, with `Channel` as the reference.
 - [ ] Every `import AllowUnsafe.embrace.danger` and every non-standard bridge carries a `// Unsafe:` comment.
 - [ ] New platform-specific code is in the narrowest tree that fits (`shared/` first, then `jvm-native/`, then `jvm/`, `native/`, or `js-wasm/`).
-- [ ] No `Thread.sleep`, `synchronized`, or blocking primitive on a path a fiber can reach.
-- [ ] A change to fiber completion, interrupt delivery, or `Scope` closing keeps the invariants in "Scope and fiber lifecycle", and the tests pinning them pass.
+- [ ] No `Thread.sleep`, wait inside `synchronized`, or other blocking primitive on a path a fiber can reach; a lock guards only a short constant-time update.
+- [ ] A change to fiber completion, interrupt delivery, or `Scope` closing keeps the invariants in "Scope and fiber lifecycle", and the tests pinning them pass: the `Scope*Test` family, `FiberTest`, and `scheduler/IOTaskTest` and `scheduler/FinalizersTest` under `shared/src/test/scala/kyo/`.
 - [ ] Tests extend `kyo.test.Test`, not raw ScalaTest.
 - [ ] Concurrency tests use `Latch`, `Channel`, or `Clock.withTimeControl` for determinism, not real-time sleeps.
 - [ ] A change to the `async.concurrency.default` flag keeps the loud failure for malformed values.
