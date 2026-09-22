@@ -4,7 +4,7 @@
 
 Kyo's library of pure, handler-based effects. Each effect names a capability the program declares in its signature (an `Abort[E]` for typed failure, an `Env[R]` for required dependencies, a `Var[V]` for tracked mutable state, an `Emit[V]` / `Poll[V]` for push/pull streaming, a `Choice` for non-determinism), and the program stays a value until you run it. To execute, you hand each effect off to a matching handler (`Abort.run`, `Env.run`, `Var.run`, ...), which discharges that capability from the row and decides what its values mean: collect them, fold them, lift them into another effect, or drop them. Effects compose freely in a single computation through Kyo's `&` intersection in the pending-effects slot, and they are discharged independently in whatever order the program chooses.
 
-On top of these primitives the module builds `Stream[V, S]`, a chunked, lazy sequence backed by `Emit[Chunk[V]]` underneath and connectable to `Poll`-shaped consumers through `Pipe[A, B, S]` (transforms) and `Sink[V, A, S]` (terminal folds). Dependency wiring is handled by `Layer`, which is compile-time-resolved by `Layer.init` and discharged into `Env`. Cross-cutting concerns get a handful more tools: `Local[A]` for thread-local-style context with defaults, `Aspect` for AOP-style interception with multi-shot continuations, `Memo` for memoizing pure computations, `Check` for accumulating validation failures, and `Batch` for transparent N+1 grouping.
+On top of these primitives the module builds `Stream[V, S]`, a chunked, lazy sequence backed by `Emit[Chunk[V]]` underneath and connectable to `Poll`-shaped consumers through `Pipe[A, B, S]` (transforms) and `Sink[V, A, S]` (terminal folds). Dependency wiring is handled by `Layer`, which is compile-time-resolved by `Layer.init` and discharged into `Env`. Cross-cutting concerns get a handful more tools: `Local[A]` for thread-local-style context with defaults, `Aspect` for AOP-style interception with multi-shot continuations, `Memo` for memoizing expensive computations, `Check` for accumulating validation failures, and `Batch` for transparent N+1 grouping.
 
 The examples below all operate on a small request-handling domain: looking up users by id, fetching their orders, validating field values, wiring a repository and configuration as dependencies. Defining it once here lets later sections introduce one capability at a time on values you have already seen.
 
@@ -104,7 +104,7 @@ assert(Abort.run(partial).eval == Result.succeed(Result.succeed(1)))
 
 ### Recover-only-failure vs fold-and-rethrow
 
-When you want recovery only for declared domain errors and want unexpected panics to escape, use `recover` (leaves `Abort[Nothing]`) or `recoverOrThrow` (throws). When you want to consume the whole result including unexpected exceptions, use `recover(onFail, onPanic)` or `fold(onSuccess, onFail, onPanic)`. The single-handler variants always leave panic in some form; the multi-handler variants consume it. `Abort.recoverError` recovers from any `Error[E]` (both `Failure` and `Panic`) with a single handler. `Abort.foldError` folds over an `Error[E]` alongside a success branch. `Abort.foldOrThrow` folds success and typed failures while rethrowing panics as exceptions.
+When you want recovery only for declared domain errors and want unexpected panics to escape, use `recover` (leaves `Abort[Nothing]`) or `recoverOrThrow` (throws). When you want to consume the whole result including unexpected exceptions, use `recover(onFail, onPanic)` or `fold(onSuccess, onFail, onPanic)`. `recover(onFail)` and `recoverOrThrow` leave panic in some form; the multi-handler variants consume it. `Abort.recoverError` recovers from any `Error[E]` (both `Failure` and `Panic`) with a single handler. `Abort.foldError` folds over an `Error[E]` alongside a success branch. `Abort.foldOrThrow` folds success and typed failures while rethrowing panics as exceptions.
 
 ### Observing a failure without consuming it
 
@@ -137,13 +137,13 @@ val checked: Int < Abort["not_found" | "denied"] =
 
 ## Dependencies
 
-When a function needs a value that the caller must supply (a `UserRepo`, a `Config`, a logger), declare it in the pending row as `Env[R]`. The compiler then refuses to run the program until every required `R` has a handler. Compose multiple requirements as an intersection: `Env[UserRepo & Config & Logger]`.
+When a function needs a value that the caller must supply (a `UserRepo`, a `Config`), declare it in the pending row as `Env[R]`. The compiler then refuses to run the program until every required `R` has a handler. Compose multiple requirements as an intersection: `Env[UserRepo & Config]`.
 
 `Env` differs from `Local` in one axis: `Env` requires a handler to discharge and the compiler enforces it; `Local` has a default and never appears in the pending row. Use `Env` when missing the value is a programmer error you want to catch at compile time; use `Local` when missing the value should fall back to a default.
 
 ### Reading the environment
 
-`Env.get[R]` retrieves a single value; `Env.use[R](f)` applies a function to it without first lifting it into a separate value; `Env.getAll[R1 & R2]` reads the complete TypeMap when you want several services at once.
+`Env.get[R]` retrieves a single value; `Env.use[R](f)` reads `R` and continues with `f` in one step; `Env.getAll[R1 & R2]` reads the complete TypeMap when you want several services at once.
 
 ```scala
 val limit: Int < Env[Config] =
@@ -190,7 +190,7 @@ assert(handled.eval == Present(User(42, "u42@example.com", "User 42")))
 
 > **Note:** `Layer.init` and `Env.runLayer` are `transparent inline` macros. Missing dependencies produce a compile-time error pointing at the call site, not a runtime exception.
 
-> **Note:** `layer.run` evaluates a layer to a `TypeMap[Out]` but introduces a `Memo` effect (the layer engine memoizes constructions to avoid duplicate work). `Env.runLayer` discharges that `Memo` for you; if you call `layer.run` directly, follow it with `Memo.run`.
+> **Note:** `layer.run` evaluates a layer to a `TypeMap[Out]` but introduces a `Memo` effect (the layer engine memoizes constructions to avoid duplicate work). `Env.runLayer` runs the layers through `layer.run`, so it leaves that `Memo` in the row too: wrap either one in `Memo.run`, as the example above does.
 
 ## Contextual values
 
@@ -215,7 +215,9 @@ assert(rendered.eval == "handling req-42")
 assert(requestId.get.eval == "anonymous")
 ```
 
-> **Caution:** the choice between `init` and `initNoninheritable` is silent at the type level. Picking the wrong one (inheritable when you wanted per-request isolation, or vice versa) propagates or fails to propagate context without any compiler signal. Decide based on whether child computations should see the parent's override.
+When neither fits, `Local.init(default)(forkValue, joinValue)` states the fork boundary directly: `forkValue` returns the value a child starts with, a transformation of the parent's, or `Absent` to keep it from crossing, and `joinValue` decides what the parent keeps when the child's work is joined back (by default, its own value). `initNoninheritable` is this form with a `forkValue` that always returns `Absent`.
+
+> **Caution:** the choice of fork strategy is silent at the type level. Picking the wrong one (inheritable when you wanted per-request isolation, or vice versa) propagates or fails to propagate context without any compiler signal. Decide based on whether child computations should see the parent's override.
 
 ### Scoped override and update
 
@@ -249,7 +251,7 @@ val counted: (Int, Chunk[Int]) < Any =
     Var.runTuple(0) {
         Kyo.foreach(Chunk(1, 2, 3, 4)) { i =>
             Var.update[Int](_ + i).map(_ => i)
-        }.map(seen => seen)
+        }
     }
 
 assert(counted.eval == (10, Chunk(1, 2, 3, 4)))
@@ -289,11 +291,11 @@ val merging: Isolate[Var[Int], Any, Var[Int]] = Var.isolate.merge[Int](_ + _)
 val discarding: Isolate[Var[Int], Any, Any] = Var.isolate.discard[Int]
 ```
 
-When two parallel branches both update the same `Var[Int]`, `update` keeps only the second branch's last value, `merge(_ + _)` adds the deltas, and `discard` leaves the outer state untouched. Pick deliberately: the default for `Async.foreach` semantics depends on which `Isolate` instance is in scope.
+When two parallel branches both update the same `Var[Int]`, `update` overwrites the outer value with the final value of whichever branch finishes last. `merge(f)` combines the outer value current at that moment with each branch's final value, so with `merge(_ + _)` an outer 10 and a branch ending at 12 give 22: pass a function that fits absolute values, not deltas. `discard` leaves the outer state untouched. `Var` has no default isolate, so a parallel runner that needs one takes it explicitly: pick deliberately.
 
 ## Branching computations
 
-When a computation has more than one possible path (parsing alternatives, search exploration, retry candidates), use `Choice`. Each branch is just another value; `Choice.run` collects all surviving outcomes into a `Chunk`, `Choice.runStream` produces them incrementally as a `Stream`.
+When a computation has more than one possible path (parsing alternatives, search exploration, retry candidates), use `Choice`. Each branch is another value; `Choice.run` collects all surviving outcomes into a `Chunk`, `Choice.runStream` produces them incrementally as a `Stream`.
 
 ### Introducing branches
 
@@ -331,11 +333,11 @@ val evens: Chunk[Int] < Any =
 assert(evens.eval == Chunk(2, 4))
 ```
 
-> **Unlike** `Abort.fail`, `Choice.drop` does not surface as a failure value: `Choice.run` simply omits the dropped path from the result `Chunk`. There is no "the third branch failed" signal in the output.
+> **Note:** unlike `Abort.fail`, `Choice.drop` does not surface as a failure value: `Choice.run` omits the dropped path from the result `Chunk`. There is no "the third branch failed" signal in the output.
 
 ### Collect all vs stream
 
-`Choice.run` is exhaustive: it walks every surviving branch before returning a `Chunk`. For deeply branching computations the result set is combinatorial and may blow up. `Choice.runStream` produces a `Stream[A, S]` that emits surviving outcomes incrementally so a downstream `take`/`fold` can consume only as many as it needs.
+`Choice.run` is exhaustive: it walks every surviving branch before returning a `Chunk`. For deeply branching computations the result set is combinatorial and may blow up. `Choice.runStream` produces a `Stream[A, S]` that emits surviving outcomes incrementally so a downstream `take`/`fold` can consume only as many as it needs. It explores one level of choice points at a time, advancing every pending branch to its next choice point before emitting, so `take(n)` bounds what is emitted rather than how far each level is explored.
 
 ```scala
 import kyo.*
@@ -350,7 +352,7 @@ assert(firstThree.eval == Chunk(1, 2, 3))
 
 `Choice.run` collects outcomes depth-first, in the order the branches were introduced. `Choice.runStream` makes no such promise for nested choice points, so code that needs `run`'s order should collect with `run`.
 
-A branch is the rest of the computation run once per value, so where a bracket sits relative to the choice point decides how often it runs. A bracket around `Choice.eval` is shared by every branch and released once, after the last one. A bracket opened inside a branch belongs to that branch and is released when the branch ends, before the next branch acquires its own. A `Scope` release follows its scope rather than its bracket, which [kyo-core's Resource safety section](../kyo-core/README.md#resource-safety) covers.
+A branch is the rest of the computation run once per value, so where a resource is acquired relative to the choice point decides how often it is released. The kernel's `Bracket` (see [kyo-kernel](../kyo-kernel/README.md#bracket-acquire-use-release)), and the brackets built on it such as kyo-core's `Sync.ensure` and `Sync.acquireReleaseWith`, pair an acquire with a release over one use. A bracket around `Choice.eval` is shared by every branch and released once, after the last one. A bracket opened inside a branch belongs to that branch and is released when its own use ends, before the next branch acquires its own. A `Scope` opened around the choice point collects every branch's registrations and releases them once, after the last branch, as [kyo-core's Resource safety section](../kyo-core/README.md#resource-safety) describes.
 
 ## Streaming
 
@@ -437,10 +439,15 @@ assert(sum.eval == 15)
 ```scala
 import kyo.*
 
-val counted: Stream[Int, Any] =
-    Stream.range(0, 4).handle(Var.run(0))
+// Each element updates a running total held in Var[Int].
+val runningTotals: Stream[Int, Var[Int]] =
+    Stream.range(0, 4).map(i => Var.update[Int](_ + i))
 
-assert(counted.run.eval == Chunk(0, 1, 2, 3))
+// Var.run discharges the Var inside the stream, leaving a plain stream.
+val handled: Stream[Int, Any] =
+    runningTotals.handle(Var.run(0))
+
+assert(handled.run.eval == Chunk(0, 1, 3, 6))
 ```
 
 > **Note:** the last handler in a `Stream#handle` chain must return `Any < (Emit[Chunk[V1]] & S1)` (it has to preserve a stream-shaped output). This is unlike the plain `Kyo#handle`, which can end in any value. If you migrate a non-stream handle chain to a stream, you cannot end on a non-emit-shaped handler.
@@ -499,10 +506,8 @@ val emitted: (Chunk[Int], Unit) < Any =
 assert(emitted.eval == (Chunk(1, 2, 3), ()))
 ```
 
-`Emit.value(v)` emits one value; `Emit.valueWhen(cond)(v)` emits only if `cond` is true; `Emit.valueWith(v)(next)` emits and then runs `next`. `Emit.run` collects all emissions, `Emit.runFold(acc)(f)` folds them, `Emit.runForeach(f)` consumes them with a function, `Emit.runDiscard` drops them. `Emit.runWhile(predicate)` runs the emit handler only while `predicate` returns true for each emitted value, stopping as soon as the predicate fails. `Emit.runFirst` runs the computation and captures only the first emitted value, discarding the rest.
-
-`Poll.one[V]` pulls one value, returning `Maybe[V]` (`Absent` means end-of-stream). `Poll.values(f)` walks the stream until exhaustion, applying `f`. `Poll.fold(acc)(f)` folds. `Poll.run(chunk)(body)` discharges `Poll` from the given `Chunk` of inputs; subsequent polls after the chunk is exhausted receive `Absent`. `Poll.andMap(f)` polls one value and applies `f` to the `Maybe[V]` result in a single step. `Poll.runFirst` runs the computation and captures only the first polled value.
-
+`Emit.value(v)` emits one value; `Emit.valueWhen(cond)(v)` emits only if `cond` is true; `Emit.valueWith(v)(next)` emits and then runs `next`. `Emit.run` collects all emissions, `Emit.runFold(acc)(f)` folds them, `Emit.runForeach(f)` consumes them with a function, `Emit.runDiscard` drops them. `Emit.runWhile(predicate)` runs the emit handler only while `predicate` returns true for each emitted value, stopping as soon as the predicate fails.
+`Poll.one[V]` pulls one value, returning `Maybe[V]` (`Absent` means end-of-stream). `Poll.values(f)` walks the stream until exhaustion, applying `f`. `Poll.fold(acc)(f)` folds. `Poll.run(chunk)(body)` discharges `Poll` from the given `Chunk` of inputs; subsequent polls after the chunk is exhausted receive `Absent`. `Poll.andMap(f)` polls one value and applies `f` to the `Maybe[V]` result in a single step.
 ```scala
 import kyo.*
 
@@ -556,7 +561,7 @@ assert(Memo.run(program).eval == 50)
 
 > **Note:** `Memo` is for global value initialization or infrequent expensive computations, not hot paths. The implementation is a `Var[Cache]` (a functional map), so look-ups cost a map operation per call. For performance-sensitive memoization, reach for `Async.memoize` and `Cache` in kyo-core.
 
-`Memo.isolate` (a given) is the cache's isolation strategy: when isolated computations end, their entries merge into the outer cache (later writes win on key conflicts). This is also why `Layer.run` returns a value with `Memo` in its pending row: the layer engine uses `Memo` internally, and `Env.runLayer` discharges it automatically.
+`Memo.isolate` (a given) is the cache's isolation strategy: when isolated computations end, their entries merge into the outer cache (later writes win on key conflicts). This is also why `Layer.run` returns a value with `Memo` in its pending row: the layer engine uses `Memo` internally, and the caller discharges it with `Memo.run`.
 
 ## Validation
 
@@ -590,7 +595,7 @@ asAbort.eval match
     case other             => sys.error(s"unexpected $other")
 ```
 
-> **Note:** `Check.runAbort` combined with parallel composition does **not** short-circuit on the first failed check. The `Check.isolate` strategy accumulates failures from each parallel branch and re-emits them once both finish; only then does `runAbort` convert the accumulated set into an `Abort`. This is counter to the usual short-circuit intuition for `Abort`, but it lets parallel checks report every problem instead of racing.
+> **Note:** `Check.runAbort` combined with parallel composition does **not** short-circuit on the first failed check. The `Check.isolate` strategy accumulates failures from each parallel branch and re-emits them once the branches finish; only then does `runAbort` see them, and it aborts with the first one re-emitted. To report every failure from parallel checks, handle with `Check.runChunk` instead.
 
 `CheckFailed(message, frame)` carries both the message and the call-site frame, so error reports include the precise location where the assertion ran.
 
@@ -600,29 +605,27 @@ When a function is called many times with different inputs and each call would i
 
 `Batch.source(f)` takes a function `Seq[A] => (A => B < S) < S` that, given a batch of inputs, returns a per-element resolver. `Batch.sourceMap(f)` is shorter when your bulk function returns a `Map[A, B]`. `Batch.sourceSeq(f)` is the variant for `Seq[B]` aligned positionally with the inputs.
 
-> **Note:** `Batch.sourceSeq` aligns its returned `Seq[B]` positionally with the input batch, so the returned sequence must have exactly the same length as the inputs.
+The example records every batch the source receives, to show that four lookups become one call:
 
 ```scala
 def user(id: Int): User = User(id, s"u$id@example.com", s"User $id")
 
-val fetchUser: Int => User < Batch =
-    Batch.sourceMap { (ids: Seq[Int]) =>
+val fetchUser: Int => User < (Batch & Var[Chunk[Seq[Int]]]) =
+    Batch.sourceMap[Int, User, Var[Chunk[Seq[Int]]]] { ids =>
         // In a real program, one DB call for the whole batch.
-        ids.map(id => id -> user(id)).toMap
+        Var.update[Chunk[Seq[Int]]](_.append(ids)).map(_ => ids.map(id => id -> user(id)).toMap)
     }
 
-val program: Chunk[User] < Batch =
-    Batch.eval(Seq(1, 2, 3, 1)).map(fetchUser).map(Chunk(_))
+val (batches, users) =
+    Var.runTuple(Chunk.empty[Seq[Int]])(Batch.run(Batch.foreach(Seq(1, 2, 3, 1))(fetchUser))).eval
 
-val flattened: Chunk[User] < Batch =
-    Batch.foreach(Seq(1, 2, 3, 1))(fetchUser).map(Chunk(_))
-
-assert(Batch.run(Batch.foreach(Seq(1, 2, 3, 1))(fetchUser)).eval == Chunk(user(1), user(2), user(3), user(1)))
+assert(users == Chunk(user(1), user(2), user(3), user(1)))
+assert(batches == Chunk(Seq(1, 2, 3)))
 ```
 
-`Batch.eval(seq)` introduces a sequence of inputs to iterate; each element flows through downstream `flatMap`s as a single value, but `Batch.run` groups identical underlying source calls. `Batch.foreach(seq)(f)` is like `Kyo.foreach` but produces a single value through batching (the engine internally deduplicates and reassembles).
+`Batch.eval(seq)` branches once per element, like `Choice`: everything downstream runs per element, and `Batch.run` gathers the per-element results into a `Chunk`, grouping the source calls the branches make into one call per source. `Batch.foreach(seq)(f)` is `Batch.eval(seq).map(f)`.
 
-> **Caution:** `Batch.sourceMap` requires the output `Map[A, B]` to be exactly the same size as the input sequence; a partial lookup (returning fewer entries than inputs) panics with a `require` violation at the source's frame. If your backing service can legitimately fail to find some inputs, return a `Map[A, Option[B]]` or `Map[A, Result[E, B]]` and surface the missing case to the caller.
+> **Caution:** a source receives the distinct inputs of a batch, and `sourceMap` and `sourceSeq` must return exactly one result per distinct input; a partial lookup panics with a `require` violation at the source's frame. If your backing service can legitimately fail to find some inputs, return a `Map[A, Maybe[B]]` or `Map[A, Result[E, B]]` and surface the missing case to the caller.
 
 ## Aspect-oriented interception
 
@@ -698,8 +701,9 @@ val configLayer: Layer[Config, Any] =
 
 val repoLayer: Layer[UserRepo, Any] =
     Layer(new UserRepo:
+        // Knows users 1 to 99; any other id is missing from the result.
         def fetchUsers(ids: Seq[Int]) =
-            ids.map(id => id -> User(id, s"u$id@example.com", s"User $id")).toMap
+            ids.filter(_ < 100).map(id => id -> User(id, s"u$id@example.com", s"User $id")).toMap
         def fetchOrders(userId: Int) =
             Chunk(
                 Order(userId * 10 + 1, userId, BigDecimal(10), Shipped),
@@ -711,10 +715,13 @@ def handle(userId: Int): Chunk[Order] < (Env[UserRepo & Config] & Abort[Validati
     Env.use[Config] { config =>
         Env.use[UserRepo] { repo =>
             Check.require(userId > 0, "userId must be positive").andThen {
-                val fetchUser: Int => User < Batch =
-                    Batch.sourceMap[Int, User, Any](ids => repo.fetchUsers(ids))
-                Batch.run(Batch.foreach(Seq(userId))(fetchUser)).map { users =>
-                    Abort.when(users.isEmpty)(ValidationError("user", "not found")).andThen {
+                // One result per input, as sourceMap requires: Absent for a user the repository lacks.
+                val fetchUser: Int => Maybe[User] < Batch =
+                    Batch.sourceMap[Int, Maybe[User], Any] { ids =>
+                        repo.fetchUsers(ids).map(found => ids.map(id => id -> Maybe.fromOption(found.get(id))).toMap)
+                    }
+                Batch.run(fetchUser(userId)).map { found =>
+                    Abort.when(found.forall(_.isEmpty))(ValidationError("user", "not found")).andThen {
                         repo.fetchOrders(userId).map { orders =>
                             Stream.init(orders)
                                 .takeWhile(_.total < BigDecimal(50))
@@ -727,14 +734,17 @@ def handle(userId: Int): Chunk[Order] < (Env[UserRepo & Config] & Abort[Validati
         }
     }
 
-val program: (Chunk[CheckFailed], Result[ValidationError, Chunk[Order]]) < Any =
+def program(userId: Int): (Chunk[CheckFailed], Result[ValidationError, Chunk[Order]]) < Any =
     Memo.run(Env.runLayer(configLayer, repoLayer) {
-        Check.runChunk(Abort.run(handle(userId = 7)))
+        Check.runChunk(Abort.run(handle(userId)))
     })
 
-val (checks, result) = program.eval
+val (checks, result) = program(7).eval
 assert(checks.isEmpty)
 assert(result == Result.succeed(Chunk(Order(71, 7, BigDecimal(10), Shipped), Order(72, 7, BigDecimal(25), Confirmed))))
+
+val (_, missing) = program(404).eval
+assert(missing == Result.fail(ValidationError("user", "not found")))
 ```
 
-The signature of `handle` records every capability the function needs: `Env[UserRepo & Config]` for dependencies, `Abort[ValidationError]` for typed failure, `Check` for accumulated validations. The handlers at the call site discharge them in whichever order the program chooses: `Env.runLayer` provides services first, then `Check.runChunk` collects validation outcomes, then `Abort.run` reifies the success-or-failure result.
+The signature of `handle` records every capability the function needs: `Env[UserRepo & Config]` for dependencies, `Abort[ValidationError]` for typed failure, `Check` for accumulated validations. The handlers at the call site discharge them from the inside out: `Abort.run` reifies the success-or-failure result, `Check.runChunk` collects validation outcomes around it, `Env.runLayer` provides the services, and `Memo.run` discharges the `Memo` the layers introduce.
