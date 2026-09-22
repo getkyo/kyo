@@ -29,8 +29,9 @@ object Effect:
       * This is what lets the evaluator own the call: the pair becomes a value it unfolds instead of `cont` running on the current stack,
       * which is where stack safety and the safepoint budget come from.
       *
-      * The overloads taking two and three continuations let a caller that already holds a composition hand the links over separately, so one
-      * node carries them rather than a node plus an [[Arrow.Chain]]. An identity link is dropped instead of stored.
+      * The overload taking two continuations lets a caller that already holds a composition hand the links over separately, so one node
+      * carries both rather than a node plus an [[Arrow.Chain]]; the one taking three chains its last two. An identity link is dropped
+      * instead of stored.
       */
     def defer[A, B, S](v: A < S, cont: Arrow[A, B, S]): B < S =
         cont match

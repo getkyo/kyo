@@ -17,8 +17,9 @@ import scala.annotation.tailrec
   * #### Layout
   *
   * State is per thread but not a `ThreadLocal` read: a thread takes a slot index once and the state lives in a plain array, so a poll is an
-  * array read and a compare rather than a map lookup. A thread's index is spread by `LineStride` so adjacent thread ids do not share a cache
-  * line, and a thread that finds no free slot after probing falls back to a shared overflow slot, which stays correct but contends. One int
+  * array read and a compare rather than a map lookup. A thread's home is its id times `LineStride`, so threads with neighboring ids land a
+  * cache line apart, and a thread that finds no free slot after probing falls back to a shared overflow slot, which stays correct but
+  * contends. One int
   * carries the whole state: the remaining depth in the low bits, a guard bit that keeps the counter from going negative into the arming bit,
   * and the arming bit itself, so a poll tests one field and the common answer is a decrement.
   *
@@ -58,7 +59,8 @@ object Safepoint:
 
     opaque type State = Int
 
-    private inline def LineStride = 8
+    // 16 ints is one 64-byte line: every poll writes its slot's depth, so two threads on one line would contend on every poll.
+    private inline def LineStride = 16
 
     private inline def DepthGuard = 1 << 15
     private inline def Armed      = 1 << 30

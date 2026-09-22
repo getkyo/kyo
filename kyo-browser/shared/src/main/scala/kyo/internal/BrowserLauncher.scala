@@ -35,18 +35,16 @@ private[kyo] object BrowserLauncher:
       * so a leaked temp dir cannot fail a scope teardown.
       */
     private def removeTmpDir(tmpDir: Path, removalSchedule: Schedule)(using Frame): Unit < Async =
-        tmpDir.name.fold(Kyo.unit)(name => killOrphans(pattern = name, command = "pgrep")).andThen {
-            Abort.run[FileSystemException] {
-                Retry[FileSystemException](removalSchedule)(Path.run(tmpDir.removeAll))
-            }.map {
-                case Result.Failure(err) =>
-                    // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
-                    // but the silent swallow makes debugging stuck test runs harder. Log so the cleanup decision is auditable.
-                    Log.warn(s"removeTmpDir: failed to remove $tmpDir after retry schedule: ${err.getMessage}")
-                case Result.Panic(ex) =>
-                    Log.warn(s"removeTmpDir: panicked removing $tmpDir: ${ex.getMessage}")
-                case Result.Success(_) => Kyo.unit
-            }
+        Abort.run[FileSystemException] {
+            Retry[FileSystemException](removalSchedule)(Path.run(tmpDir.removeAll))
+        }.map {
+            case Result.Failure(err) =>
+                // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
+                // but the silent swallow makes debugging stuck test runs harder. Log so the cleanup decision is auditable.
+                Log.warn(s"removeTmpDir: failed to remove $tmpDir after retry schedule: ${err.getMessage}")
+            case Result.Panic(ex) =>
+                Log.warn(s"removeTmpDir: panicked removing $tmpDir: ${ex.getMessage}")
+            case Result.Success(_) => Kyo.unit
         }
 
     /** Creates a fresh user-data temp directory for the Chrome process.

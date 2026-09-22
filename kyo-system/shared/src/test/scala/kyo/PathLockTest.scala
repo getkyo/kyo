@@ -30,14 +30,13 @@ class HostPathLockTest extends FileSystemLockTest[Sync]:
         // HostFileSystem exposes for exactly this. The request is made with the OS lock already
         // held, and delivery happens at the next safepoint, so the interrupt lands after the
         // acquisition produced the lock rather than before it started. That instant is the whole
-        // defect: with the finalizer registered in a continuation after acquire, nothing capable of
-        // releasing the claim exists yet, and the path stays unacquirable for the life of the
-        // process.
+        // defect: a release registered in a step after the claim does not exist yet when the
+        // interrupt lands, and the path stays unacquirable for the life of the process.
         //
-        // Mutation-checked rather than assumed: rewriting tryLock as Scope.acquireRelease, with the
-        // hook in the same position inside acquire, fails this case on the retry below. An earlier
-        // version of this test interrupted from outside the fiber and passed under both orderings,
-        // because that interrupt is delivered before the claim is ever made.
+        // Mutation-checked rather than assumed: registering the release with a `map` after the
+        // claim, instead of in the step the claim arrives, fails this case on the retry below. An
+        // interrupt from outside the fiber passes under both orderings, because it is delivered
+        // before the claim is ever made.
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-lock-window"))(h => Sync.Unsafe.defer(h.remove())).map { handle =>
             val target = handle.path / "windowed.bin"
             Scope.ensure(Sync.defer(HostFileSystem.afterClaimHook = () => ())).andThen {

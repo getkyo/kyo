@@ -109,7 +109,6 @@ class EvalShapeTest extends Test:
             law(List(1000)),
             runs(0)
         ),
-        /* handleContRepeated is not in this kernel. Disabled; restore if the API is reintroduced.
         Scenario(
             "handleContRepeated resuming once",
             v => ArrowEffect.handleContRepeated(Tag[Ask], v)([C] => (_, k) => k(7), a => a),
@@ -138,7 +137,6 @@ class EvalShapeTest extends Test:
             law(List(1000)),
             runs(0)
         ),
-         */
         Scenario(
             "handleLoop continuing",
             v => ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(7)),

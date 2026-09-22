@@ -222,8 +222,6 @@ object Scope:
 
         private[kyo] def ensureUnsafe(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
 
-        private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(using Frame, AllowUnsafe): Unit
-
         /** Records a nested run as the scope it opened, not a wait. A wait would deadlock: it completes only when the
           * nested run's computation ends, but that is often ended by one of THIS scope's finalizers, which reverse
           * order runs after the wait. Holding the child's finalizer lets this scope close it directly.
@@ -260,13 +258,6 @@ object Scope:
                 AllowUnsafe
             ): Unit =
                 origin.ensureUnsafe(v)
-
-            private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
-                using
-                Frame,
-                AllowUnsafe
-            ): Unit =
-                origin.ensureIfOpen(v)
 
             private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit = ()
 
@@ -332,13 +323,6 @@ object Scope:
                             throw closed
                         end if
                     end ensureUnsafe
-
-                    private[kyo] def ensureIfOpen(v: Maybe[Error[Any]] => Any < (Async & Abort[Throwable]))(
-                        using
-                        Frame,
-                        AllowUnsafe
-                    ): Unit =
-                        discard(queue.offer(v))
 
                     private[kyo] def addChild(child: Finalizer)(using Frame, AllowUnsafe): Unit =
                         discard(children.offer(child))

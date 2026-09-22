@@ -15,7 +15,7 @@ class SafepointConcurrencyTest extends AnyFreeSpec:
 
     private val Period = Safepoint.period()
     private val Slots  = 65536
-    private val Homes  = 8192
+    private val Homes  = 4096
 
     def spinUntil(deadlineMs: Long = 10000)(condition: => Boolean): Boolean =
         val deadline = java.lang.System.currentTimeMillis() + deadlineMs

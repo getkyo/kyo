@@ -133,11 +133,12 @@ object Bracket:
                         if state.endedItsExtent then
                             "Its extent already ran to an end, which is what released it, and this is a later " +
                                 "resumption of a continuation that re-enters it. A handler that resumes the same " +
-                                "continuation more than once, as Choice does, has that effect whenever the bracket " +
+                                "continuation more than once through handleCont has that effect whenever the bracket " +
                                 "sits between the handler and the suspension it answers: the first resumption ends " +
-                                "the extent and releases. Acquire inside the branch, so each resumption gets a " +
-                                "resource of its own, or put the bracket outside the handler, so its extent is not " +
-                                "what gets replayed."
+                                "the extent and releases. Resume through handleContRepeated, which holds the bracket " +
+                                "open until its done, acquire inside the branch, so each resumption gets a resource " +
+                                "of its own, or put the bracket outside the handler, so its extent is not what gets " +
+                                "replayed."
                         else
                             "It was released when the scope that owned it ended, without its extent ever running to " +
                                 "an end. That is what happens to a remainder handed out by a peel, such as " +

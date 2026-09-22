@@ -152,6 +152,15 @@ class ZioBench:
         runSync(loop(seed - 1))
     end suspensionBaseline
 
+    /** `FiberRef.getWith` runs the continuation inside the read node, the counterpart of kyo's fused suspension. */
+    @Benchmark
+    def suspensionFusesContinuation: Int =
+        def loop(i: Int): UIO[Int] =
+            if i > Depth then ZIO.succeed(i)
+            else ask.getWith(a => loop(i + a))
+        runSync(loop(seed - 1))
+    end suspensionFusesContinuation
+
     /** Recorded alternative: `ZIO.service` under `provideEnvironment`, the same FiberRef read plus
       * a ZEnvironment dictionary lookup.
       */
