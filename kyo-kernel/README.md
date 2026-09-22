@@ -669,7 +669,7 @@ assert(Result.catching[Closed](refused.eval).isFailure)
 assert(once.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-The same refusal reaches any computation resumed after the region that owned it has ended: a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished. A peel (`ArrowEffect.handleFirst`, the `private[kyo]` form behind `Stream.splitAt`, `Emit.runFirst`, and `Batch.capture`) answers one operation and hands the rest of the region out as a value.
+The same refusal reaches any computation resumed after the region that owned it has ended: a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished. A peel (`ArrowEffect.handleFirst`, the `private[kyo]` form behind `Stream.splitAtWith` and `Batch.run`) answers one operation and hands the rest of the region out as a value.
 
 The `Closed` carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase. It says which of the two ways released the scope, and what to change in each case. For an extent that ran to its end and was replayed: resume through `handleContRepeated`, acquire inside the branch so every resumption gets a resource of its own, or put the bracket outside the handler so its extent is not what gets replayed. For an owning scope that exited with a peeled remainder still unconsumed: consume the remainder inside the scope that peeled it, or use a confined form such as `Stream.splitAtWith`, whose callback the remainder cannot escape.
 

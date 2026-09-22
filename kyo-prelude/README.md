@@ -471,7 +471,7 @@ Pipes have a `contramap` / `contramapPure` / `contramapChunk` family that change
 
 ### Reusable consumers: Sink
 
-A `Sink[V, A, S]` consumes a `Stream[V, S2]` and produces an `A < (S & S2)`. Stock sinks (`Sink.collect`, `Sink.count`, `Sink.fold`, `Sink.foreach`, `Sink.foreachChunk`, `Sink.foldKyo`, `Sink.discard`) cover the common cases, and `Sink.zip(a, b, ...)` combines up to eight sinks over one pass.
+A `Sink[V, A, S]` consumes a `Stream[V, S2]` and produces an `A < (S & S2)`. Stock sinks (`Sink.collect`, `Sink.count`, `Sink.fold`, `Sink.foreach`, `Sink.foreachChunk`, `Sink.foldKyo`, `Sink.discard`) cover the common cases, and `Sink.zip(a, b, ...)` combines up to ten sinks over one pass.
 
 ```scala
 import Order.Status.*

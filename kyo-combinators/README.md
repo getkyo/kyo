@@ -537,7 +537,7 @@ val asChoice: Order < (Abort[InventoryEmpty | PaymentDeclined] & Async & Choice)
     orderEffect.forAbort[OrderNotFound].toChoiceDrop
 ```
 
-`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. Each method applies to the selected branch `E1` and leaves the other branches in the row, The one behavioral difference from the top-level forms is that `retry(n)` and `retryForever` here retry `E1` failures only, not panics. Unlike the other `forAbort` methods, `recoverSome` keeps the whole union in the row, since an unmatched `E1` stays possible.
+`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. Each method applies to the selected branch `E1` and leaves the other branches in the row. The one behavioral difference from the top-level forms is that `retry(n)` and `retryForever` here retry `E1` failures only, not panics. Unlike the other `forAbort` methods, `recoverSome` keeps the whole union in the row, since an unmatched `E1` stays possible.
 
 ### `PanicException`: the panic wrapper
 
