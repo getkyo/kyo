@@ -1292,7 +1292,7 @@ The same pattern applies to internal APIs. When a method takes `(using AllowUnsa
 
 ```scala
 // One suspension covers multiple unsafe operations, with no per-operation allocation
-def release(conn: Connection)(using AllowUnsafe, Frame): Unit =
+def release(conn: Connection)(using Frame, AllowUnsafe): Unit =
     if conn.isAlive then          // unsafe: reads atomic flag
         idleChannels.offer(conn)  // unsafe: mutates concurrent queue
     else
