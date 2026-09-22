@@ -521,7 +521,7 @@ def prepare(w: Int): Unit < Sync = ???
 def execute(w: Int): Unit < Sync = ???
 ```
 
-`Gate.Dynamic.init(parties)` is the variant where parties can join and leave at any time, and `subgroup` derives a gate for a subset of the parties.
+`Gate.Dynamic.init(parties)` is the variant where parties can join and leave at any time, and `subgroup(n)` creates a child gate whose `n` parties synchronize locally; the child joins the parent as one party and signals it on each completed pass.
 
 `Latch` is asymmetric: some parties release, others wait. `Gate` is symmetric: all parties pass together.
 
@@ -892,7 +892,7 @@ Each level (`trace`, `debug`, `info`, `warn`, `error`) has a `(msg)` form and a 
 Three error types recur across the module. Two appear in `Abort` rows:
 
 - `Closed`: raised by `Channel`, `Queue`, `Hub`, `Meter`, `Gate`, and `Exchange` when the underlying resource is closed or an operation is attempted after close, and panicked by `Scope` for a registration on a closed scope. Its message names the resource and the frame where it was created.
-- `Timeout`: produced by `Async.timeout(d)(v)` and `Fiber.block(duration)` on expiry. Its message names the duration.
+- `Timeout`: raised by `Async.timeout(d)(v)` on expiry, with a message naming the expired duration. `Fiber.block(duration)` returns it inside its `Result` instead.
 
 The third arrives as a panic rather than a typed failure:
 
@@ -951,13 +951,16 @@ val missing: Maybe[Counter] < Sync   = orders.findCounter("processsed") // Absen
 
 `Stat.traceListen(exporter)(v)` registers an exporter for the duration of `v`. Exporters implement `kyo.stats.internal.TraceExporter` from kyo-stats-registry, which `import kyo.*` does not bring in; kyo-stats-otlp provides one for OpenTelemetry.
 
+Exporters and samplers on the classpath start when `Stat` activates. `KyoApp` activates it at startup; any other entry point calls `Stat.activate()` once.
+
 ### `StreamCoreExtensions`
 
 `StreamCoreExtensions` adds the stream operators that need fibers, imported with `kyo.*`:
 
 - **Concurrent mapping:** `mapPar` and `mapChunkPar` keep input order, and `mapParUnordered` and `mapChunkParUnordered` emit results as they complete.
-- **Merging:** `Stream.collectAll` runs many streams at once, and `merge`, `mergeHalting`, `mergeHaltingLeft` and `mergeHaltingRight` combine two, differing in which side's end stops the result.
-- **Fan-out:** `broadcast2` through `broadcast5` and `broadcastN` split one stream into a fixed number of copies, and `broadcastDynamic` returns a `StreamHub` that later subscribers join.
+- **Sources:** `Stream.fromIterator` turns an `Iterator` into a `Sync` stream, and `Stream.fromIteratorCatching[E]` also captures `E` thrown by the iterator as a typed failure.
+- **Merging:** `Stream.collectAll` runs many streams at once, `Stream.collectAllHalting` does the same and stops when any source ends, and `merge`, `mergeHalting`, `mergeHaltingLeft` and `mergeHaltingRight` combine two, differing in which side's end stops the result.
+- **Fan-out:** `broadcast2` through `broadcast5` and `broadcastN` split one stream into a fixed number of copies, `broadcasted` returns a stream whose concurrent runs share one upstream run, where a run that starts late misses the elements already pulled, and `broadcastDynamic` returns a `StreamHub` that later subscribers join (`broadcastDynamicWith` hands it to a function instead).
 - **Batching:** `groupedWithin(maxSize, maxTime)` emits a batch when it is full or when the time runs out, whichever comes first.
 
 Operators that buffer between fibers default to a buffer of 1024 elements.
