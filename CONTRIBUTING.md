@@ -21,10 +21,6 @@ Thank you for considering contributing to this project! We welcome all contribut
   - [Pending Type (A < S)](#pending-type-a--s)
   - [Scala Conventions](#scala-conventions)
   - [Documentation](#documentation)
-    - [Type-Level Scaladoc](#type-level-scaladoc)
-    - [Method-Level Scaladoc](#method-level-scaladoc)
-    - [Markdown Formatting](#markdown-formatting)
-    - [Inline Comments](#inline-comments)
   - [File Organization](#file-organization)
   - [Macros](#macros)
 - [Module READMEs](#module-readmes)
@@ -82,7 +78,7 @@ Before you begin, make sure you have the following installed:
 2. **Clone Your Fork**
    ```sh
    git clone https://github.com/your-username/kyo.git
-   cd your-repo
+   cd kyo
    ```
 
 3. **Set Up Upstream Remote**
@@ -279,7 +275,6 @@ Effect operations follow consistent naming:
   - `runWith(v)(continue)`: canonical handler with continuation
   - `runTuple`: returns `(State, A)` tuple
   - `runDiscard`: discards emitted/intermediate values
-  - `runFirst`: handles only the first occurrence
   - `runPartial` / `runPartialOrThrow`: handles a subset of a union error type
   Non-`run` eliminators have specific semantics beyond elimination:
   - `recover` / `recoverError`: recovers from errors with a fallback value
@@ -298,7 +293,7 @@ Effect operations follow consistent naming:
 - **`fooPure`** suffix for pure (non-effectful) variants: `mapPure`, `filterPure`, `collectPure`, `contramapPure`. The pure version avoids suspension overhead. Used consistently across `Stream`, `Pipe`, and `Sink`.
 - **`fooDiscard`** drops the return value: `offer` returns `Boolean`, `offerDiscard` returns `Unit`. Same for `complete`/`completeDiscard`, `interrupt`/`interruptDiscard`, etc.
 - **Sync-try vs async-wait**: sync-try operations use names that imply attempt (`offer`, `poll`) and return a success indicator (`Boolean`, `Maybe`). Async-wait operations use names that imply completion (`put`, `take`) and suspend until done. The async version tries the sync version first and only suspends on failure.
-- **`noop`** / **`Noop`** for degenerate cases (formally, the identity implementation): `Latch(0)` returns a pre-completed noop, `Meter.Noop` is a no-op meter that passes through without rate-limiting. This is both an optimization (avoids allocating real state when nothing will happen) and a naming convention for when you need an identity/pass-through implementation of a type.
+- **`noop`** / **`Noop`** for degenerate cases (formally, the identity implementation): `Latch.init(0)` returns a pre-completed noop, `Meter.Noop` is a no-op meter that passes through without rate-limiting. This is both an optimization (avoids allocating real state when nothing will happen) and a naming convention for when you need an identity/pass-through implementation of a type.
 
 ### Types
 
@@ -462,12 +457,18 @@ inline def get[V](using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V
 
 Non-inline methods put `Frame` before type-level evidence:
 ```scala
-def run[E](...)(using frame: Frame, ct: ConcreteTag[E], reduce: Reducible[Abort[ER]]): ...
+def run[E](
+    using Frame
+)[A, S, ER](v: => A < (Abort[E | ER] & S))(
+    using
+    ct: ConcreteTag[E],
+    reduce: Reducible[Abort[ER]]
+): Result[E, A] < (S & reduce.SReduced)
 ```
 
 `AllowUnsafe` always last:
 ```scala
-def init(parallelism: Int)(using frame: Frame, allow: AllowUnsafe): ...
+def init(parallelism: Int)(spawn: Unit < Async => Unit)(using frame: Frame, u: AllowUnsafe): Finalizer
 ```
 
 #### Frame and Tag
@@ -871,7 +872,7 @@ Kyo achieves zero-cost abstractions through opaque types. When designing a new t
 
 Inside the template that declares an opaque type, and inside its companion, the compiler substitutes the underlying type for the opaque one wherever it has to infer, and it does so before any macro runs. `Env.get[X]` written there reaches the `Tag` macro as the underlying type, so the tag derived inside describes something different from the tag every call site outside derives, and a value stored under one is not found under the other.
 
-Nothing at that point can say which type was meant, so the macro refuses any derivation whose type mentions the underlying type of an opaque type transparent there (`[Tag.opaque.collapsed]`), whether it was inferred or written. Naming the opaque type in `Tag.derive[X]` always survives the substitution and derives the same tag as anywhere else. An implicit query may or may not survive depending on how the compiler resolves it (the `Emit.value(x)` from #1367 does, a summoned `Tag[X]` does not); when it does not, the derivation is refused rather than misnamed, and the tag is passed explicitly:
+Nothing at that point can say which type was meant, so the macro refuses any derivation whose type mentions the underlying type of an opaque type transparent there (`[Tag.opaque.collapsed]`), whether it was inferred or written. Naming the opaque type in `Tag.derive[X]` always survives the substitution and derives the same tag as anywhere else. An implicit query may or may not survive depending on how the compiler resolves it (an `Emit.value(m)` in a companion extension method on the opaque type does, a summoned `Tag[X]` does not); when it does not, the derivation is refused rather than misnamed, and the tag is passed explicitly:
 
 ```scala
 opaque type Meters = Long
@@ -999,7 +1000,7 @@ Test suites extend `kyo.test.Test[Any]`, directly or through a module base that 
 
 A module base exists only when the module's suites share configuration or a fixture (a tighter `timeout`, an `aroundLeaf`, a helper). It lives in the module's test sources, as a `Test.scala` in the module's package or as a named base such as `ParseTestBase`, and extends `kyo.test.Test[Any]`.
 
-A project runs on kyo-test when its build definition calls `.withKyoTest`. The projects kyo-test itself runs on cannot: kyo-kernel and the modules under it, and kyo-test's own suites, test on ScalaTest, as do sbt plugins. kyo-kernel is the one to know, since its suites assert on the scheduler state kyo-test would run them on (see [kyo-kernel's guide](kyo-kernel/CONTRIBUTING.md#the-base-and-why-it-is-not-kyo-test)). Everything else in this section describes kyo-test.
+A project runs on kyo-test when its build definition registers kyo-test's framework: a cross project calls `.withKyoTest`, and a JVM-only project adds the same runner wiring by hand. Projects without that wiring test on ScalaTest, apart from `kyo-zio-test`, which tests on the zio-test framework it integrates. kyo-kernel is the ScalaTest project to know, since its suites assert on the scheduler state kyo-test would run them on (see [kyo-kernel's guide](kyo-kernel/CONTRIBUTING.md#the-base-and-why-it-is-not-kyo-test)). Everything else in this section describes kyo-test.
 
 ```scala
 class ChannelTest extends kyo.test.Test[Any]:
@@ -1453,10 +1454,13 @@ The kernel side of this work (handler variants, region rows, context strategies,
 
 2. **Operations as data**: encode operations as an ADT, not as methods:
    ```scala
-   private type Op[V] = Get.type | V | Update[V]
-   private object Get
-   private type Update[V] = V => V
+   object internal:
+       type Op[V] = Get.type | V | Update[V]
+       object Get
+       abstract class Update[V]:
+           def apply(v: V): V
    ```
+   `Update` is a class rather than a `V => V` alias so the handler's `case input: Update[V]` stays distinguishable from `case input: V` (see the union discriminability rule in [Zero-Cost Type Design](#zero-cost-type-design)).
 
 3. **Suspend**: translate domain operations into kernel inputs:
    ```scala
