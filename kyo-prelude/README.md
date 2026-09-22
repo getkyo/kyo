@@ -141,7 +141,7 @@ When a function needs a value that the caller must supply (a `UserRepo`, a `Conf
 
 ### Reading the environment
 
-`Env.get[R]` retrieves a single value; `Env.use[R](f)` reads `R` and continues with `f` in one step; `Env.getAll[R1 & R2]` reads the complete TypeMap when you want several services at once.
+`Env.get[R]` retrieves a single value; `Env.use[R](f)` reads `R` and continues with `f` in one step; `Env.getAll[R1 & R2]` reads the complete TypeMap when you want several services at once, and `Env.useAll` is its `use` form.
 
 ```scala
 val limit: Int < Env[Config] =
@@ -398,7 +398,7 @@ val smallForUser1: Chunk[Order] < Any =
 assert(smallForUser1.eval == Chunk(Order(1, 1, BigDecimal(10), Confirmed), Order(3, 1, BigDecimal(5), Shipped)))
 ```
 
-`map`, `filter`, and `takeWhile` accept an effectful function and sequence it element by element; `mapPure`, `mapChunkPure`, `filterPure`, and `takeWhilePure` take a plain function and transform each chunk directly, with no per-element effect sequencing. Use the pure variants whenever the function does not require an effect. `flatMap` is a different operation: it maps each element to a whole `Stream` and concatenates them.
+`map`, `filter`, and `takeWhile` accept an effectful function and sequence it element by element; `mapPure`, `mapChunkPure`, `filterPure`, and `takeWhilePure` take a plain function and transform each chunk directly, with no per-element effect sequencing. Use the pure variants whenever the function does not require an effect. `flatMap` is a different operation: it maps each element to a whole `Stream` and concatenates them. The same family includes `drop` and `dropWhile`, `collect` and `collectWhile` (a function returning `Maybe`), `find`, `changes` (drops consecutive duplicates), and `tap` and `tapChunk` for observing elements without changing them.
 
 > **Note:** `rechunk(n)` clamps `n` to at least 1; passing `0` or a negative number silently changes the chunk granularity to one element per chunk. There is no "leave the chunking alone" overload.
 
@@ -471,7 +471,7 @@ Pipes have a `contramap` / `contramapPure` / `contramapChunk` family that change
 
 ### Reusable consumers: Sink
 
-A `Sink[V, A, S]` consumes a `Stream[V, S2]` and produces an `A < (S & S2)`. Stock sinks (`Sink.collect`, `Sink.count`, `Sink.fold`, `Sink.foreach`, `Sink.foldKyo`) cover the common cases.
+A `Sink[V, A, S]` consumes a `Stream[V, S2]` and produces an `A < (S & S2)`. Stock sinks (`Sink.collect`, `Sink.count`, `Sink.fold`, `Sink.foreach`, `Sink.foreachChunk`, `Sink.foldKyo`, `Sink.discard`) cover the common cases, and `Sink.zip(a, b, ...)` combines up to eight sinks over one pass.
 
 ```scala
 import Order.Status.*
@@ -535,7 +535,7 @@ When a computation carrying these effects is split across parallel branches (kyo
 
 - `Emit.isolate.merge[V]` collects every emitted value during isolation and re-emits them in order when isolation ends. `Emit.isolate.discard[V]` drops them.
 - `Var.isolate.update`, `Var.isolate.merge`, and `Var.isolate.discard`, covered under [mutable state](#isolation-strategies).
-- `Memo.isolate` merges memo caches across branches, keeping later writes on conflict.
+- `Memo.isolate` merges each branch's cache entries into the outer cache when the branch ends, keeping later writes on conflict.
 - `Check.isolate` accumulates failures and re-emits them when isolation ends, so parallel branches all contribute checks.
 
 `Memo` and `Check` provide theirs as givens, so they apply without being named. `Emit` and `Var` have no default: pass the one you want with `use`, as in `Emit.isolate.merge[Int].use { Async.foreach(items)(step) }`. `Poll` has no isolate, so a `Poll` computation must be handled before it reaches a parallel runner, or the call does not compile.
@@ -560,8 +560,6 @@ assert(Memo.run(program).eval == 50)
 ```
 
 > **Note:** `Memo` is for global value initialization or infrequent expensive computations, not hot paths. The implementation is a `Var[Cache]` (a functional map), so look-ups cost a map operation per call. For performance-sensitive memoization, reach for `Async.memoize` and `Cache` in kyo-core.
-
-`Memo.isolate` (a given) is the cache's isolation strategy: when isolated computations end, their entries merge into the outer cache (later writes win on key conflicts).
 
 ## Validation
 
@@ -631,7 +629,7 @@ assert(batches == Chunk(Seq(1, 2, 3)))
 
 When you want to wrap or replace behavior at many call sites without rewiring callers (logging every `fetchUser`, retrying on a class of errors, swapping in a mock for tests), declare an `Aspect`. An aspect is a reified extension point: you call it like a function, and the call delegates to whatever `Cut` is installed in the current scope or falls back to the default pass-through.
 
-`Aspect.init[I, O, S]` allocates a new aspect; the resulting `Aspect[Input, Output, S]` has a stable identity given by its type arguments (its `Tag`) plus its allocation site (its `Frame`). `aspect.let(cut)(body)` installs a cut for the dynamic extent of `body`; a nested `let` composes with the cut already installed rather than replacing it, the outer cut running first. `aspect.sandbox(body)` temporarily disables the aspect inside `body`.
+`Aspect.init[I, O, S]` allocates a new aspect; the resulting `Aspect[Input, Output, S]` has a stable identity given by its type arguments (its `Tag`) plus its allocation site (its `Frame`). `aspect.let(cut)(body)` installs a cut for the dynamic extent of `body`; a nested `let` composes with the cut already installed rather than replacing it, the outer cut running first. `aspect.sandbox(body)` temporarily disables the aspect inside `body`. While a cut runs, the aspect is disabled for its extent, continuation included, so a nested call to the same aspect goes straight to the default rather than through the cut again.
 
 ```scala
 import kyo.*
@@ -701,7 +699,7 @@ val configLayer: Layer[Config, Any] =
 
 val repoLayer: Layer[UserRepo, Any] =
     Layer(new UserRepo:
-        // Knows users 1 to 99; any other id is missing from the result.
+        // Knows ids below 100; any other id is missing from the result.
         def fetchUsers(ids: Seq[Int]) =
             ids.filter(_ < 100).map(id => id -> User(id, s"u$id@example.com", s"User $id")).toMap
         def fetchOrders(userId: Int) =
