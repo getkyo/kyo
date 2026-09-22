@@ -20,7 +20,7 @@ val resilient: Order < Async =
         .recover(_ => Order(0L))
 ```
 
-The rest of this README walks the combinators by cluster, starting with construction (lifting plain values into the effect row) and finishing with dependency injection (handling `Env[E]`).
+The rest of this README walks the combinators by cluster, starting with construction (lifting plain values into the effect row) through dependency injection (handling `Env[E]`), and ends with one chain that crosses all of them.
 
 ## Construction
 
@@ -77,7 +77,7 @@ val fromCallback: Order < (Abort[OrderNotFound] & Async) =
     }
 ```
 
-> **Caution:** `Kyo.async` schedules the register callback through `Sync.Unsafe.evalOrThrow` internally. The public API is safe (any panic propagates through the resulting promise), but the implementation depends on an unsafe primitive. Treat the `register` body as side-effecting code that may run outside the calling fiber.
+> **Note:** `register` may be called from any thread, typically the callback API's own. Each computation passed to it runs on a fiber of its own, and the first one to finish completes the result; later calls have no effect. Interrupting the fiber waiting on `Kyo.async` also interrupts the registered computation, so a caller that gives up does not leave it running.
 
 ### Lifting standard-library types
 
@@ -1026,62 +1026,11 @@ val withErrorAwareCleanup: Order < (Async & Scope & Sync & Abort[OrderNotFound])
     }
 ```
 
-`ensuring(finalizer)` registers `finalizer` to run when the surrounding `Scope` closes. `ensuringError` takes a function that receives `Maybe[Error[Any]]`: `Present(err)` when the effect failed, `Absent` when it succeeded.
+`ensuring(finalizer)` registers `finalizer` to run when the surrounding `Scope` closes. `ensuringError` takes a function that receives `Maybe[Error[Any]]`: `Present(err)` when the scope's body failed or was interrupted, `Absent` when it completed.
 
-> **Note:** `ensuring` registers the finalizer BEFORE `effect` runs (via `Scope.ensure(finalizer).andThen(effect)`). The finalizer will fire even if the effect never starts (e.g. if a prior step in the scope already failed). This is the safe behaviour for "always clean up," but differs from a try-finally where the cleanup runs only if the try-body started.
+> **Note:** The finalizer is registered before the effect's first step, so it runs even if the effect is interrupted before it starts. It runs when the scope closes, not when the effect ends: in a scope that goes on to do more work, the finalizer waits for all of it. Wrap the effect in its own `Kyo.scoped` when cleanup must follow the effect directly.
 
 When you reach for `ensuring`: you have an existing effect and want to add cleanup AFTER it. When you reach for `Kyo.acquireRelease`: you're building the resource from scratch and want cleanup paired with construction. The latter is the better default; reach for `ensuring` when you can't restructure the surrounding code.
-
-## Putting it together
-
-The clusters above are orthogonal. A single chain can cross construction, sequencing, concurrency, error handling, and resource lifecycle without any intermediate types.
-
-```scala
-import kyo.*
-
-opaque type OrderId = Long
-opaque type Money   = BigDecimal
-case class Order(id: OrderId, total: Money)
-case class Item(sku: String, qty: Int, price: Money)
-case class Profile(name: String, tier: String)
-case class OrderNotFound(id: OrderId) extends Exception(s"Order $id not found")
-
-object OrderRepo:
-    def lookup(id: Long): Option[Order] = None
-
-trait Database:
-    def begin: Any < Sync
-
-val db: Database                        = ???
-val orderId: Long                       = 42L
-val profileFor: Long => Profile < Async = _ => ???
-
-// Construction: lift a fallible operation into Abort[OrderNotFound]
-val load: Order < (Abort[OrderNotFound] & Async) =
-    Kyo.fromOption(OrderRepo.lookup(orderId))
-        .absentToFailure(OrderNotFound(orderId))
-
-// Sequencing: log then load
-val priced: Order < (Abort[OrderNotFound] & Async) =
-    Kyo.logInfo("loading order") *> load
-
-// Concurrency: fork a profile fetch and join after loading the order
-val profileEff: Profile < Async = profileFor(orderId)
-val withProfile: (Order, Profile) < (Abort[OrderNotFound] & Async & Scope & Sync) =
-    for
-        fiber   <- profileEff.fork
-        order   <- load
-        profile <- fiber.join
-    yield (order, profile)
-
-// Error handling: retry on failure, recover with a fallback if all retries fail
-val resilient: Order < Async =
-    load.retry(3).recover(_ => Order(0L, BigDecimal(0)))
-
-// Resource lifecycle: acquire a transaction, ensure commit or rollback
-val txnComp: Any < (Abort[OrderNotFound] & Async & Scope & Sync) =
-    Kyo.acquireRelease(db.begin)(_ => Kyo.unit).map(_ => load)
-```
 
 ## Dependency injection (Env)
 
@@ -1154,8 +1103,61 @@ val fullyConfigured: Order < (Abort[OrderNotFound] & Memo) =
     loadOrder.provide(OrderRepo.layer)
 ```
 
-`provide` is a `transparent inline` macro that takes a variable number of layers and supplies ALL of the effect's `Env[*]` requirements. The return type is `A < Nothing`: no effects remain, the computation is ready to run.
+`provide` is a `transparent inline` macro that takes a variable number of layers and supplies ALL of the effect's `Env[*]` requirements. Its result type is computed at the call site: the `Env` requirements are gone, and what remains is the effect's other effects plus `Memo` from the layers, as in the example above.
 
 > **Caution:** Because `provide` is `transparent inline`, under-provisioning produces a macro-flavoured compile error rather than a typed residue. If you forget a layer, the error message will reference `Env.runLayer` macro expansion rather than naming the missing dependency clearly. Read the error carefully or temporarily switch to chained `provideLayer` calls to localise which dependency is missing.
 
 `Kyo.provideFor` (in [Construction](#construction)) is the companion form for single-dependency wiring: it accepts a dependency value and an effect, complementing the extension methods `.provideValue`, `.provideLayer`, and `.provide` shown above.
+
+## Putting it together
+
+The clusters above are orthogonal. A single chain can cross construction, sequencing, concurrency, error handling, and resource lifecycle without any intermediate types.
+
+```scala
+import kyo.*
+
+case class Order(id: Long, total: BigDecimal)
+case class Profile(name: String, tier: String)
+case class OrderNotFound(id: Long) extends Exception(s"Order $id not found")
+
+object OrderRepo:
+    def lookup(id: Long): Option[Order] = None
+
+trait Transaction:
+    def commit: Unit < Sync
+    def close: Unit < Sync // rolls back anything not committed
+
+trait Database:
+    def begin: Transaction < Sync
+
+val db: Database                        = ???
+val orderId: Long                       = 42L
+val profileFor: Long => Profile < Async = _ => ???
+
+// Construction: lift a fallible operation into Abort[OrderNotFound]
+val load: Order < (Abort[OrderNotFound] & Async) =
+    Kyo.fromOption(OrderRepo.lookup(orderId))
+        .absentToFailure(OrderNotFound(orderId))
+
+// Sequencing: log then load
+val logged: Order < (Abort[OrderNotFound] & Async) =
+    Kyo.logInfo("loading order") *> load
+
+// Concurrency: fork a profile fetch and join after loading the order
+val withProfile: (Order, Profile) < (Abort[OrderNotFound] & Async & Scope & Sync) =
+    for
+        fiber   <- profileFor(orderId).fork
+        order   <- load
+        profile <- fiber.join
+    yield (order, profile)
+
+// Error handling: retry on failure, recover with a fallback if all retries fail
+val resilient: Order < Async =
+    load.retry(3).recover(_ => Order(0L, BigDecimal(0)))
+
+// Resource lifecycle: the transaction closes with the scope, and commits only if the load succeeded
+val transactional: Order < (Abort[OrderNotFound] & Async & Scope & Sync) =
+    Kyo.acquireRelease(db.begin)(_.close).map { txn =>
+        load.tap(_ => txn.commit)
+    }
+```
