@@ -307,6 +307,27 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A spawn must not hand its pipes to a child another spawn forks at the same time: a long-lived child holding a short command's
+    // stdout keeps that command's read from ever reaching EOF. Each round forks a long-lived child while a short command's output is
+    // read; every read must complete, and one that does not is counted within its bound rather than left to hang the leaf.
+    "commands spawned concurrently do not hold each other's pipes" in {
+        assumeUnix() // sleep has no Windows equivalent
+        val rounds = 80
+        Loop.indexed { i =>
+            if i >= rounds then Loop.done(succeed)
+            else
+                for
+                    holder <- Fiber.initUnscoped(Scope.run(Command("sleep", "300").spawn.andThen(Async.never)))
+                    read   <- Abort.run[Timeout](Async.timeout(5.seconds)(Command("echo", "x").text))
+                    _      <- holder.interrupt
+                    _      <- holder.getResult
+                yield
+                    assert(read.isSuccess, s"round $i: the short command's output never reached EOF while another spawn was in flight")
+                    Loop.continue
+                end for
+        }
+    }
+
     "spawnUnscoped returns a live process the caller owns and must close" in {
         for
             proc <- trueCmd.spawnUnscoped
