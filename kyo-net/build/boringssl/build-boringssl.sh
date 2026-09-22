@@ -24,12 +24,26 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
 . "$(cd "$here/../../.." && pwd)/scripts/native-build-lib.sh"
+. "$(cd "$here/../../.." && pwd)/scripts/fetch-lib.sh"
 
 native_resolve_target "${1:-}" \
     "linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 darwin-x86_64 darwin-aarch64"
 
 commit="$(grep -vE '^[[:space:]]*#' "$here/BORINGSSL_COMMIT" | head -n1 | tr -d '[:space:]')"
 [ "${#commit}" -eq 40 ] || { echo "BORINGSSL_COMMIT is not a 40-char commit: '$commit'" >&2; exit 1; }
+
+dest="$here/staged/$osArch"
+stamp="$dest/.stamp"
+# The stamp is written last, so its presence means a complete tree, and it names the pin, so a
+# commit bump rebuilds rather than accepting whatever tree it finds. The arch assertion runs on
+# this path too: a restored cache is the one tree that never went through the build below, and
+# the staged name is a promise every consumer trusts.
+if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$commit" ]; then
+    native_assert_arch "$dest/lib/libssl.a" "$os" "$arch"
+    native_assert_arch "$dest/lib/libcrypto.a" "$os" "$arch"
+    echo "staged BoringSSL $commit for $osArch already at $dest"
+    exit 0
+fi
 
 src="${BORINGSSL_SRC:-${TMPDIR:-/tmp}/kyonet-boringssl-src}"
 # Clone from the GitHub mirror rather than boringssl.googlesource.com: googlesource rate-limits
@@ -38,14 +52,7 @@ src="${BORINGSSL_SRC:-${TMPDIR:-/tmp}/kyonet-boringssl-src}"
 # Override with BORINGSSL_GIT_URL if a different source is ever needed.
 boringssl_url="${BORINGSSL_GIT_URL:-https://github.com/google/boringssl}"
 clone_src() {
-    rm -rf "$src"
-    attempt=1
-    until git clone "$boringssl_url" "$src"; do
-        [ "$attempt" -ge 3 ] && { echo "git clone $boringssl_url failed after $attempt attempts" >&2; exit 1; }
-        echo "git clone $boringssl_url failed (attempt $attempt); retrying in $((attempt * 5))s" >&2
-        sleep $((attempt * 5))
-        attempt=$((attempt + 1))
-    done
+    fetch_git_clone "$src" "$boringssl_url"
 }
 # `[ -d "$src/.git" ]` is not a usable-clone check: the default $src lives under $TMPDIR, which the OS
 # reaps, and it reaps it to a skeleton (.git/ survives with HEAD, config and index gone). That skeleton
@@ -90,9 +97,9 @@ cmake --build "$build" --target ssl crypto -j"$(getconf _NPROCESSORS_ONLN 2>/dev
 native_assert_arch "$build/libssl.a" "$os" "$arch"
 native_assert_arch "$build/libcrypto.a" "$os" "$arch"
 
-dest="$here/staged/$osArch"
 rm -rf "$dest"
 mkdir -p "$dest/lib"
 cp "$build/libssl.a" "$build/libcrypto.a" "$dest/lib/"
 cp -R "$src/include" "$dest/include"
+printf '%s\n' "$commit" > "$stamp"
 echo "staged BoringSSL $commit for $osArch -> $dest (libssl.a $(wc -c <"$dest/lib/libssl.a") bytes, libcrypto.a $(wc -c <"$dest/lib/libcrypto.a") bytes)"

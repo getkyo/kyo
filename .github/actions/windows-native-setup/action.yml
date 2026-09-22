@@ -74,8 +74,15 @@ runs:
     # The staged libaeron tree is gitignored, so anything compiling kyo-aeron's C shim builds it
     # first: the shim statically links aeron_driver_static. cmake is preinstalled on both images.
     # build-aeron.sh refuses a cross-architecture Windows request, so this is always host-native.
-    - name: Prepare libaeron
-      shell: bash
-      run: |
-        command -v cmake >/dev/null 2>&1 || { echo "cmake missing on the Windows runner" >&2; exit 1; }
-        bash kyo-aeron/scripts/build-aeron.sh "${{ inputs.os-arch }}"
+    # SQLite too: it stages C source, which either MSVC toolchain compiles like any other target.
+    # Nothing else: no BoringSSL native by ruling (NIO + the JDK's TLS), and DoltLite is absent by
+    # declaration (kyoSqlDoltLiteOsArchTargets), upstream publishing a DLL with no archive to link
+    # into the shim and no win-arm64 library at all; the release guard reads that declaration and
+    # requires no DoltLite native here. Cached per pin, so a producer rebuilds libaeron only on an
+    # Aeron bump.
+    - uses: ./.github/actions/stage-natives
+      with:
+        os: ${{ inputs.os-arch }}
+        os-archs: ${{ inputs.os-arch }}
+        boringssl: 'false'
+        doltlite: 'false'

@@ -92,12 +92,18 @@ esac
 
 staged="$module/build/doltlite/staged/$osarch"
 work="$module/build/doltlite/work"
+stamp="$staged/.stamp"
+pin="$DOLTLITE_VERSION ${sha256:-source}"
 
-if [[ -f "$staged/doltlite.h" ]]; then
+# The stamp is written last, so its presence means a complete tree, and it names the pin, so a
+# version bump rebuilds rather than accepting whatever tree it finds.
+if [[ -f "$stamp" && "$(cat "$stamp")" == "$pin" ]]; then
     echo "[kyo-sql-doltlite] DoltLite $DOLTLITE_VERSION already staged at $staged"
     exit 0
 fi
 
+. "$(cd "$module/.." && pwd)/scripts/fetch-lib.sh"
+rm -rf "$staged"
 mkdir -p "$work" "$staged"
 
 # --- No published library for this platform: build the pinned tag from source ---
@@ -115,8 +121,7 @@ if [[ -z "$asset" ]]; then
     src="$module/build/doltlite/src"
     if [[ ! -d "$src/.git" ]]; then
         echo "[kyo-sql-doltlite] cloning DoltLite v$DOLTLITE_VERSION for a source build ($osarch)"
-        rm -rf "$src"
-        git clone --depth 1 --branch "v$DOLTLITE_VERSION" https://github.com/dolthub/doltlite.git "$src"
+        fetch_git_clone "$src" --depth 1 --branch "v$DOLTLITE_VERSION" https://github.com/dolthub/doltlite.git
     fi
 
     # Cross-building on macOS is an -arch flag rather than a compiler prefix: passing --host makes
@@ -141,6 +146,7 @@ if [[ -z "$asset" ]]; then
     cp "$build"/libdoltlite.dylib "$staged/" 2>/dev/null || true
     cp "$build"/libdoltlite.so* "$staged/" 2>/dev/null || true
     cp "$build"/doltlite.dll "$staged/" 2>/dev/null || true
+    printf '%s\n' "$pin" > "$stamp"
     echo "[kyo-sql-doltlite] built DoltLite $DOLTLITE_VERSION from source at $staged"
     exit 0
 fi
@@ -151,42 +157,9 @@ zip="$work/$dist.zip"
 url="https://github.com/dolthub/doltlite/releases/download/v$DOLTLITE_VERSION/$dist.zip"
 
 echo "[kyo-sql-doltlite] fetching $url"
-curl -fsSL --retry 3 -o "$zip" "$url"
-
-# Whichever of the three this platform has. Checked rather than assumed: a missing tool would
-# otherwise make `actual` empty, which compares unequal and reports a checksum mismatch, sending a
-# reader after a corrupt download that never happened. The Windows runners carry none of shasum.
-if command -v shasum >/dev/null 2>&1; then
-    actual="$(shasum -a 256 "$zip" | awk '{print $1}')"
-elif command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "$zip" | awk '{print $1}')"
-elif command -v openssl >/dev/null 2>&1; then
-    actual="$(openssl dgst -sha256 "$zip" | awk '{print $NF}')"
-else
-    echo "[kyo-sql-doltlite] no sha256 tool found (tried shasum, sha256sum, openssl)." >&2
-    echo "Install one, or stage $staged by hand from $url." >&2
-    exit 1
-fi
-if [[ "$actual" != "$sha256" ]]; then
-    echo "[kyo-sql-doltlite] checksum mismatch for $dist.zip" >&2
-    echo "  expected $sha256" >&2
-    echo "  actual   $actual" >&2
-    echo "Refusing to stage. If the version was bumped, update the checksum in this script together with it." >&2
-    exit 1
-fi
-
-# bsdtar (the `tar` Windows 10+ and macOS ship) extracts zip, which is what makes the Windows
-# runners work without unzip. 7z is the last resort, preinstalled on GitHub's Windows images.
-if command -v unzip >/dev/null 2>&1; then
-    unzip -o -q "$zip" -d "$work"
-elif tar --version 2>/dev/null | grep -qi bsdtar; then
-    (cd "$work" && tar -xf "$zip")
-elif command -v 7z >/dev/null 2>&1; then
-    7z x -y -o"$work" "$zip" >/dev/null
-else
-    echo "[kyo-sql-doltlite] no zip extractor found (tried unzip, bsdtar, 7z)." >&2
-    exit 1
-fi
+fetch_url "$url" "$zip"
+fetch_verify_sha256 "$zip" "$sha256" "$dist.zip"
+fetch_unzip "$zip" "$work"
 cp "$work/$dist/doltlite.h" "$staged/doltlite.h"
 cp "$work/$dist/libdoltlite.a" "$staged/libdoltlite.a"
 # The shared library is staged too: the JVM and Node load it at run time rather than linking it.
@@ -195,5 +168,6 @@ cp "$work/$dist/libdoltlite.so" "$staged/" 2>/dev/null || true
 cp "$work/$dist/doltlite.dll" "$staged/" 2>/dev/null || true
 cp "$work/$dist/libdoltlite.dll" "$staged/" 2>/dev/null || true
 rm -rf "$work/$dist" "$zip"
+printf '%s\n' "$pin" > "$stamp"
 
 echo "[kyo-sql-doltlite] staged DoltLite $DOLTLITE_VERSION at $staged"

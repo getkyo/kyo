@@ -64,40 +64,15 @@ runs:
       shell: bash
       run: bash scripts/apt-install.sh libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3 liburing-dev
 
-    # Stage the vendored BoringSSL static archives before any build: without the staged tree,
-    # build.sbt silently compiles the c-boringssl-stub shim into kyo-net (probe_available -> 0,
-    # BoringSslProvider unavailable at runtime), so the published artifact would ship without
-    # BoringSSL TLS.
-    - name: Prepare BoringSSL
-      shell: bash
-      run: |
-        bash scripts/apt-install.sh --if-missing cmake go:golang-go
-        bash kyo-net/build/boringssl/build-boringssl.sh "${{ steps.osarch.outputs.value }}"
-
-    # The staged libaeron tree is gitignored, so anything that compiles kyo-aeron's C shim has to
-    # build it first: the shim statically links -laeron_driver_static.
-    - name: Prepare libaeron
-      shell: bash
-      run: |
-        # The Aeron driver links -luuid on Linux and the package providing the libuuid.so link
-        # target is not preinstalled.
-        bash scripts/apt-install.sh --if-missing cmake uuid-dev
-        bash kyo-aeron/scripts/build-aeron.sh "${{ steps.osarch.outputs.value }}"
-
-    # The staged SQLite source is gitignored like the two above, and ffiCompileAll compiles this
-    # module's shim together with it. No os-arch argument, unlike them: SQLite is one
-    # architecture-independent .c that the FFI plugin compiles per platform, so one tree serves any
-    # runner this probe lands on.
-    - name: Prepare SQLite
-      shell: bash
-      run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
-
-    # DoltLite stages a compiled library rather than source, so it is per os-arch and takes the tag
-    # the step above resolved. Upstream publishes one for this probe's architecture; the platforms it
-    # does not publish for build the same pinned tag from source.
-    - name: Prepare DoltLite
-      shell: bash
-      run: bash kyo-sql-doltlite/scripts/build-doltlite.sh "${{ steps.osarch.outputs.value }}"
+    # Every vendored tree an FFI module links, staged for this probe's os-arch and cached per pin.
+    # BoringSSL must be staged before any build: without the tree build.sbt silently compiles the
+    # c-boringssl-stub shim into kyo-net (probe_available -> 0, BoringSslProvider unavailable at
+    # runtime), so the published artifact would ship without BoringSSL TLS. ffiCompileAll compiles
+    # every module's shim, so libaeron, SQLite and DoltLite are staged for the same reason.
+    - uses: ./.github/actions/stage-natives
+      with:
+        os: ${{ steps.osarch.outputs.value }}
+        os-archs: ${{ steps.osarch.outputs.value }}
 
     - uses: coursier/setup-action@v3.0.3
       with:

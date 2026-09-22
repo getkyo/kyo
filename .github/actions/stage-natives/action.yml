@@ -1,0 +1,177 @@
+name: stage-natives
+description: >-
+  Restore, stage and save the vendored native trees an FFI build links: BoringSSL, Aeron, SQLite
+  and DoltLite. Each tree is cached under a key made of the files that determine its content, so
+  a job pays the network fetch and the cmake build only when a pin changes; on a hit the staging
+  script takes its stamp fast path, which costs a stamp read and an arch assertion. The cache is
+  saved right after staging rather than post-job, so a job that later fails on a test still leaves
+  a minutes-long build cached. Checkout is the caller's responsibility, as is the MSVC environment
+  on Windows.
+inputs:
+  os:
+    description: >-
+      Cache namespace: the ci os id (linux-x64, linux-arm64, macos-arm64, windows-x64, ...) or,
+      for a container-staged musl leg, its os-arch.
+    required: true
+  os-archs:
+    description: >-
+      Space-separated kyo os-arch tags to stage, for a runner that produces more than one
+      (darwin-aarch64 darwin-x86_64). Empty stages the host's own, which every script resolves for
+      itself.
+    default: ''
+  boringssl:
+    description: "'true' to stage BoringSSL. Skipped on Windows by ruling (NIO + the JDK's TLS)."
+    default: 'true'
+  aeron:
+    description: "'true' to stage libaeron."
+    default: 'true'
+  sqlite:
+    description: "'true' to stage the SQLite amalgamation."
+    default: 'true'
+  doltlite:
+    description: "'true' to stage DoltLite. Skipped on Windows: upstream publishes no archive the shim can link."
+    default: 'true'
+  stage:
+    description: >-
+      'false' restores only, for a caller that stages inside a container it runs itself. That
+      caller saves afterwards with actions/cache/save and the keys this action outputs.
+    default: 'true'
+outputs:
+  boringssl-key:
+    value: ${{ steps.restore-boringssl.outputs.cache-primary-key }}
+  boringssl-hit:
+    value: ${{ steps.restore-boringssl.outputs.cache-hit }}
+  aeron-key:
+    value: ${{ steps.restore-aeron.outputs.cache-primary-key }}
+  aeron-hit:
+    value: ${{ steps.restore-aeron.outputs.cache-hit }}
+  sqlite-key:
+    value: ${{ steps.restore-sqlite.outputs.cache-primary-key }}
+  sqlite-hit:
+    value: ${{ steps.restore-sqlite.outputs.cache-hit }}
+  doltlite-key:
+    value: ${{ steps.restore-doltlite.outputs.cache-primary-key }}
+  doltlite-hit:
+    value: ${{ steps.restore-doltlite.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    # The os-arch list is part of every key: a runner that stages both Mac targets must not share
+    # an entry with one that stages only its own, or the second target would be missing from a hit.
+    - id: slug
+      shell: bash
+      run: |
+        archs="${{ inputs.os-archs }}"
+        echo "value=${archs:-host}" | tr ' ' '_' >> "$GITHUB_OUTPUT"
+
+    # The key of each tree is the files that determine its bytes. No restore-keys: the scripts
+    # rebuild on a stamp mismatch, so a near miss would only download a tree to throw away.
+    - id: restore-boringssl
+      if: ${{ inputs.boringssl == 'true' && runner.os != 'Windows' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: kyo-net/build/boringssl/staged
+        key: natives-boringssl-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-net/build/boringssl/BORINGSSL_COMMIT', 'kyo-net/build/boringssl/build-boringssl.sh', 'scripts/native-build-lib.sh') }}
+
+    - id: restore-aeron
+      if: ${{ inputs.aeron == 'true' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: kyo-aeron/build/aeron/staged
+        key: natives-aeron-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-aeron/scripts/build-aeron.sh', 'scripts/native-build-lib.sh') }}
+
+    - id: restore-sqlite
+      if: ${{ inputs.sqlite == 'true' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: kyo-sql-sqlite/build/sqlite/staged
+        key: natives-sqlite-${{ inputs.os }}-${{ hashFiles('kyo-sql-sqlite/scripts/build-sqlite.sh') }}
+
+    - id: restore-doltlite
+      if: ${{ inputs.doltlite == 'true' && runner.os != 'Windows' }}
+      uses: actions/cache/restore@v6
+      with:
+        path: kyo-sql-doltlite/build/doltlite/staged
+        key: natives-doltlite-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-sql-doltlite/scripts/build-doltlite.sh') }}
+
+    # Only a miss on a tree that is built needs the toolchain: cmake and Go for BoringSSL, cmake and
+    # the -luuid link target for the Aeron driver. SQLite and DoltLite's published archives need
+    # neither. A skipped restore reports no hit, so each clause is also gated on its input.
+    - name: Install the native build toolchain
+      if: >-
+        ${{ inputs.stage == 'true' && (
+          (inputs.boringssl == 'true' && runner.os != 'Windows' && steps.restore-boringssl.outputs.cache-hit != 'true') ||
+          (inputs.aeron == 'true' && steps.restore-aeron.outputs.cache-hit != 'true')) }}
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          Linux)
+            bash scripts/apt-install.sh --if-missing cmake go:golang-go uuid-dev
+            ;;
+          macOS)
+            command -v cmake >/dev/null 2>&1 || brew install cmake
+            command -v go >/dev/null 2>&1 || brew install go
+            ;;
+          Windows)
+            # cmake and MSVC are preinstalled; build-aeron.sh selects the Visual Studio generator.
+            command -v cmake >/dev/null 2>&1 || { echo "cmake missing on the Windows runner" >&2; exit 1; }
+            ;;
+          *)
+            echo "stage-natives: no toolchain mapping for '$RUNNER_OS'." >&2
+            exit 1
+            ;;
+        esac
+
+    # Every enabled script runs, hit or miss: on a hit it takes the stamp fast path, which is what
+    # asserts a restored archive really is the requested arch. Windows ships no BoringSSL native,
+    # an explicit skip rather than a silent one: a bare exit here would ship the kyonet_boringssl
+    # stub and the TLS tests would cancel with no signal. build-doltlite.sh declines Windows itself.
+    - name: Stage vendored natives
+      if: ${{ inputs.stage == 'true' }}
+      shell: bash
+      env:
+        OS_ARCHS: ${{ inputs.os-archs }}
+        STAGE_BORINGSSL: ${{ inputs.boringssl }}
+        STAGE_AERON: ${{ inputs.aeron }}
+        STAGE_SQLITE: ${{ inputs.sqlite }}
+        STAGE_DOLTLITE: ${{ inputs.doltlite }}
+      run: |
+        set -euo pipefail
+        # An empty list iterates once with no argument, which every script takes as its host.
+        for arch in ${OS_ARCHS:-""}; do
+          if [ "$STAGE_BORINGSSL" = true ]; then
+            if [ "$RUNNER_OS" = Windows ]; then
+              echo "Windows ships no BoringSSL native (NIO + JDK TLS by ruling); skipping."
+            else
+              bash kyo-net/build/boringssl/build-boringssl.sh $arch
+            fi
+          fi
+          [ "$STAGE_AERON" != true ] || bash kyo-aeron/scripts/build-aeron.sh $arch
+          [ "$STAGE_DOLTLITE" != true ] || bash kyo-sql-doltlite/scripts/build-doltlite.sh $arch
+        done
+        # One tree serves every os-arch: SQLite is C source the FFI plugin compiles per platform.
+        [ "$STAGE_SQLITE" != true ] || bash kyo-sql-sqlite/scripts/build-sqlite.sh
+
+    - if: ${{ inputs.stage == 'true' && inputs.boringssl == 'true' && runner.os != 'Windows' && steps.restore-boringssl.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: kyo-net/build/boringssl/staged
+        key: ${{ steps.restore-boringssl.outputs.cache-primary-key }}
+
+    - if: ${{ inputs.stage == 'true' && inputs.aeron == 'true' && steps.restore-aeron.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: kyo-aeron/build/aeron/staged
+        key: ${{ steps.restore-aeron.outputs.cache-primary-key }}
+
+    - if: ${{ inputs.stage == 'true' && inputs.sqlite == 'true' && steps.restore-sqlite.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: kyo-sql-sqlite/build/sqlite/staged
+        key: ${{ steps.restore-sqlite.outputs.cache-primary-key }}
+
+    - if: ${{ inputs.stage == 'true' && inputs.doltlite == 'true' && runner.os != 'Windows' && steps.restore-doltlite.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: kyo-sql-doltlite/build/doltlite/staged
+        key: ${{ steps.restore-doltlite.outputs.cache-primary-key }}
