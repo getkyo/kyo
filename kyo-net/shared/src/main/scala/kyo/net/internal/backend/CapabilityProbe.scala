@@ -41,8 +41,8 @@ private[net] object CapabilityProbe:
             else "unknown"
         // Unsafe: reads this host's architecture, which the safe tier exposes only inside Sync while this is a val
         // on a diagnostic path. Read through the platform shim rather than `sys.props`, which carries no os.arch
-        // off the JVM and Native: reading it there named every JS and Wasm host "<os>-unknown" and sent the reader
-        // after a classifier artifact that does not exist under that name.
+        // off the JVM and Native: reading it there would name every JS and Wasm host "<os>-unknown" and send the
+        // reader after an artifact published under no such name.
         import AllowUnsafe.embrace.danger
         val arch = kyo.internal.SystemPlatformSpecific.osArch() match
             case ""                  => "unknown"

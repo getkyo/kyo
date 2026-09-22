@@ -6,9 +6,9 @@ import kyo.net.internal.posix.PosixConstants
 /** The JS/Wasm I/O registry's probes, read as outcomes rather than through the backend fan-out.
   *
   * The fan-out in `kyo.net.Test` CANCELS a leaf whose backend is unavailable, so a posix backend that stops
-  * probing available takes every one of its leaves out of the run and the suite still reports success. That is
-  * how an FFI loader failure reached this registry as a platform verdict and shipped: on the ESModule axis every
-  * kqueue, epoll and io_uring leaf cancelled and nothing went red.
+  * probing available takes every one of its leaves out of the run and the suite still reports success. An FFI
+  * loader failure that reaches this registry as a platform verdict is invisible there: on an ESModule bundle
+  * every kqueue, epoll and io_uring leaf cancels and nothing goes red.
   *
   * So this suite asserts on the probe itself. It separates a backend that is correctly absent (nothing bundled,
   * no syscall, kernel too old) from one claiming the OS it exists for does not apply, which is the shape a

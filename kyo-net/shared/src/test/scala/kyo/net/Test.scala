@@ -14,7 +14,7 @@ abstract class Test extends kyo.test.Test[Any]:
     // Idempotent: every suite in the process derives the same value from the same env var, so concurrent construction on Native races harmlessly.
     locally:
         if java.lang.System.getProperty("kyo.net.backend") == null then
-            Test.isolationEnv("KYO_NET_ONLY").foreach(name => java.lang.System.setProperty("kyo.net.backend", name))
+            Test.isolationEnv("KYO_NET_ONLY").foreach(name => discard(java.lang.System.setProperty("kyo.net.backend", name)))
 
     // 60s per-leaf budget for the whole module. CI runners are far slower than a local box, and the heaviest leaves here
     // drive software TLS over BoringSSL/OpenSSL with dozens of concurrent connections (a few seconds idle on the JVM,
@@ -200,13 +200,13 @@ end Test
 
 object Test:
 
-    /** An isolation variable's value, or `None` when it is unset.
+    /** An isolation variable's value, or `Absent` when it is unset.
       *
       * Read through `FlagPlatform` rather than `sys.env`, which is `System.getenv` and answers null for every name
-      * under Scala.js. A `KYO_NET_ONLY=node` run on the JS or Wasm axis therefore restricted nothing and ran the
-      * whole matrix, reporting success for a fan-out the operator believed had been narrowed to one cell.
+      * under Scala.js. Read through `sys.env`, a `KYO_NET_ONLY=node` run on the JS or Wasm axis would restrict nothing
+      * and run the whole matrix, reporting success for a fan-out the operator believed was narrowed to one cell.
       */
-    private[net] def isolationEnv(name: String): Option[String] =
-        Option(FlagPlatform.env(name)).filter(_.nonEmpty)
+    private[net] def isolationEnv(name: String): Maybe[String] =
+        Maybe(FlagPlatform.env(name)).filter(_.nonEmpty)
 
 end Test
