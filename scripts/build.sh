@@ -286,8 +286,8 @@ if command -v node >/dev/null 2>&1; then
 fi
 if [ "$node_ok" != 1 ]; then
     case $(uname -m) in aarch64) node_arch=linux-arm64 ;; *) node_arch=linux-x64 ;; esac
-    curl -fsSL "https://nodejs.org/dist/v24.16.0/node-v24.16.0-${node_arch}.tar.gz" \
-        | tar xz -C /usr/local --strip-components=1
+    fetch_url "https://nodejs.org/dist/v24.16.0/node-v24.16.0-${node_arch}.tar.gz" /tmp/node.tar.gz
+    tar xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 && rm -f /tmp/node.tar.gz
 fi'
     fi
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
@@ -334,8 +334,8 @@ if [ "$cmake_ok" != 1 ]; then
         exit 1
     fi
     case $(uname -m) in aarch64) cmake_arch=linux-aarch64 ;; *) cmake_arch=linux-x86_64 ;; esac
-    curl -fsSL "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" \
-        | tar xz -C /usr/local --strip-components=1
+    fetch_url "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" /tmp/cmake.tar.gz
+    tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1 && rm -f /tmp/cmake.tar.gz
 fi'
     fi
     cat <<PROVISION
@@ -374,7 +374,8 @@ if command -v apk >/dev/null 2>&1; then
     if ! command -v sbt >/dev/null 2>&1; then
         # The version comes from the host: provisioning runs before the source snapshot is
         # extracted, so project/build.properties is not readable here yet.
-        curl -fsSL "https://github.com/sbt/sbt/releases/download/v$sbt_version/sbt-$sbt_version.tgz" | tar -xz -C /opt
+        fetch_url "https://github.com/sbt/sbt/releases/download/v$sbt_version/sbt-$sbt_version.tgz" /tmp/sbt.tgz
+        tar -xzf /tmp/sbt.tgz -C /opt && rm -f /tmp/sbt.tgz
     fi
     export PATH="/opt/sbt/bin:\$PATH"
 elif ! command -v cs >/dev/null 2>&1; then
@@ -386,14 +387,8 @@ elif ! command -v cs >/dev/null 2>&1; then
     else
         cs_url="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
     fi
-    # Without cs there is no JDK and no sbt, and a failed download would otherwise surface only as a
-    # missing sbt after the staging steps. A pipeline hides its upstream status from set -e, so the
-    # launcher lands in a file first, and GitHub's transient 5xx answers are retried. No backticks in
-    # this comment: the heredoc is unquoted, so the host shell would run them.
-    cs_tmp=\$(mktemp)
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "\$cs_tmp" "\$cs_url" \
-        || { echo "build.sh: coursier launcher download failed: \$cs_url" >&2; exit 1; }
-    gzip -d < "\$cs_tmp" > /usr/local/bin/cs && chmod +x /usr/local/bin/cs && rm -f "\$cs_tmp"
+    fetch_url "\$cs_url" /tmp/cs.gz
+    gzip -dc /tmp/cs.gz > /usr/local/bin/cs && chmod +x /usr/local/bin/cs && rm -f /tmp/cs.gz
 fi
 if command -v cs >/dev/null 2>&1; then
     eval "\$(cs java --jvm corretto:25 --env)"
@@ -526,7 +521,11 @@ run_in_container() {
         stage_jsdom=1
     fi
     envs+=(-e "STAGE_JSDOM=$stage_jsdom")
-    local provision; provision=$(container_provision "$platform")
+    # The fetch library leads the prelude: provisioning runs before the source snapshot is extracted,
+    # so the container cannot source it from the tree, and every download in the prelude goes
+    # through it. A `curl | tar` pipe cannot be retried: curl restarts its output on a retry and tar
+    # has already consumed the first bytes.
+    local provision; provision=$(cat "$PROJECT_DIR/scripts/fetch-lib.sh" && container_provision "$platform")
     # `sh`, not `bash`: a musl JDK image ships busybox sh and no bash, and provisioning is what
     # installs bash there, so a bash entrypoint cannot get far enough to install it. This prelude is
     # POSIX throughout; the two staging scripts genuinely need bash and are invoked as `bash <script>`

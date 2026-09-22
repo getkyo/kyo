@@ -59,26 +59,12 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
-      - name: Install vendored-native build toolchain
-        shell: bash
-        run: |
-          command -v cmake >/dev/null 2>&1 || brew install cmake
-          command -v go >/dev/null 2>&1 || brew install go
-      # Every vendored dependency any FFI module links, for both Mac targets. ffiCompileAll below
-      # compiles every module, so a module whose staged tree is missing fails the whole producer.
-      # macOS needs no uuid package; the Aeron driver takes it from libSystem.
-      - name: Stage vendored natives (darwin-aarch64 + darwin-x86_64)
-        shell: bash
-        run: |
-          bash kyo-net/build/boringssl/build-boringssl.sh darwin-aarch64
-          bash kyo-net/build/boringssl/build-boringssl.sh darwin-x86_64
-          bash kyo-aeron/scripts/build-aeron.sh darwin-aarch64
-          bash kyo-aeron/scripts/build-aeron.sh darwin-x86_64
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
-          # Both Mac targets, like the two above it. SQLite needs one call because it stages C source
-          # that every target compiles; DoltLite stages a compiled library, so each target needs its own.
-          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-aarch64
-          bash kyo-sql-doltlite/scripts/build-doltlite.sh darwin-x86_64
+      # Every vendored dependency any FFI module links, for both Mac targets, cached per pin.
+      # ffiCompileAll below compiles every module, so a module whose staged tree is missing fails the
+      # whole producer. macOS needs no uuid package; the Aeron driver takes it from libSystem.
+      - uses: ./.github/actions/stage-natives
+        with:
+          os-archs: darwin-aarch64 darwin-x86_64
       # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
       # carried a hand-written block per module (compile, collect, upload), which is how a module ends up
@@ -176,6 +162,9 @@ jobs:
         shell: bash
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
+      # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
+      # need to restage anything.
+      - uses: ./.github/actions/stage-natives
       - name: Build linux-x86_64 (glibc) natives
         uses: nick-fields/retry@v4
         with:
@@ -188,13 +177,18 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
-            bash kyo-aeron/scripts/build-aeron.sh linux-x86_64
-            bash kyo-sql-sqlite/scripts/build-sqlite.sh
-            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
+      # The musl trees are staged inside the container below, so this restores only; the saves
+      # follow the container step, keyed from these outputs. SQLite is one tree for both legs and the
+      # glibc call above already staged it, so the container's script takes its stamp fast path.
+      - id: natives-musl
+        uses: ./.github/actions/stage-natives
+        with:
+          os-archs: linux-musl-x86_64
+          sqlite: 'false'
+          stage: 'false'
       # The container resolves against the mounted cache, so it is exposed even on a run where the host
       # cache was warm. A reset here is what failed release 35440372541 at sbt project load.
       - name: Build linux-musl-x86_64 natives (Alpine)
@@ -219,7 +213,9 @@ jobs:
               set -eu
               apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
               sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
-              curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
+              . scripts/fetch-lib.sh
+              fetch_url "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" /tmp/sbt.tgz
+              tar -xzf /tmp/sbt.tgz -C /opt
               export PATH="/opt/sbt/bin:$PATH"
               bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-x86_64
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
@@ -229,6 +225,21 @@ jobs:
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
             '
+      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-net/build/boringssl/staged
+          key: ${{ steps.natives-musl.outputs.boringssl-key }}
+      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-aeron/build/aeron/staged
+          key: ${{ steps.natives-musl.outputs.aeron-key }}
+      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-sql-doltlite/build/doltlite/staged
+          key: ${{ steps.natives-musl.outputs.doltlite-key }}
       - name: Verify + list natives
         shell: bash
         run: |
@@ -287,6 +298,9 @@ jobs:
         shell: bash
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
+      # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
+      # need to restage anything.
+      - uses: ./.github/actions/stage-natives
       - name: Build linux-aarch64 (glibc) natives
         uses: nick-fields/retry@v4
         with:
@@ -299,13 +313,18 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            bash kyo-net/build/boringssl/build-boringssl.sh linux-aarch64
-            bash kyo-aeron/scripts/build-aeron.sh linux-aarch64
-            bash kyo-sql-sqlite/scripts/build-sqlite.sh
-            bash kyo-sql-doltlite/scripts/build-doltlite.sh
             sbt -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
+      # The musl trees are staged inside the container below, so this restores only; the saves
+      # follow the container step, keyed from these outputs. SQLite is one tree for both legs and the
+      # glibc call above already staged it, so the container's script takes its stamp fast path.
+      - id: natives-musl
+        uses: ./.github/actions/stage-natives
+        with:
+          os-archs: linux-musl-aarch64
+          sqlite: 'false'
+          stage: 'false'
       - name: Build linux-musl-aarch64 natives (Alpine)
         uses: nick-fields/retry@v4
         with:
@@ -324,7 +343,9 @@ jobs:
               set -eu
               apk add --no-cache bash cmake go build-base git file binutils perl linux-headers liburing-dev util-linux-dev curl tar tcl
               sbt_ver="$(sed -n "s/^sbt.version=//p" project/build.properties)"
-              curl -fsSL "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" | tar -xz -C /opt
+              . scripts/fetch-lib.sh
+              fetch_url "https://github.com/sbt/sbt/releases/download/v${sbt_ver}/sbt-${sbt_ver}.tgz" /tmp/sbt.tgz
+              tar -xzf /tmp/sbt.tgz -C /opt
               export PATH="/opt/sbt/bin:$PATH"
               bash kyo-net/build/boringssl/build-boringssl.sh linux-musl-aarch64
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
@@ -334,6 +355,21 @@ jobs:
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
             '
+      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-net/build/boringssl/staged
+          key: ${{ steps.natives-musl.outputs.boringssl-key }}
+      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-aeron/build/aeron/staged
+          key: ${{ steps.natives-musl.outputs.aeron-key }}
+      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: kyo-sql-doltlite/build/doltlite/staged
+          key: ${{ steps.natives-musl.outputs.doltlite-key }}
       - name: Verify + list natives
         shell: bash
         run: |
@@ -397,13 +433,6 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-x86_64
-      # SQLite only, as on the ARM leg below: it stages C source, which this toolchain compiles. DoltLite
-      # is absent on Windows by declaration (kyoSqlDoltLiteOsArchTargets), upstream publishing a DLL with
-      # no archive to link into the shim. The release guard reads that declaration and requires no
-      # DoltLite native here.
-      - name: Stage vendored natives (windows-x86_64)
-        shell: bash
-        run: bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-x86_64 natives
         uses: nick-fields/retry@v4
         with:
@@ -468,14 +497,6 @@ jobs:
       - uses: ./.github/actions/windows-native-setup
         with:
           os-arch: windows-aarch64
-      # SQLite only: it stages C source, which the ARM64 MSVC toolchain compiles like any other target.
-      # DoltLite is absent here by declaration (kyoSqlDoltLiteOsArchTargets), because upstream publishes
-      # no win-arm64 library and its autoconf build has no toolchain on this runner. The release guard
-      # reads that declaration, so it requires no DoltLite native for this platform rather than failing.
-      - name: Stage vendored natives (windows-aarch64)
-        shell: bash
-        run: |
-          bash kyo-sql-sqlite/scripts/build-sqlite.sh
       - name: Compile every module's windows-aarch64 natives
         uses: nick-fields/retry@v4
         with:
