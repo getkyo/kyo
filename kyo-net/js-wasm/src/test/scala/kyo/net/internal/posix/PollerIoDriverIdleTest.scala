@@ -22,6 +22,7 @@ class PollerIoDriverIdleTest extends kyo.net.Test:
         if !PosixConstants.isLinux && !PosixConstants.isMacOrBsd then cancel("no posix poller on this OS; the Node floor serves it")
         val backend = PollerBackend.default()
         PollerIoDriver.init(backend, backend.create(), Ffi.load[SocketBindings])
+    end newDriver
 
     "a driver with nothing registered has nothing to poll for" in {
         val driver = newDriver
