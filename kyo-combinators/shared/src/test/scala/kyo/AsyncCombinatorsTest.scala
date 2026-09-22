@@ -118,7 +118,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
         "async" - {
             // `Kyo.async` spawns the effect handed to its continuation and the caller parks on a promise that fiber
-            // completes.
+            // completes. An orphaned effect never runs its finalizer, which the leaf timeout reports.
             "interrupting the caller of async interrupts the effect it registered" in {
                 for
                     gate     <- Latch.init(1)
@@ -132,9 +132,8 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
                     _ <- entered.await
                     _ <- fiber.interrupt
                     _ <- fiber.getResult
-                    r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
-                    _ <- gate.release
-                yield assert(r.isSuccess, "the registered effect was orphaned: its finalizer did not run once the caller was interrupted")
+                    _ <- Sync.ensure(gate.release)(assertEventually(released.get))
+                yield succeed
                 end for
             }
         }

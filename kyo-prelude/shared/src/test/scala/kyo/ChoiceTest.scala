@@ -364,6 +364,25 @@ class ChoiceTest extends kyo.test.Test[Any]:
             assert(released)
         }
 
+        "a bracket inside the region around the choice point is live in every branch and releases once, after the handler ends" in {
+            // The choice suspension crosses the bracket, so the bracket is shared by every branch: each branch and the
+            // step after the bracket run against the live resource, and the release runs once, when `Choice.run` ends.
+            var log = Chunk.empty[String]
+            val v   = Choice.run {
+                Bracket("res") { _ =>
+                    Choice.eval(1, 2).map { n =>
+                        log = log.append(s"branch$n")
+                        n
+                    }
+                }((_, _) => log = log.append("release")).map { n =>
+                    log = log.append(s"after$n")
+                    n
+                }
+            }
+            assert(v.eval == Chunk(1, 2))
+            assert(log == Chunk("branch1", "after1", "branch2", "after2", "release"))
+        }
+
         "a bracket inside a branch releases once per branch" in {
             var opens  = 0
             var closes = 0

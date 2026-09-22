@@ -261,7 +261,9 @@ object Hub:
             val channel          = Channel.Unsafe.init[A](capacity, Access.MultiProducerSingleConsumer).safe
             val listeners        = new CopyOnWriteArraySet[Listener[A]]
             def currentListeners = Chunk.fromNoCopy(listeners.toArray()).asInstanceOf[Chunk[Listener[A]]]
-            Fiber.initUnscoped {
+            // The publisher is live once it is spawned and only the hub built from it can stop it, so the spawn, the hub and
+            // `f` share this block: a suspension between them is a step an interrupt could park on with `f` never applied.
+            val fiber = Fiber.Unsafe.init {
                 Loop.foreach {
                     channel.take.map { value =>
                         Abort.recover { error =>
@@ -269,16 +271,16 @@ object Hub:
                             Loop.continue
                         } {
                             Kyo.foreachDiscard(currentListeners) { listener =>
-                                Abort.recover[Throwable](e => bug(s"Hub fiber failed to publish to listener: $e"))(
-                                    listener.put(value)
-                                )
+                                // A listener closes on its own schedule: `Listener.close` removes it from the set and then closes its
+                                // channel, and this snapshot may still hold it, so its put fails Closed or is failed while parked on
+                                // its full buffer. That is the listener leaving, not a delivery failure.
+                                Abort.recover[Closed](_ => ())(listener.put(value))
                             }.andThen(Loop.continue)
                         }
                     }
                 }
-            }.map { fiber =>
-                f(new Hub(channel, fiber, listeners))
             }
+            f(new Hub(channel, fiber.safe, listeners))
         }
 
     /** A subscriber to a Hub that receives and processes a filtered stream of messages.

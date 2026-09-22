@@ -172,8 +172,8 @@ class FiberTest extends kyo.test.Test[Any]:
             // The race interrupts each loser from the winner's completion callback while the loser may be mid-slice on
             // another worker, never parking: the stop has to be observed by the loser's next safepoint poll or at its
             // next slice entry. Each round races an immediate winner against a spinning loser that owes a finalizer;
-            // the flag lets the leaf stop a loser the race failed to, so a lost stop fails the round instead of the
-            // fork.
+            // the flag stops a loser the race failed to on the leaf's way out, so a lost stop ends as this leaf's
+            // timeout rather than a carrier spinning under the rest of the suite.
             "interrupts a losing computation that never parks" in {
                 val rounds                                                             = 500
                 def spin(stop: java.util.concurrent.atomic.AtomicBoolean): Unit < Sync =
@@ -188,12 +188,9 @@ class FiberTest extends kyo.test.Test[Any]:
                                 Sync.defer(1),
                                 Sync.ensure(done.incrementAndGet.unit)(spin(stop)).andThen(2)
                             )).map(_.getResult)
-                            freed <- Abort.run[Timeout](Async.timeout(5.seconds)(assertEventually(done.get.map(_ == 1))))
-                            _ = stop.set(true)
-                            _ <- assertEventually(done.get.map(_ == 1))
+                            _ <- Sync.ensure(Sync.defer(stop.set(true)))(assertEventually(done.get.map(_ == 1)))
                         yield
                             assert(r.contains(1), s"round $i: the immediate computation did not win: $r")
-                            assert(freed.isSuccess, s"round $i: the losing spinner was not stopped by the race")
                             Loop.continue
                         end for
                 }

@@ -138,8 +138,7 @@ object Fiber:
         // child and its resources close with what actually ended the FIBER, not the enclosing scope's verdict. The
         // `await` is load-bearing: it orders the fiber's releases ahead of the enclosing scope's own
         // finalizers, which a mere close (the run backstop's) does not, since the drain runs on a detached fiber.
-        Sync.Unsafe.defer {
-            val own   = Scope.Finalizer.Unsafe.init(1)
+        Scope.Finalizer.init(1).map { own =>
             val owned = ContextEffect.handleInheritable(Tag[Scope], own)(v)
             Scope.acquireRelease(initUnscoped[E, A, S, S2](owned)) { fiber =>
                 // Erasure-forced: a fiber is its promise.

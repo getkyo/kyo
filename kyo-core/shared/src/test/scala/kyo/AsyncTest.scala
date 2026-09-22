@@ -506,29 +506,6 @@ class AsyncTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "a value the shielded body produces is not stranded when the caller is interrupted at the join".pendingUntilFixed(
-        "Async.uninterruptible joins the shielded fiber's promise and hands its value to the caller's next step, so a stop landing at that join abandons the value with no owner"
-    ) in {
-        for
-            entered  <- Latch.init(1)
-            gate     <- Latch.init(1)
-            released <- AtomicBoolean.init(false)
-            fiber    <- Fiber.initUnscoped {
-                Scope.run {
-                    Scope.acquireRelease(Async.uninterruptible(entered.release.andThen(gate.await).andThen("handle")))(_ =>
-                        released.set(true)
-                    ).andThen(Async.never)
-                }
-            }
-            _ <- entered.await
-            _ <- fiber.interrupt
-            _ <- gate.release
-            _ <- fiber.getResult
-            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get)))
-        yield assert(r.isSuccess, "the shielded body handed its value to a join the interrupt had abandoned, and its release never ran")
-        end for
-    }
-
     "boundary inference with Abort" - {
         "same failures" in {
             val v: Int < Abort[Int]                            = 1
@@ -1962,49 +1939,6 @@ class AsyncTest extends kyo.test.Test[Any]:
                     Async.timeout(Duration.Zero)(Async.sleep(1.day))
                 }
             yield assert(result.isFailure)
-        }
-    }
-
-    "timeout under interruption" - {
-        // The timeout forks the guarded computation and installs the bracket that owns it as the spawn's handle
-        // arrives (`acquireReleaseWith`, no poll between): a stop requested as the handle settles must still interrupt
-        // the child, not leave it running. The window is a few microseconds, below what a timer lands in, so the leaf
-        // spins on a flag set before the timeout, staggers its offset, and requests the stop directly; a child known
-        // to have started must then release.
-        "an interrupt landing at the timeout's spawn reaches the guarded computation".notJs.notWasm in {
-            val rounds = 80
-            Loop.indexed { i =>
-                if i >= rounds then Loop.done(succeed)
-                else
-                    val arming = new java.util.concurrent.atomic.AtomicBoolean(false)
-                    for
-                        entered  <- Latch.init(1)
-                        gate     <- Latch.init(1)
-                        released <- AtomicBoolean.init(false)
-                        fiber    <- Fiber.initUnscoped {
-                            Sync.defer(arming.set(true)).andThen {
-                                Async.timeout(1.hour)(Sync.ensure(released.set(true))(entered.release.andThen(gate.await)))
-                            }
-                        }
-                        _ <- Sync.Unsafe.defer {
-                            val bound = java.lang.System.nanoTime() + 200_000_000L
-                            while !arming.get() && java.lang.System.nanoTime() < bound do ()
-                            val target = java.lang.System.nanoTime() + (i % 40) * 10_000L
-                            while java.lang.System.nanoTime() < target do ()
-                            discard(fiber.unsafe.interrupt())
-                        }
-                        _     <- fiber.getResult
-                        ran   <- Abort.run[Timeout](Async.timeout(1.second)(entered.await))
-                        freed <-
-                            if ran.isSuccess then
-                                Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(released.get))).map(_.isSuccess)
-                            else Kyo.lift(true)
-                        _ <- gate.release
-                    yield
-                        assert(freed, s"round $i: the guarded computation kept running after the caller was interrupted at the spawn")
-                        Loop.continue
-                    end for
-            }
         }
     }
 

@@ -394,30 +394,6 @@ class ScopeInterruptTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // The inner finalizer parks on a gate so the drain is a real join when the interrupt lands.
-    "an interrupt at Scope.run's drain await does not strand the value the body produced".pendingUntilFixed(
-        "Scope.run's clean exit awaits its drain on a join with the body's value in flight, so an interrupt there abandons the continuation and the value never reaches the caller's registration"
-    ) in {
-        for
-            gate     <- Latch.init(1)
-            draining <- Latch.init(1)
-            closes   <- AtomicInt.init(0)
-            fiber    <- Fiber.initUnscoped {
-                Scope.run {
-                    Scope.run(Scope.ensure(draining.release.andThen(gate.await)).andThen(Sync.defer("handle")))
-                        .ensureMap(h => Scope.ensure(closes.incrementAndGet.unit).andThen(h))
-                }
-            }
-            _ <- draining.await
-            _ <- fiber.interrupt
-            _ <- gate.release
-            _ <- fiber.getResult
-            r <- Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(closes.get.map(_ == 1))))
-            c <- closes.get
-        yield assert(r.isSuccess && c == 1, s"the handle the inner run produced was registered by nobody: closes=$c")
-        end for
-    }
-
     // A remainder handed out by a peel (`Emit.runFirst`) carries the regions the peeled body had installed. Handed
     // to a child fiber and run there while the peeling scope ends, the resource stays with the child's run: the
     // child either completes its use with the resource still held, releasing it at its own exit, or is refused

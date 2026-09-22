@@ -1521,15 +1521,49 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "finalizer context" - {
+
+        // The drain is spawned from the region's release, which the kernel runs on a stack of its own; the
+        // finalizers must still see the regions the run was opened under.
+        "a finalizer reads the Local the run was opened under" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init("")
+                _    <- local.let("bound")(Scope.run(Scope.ensure(local.use(v => seen.set(v)))))
+                v    <- seen.get
+            yield assert(v == "bound", s"the finalizer read $v")
+            end for
+        }
+
+        "a finalizer reads the Local the run was opened under when a handler replays" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init(Chunk.empty[String])
+                res  <- local.let("bound") {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.ensure(local.use(v => seen.updateAndGet(_.append(v)).unit)).andThen(n)
+                            }
+                        }
+                    }
+                }
+                _ <- assertEventually(seen.get.map(_.size == 2))
+                s <- seen.get
+            yield
+                assert(res == Chunk(1, 2))
+                assert(s == Chunk("bound", "bound"), s"the finalizers read $s")
+            end for
+        }
+    }
+
     "under a handler that replays" - {
 
         // `Choice.run` outside `Scope.run` answers the choice inside the scope's body twice, so the body runs
         // twice and each branch registers a finalizer. The bracket contract under a replaying handler
         // is that every branch runs against the live region and the release runs
         // once after all of them; a scope's registrations are the counterpart, each running once.
-        "every branch of a replaying handler registers its finalizer and each runs once".pendingUntilFixed(
-            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot registers on a closed scope and is refused with Closed"
-        ) in {
+        "every branch of a replaying handler registers its finalizer and each runs once" in {
             for
                 log <- AtomicRef.init(Chunk.empty[String])
                 res <- Abort.run[Closed] {
@@ -1549,9 +1583,7 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "every branch of a replaying handler acquires its own resource and each is released once".pendingUntilFixed(
-            "Scope.run closes its scope at the end of each shot of a replaying handler, so the second shot's acquisition registers on a closed scope and is refused with Closed"
-        ) in {
+        "every branch of a replaying handler acquires its own resource and each is released once" in {
             for
                 released <- AtomicRef.init(Chunk.empty[Int])
                 seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
@@ -1604,8 +1636,8 @@ class ScopeTest extends kyo.test.Test[Any]:
         // racers get an item is exactly what the interleaving decides, and the counts are compared to each other
         // rather than to four: between the latch opening and a racer's interrupt landing, a racer still parked can
         // take an item a release has just put back.
-        "every racer that took an item from the channel puts it back".pendingUntilFixed(
-            "a value delivered to a taker abandoned before it resumed is lost"
+        "every racer that took an item from the channel puts it back".ignore(
+            "loses an item only in the rounds where a racer's interrupt lands between the delivery and its resumption; that loss is pinned by ChannelTest's stranded-value leaves"
         ) in {
             // The loss this pins (a put delivered into a parked racer's promise as the racer's interrupt lands, then the racer
             // abandoned without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated
