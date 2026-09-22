@@ -745,24 +745,27 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                             val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                             lazyStream.broadcasted().map: reusableStream =>
                                 Latch.initWith(10): latch =>
-                                    Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map:
-                                        runFiber =>
-                                            latch.await.andThen:
-                                                Fiber.initUnscoped(
-                                                    Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                                ).andThen:
-                                                    runFiber.get.map: resultChunks =>
-                                                        // A run subscribes as it starts and the original starts with the first
-                                                        // subscription, so a run that gets there later can only have missed a
-                                                        // prefix. Unison across concurrent runs is broadcastDynamic's guarantee,
-                                                        // not this one.
-                                                        val all = Chunk.from(0 to 10)
-                                                        assert(resultChunks.size == 10, resultChunks.toString)
-                                                        assert(resultChunks.contains(all), resultChunks.toString)
-                                                        assert(
-                                                            resultChunks.forall(c => c == all.drop(all.size - c.size)),
-                                                            resultChunks.toString
-                                                        )
+                                    // Every run must be in flight before the latch opens, so the concurrency is explicit:
+                                    // the default is 2 x available processors and starves the latch below 5 cores.
+                                    Fiber.initUnscoped(
+                                        Async.foreach(1 to 10, concurrency = 10)(_ => latch.release.andThen(reusableStream.run))
+                                    ).map: runFiber =>
+                                        latch.await.andThen:
+                                            Fiber.initUnscoped(
+                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                            ).andThen:
+                                                runFiber.get.map: resultChunks =>
+                                                    // A run subscribes as it starts and the original starts with the first
+                                                    // subscription, so a run that gets there later can only have missed a
+                                                    // prefix. Unison across concurrent runs is broadcastDynamic's guarantee,
+                                                    // not this one.
+                                                    val all = Chunk.from(0 to 10)
+                                                    assert(resultChunks.size == 10, resultChunks.toString)
+                                                    assert(resultChunks.contains(all), resultChunks.toString)
+                                                    assert(
+                                                        resultChunks.forall(c => c == all.drop(all.size - c.size)),
+                                                        resultChunks.toString
+                                                    )
                     }
                 }
 
