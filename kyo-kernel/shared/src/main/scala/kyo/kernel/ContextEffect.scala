@@ -200,8 +200,10 @@ object ContextEffect:
       *
       * `derive` produces the region's value from whatever an outer handler bound (absent when none), `fork` computes what a forked
       * computation starts with from the parent's value, `join` computes what the parent holds once the fork rejoins from the parent's,
-      * forked-start and forked-end values, and `release` runs once when the region ends, told `Absent` for a clean end or the failure on an
-      * unwind.
+      * forked-start and forked-end values, and `release` runs when the region ends, told `Absent` for a clean end or the failure on an
+      * unwind. It runs once per evaluation: a region carried in a remainder that a clause resumes on another evaluator stack (a nested eval,
+      * another thread) ends there and is drained again by the handler that owed it, so a handler that must release once across those guards
+      * its state, as [[Bracket]] does with its cell.
       */
     @nowarn("msg=anonymous")
     inline def handle[A, E <: ContextEffect[A], B, S](

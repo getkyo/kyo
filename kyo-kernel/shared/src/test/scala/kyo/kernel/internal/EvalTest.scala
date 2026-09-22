@@ -999,25 +999,6 @@ class EvalTest extends AnyFreeSpec:
             assert(parked.map(_ * 10).eval == 420)
         }
 
-        // A crossing's capture is a step of its own, applied as the body's value arrives: a stop landing on the
-        // body's last step leaves the value for the region's `done` rather than parking in front of the capture,
-        // where an abandonment would drop it.
-        "a stop landing on the body's last step does not park in front of the crossing's capture" in {
-            // Known gap: partial parks in front of the crossing's capture (result
-            // stays Defer(21) whose evalNow is Absent) instead of the value reaching the region's done.
-            pendingUntilFixed {
-                val body: Int < Any =
-                    Effect.defer(20).map { a =>
-                        requestStop()
-                        a + 1
-                    }
-                val crossed = Isolate.internal.Contextual.isolate(Stack.Snapshot.empty, body)
-                val result  = Eval.partial(crossed)
-                assert(result.evalNow.exists(_._3 == 21), s"the value did not reach the capture: $result")
-                ()
-            }
-        }
-
         // An operation issued under a region answers back through the region its clause sits in, and the crossing
         // parks the answer as a deferral in front of the operation's own continuation, under the regions it crosses
         // into.

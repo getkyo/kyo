@@ -345,6 +345,40 @@ class BracketTest extends AnyFreeSpec:
     }
 
     "captured continuations" - {
+        // A single-shot clause's dumped regions travel with the continuation and close at their own end where it
+        // resumes: the release runs before the step that follows the bracket, not at the handler's end.
+        "a continuation resumed once in tail position releases before the step after the bracket" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask =
+                Bracket.ensuring(_ => discard(log += "release"))(ask.map { x => log += "body"; x })
+                    .map { x => log += "after"; x }
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1), b => b)
+            assert(r.eval == 1)
+            assert(log.toList == List("body", "release", "after"))
+        }
+
+        "a continuation resumed once with a pending answer releases before the step after the bracket" in {
+            val log             = ListBuffer[String]()
+            val body: Int < Ask =
+                Bracket.ensuring(_ => discard(log += "release"))(ask.map { x => log += "body"; x })
+                    .map { x => log += "after"; x }
+            val r: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => Effect.defer(1).map(v => cont(v)), b => b)
+            assert(r.eval == 1)
+            assert(log.toList == List("body", "release", "after"))
+        }
+
+        "a single-shot clause resuming a second time is refused at the released bracket" in {
+            var releases        = 0
+            val body: Int < Ask =
+                Bracket(Effect.defer(7))(a => ask.map(x => a + x))((_, _) => releases += 1)
+            val r: Int < Any =
+                ArrowEffect.handleCont(Tag[Ask], body)([C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)), b => b)
+            val ex = intercept[Closed](r.eval)
+            assert(ex.getMessage.contains("released"))
+            assert(releases == 1)
+        }
+
         "a captured continuation resumed in the clause completes the bracket there" in {
             var seen            = Maybe.empty[Maybe[Throwable]]
             val body: Int < Ask =
@@ -520,7 +554,7 @@ class BracketTest extends AnyFreeSpec:
                 Bracket(Effect.defer(7)) { a =>
                     ask.map(x => a + x)
                 }((_, outcome) => discard(outcomes += outcome))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
@@ -740,7 +774,7 @@ class BracketTest extends AnyFreeSpec:
                         a + x
                     }
                 }((_, outcome) => discard(outcomes += outcome))
-            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any = ArrowEffect.handleContRepeated(Tag[Ask], body)(
                 [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x * 100 + y)),
                 b => b
             )
@@ -998,7 +1032,7 @@ class BracketTest extends AnyFreeSpec:
             var released = List.empty[Int]
             val v        = Bracket(ask)(r => r * 10)((r, _) => released :+= r)
             val r        =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
                     a => a
                 )
@@ -1377,7 +1411,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => if a == 20 then throw Boom else a + r)
                 }((_, o) => outcome = Maybe(o))
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
@@ -1394,7 +1428,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => a + r)
                 }((r, _) => events :+= s"release $r")
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Absent
@@ -1410,7 +1444,7 @@ class BracketTest extends AnyFreeSpec:
                     ask.map(a => if a == 20 then throw Boom else a + r)
                 }((_, o) => outcome = Maybe(o))
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Maybe(-1)
@@ -1422,7 +1456,7 @@ class BracketTest extends AnyFreeSpec:
         "a recovering multi-shot clause declining lets the failure through" in {
             val v     = Bracket(Effect.defer(1))(r => ask.map(a => if a == 20 then throw Boom else a + r))((_, _) => ())
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Absent
@@ -1433,7 +1467,7 @@ class BracketTest extends AnyFreeSpec:
         "a recovering multi-shot clause answers a throw raised while its input is built" in {
             def boomInput: Int < Ask = throw Boom
             val twice                =
-                ArrowEffect.handleCont(Tag[Ask], boomInput)(
+                ArrowEffect.handleContRepeated(Tag[Ask], boomInput)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a,
                     _ => Maybe(-2)
@@ -1449,7 +1483,7 @@ class BracketTest extends AnyFreeSpec:
                     r * 10
                 }((r, _) => events :+= s"release $r")
             val thrice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
@@ -1471,7 +1505,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((r, _) => events :+= s"release $r")
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
@@ -1491,7 +1525,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((_, _) => closed = true)
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
@@ -1512,7 +1546,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((_, _) => closed = true)
             val branches =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(1).map(a => cont(2).map(b => cont(3).map(c => a + b + c))),
                     a => a
                 )
@@ -1534,7 +1568,7 @@ class BracketTest extends AnyFreeSpec:
                     }((_, _) => events :+= "release inner")
                 }((_, _) => events :+= "release outer")
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
@@ -1739,7 +1773,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((_, _) => ())
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )
@@ -1779,7 +1813,7 @@ class BracketTest extends AnyFreeSpec:
             var seen         = List.empty[String]
             val v: Int < Any =
                 Bracket(Effect.defer(1)) { r =>
-                    ArrowEffect.handleCont(
+                    ArrowEffect.handleContRepeated(
                         Tag[Ask],
                         ask.map { a =>
                             seen :+= (if closed then s"branch $a after release" else s"branch $a")
@@ -1795,11 +1829,9 @@ class BracketTest extends AnyFreeSpec:
             assert(closed)
         }
 
-        // Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
-        /*
         "a recovering multi-shot clause releases once at its end" in {
             var events = List.empty[String]
-            val v =
+            val v      =
                 Bracket(Effect.defer(1)) { r =>
                     ask.map(a => a + r)
                 }((r, _) => events :+= s"release $r")
@@ -1812,16 +1844,13 @@ class BracketTest extends AnyFreeSpec:
             assert(twice.eval == 32)
             assert(events == List("release 1"))
         }
-         */
 
-        // Disabled: needs ArrowEffect.handleContRepeated, which this kernel does not provide.
-        /*
         // Every resumption re-enters the region, and the re-entered region repeats as the outer one does: a bracket
         // acquired inside one resumption and captured by an inner occurrence's continuation is held across that
         // clause's resumptions and released where the re-entered region ends, before the outer clause resumes again.
         "a bracket inside a re-entered region is released where that region ends, before the next resumption" in {
             var events = List.empty[String]
-            val v =
+            val v      =
                 ask.map { a =>
                     Bracket(Effect.defer(a)) { r =>
                         ask.map { b =>
@@ -1838,7 +1867,6 @@ class BracketTest extends AnyFreeSpec:
             assert(twice.eval == 120)
             assert(events == List("use 10 10", "use 10 20", "release 10", "use 20 10", "use 20 20", "release 20"))
         }
-         */
 
         "a branch that throws after another ended tells the release it failed" in {
             var events             = List.empty[String]
@@ -1854,7 +1882,7 @@ class BracketTest extends AnyFreeSpec:
                     }
                 }((r, outcome) => events :+= s"release $r ${outcome.exists(_ eq boom)}")
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(-1).map(b => a + b)),
                     a => a
                 )
@@ -1875,7 +1903,7 @@ class BracketTest extends AnyFreeSpec:
                     }((_, _) => events :+= "release inner")
                 }((_, _) => events :+= "release outer")
             val twice =
-                ArrowEffect.handleCont(Tag[Ask], v)(
+                ArrowEffect.handleContRepeated(Tag[Ask], v)(
                     [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                     a => a
                 )

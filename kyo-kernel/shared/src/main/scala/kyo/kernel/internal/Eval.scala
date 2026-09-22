@@ -109,8 +109,14 @@ import scala.annotation.tailrec
                                 val atTop = idx == stack.depth - 1
                                 if !atTop then Debugger.onForeign(kyo, stack.handler(stack.depth - 1))
                                 stack.handler(idx) match
+                                    // Single-shot (the default): the dumped regions travel with the continuation and close at their own end
+                                    // where the clause resumes it, and the remainder is owed to this region, which drains it at its exit if
+                                    // the clause never resumed (settled xor drained, as a peel's). Repeated: the dumped regions are held and
+                                    // released once at this region's end, so every resumption runs against the live resource.
                                     case handler: Handler.ContHandler[IX, OX, EX, C, Y, S2] @unchecked =>
-                                        val entries      = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo)
+                                        val repeated = handler.repeated
+                                        val entries  = if atTop then Stack.Snapshot.empty else dumped(stack, idx, kyo, escaping = !repeated)
+                                        if !repeated && !entries.isEmpty then stack.oweRemainders(idx, Chunk(entries))
                                         val continuation =
                                             if atTop then kyo.cont.chain(contA.chain(contB))
                                             else kyo.crossing(entries, contA.chain(contB))
@@ -482,20 +488,22 @@ import scala.annotation.tailrec
 
         // A dropped remainder (its region ended without resuming it) is drained here, each release resolved against the
         // state its snapshot carried since no entry is live; a throw is reported on a clean end, suppressed on an unwind.
+        // Newest first, as every drain runs: the latest remainder before the earlier ones, and inside each the innermost
+        // region before the ones that enclosed it.
         def drainRemainders(snapshots: Chunk[Stack.Snapshot], failure: Maybe[Throwable]): Unit =
-            var s = 0
-            while s < snapshots.size do
+            var s = snapshots.size - 1
+            while s >= 0 do
                 val entries = snapshots(s)
-                var i       = 0
-                while i < entries.regions do
+                var i       = entries.regions - 1
+                while i >= 0 do
                     entries.releases(i).capture(entries.state(i)).run(failure) { t =>
                         failure match
                             case Present(ex) => if t ne ex then ex.addSuppressed(t)
                             case Absent      => Report.unhandled(t)
                     }
-                    i += 1
+                    i -= 1
                 end while
-                s += 1
+                s -= 1
             end while
         end drainRemainders
 

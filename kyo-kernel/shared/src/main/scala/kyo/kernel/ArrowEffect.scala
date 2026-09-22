@@ -71,11 +71,13 @@ object ArrowEffect:
 
     /** Answers an arrow effect by handing the clause the operation's input and the rest of the computation as an [[Arrow]].
       *
-      * Each occurrence is answered independently. Never applying the continuation abandons the remainder (an early exit); applying it more
-      * than once is supported, the regions this handler dumps into it moving their releases to this region, which runs them once where it
-      * ends, so every resumption runs against the live resource. The rows place the clause inside the region it serves (result at
-      * `E & S & S2`), so an `E` operation the clause performs is answered by this same handler: it is re-entrant.
-      * The continuation carries [[Region.NoEscape]], confining it to the clause.
+      * Each occurrence is answered independently. The clause applies the continuation at most once: the regions this handler dumps into it
+      * travel with it and close at their own end where it resumes, so a bracket inside the handled computation releases in place, before the
+      * steps that follow it. Never applying the continuation abandons the remainder (an early exit), and this region drains what it owed at
+      * its end. Applying it a second time is refused at the first region it re-enters, as a use after release; a clause that resumes more
+      * than once uses [[handleContRepeated]]. The rows place the clause inside the region it serves (result at `E & S & S2`), so an `E`
+      * operation the clause performs is answered by this same handler: it is re-entrant. The continuation carries [[Region.NoEscape]],
+      * confining it to the clause.
       */
     inline def handleCont[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
         inline effectTag: Tag[E],
@@ -153,6 +155,96 @@ object ArrowEffect:
             case ex if !IsFatal(ex) => recover(ex).getOrElse(throw ex)
         end try
     end handleCont
+
+    /** [[handleCont]] for a clause that may apply its continuation more than once.
+      *
+      * The regions this handler dumps into the continuation are held rather than carried: a region that discharges exactly once, a bracket's
+      * release, would otherwise fire when the first resumption ends its extent, leaving later resumptions running against something already
+      * released. Held, every resumption runs against the live resource and the releases run once, where this region ends, after the steps
+      * that follow the bracket inside each resumption. Only for a clause that really does resume more than once: holding keeps the
+      * obligation longer than a single-shot clause needs.
+      */
+    inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape)
+    )(using inline _frame: Frame): A < (S & S2) =
+        handleContRepeated(effectTag, v)(handle, a => a)
+
+    /** [[handleContRepeated]] with a `done` arm transforming the result when the handled computation completes. */
+    @nowarn("msg=anonymous")
+    inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        v: A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
+        inline done: A => B < (S & S2)
+    )(using inline _frame: Frame): B < (S & S2) =
+        v match
+            case _: Pending[?, ?] =>
+                val h =
+                    new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                        def tag = effectTag
+                        // each application of the continuation re-enters the region, so the clause's pending work between
+                        // resumptions is never in the registers a later occurrence captures
+                        val reentered                                             = Handler.reentered(this)
+                        def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                            Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
+                        def onDone(state: Unit, v0: A) = done(v0)
+                        override def repeated          = true
+
+                new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                    override def frame = _frame
+                    def value          = v
+                    def handler        = h
+                    def state          = ()
+                    def cont           = Arrow.id
+                end new
+            case _ => done(Nested.unnest(v))
+        end match
+    end handleContRepeated
+
+    /** [[handleContRepeated]] with a `recover` arm: a failure of the handled computation is offered to `recover`, which answers with a
+      * replacement or declines, letting the failure propagate.
+      */
+    @nowarn("msg=anonymous")
+    inline def handleContRepeated[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](
+        inline effectTag: Tag[E],
+        inline v: => A < (E & S)
+    )(
+        inline handle: [C] => (I[C], Arrow[O[C], A, E & S & S2 & Region.NoEscape]) => A < (E & S & S2 & Region.NoEscape),
+        inline done: A => B < (S & S2),
+        inline recover: Throwable => Maybe[B < (S & S2)]
+    )(using inline _frame: Frame): B < (S & S2) =
+        try
+            val v0 = v
+            v0 match
+                case _: Pending[?, ?] =>
+                    val h =
+                        new Handler.ContHandler[I, O, E, A, B, S & S2]:
+                            def tag                                                   = effectTag
+                            val reentered                                             = Handler.reentered(this)
+                            def run[X](input: I[X], next: Arrow[O[X], A, E & S & S2]) =
+                                Region.discharge(handle[X](input, Handler.reentering[I, O, E, A, S & S2, X](next, reentered)))
+                            def onDone(state: Unit, v0: A)                     = done(v0)
+                            override def onRecover(state: Unit, ex: Throwable) = recover(ex)
+                            override def repeated                              = true
+
+                    new Pending.HandleArrow[Unit, E, A, B, B, S & S2]:
+                        override def frame = _frame
+                        def value          = v0
+                        def handler        = h
+                        def state          = ()
+                        def cont           = Arrow.id
+                    end new
+                case _ =>
+                    done(Nested.unnest(v0))
+            end match
+        catch
+            case ex if !IsFatal(ex) => recover(ex).getOrElse(throw ex)
+        end try
+    end handleContRepeated
 
     /** Answers an arrow effect with a clause handed the operation's input alone, taking a [[Loop.Outcome]] back: `Loop.continue` with an
       * answer resumes the region, `Loop.done` ends it with a result.

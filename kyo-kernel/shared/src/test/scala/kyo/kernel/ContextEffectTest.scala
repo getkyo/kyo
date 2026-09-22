@@ -430,7 +430,7 @@ class ContextEffectTest extends AnyFreeSpec:
             val body: Int < (Ask & Say) =
                 hooked(log, "outer", 1)(hooked(log, "inner", 2)(say("s").map(_ => 0)).map(a => ask.map(_ + a)))
             val handledSay: Int < Ask = ArrowEffect.handleCont(Tag[Say], body)([C] => (_, cont) => cont(()), a => a)
-            val twice: Int < Any      = ArrowEffect.handleCont(Tag[Ask], handledSay)(
+            val twice: Int < Any      = ArrowEffect.handleContRepeated(Tag[Ask], handledSay)(
                 [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
                 a => a
             )
@@ -457,10 +457,13 @@ class ContextEffectTest extends AnyFreeSpec:
         def answerAsk[A, S](value: Int)(v: A < (Ask & S)): A < S =
             ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
-        "a crossing resumed in a nested eval inside the clause is released once, where the owner ends" in {
+        // A region resumed on another evaluator stack is ended there and drained again by the handler that owed it, so
+        // the release under it is a bracket's, whose cell fires once; a raw hook would log twice.
+        "a crossing resumed in a nested eval inside the clause is released once, where it resumes" in {
             val log             = ListBuffer[String]()
-            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
+            val body: Int < Ask =
+                Bracket.ensuring(failure => discard(log += (if failure.isEmpty then "done cfg 1" else "release cfg 1")))(ask.map(_ + 1))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )
@@ -492,7 +495,7 @@ class ContextEffectTest extends AnyFreeSpec:
         "each shot re-establishes a hooked region and completes it before the clause continues" in {
             val log             = ListBuffer[String]()
             val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
+            val r: Int < Any    = ArrowEffect.handleContRepeated(Tag[Ask], body)(
                 [C] =>
                     (_, cont) =>
                         cont(1).map { a =>
@@ -597,8 +600,9 @@ class ContextEffectTest extends AnyFreeSpec:
 
         "a crossing resumed in a nested eval inside the clause completes its binding there" in {
             val log             = ListBuffer[String]()
-            val body: Int < Ask = hooked(log, "cfg", 1)(ask.map(_ + 1))
-            val r: Int < Any    = ArrowEffect.handleCont(Tag[Ask], body)(
+            val body: Int < Ask =
+                Bracket.ensuring(failure => discard(log += (if failure.isEmpty then "done cfg 1" else "release cfg 1")))(ask.map(_ + 1))
+            val r: Int < Any = ArrowEffect.handleCont(Tag[Ask], body)(
                 [C] => (_, cont) => Region.discharge(answerAsk(0)(cont(41))).eval + 1,
                 a => a
             )
