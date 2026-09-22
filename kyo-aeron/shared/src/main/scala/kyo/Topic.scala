@@ -155,7 +155,9 @@ object Topic:
       *   the computation result within `Async`, aborting [[TopicTransportFailedException]] on a failed connect
       */
     def run[A, S](aeronDir: Path)(v: A < (Topic & S))(using Frame): A < (Async & Abort[TopicTransportFailedException] & S) =
-        AeronPlatform.external(aeronDir.unsafe.show).map { runtime =>
+        // `ensureMap`, not `map`: the connect completes by producing a connected client, and its close must be owed in
+        // the step it arrives. A `map` polls for a stop first, which would drop the client with nothing to close it.
+        AeronPlatform.external(aeronDir.unsafe.show).ensureMap { runtime =>
             Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                 runWith(runtime.transport)(v)
             }

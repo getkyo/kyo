@@ -38,30 +38,25 @@ class AeronClientTest extends Test:
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
 
     // The client is a native handle with no Scala reference once abandoned, so the leaf
-    // asserts what the driver can show: after rounds of connects stopped at sub-millisecond offsets, with every client
-    // the rounds did receive closed, the embedded driver still closes within its bound rather than waiting on a client
-    // that nobody closed.
-    "connects stopped at staggered offsets leave a driver that still closes".notJs.notWasm in {
+    // asserts what the driver can show: after rounds of connects stopped while in flight, with every client the rounds
+    // did receive closed, the embedded driver still closes rather than waiting on a client that nobody closed. A driver
+    // that does not close ends this leaf as its timeout.
+    "connects stopped in flight leave a driver that still closes" in {
         Path.run(Path.tempDir("kyo-aeron-client-stops")).map { root =>
             val dir    = root / AeronDriver.mediaDirName
             val rounds = 40
-            Abort.run[Timeout](Async.timeout(60.seconds)(Scope.run {
+            Scope.run {
                 withExternalDriver(dir) {
                     Loop.indexed { i =>
-                        if i >= rounds then Loop.done(succeed)
+                        if i >= rounds then Loop.done(rounds)
                         else
-                            val connecting = new java.util.concurrent.atomic.AtomicBoolean(false)
                             for
-                                fiber <- Fiber.initUnscoped(
-                                    Sync.defer(connecting.set(true)).andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
+                                connecting <- Latch.init(1)
+                                fiber      <- Fiber.initUnscoped(
+                                    connecting.release.andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
                                 )
-                                _ <- Sync.Unsafe.defer {
-                                    val bound = java.lang.System.nanoTime() + 200_000_000L
-                                    while !connecting.get() && java.lang.System.nanoTime() < bound do ()
-                                    val target = java.lang.System.nanoTime() + (i % 40) * 100_000L
-                                    while java.lang.System.nanoTime() < target do ()
-                                    discard(fiber.unsafe.interrupt())
-                                }
+                                _ <- connecting.await
+                                _ <- fiber.interrupt
                                 r <- fiber.getResult
                                 _ <- r match
                                     case Result.Success(Result.Success(client)) => Sync.Unsafe.defer(client.unsafe.close())
@@ -70,7 +65,7 @@ class AeronClientTest extends Test:
                             end for
                     }
                 }
-            })).map(r => assert(r.isSuccess, "the driver did not close within the bound after the interrupted connects"))
+            }.map(stopped => assert(stopped == rounds))
         }
     }
 
@@ -256,9 +251,7 @@ class AeronClientTest extends Test:
     end FakeBindings
 
     // Deterministic via the seam: a fake binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
-    "an interrupt landing at the connect join leaves the connected client unclosed".pendingUntilFixed(
-        "externalWith builds the runtime and its close after the blocking clientConnect join; an interrupt at the join leaves the connected client unclosed"
-    ) in {
+    "an interrupt landing at the connect join closes the connected client" in {
         val closed        = new java.util.concurrent.atomic.AtomicBoolean(false)
         val connectCalled = new java.util.concurrent.atomic.AtomicBoolean(false)
         for

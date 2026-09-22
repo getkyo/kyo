@@ -1151,11 +1151,12 @@ class ActorTest extends kyo.test.Test[Any]:
     }
 
     "resource safety under interruption" - {
-        // This is the `PubSub.subscribe` window, pinned through a raw actor. The reply-promise probe lands the stop
-        // deterministically: an `onComplete` registered after the caller parked fires LIFO before the caller's resume.
-        "a subscriber interrupted at the ask reply is left in the actor's set".pendingUntilFixed(
-            "a subscriber adds via actor.ask and registers its removal with Scope.ensure only after the reply resumes; an interrupt in that window leaves it in the set"
-        ) in {
+        // This is the `PubSub.subscribe` window, pinned through a raw actor. The actor has added the subscriber by the
+        // time it replies, and a caller stopped at that reply never runs another step, so the removal has to be
+        // registered before the ask, as `PubSub.subscribe` does; removing a subscriber that was never added is a no-op.
+        // The reply-promise probe lands the stop deterministically: an `onComplete` registered after the caller parked
+        // fires LIFO before the caller's resume.
+        "a subscriber that registers its removal before the ask is not left in the set when stopped at the reply" in {
             Scope.run {
                 for
                     set   <- AtomicRef.init(Set.empty[Int])
@@ -1164,7 +1165,7 @@ class ActorTest extends kyo.test.Test[Any]:
                         gate.await.andThen(set.updateAndGet(_ + msg.id)).andThen(msg.replyTo.send(())).andThen(Loop.continue)
                     })
                     subscriber <- Fiber.initUnscoped(
-                        Scope.run(actor.ask(Sub(1, _)).andThen(Scope.ensure(set.updateAndGet(_ - 1).unit)))
+                        Scope.run(Scope.ensure(set.updateAndGet(_ - 1).unit).andThen(actor.ask(Sub(1, _))))
                     )
                     _ <- assertEventually(Sync.defer(actor.inFlightReplies.nonEmpty))
                     reply = actor.inFlightReplies.head
@@ -1172,8 +1173,10 @@ class ActorTest extends kyo.test.Test[Any]:
                     _ <- reply.onComplete(_ => subscriber.interrupt.unit)
                     _ <- gate.release
                     _ <- subscriber.getResult
-                    n <- set.get
-                yield assert(n.isEmpty, s"the subscriber stayed in the set after being interrupted at the ask reply: $n")
+                    // Awaited, not read once: the interrupt spawns the scope's drain without waiting for it, so the
+                    // removal can land after `getResult` returns.
+                    _ <- assertEventually(set.get.map(_.isEmpty))
+                yield succeed
             }
         }
     }

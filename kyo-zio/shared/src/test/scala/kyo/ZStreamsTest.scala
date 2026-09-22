@@ -265,7 +265,7 @@ class ZStreamsTest extends kyo.test.Test[Any]:
                 // finalizer, so the interrupt cannot land before the finalizer is in place.
                 fiber <- zioStream.tap(_ => started.succeed(())).take(5).runCollect.fork
                 // Verify initial state is false
-                _      = assert(!streamFinalized.isCompleted)
+                _ = assert(!streamFinalized.isCompleted)
                 _      <- started.await
                 result <- fiber.interrupt
                 // Awaited, not read: a finalizer that was registered trips this, and one that was never registered

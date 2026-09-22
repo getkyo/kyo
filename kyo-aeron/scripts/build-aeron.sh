@@ -33,14 +33,20 @@ AERON_VERSION="1.51.1"
 AERON_TAG="$AERON_VERSION"
 
 src="${AERON_SRC:-${TMPDIR:-/tmp}/kyo-aeron-src}"
-if [ ! -d "$src/.git" ]; then
+clone_src() {
     rm -rf "$src"
     git clone --depth 1 --branch "$AERON_TAG" https://github.com/real-logic/aeron.git "$src"
-fi
+}
+# `[ -d "$src/.git" ]` is not a usable-clone check: the default $src lives under $TMPDIR, which the OS
+# reaps to a skeleton (.git/ survives with HEAD, config and index gone), and every git command below
+# then fails with no way back. Probe the clone instead, as kyo-net's build-boringssl.sh does.
+git -C "$src" rev-parse --git-dir >/dev/null 2>&1 || clone_src
 # Re-point a reused cache to the pinned tag: a $src left over from a different AERON_TAG would
 # otherwise silently build the wrong Aeron version (then statically linked with no further check).
-git -C "$src" fetch --depth 1 origin tag "$AERON_TAG"
-git -C "$src" checkout -q "$AERON_TAG"
+# The checkout is forced because the same reaper removes aged files from the work tree, and an
+# unforced checkout of the tag already checked out restores none of them.
+{ git -C "$src" fetch --depth 1 origin tag "$AERON_TAG" && git -C "$src" checkout -q -f "$AERON_TAG"; } \
+    || { clone_src; git -C "$src" checkout -q -f "$AERON_TAG"; }
 
 dest="$here/../build/aeron/staged/$osArch"
 rm -rf "$dest"

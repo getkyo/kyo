@@ -386,7 +386,14 @@ elif ! command -v cs >/dev/null 2>&1; then
     else
         cs_url="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
     fi
-    curl -fsSL "\$cs_url" | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
+    # Without cs there is no JDK and no sbt, and a failed download would otherwise surface only as a
+    # missing sbt after the staging steps. A pipeline hides its upstream status from set -e, so the
+    # launcher lands in a file first, and GitHub's transient 5xx answers are retried. No backticks in
+    # this comment: the heredoc is unquoted, so the host shell would run them.
+    cs_tmp=\$(mktemp)
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "\$cs_tmp" "\$cs_url" \
+        || { echo "build.sh: coursier launcher download failed: \$cs_url" >&2; exit 1; }
+    gzip -d < "\$cs_tmp" > /usr/local/bin/cs && chmod +x /usr/local/bin/cs && rm -f "\$cs_tmp"
 fi
 if command -v cs >/dev/null 2>&1; then
     eval "\$(cs java --jvm corretto:25 --env)"
