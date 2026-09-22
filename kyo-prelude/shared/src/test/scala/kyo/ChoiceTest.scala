@@ -84,7 +84,7 @@ class ChoiceTest extends kyo.test.Test[Any]:
         end try
     }
 
-    "large number of suspensions".notNative.notWasm in {
+    "large number of suspensions" in {
         // #208: suspensions run on the evaluator's loop, not the call stack, so this depth does not overflow.
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do

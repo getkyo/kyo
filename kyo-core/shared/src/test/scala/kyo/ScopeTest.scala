@@ -1050,9 +1050,8 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
 
         // A fatal error leaves a finalizer by a different path than an ordinary failure; the releases registered
-        // before it are owed either way. JVM-only: it needs worker-thread semantics
-        // single-worker Native and single-threaded JS do not provide.
-        "a finalizer that throws a fatal error does not stop the ones registered before it".onlyJvm in {
+        // before it are owed either way. It needs worker-thread semantics single-threaded JS and Wasm do not provide.
+        "a finalizer that throws a fatal error does not stop the ones registered before it".notJs.notWasm in {
             for
                 ran <- AtomicRef.init(Chunk.empty[String])
                 _   <- Abort.run[Any] {

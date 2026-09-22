@@ -958,7 +958,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     // interrupts, so an interrupt of the caller cascades into the carrier and abandons the finalizer partway, leaving
     // the transport, exchange, progress channels and inbound handlers uncleaned. Blocking the transport-close step
     // holds the carrier mid-finalizer.
-    "closing the handler finishes its finalizer even when the caller is interrupted mid-close".notJs.notWasm in {
+    "closing the handler finishes its finalizer even when the caller is interrupted mid-close" in {
         for
             closeEntered    <- Latch.init(1)
             blockGate       <- Latch.init(1)
@@ -983,7 +983,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     // is issued while the finalizer is held at transport.close (writerChannel already closed, done promise not yet),
     // so its send loses deterministically. requestEnqueued completing is the barrier that the put has been decided
     // before the gate is released.
-    "a call whose send loses to close(0) sees Closed and leaves the handler Closed".notJs.notWasm in {
+    "a call whose send loses to close(0) sees Closed and leaves the handler Closed" in {
         for
             closeEntered    <- Latch.init(1)
             blockGate       <- Latch.init(1)
@@ -1009,7 +1009,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             case other => fail(s"expected (Closed, Closed) during and after close, got $other")
     }
 
-    "an in-flight call registered before close(0) drains as JsonRpcLifecycleError(Close)".notJs.notWasm in {
+    "an in-flight call registered before close(0) drains as JsonRpcLifecycleError(Close)" in {
         Fiber.Promise.init[Unit, Any].map { gate =>
             val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }
             JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -1034,7 +1034,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     // The receive side, reachable only through a custom transport whose incoming aborts Closed (the shipped transports
     // end cleanly). The Exchange reader takes that Closed as a transport error and completes the done promise with it
     // unless the receive stream treats it as an orderly end.
-    "a custom transport whose incoming aborts Closed leaves the handler Closed, not a transport error".notJs.notWasm in {
+    "a custom transport whose incoming aborts Closed leaves the handler Closed, not a transport error" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             val custom = new JsonRpcTransport:
                 def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = ta.send(env)
