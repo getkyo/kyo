@@ -47,7 +47,7 @@ val withCleanup: String < Sync =
 
 ### Adding fibers with `Async`
 
-When a computation might park (sleep, wait on a fiber, await I/O), reach for `Async`. It extends `Sync` with the fiber-aware scheduler. The same `defer`, `sleep`, `delay`, and `timeout` operators all live on `Async`, plus the structured-concurrency combinators in the next section.
+When a computation might park (sleep, wait on a fiber, await I/O), reach for `Async`. It extends `Sync` with the fiber-aware scheduler: alongside `defer`, `Async` adds `sleep`, `delay`, and `timeout`, plus the structured-concurrency combinators in the next section.
 
 ```scala
 val slow: Int < Async =
@@ -62,7 +62,7 @@ val infinite: Nothing < Async =
 
 `Async.timeout` requires a finite duration; an infinite duration is short-circuited and the underlying computation is returned unwrapped. `Async.timeoutWithError` lets you supply a custom error on expiry instead of `Timeout`.
 
-`Async.memoize` lazily evaluates a computation once and shares the result with all subsequent callers:
+`Async.memoize` lazily evaluates a computation and shares its first successful result with all subsequent callers; a failure clears the slot, so the next caller runs it again:
 
 ```scala
 import kyo.*
@@ -78,7 +78,7 @@ val cached: Int < (Async & Sync) =
 
 `Async.fromFuture(f)` lifts a `scala.concurrent.Future` into an `Async` computation, bridging existing Future-based code into the Kyo effect model.
 
-`Async.uninterruptible` runs a computation that interrupts cannot reach, so the protected portion completes even if an interrupt arrives. The interrupt is delivered after the protected computation returns, so the surrounding fiber is still cancellable.
+`Async.uninterruptible` runs a computation that interrupts cannot reach, so it runs to its end even if the caller is interrupted. The caller itself stays cancellable: an interrupt stops it waiting at once and runs its own finalizers, while the protected computation finishes on its own and its result goes nowhere. Anything the protected computation opens, it must release itself.
 
 ### Running an application
 
@@ -97,7 +97,7 @@ end Hello
 
 The `run` block accepts `A < (Async & Scope & Abort[Any])`. Multiple `run` blocks execute sequentially. `args: Chunk[String]` exposes the command-line arguments.
 
-> **Note:** `KyoApp.runAndBlock(timeout)(v)` exists for embedding Kyo inside a blocking integration (`main` calls a Future-returning library, you need a `Result`). It defeats the purpose of async execution, so reserve it for that bridging case.
+> **Note:** `KyoApp.runAndBlock(timeout)(v)` blocks the calling thread until `v` finishes, leaving `Sync` and `Abort[E | Timeout]` in the row. It exists for embedding Kyo inside a blocking integration. It defeats the purpose of async execution, so reserve it for that bridging case.
 
 For full integration outside an application entry point, `KyoApp.Unsafe.runAndBlock(timeout)(v): Result[Throwable, A]` runs a computation and produces a plain `Result`.
 
@@ -133,7 +133,7 @@ def slowSource(label: String): String < Async = ???
 
 `Async.raceFirst` completes as soon as any computation completes, success or failure. If one fails while another never completes, `raceFirst` returns the failure and interrupts the rest.
 
-The "when to reach for which" rule: use `race` when you want a successful answer from a redundant set of sources (replicated reads, load-balanced queries). Use `raceFirst` when you want the first observable outcome (a request bounded by a timeout fiber, a competition where any termination is decisive).
+Use `race` when you want a successful answer from a redundant set of sources (replicated reads, load-balanced queries). Use `raceFirst` when you want the first observable outcome (a request bounded by a timeout fiber, a competition where any termination is decisive).
 
 ```scala
 import kyo.*
@@ -149,7 +149,7 @@ val orderId: Long                      = ???
 def loadOrder(id: Long): Order < Async = ???
 ```
 
-> **Caution:** Both `race` and `raceFirst` are unbounded: every input runs concurrently with no admission control. With large input sequences, layer in `Meter.initSemaphore` or call `Async.gather(max)(...)` instead.
+> **Caution:** Both `race` and `raceFirst` are unbounded: every input runs concurrently with no admission control. With large input sequences, layer in `Meter.initSemaphore`, or use `Async.foreach` with a `concurrency` cap.
 
 ### Gathering bounded successful results
 
@@ -240,9 +240,7 @@ val safe: Fiber[Int, Any] < (Sync & Scope) = Fiber.init(compute)
 val raw: Fiber[Int, Any] < Sync = Fiber.initUnscoped(compute)
 ```
 
-Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResult`, `uninterruptible`, `interrupt`, `onComplete`, `onInterrupt`, `block`, and `safe`. `Fiber.Promise[E, A]` is the manually-completable variant: build one with `Fiber.Promise.init[E, A]`, call `succeed`, `fail`, `complete`, or `become` from another fiber. `Fiber.fromFuture(f)` converts a `scala.concurrent.Future` into a `Fiber`, bridging Future-returning APIs into fiber-managed code.
-
-> **Note:** `Fiber` is a low-level primitive; the public-facing recommendation is to write application code against `Async`'s structured combinators and reach for `Fiber.init` only when none of them fit.
+Fibers expose `get`, `getResult`, `use`, `useResult`, `map`, `flatMap`, `mapResult`, `uninterruptible`, `interrupt`, `interruptAwait`, `onComplete`, `onInterrupt`, and `block`. `Promise[A, S]` (exported at the top level) is the manually-completable variant: build one with `Promise.init[A, Abort[E]]` and call `succeed`, `fail`, `complete`, or `become` from another fiber. `Fiber.fromFuture(f)` converts a `scala.concurrent.Future` into a `Fiber`, bridging Future-returning APIs into fiber-managed code.
 
 ## Resource safety
 
@@ -312,7 +310,7 @@ def compute: Int < Sync = ???
 
 `Scope.run` discharges `Scope` and closes it when its body ends. Its result is delivered after every release has run, and a failure from the body is raised again after them, so the caller never observes a half-closed scope. Releases run in reverse registration order. A failing release is logged with `Log.error` and the rest still run, so a release can never mask the body's own result or error.
 
-A `Scope.run` nested inside another is its child: it closes at its own end, releasing its resources before the enclosing scope's own. `Scope.run(closeParallelism)` runs up to that many releases at once, for scopes holding many independent slow shutdowns such as connection pools. Releases still start in reverse order, but one may finish after a release registered before it.
+A `Scope.run` nested inside another is its child: it closes at its own end, releasing its resources before the enclosing scope's own. A run opened inside a forked branch or an unscoped fiber is a root instead, since that fiber can outlive the scope it was forked from. `Scope.run(closeParallelism)` runs up to that many releases at once, for scopes holding many independent slow shutdowns such as connection pools. Releases still start in reverse order, but one may finish after a release registered before it.
 
 ```scala
 val app: Unit < Async =
@@ -326,23 +324,23 @@ def serve: Unit < Async                 = ???
 
 ### Fibers and scopes
 
-`Fiber.init` ties the fiber to the enclosing scope as one of its releases. When the scope reaches it, the release interrupts the fiber, waits for it to stop, and then releases what the fiber registered, before moving on to anything registered ahead of the fiber. The combinators in [Structured concurrency](#structured-concurrency) fork the same way, and a resource acquired inside one of their branches belongs to the scope the combinator was called in.
+`Fiber.init` ties the fiber to the enclosing scope as one of its releases. When the scope reaches it, the release interrupts the fiber, waits for it to stop, and then releases what the fiber registered, before moving on to anything registered ahead of the fiber. The combinators in [Structured concurrency](#structured-concurrency) work differently: they join or interrupt their own branches before returning, and a resource acquired inside a branch registers directly on the scope the combinator was called in.
 
 Two cases need care:
 
-- **Interrupting a fiber does not wait for it.** `fiber.interrupt` returns once the interrupt is requested. When the caller must observe the fiber stopped, and its releases run, follow it with `fiber.getResult`.
-- **A fiber that outlives its scope cannot register on it.** A registration on a closed scope runs the release at once, detached, and fails the registering computation with `Closed`: the resource was released instead of leaked, but its user is told it no longer has one. This happens to `Fiber.initUnscoped` fibers that capture a scope, and it is the reason to prefer `Fiber.init`.
+- **Interrupting a fiber does not wait for it.** `fiber.interrupt` returns once the interrupt is requested. When the caller must observe the fiber stopped, use `fiber.interruptAwait`: it returns once the fiber has stopped and its brackets and nested `Scope.run`s have released. What a `Fiber.init` fiber registered directly on its scope is released when the enclosing scope reaches it.
+- **A fiber that outlives its scope cannot register on it.** A registration on a closed scope logs a warning, runs the release at once, detached, and panics the registering computation with `Closed`: the resource was released instead of leaked, but its user is told it no longer has one. This happens to `Fiber.initUnscoped` fibers that capture a scope, and it is the reason to prefer `Fiber.init`.
 
 ### Where the guarantee starts and stops
 
 `acquireRelease` registers the release in the same step that delivers the acquired value, so no interrupt can land between the two. The edges of that guarantee are specific:
 
 - **Only the returned value is covered.** If the acquire opens a socket and then a session, and is interrupted between them, the socket is the acquire's to clean up. Split it into two `acquireRelease` calls, one per resource.
-- **An acquire that joins a fiber or a promise is not covered.** An interrupt that lands after the join and before the acquiring fiber resumes drops the value with nothing registered. Register the release inside the fiber that produces the value, or continue from the join with `ensureMap`, which applies its function in the step the value arrives rather than after a preemption point as `map` does.
+- **An acquire that joins a fiber or a promise is not covered.** An interrupt that lands after the join and before the acquiring fiber resumes drops the value with nothing registered. Register the release inside the fiber that produces the value, so the value never travels unowned.
 - **`*Unscoped` constructors hand over a resource with nothing registered.** Between receiving it and registering a release, the caller is unprotected. Prefer the scoped constructor wherever one exists.
-- **Work that must finish once started goes in `Async.uninterruptible`.** An interrupt that arrives meanwhile is delivered after the protected computation returns.
+- **Work that must finish once started goes in `Async.uninterruptible`.** It runs to its end even if the caller is interrupted, but the interrupted caller stops waiting at once, so the protected work must release anything it opens itself.
 
-Under a handler that runs the rest of the computation more than once, such as `Choice.run`, a scope opened around the choice point is shared by every branch: each branch's registrations are kept, and all of them release once, after the last branch. A scope opened inside a branch closes at the end of that branch. [kyo-kernel's README](../kyo-kernel/README.md#bracket-acquire-use-release) covers the underlying bracket semantics, including why a computation resumed after its scope has closed is refused rather than run against released resources.
+Under a handler that runs the rest of the computation more than once, such as `Choice.run`, a scope opened around the choice point is shared by every branch: each branch's registrations are kept, and all of them release once, after the last branch. A scope opened inside a branch closes at the end of that branch. [kyo-kernel's README](../kyo-kernel/README.md#a-released-scope-entered-again) covers the underlying bracket semantics, including why a computation resumed after its scope has closed is refused rather than run against released resources.
 
 ## Talking between fibers
 
@@ -367,9 +365,9 @@ val example: Unit < (Async & Sync & Scope & Abort[Closed]) =
 
 `offer` and `poll` are non-blocking: `offer` returns `false` if the channel is full, `poll` returns `Absent` if empty.
 
-`put` and `take` park the fiber until space is available or an element arrives. `putBatch(values)` puts a sequence atomically (items from one `putBatch` are kept contiguous in the channel). `takeExactly(n)` blocks until at least `n` items can be taken.
+`put` and `take` park the fiber until space is available or an element arrives. `putBatch(values)` puts a sequence atomically (items from one `putBatch` are kept contiguous in the channel). `takeExactly(n)` parks until it has taken exactly `n` items.
 
-`drain` and `drainUpTo(max)` return all currently-buffered elements.
+`drain` returns every currently-buffered element without parking, and `drainUpTo(max)` returns at most `max` of them.
 
 `stream(maxChunkSize)` exposes the channel as `Stream[A, Abort[Closed] & Async]`. Use `streamUntilClosed` if you want a clean termination instead of a `Closed` failure on close.
 
@@ -403,7 +401,7 @@ val channel: Channel[Order] = ???
 val drained: Boolean < Async = channel.closeAwaitEmpty
 ```
 
-The "when to reach for which" rule: `close` when consumers should learn the source is gone now (shutdown on error); `closeAwaitEmpty` when consumers should finish the work already enqueued (graceful shutdown).
+Use `close` when consumers should learn the source is gone now (shutdown on error), and `closeAwaitEmpty` when they should finish the work already enqueued (graceful shutdown).
 
 ### Lock-free queues with overflow policies
 
@@ -426,7 +424,7 @@ val slide: Queue.Unbounded[Order] < (Sync & Scope) =
 
 > **Caution:** `Queue.Unbounded.init` can exhaust memory if producers outpace consumers indefinitely. Prefer `initDropping` or `initSliding` unless an external mechanism enforces a bound.
 
-Like `Channel`, `Queue` has the same `close` (drop any in-flight items, return remaining elements) vs `closeAwaitEmpty` (close to new offers and wait until all buffered elements have been consumed) distinction. Use `close` for immediate shutdown and `closeAwaitEmpty` for graceful draining.
+Like `Channel`, `Queue` has the same `close` (close at once and return the buffered elements) vs `closeAwaitEmpty` (close to new offers and wait until all buffered elements have been consumed) distinction. Use `close` for immediate shutdown and `closeAwaitEmpty` for graceful draining.
 
 ### Broadcast fan-out
 
@@ -522,7 +520,7 @@ def execute(w: Int): Unit < Sync = ???
 
 `Gate.Dynamic.init(parties)` is the variant where parties can join and leave between cycles.
 
-The "when to reach for which" rule: `Latch` is asymmetric (some release, others wait). `Gate` is symmetric (all parties pass together).
+`Latch` is asymmetric: some parties release, others wait. `Gate` is symmetric: all parties pass together.
 
 ### `Meter`: mutex, semaphore, rate limiter
 
@@ -607,7 +605,7 @@ val example: Unit < (Async & Sync) =
     }
 ```
 
-`signal.current` reads the current value (`Sync`). `signal.next` parks until the value changes (`Async`). `signal.streamCurrent` emits the current value and every subsequent change. `signal.streamChanges` emits only subsequent changes.
+`signal.current` reads the current value (`Sync`). `signal.next` parks until the value changes (`Async`). `signal.streamChanges` emits the current value, then each new value that differs from the last one emitted. `signal.streamCurrent` samples the current value repeatedly without waiting for a change, so it is a polling stream to bound with `take` or a schedule.
 
 > **Caution:** `Signal.streamChanges` may skip intermediate values under load. The stream guarantees latest-value semantics, not every-change-observed semantics. For capture-every-change cases use a `Channel` instead.
 
@@ -651,7 +649,7 @@ val counted: Long < (Async & Sync) =
     }
 ```
 
-The "when to reach for which" rule: pick `LongAdder` when many fibers increment and the value is read infrequently (request counters, hit counters). Pick `AtomicLong` when reads dominate or you need `cas` semantics. Choosing by name alone hides the trade-off: both look like counters, but `LongAdder` trades faster contended writes for slower reads (it must sum across stripes), while `AtomicLong` is the inverse.
+Pick `LongAdder` when many fibers increment and the value is read infrequently (request counters, hit counters). Pick `AtomicLong` when reads dominate or you need compare-and-set.
 
 ### Bounded caches and memoization
 
@@ -724,19 +722,23 @@ val withDeadline: Boolean < Sync =
 
 ### Scheduling recurring work
 
+Both functions start the loop on a background fiber and return that fiber at once. The fiber is unscoped: nothing stops it until the caller interrupts it, so tie it to a scope:
+
 ```scala
-val pollEverySec: Unit < (Async & Sync) =
-    Clock.repeatWithDelay(1.second)(checkHealth)
+val pollEverySec: Fiber[Unit, Any] < (Sync & Scope) =
+    Clock.repeatWithDelay(1.second)(checkHealth).map { fiber =>
+        Scope.ensure(fiber.interrupt).andThen(fiber)
+    }
 
 def checkHealth: Unit < (Async & Sync) = ???
 
-val tickOnSchedule: Unit < (Async & Sync) =
+val tickOnSchedule: Fiber[Unit, Any] < Sync =
     Clock.repeatAtInterval(1.second)(emitMetric)
 
 def emitMetric: Unit < (Async & Sync) = ???
 ```
 
-The "when to reach for which" rule: `repeatWithDelay(d)` runs the task, waits `d`, runs it again. A slow task pushes the next start out. `repeatAtInterval(d)` runs at fixed wall-clock intervals; if the task takes longer than the interval, the next invocation starts immediately (subsequent invocations may stack up). Pick deliberately.
+`repeatWithDelay(d)` runs the task, waits `d`, and runs it again, so a slow task pushes the next start out. `repeatAtInterval(d)` aims for fixed intervals between starts; a run that overruns its interval is followed immediately by the next, and runs never overlap.
 
 ### Deterministic time for tests
 
@@ -818,7 +820,7 @@ val name: String < (Sync & Abort[java.io.IOException]) =
 
 > **Note:** Console print methods return no `Abort` because the underlying Java `PrintStream` never throws. A write failure is silently captured; check it explicitly with `Console.checkErrors`.
 
-`Console.flush` flushes both stdout and stderr. `Console.withIn(lines)(v)` runs `v` with a stub that replays the provided lines as `readLine` input, useful in tests. `Console.withOut(v)` captures all print output from `v` into a buffer and returns it alongside the result.
+`flush` is a method on a `Console` value (reach it with `Console.use`), and the live console's `flush` flushes stdout. `Console.withIn(lines)(v)` runs `v` with a stub that replays the provided lines as `readLine` input, useful in tests. `Console.withOut(v)` captures all print output from `v` into a buffer and returns it alongside the result.
 
 `Console.let(c)(v)` runs `v` with `c` as the ambient console: useful for testing (capture output to a buffer) and for redirection.
 
@@ -867,7 +869,7 @@ For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; 
 
 ### `Log`
 
-`Log` is the ambient logger. `Log.live` is the default backend: a `ConsoleLogger` named `kyo.logs` at `warn` level. It writes `warn` and `error` to stderr (with stack traces to stderr) and `trace`, `debug`, and `info` to stdout. Each line is prefixed with a timestamp from the system clock. Log calls are async by default on JVM and Native: each call enqueues to a bounded background channel (capacity 4096) and returns without blocking; a daemon fiber drains the channel in FIFO order. `Log.flush: Unit < Async` suspends until the daemon has delivered every enqueued event. To force synchronous logging, set `-Dkyo.Log.asyncLogging=false`.
+`Log` is the ambient logger. `Log.live` is the default backend: a `ConsoleLogger` named `kyo.logs` at `warn` level, configurable with `-Dkyo.Log.defaultLevel` or `KYO_LOG_DEFAULTLEVEL`. At the default level, `trace`, `debug`, and `info` calls print nothing. It writes `warn` and `error` to stderr (with stack traces to stderr) and `trace`, `debug`, and `info` to stdout. Each line is prefixed with a timestamp from the ambient `Clock`, so time control applies to it. Log calls are async by default on JVM and Native: each call enqueues to a bounded background channel (capacity 4096) and returns without blocking; a daemon fiber drains the channel in FIFO order. `Log.flush: Unit < Async` suspends until the daemon has delivered every enqueued event. To force synchronous logging, set `-Dkyo.Log.asyncLogging=false`.
 
 ```scala
 import kyo.*
@@ -891,7 +893,7 @@ Three error types appear in `Abort` rows across the module:
 - `Interrupted`: marker for fiber interruption. Carries the frame where the interrupt was issued.
 - `Timeout`: produced by `Async.timeout(d)(v)` and `Fiber.block(duration)` on expiry. Carries the duration.
 
-`KyoApp.FailureException` is the wrapper thrown when an uncaught `Abort` value surfaces from a `runAndBlock` boundary, allowing callers to distinguish Kyo-originated failures from unexpected exceptions.
+`KyoApp.FailureException` wraps a non-`Throwable` `Abort` error that escapes an application's `run` block or `KyoApp.Unsafe.runAndBlock`, so it can travel as a `Throwable`; `KyoApp.Unsafe.runAndBlock` returns it inside its `Result`.
 
 Handle them per-effect with `Abort.run[Closed]`, `Abort.recover[Timeout]`, and so on:
 
@@ -940,7 +942,7 @@ val missing: Maybe[Counter] < Sync   = orders.findCounter("processsed") // Absen
 
 `findCounter`, `findGauge` and `findHistogram` answer `Absent` when nothing is registered at that name and never create anything, so a misspelled path fails visibly instead of becoming a brand-new zeroed instrument that an exporter publishes and a dashboard renders as a permanent flat line.
 
-`Stat.traceSpan(name, attributes)(v)` wraps a computation in a trace span exported via the registered `TraceExporter`. `Stat.traceListen(exporter)(v)` registers an exporter for the duration of the scope.
+`stats.traceSpan(name, attributes)(v)`, on a `Stat` scope, wraps a computation in a trace span exported via the registered `TraceExporter`. `Stat.traceListen(exporter)(v)` registers an exporter for the duration of the scope.
 
 ### `StreamCoreExtensions`
 
@@ -964,13 +966,11 @@ val bytes: Stream[Byte, Sync & Scope] =
     Stream.fromInputStream(source, bufferSize = 8.kib)
 ```
 
-`bufferSize` is a `ByteSize`, so a read buffer reads as `8.kib` rather than as a bare number. It is clamped to the range an array can
-address: `ByteSize.Zero` reads one byte at a time rather than spinning on a buffer that holds nothing, and anything above `Int.MaxValue`
-bytes reads through the largest buffer there is.
+`bufferSize` is a `ByteSize`, so a read buffer reads as `8.kib` rather than as a bare number. It is clamped to the range an array can address: `ByteSize.Zero` reads one byte at a time rather than spinning on a buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
 
 ### `StreamCompression` (JVM only)
 
-`StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. All four operators are available after importing `kyo.*`.
+`StreamCompression` is a JVM-only object (in `kyo-core/jvm`) that adds gzip and deflate operators directly to `Stream[Byte, Ctx]` via an extension. The operators are available after `import kyo.StreamCompression.*`.
 
 - `stream.deflate(...)` compresses bytes using raw deflate and returns `Stream[Byte, Scope & Sync & Ctx]`.
 - `stream.inflate(...)` decompresses raw deflate data and returns `Stream[Byte, Sync & Scope & Ctx & Abort[StreamCompressionException]]`.
@@ -1030,6 +1030,6 @@ The resulting type of the `run` block is `Chunk[Unit] < (Async & Scope & Abort[A
 
 ## Low-level extension points
 
-Every public type in kyo-core has a companion `Unsafe` object (`Sync.Unsafe`, `Async`-by-way-of `Fiber.Unsafe`, `Channel.Unsafe`, `Queue.Unsafe`, `Cache.Unsafe`, `Exchange.Unsafe`, `Console.Unsafe`, `Latch.Unsafe`, ...). The `Unsafe` API skips the effect-tracking layer and works against raw values, gated by an `AllowUnsafe` evidence import. Application code should use the safe surface; the `Unsafe` API is for library integrations, performance-critical inner loops, and bridging into non-Kyo code.
+Most kyo-core primitives have an `Unsafe` tier (`Sync.Unsafe`, `Fiber.Unsafe`, `Channel.Unsafe`, `Queue.Unsafe`, `Cache.Unsafe`, `Exchange.Unsafe`, `Console.Unsafe`, `Latch.Unsafe`, ...). The `Unsafe` API skips the effect-tracking layer and works against raw values, gated by an `AllowUnsafe` evidence import. Application code should use the safe surface; the `Unsafe` API is for library integrations, performance-critical inner loops, and bridging into non-Kyo code.
 
 Modules that provide their own application entry point, such as kyo-case-app, build on `kyo.internal.KyoAppRunner`, the trait `KyoApp` itself uses to register and run its `run` blocks.
