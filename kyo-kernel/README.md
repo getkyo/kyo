@@ -192,11 +192,12 @@ A required read cannot be reached without a binding: the effect is in the row, a
 
 A handler supplies the implementation an effect declaration left out, and removes that effect from the row as it does. Two words recur from here on. The function a handler runs at each operation is its clause. The computation a handler wraps, up to the result it answers with, is its region, and the run of a region from entry to end is its extent.
 
-Three shapes are provided: `handleCont` hands the clause the continuation, `handleLoop` hands it only the operation's input, and `handleLoopState` threads a value from one occurrence to the next. Reach for the most convenient shape that still gives you the control you need, because handing the clause less also gives the evaluator more room.
+Four shapes are provided: `handleCont` hands the clause the continuation to apply at most once, `handleContRepeated` hands it the continuation to apply as many times as it likes, `handleLoop` hands it only the operation's input, and `handleLoopState` threads a value from one occurrence to the next. Reach for the most convenient shape that still gives you the control you need, because handing the clause less also gives the evaluator more room.
 
 | Handler | What the clause gets, and when to reach for it |
 | --- | --- |
-| `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, more than once to branch, or never to discard the rest. |
+| `ArrowEffect.handleCont` | The input and the continuation as an `Arrow`. Apply it once to resume, or never to discard the rest. |
+| `ArrowEffect.handleContRepeated` | The same, for a clause that applies the continuation more than once: branching, backtracking, retrying the rest. |
 | `ArrowEffect.handleLoop` | Only the input. Control flows through `Loop.Outcome`: `Loop.continue(answer)` answers this occurrence, `Loop.done(value)` ends the region. |
 | `ArrowEffect.handleLoopState` | The input and a state value threaded from one occurrence to the next. |
 | `ContextEffect.handleInheritable` | A value bound for the extent, inherited unchanged by a fork (a computation started from inside this one to run on its own fiber or branch). |
@@ -221,11 +222,15 @@ assert(transformed.eval == 30)
 
 The second clause is the `done` clause, which transforms the region's final value; the shorter overload used for `Ask.run` earlier omits it and returns the body's own result.
 
-Because `cont` is a value rather than a stack frame, a clause can apply it more than once, or not at all:
+A clause that ignores `cont` entirely ends the computation at the operation, which is how early exit and short-circuiting are built.
+
+### `handleContRepeated`: applying the continuation more than once
+
+Because `cont` is a value rather than a stack frame, a clause can apply it more than once. `handleContRepeated` is the handler for that:
 
 ```scala
 val bothAnswers: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], Ask.get.map(_ * 10))(
+    ArrowEffect.handleContRepeated(Tag[Ask], Ask.get.map(_ * 10))(
         handle = [C] => (_, cont) => cont(1).map(x => cont(2).map(y => x + y)),
         done = a => a
     )
@@ -233,9 +238,9 @@ val bothAnswers: Int < Any =
 assert(bothAnswers.eval == 30)
 ```
 
-That is the whole mechanism behind non-determinism and backtracking: the region after the suspension ran twice, once per answer, and the clause combined the results. A clause that ignores `cont` entirely ends the computation at the operation, which is how early exit and short-circuiting are built.
+That is the whole mechanism behind non-determinism and backtracking: the region after the suspension ran twice, once per answer, and the clause combined the results.
 
-What makes the second application safe is who owns what the continuation carries. Between the handler and the suspension stand the regions the computation entered on the way, and some of them own a resource: a `Bracket`, covered under [failure and resources](#bracket-acquire-use-release), holds one and owes its release when its extent ends. Rather than each application of the continuation ending those regions, the handler holds what they owe and settles it once, where its own region ends. So every application runs against a live resource, and a bracket inside the region releases once however many times the clause resumed. The one thing a clause may not do with the continuation is keep it past its region; [a released scope, entered again](#a-released-scope-entered-again) is what happens to a continuation that outlives the region that owned it.
+The two handlers differ in who owns what the continuation carries. Between the handler and the suspension stand the regions the computation entered on the way, and some of them own a resource: a `Bracket`, covered under [failure and resources](#bracket-acquire-use-release), holds one and owes its release when its extent ends. Under `handleCont` those regions travel with the continuation and close at their own end where it resumes, so a bracket releases in place, before the steps that follow it. That is the right behavior for a continuation applied once, and it is why `handleCont` is single-shot: a second application would re-enter a bracket the first one already released. `handleContRepeated` holds what those regions owe instead of letting them close, so every application runs against a live resource and each release runs once, where the handler's own region ends. Holding keeps a resource open longer than a single resumption needs, so use `handleContRepeated` only for a clause that really resumes more than once. [A released scope, entered again](#a-released-scope-entered-again) shows both sides.
 
 ### `handleLoop`: one answer per occurrence
 
@@ -583,7 +588,7 @@ The connection exists and the registry knows about it, with nothing schedulable 
 
 `Bracket(acquire)(use)(release)` binds a resource for the extent of a use and runs the release exactly once, whichever way that extent ends. It is not exported into the `kyo` package, so it arrives through the `import kyo.kernel.*` at the top of this document; there is no `kyo.Bracket`.
 
-What the release is told follows from what [the continuation in hand](#handlecont-the-continuation-in-hand) established. A clause holds the rest of the computation as a value and may apply it more than once, so an extent can end more than once, with a different value each time, and there is no single value to hand a release. What it is told instead is the resource and how its extent ended, never what the use produced:
+What the release is told follows from what [applying the continuation more than once](#handlecontrepeated-applying-the-continuation-more-than-once) established. A clause holds the rest of the computation as a value and may apply it more than once, so an extent can end more than once, with a different value each time, and there is no single value to hand a release. What it is told instead is the resource and how its extent ended, never what the use produced:
 
 ```scala
 def session(c: Connection): Int < Ask =
@@ -622,13 +627,13 @@ The clause answered `-1` without ever applying `cont`, so the `Ask.get.map(_ + 1
 
 ### A released scope, entered again
 
-The mirror case, a clause that applies its continuation more than once with a bracket inside the region, looks like it should be one: each branch resumes code that closed over the resource, and the first branch reaches the end of the use. It is not, because the resource outlives that branch. As the section on `handleCont` said, the bracket's release moved to the handler holding the continuation, which settles it once where its own region ends. Both branches run against the live resource and the release runs once, after the second:
+A clause that applies its continuation more than once with a bracket inside the region is where the two handlers part. Under `handleContRepeated` the bracket's release moved to the handler holding the continuation, which settles it once where its own region ends. Both branches run against the live resource and the release runs once, after the second:
 
 ```scala
 val held = Connection()
 
 val branched: Int < Any =
-    ArrowEffect.handleCont(Tag[Ask], session(held))(
+    ArrowEffect.handleContRepeated(Tag[Ask], session(held))(
         handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
         done = a => a
     )
@@ -637,7 +642,22 @@ assert(branched.eval == 32)
 assert(held.closings == Chunk(Maybe.empty[Throwable]))
 ```
 
-What is refused is entering a scope after it has been released. The row rules that out for a clause's own continuation, so it is reachable only by a computation resumed after the region that owned it has ended. That is a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished: a peel (`ArrowEffect.handleFirst`, the `private[kyo]` form behind the stream pipes) answers one operation and hands the rest of the region out as a value. Rather than hand that resumption a released resource, re-entering the scope is refused with a `kyo.Closed`. It carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase. It says which of the two ways released the scope, an extent that ran to its end or an owning scope that exited with the remainder still unconsumed, and what to change in each case: acquire inside the branch, so every resumption gets a resource of its own; put the bracket outside the handler, so its extent is not what gets replayed; or consume a peeled remainder inside the scope that peeled it.
+Under `handleCont` the first branch runs the use to its end, which releases the connection, and the second branch would then run against a closed one. Rather than hand it a released resource, re-entering the bracket is refused with a `kyo.Closed`:
+
+```scala
+val once = Connection()
+
+val refused: Int < Any =
+    ArrowEffect.handleCont(Tag[Ask], session(once))(
+        handle = [C] => (_, cont) => cont(10).map(a => cont(20).map(b => a + b)),
+        done = a => a
+    )
+
+assert(Result.catching[Closed](refused.eval).isFailure)
+assert(once.closings == Chunk(Maybe.empty[Throwable]))
+```
+
+The same refusal reaches any computation resumed after the region that owned it has ended: a parked computation resumed a second time, or a peeled remainder consumed after the computation that peeled it finished. A peel (`ArrowEffect.handleFirst`, the `private[kyo]` form behind the stream pipes) answers one operation and hands the rest of the region out as a value. The `Closed` carries no stack trace at all, which is why its message names the `Bracket` call site the resource was opened at, and why the message explains itself rather than leaving the reader a frame to chase. It says which of the two ways released the scope, an extent that ran to its end or an owning scope that exited with the remainder still unconsumed, and what to change in each case: resume through `handleContRepeated`; acquire inside the branch, so every resumption gets a resource of its own; put the bracket outside the handler, so its extent is not what gets replayed; or consume a peeled remainder inside the scope that peeled it.
 
 ### `EffectTrace`: what a failure carries out
 
