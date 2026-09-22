@@ -24,7 +24,8 @@ class CapabilityProbeReportTest extends Test:
 
     "the loader's own tag wins over the derived one" in {
         // The loader is the only side that knows the libc flavour, so its tag names the artifact it searched for.
-        val thrown = new FfiLoadError.LibraryNotFound("kyonet_posix_uring", Chunk("bundled resource"), "not found", null, "linux-musl-x86_64")
+        val thrown =
+            new FfiLoadError.LibraryNotFound("kyonet_posix_uring", Chunk("bundled resource"), "not found", null, "linux-musl-x86_64")
         CapabilityProbe.classify(thrown, Chunk("kyonet_posix_uring")) match
             case CapabilityOutcome.NotBundled(id, platform) =>
                 assert(id == "kyonet_posix_uring")
@@ -37,7 +38,7 @@ class CapabilityProbeReportTest extends Test:
         val thrown = new FfiLoadError.LibraryNotFound("kyonet_posix_uring", Chunk("bundled resource"), null)
         CapabilityProbe.classify(thrown, Chunk("kyonet_posix_uring")) match
             case CapabilityOutcome.NotBundled(_, platform) => assert(platform == CapabilityProbe.platform)
-            case other                                      => fail(s"expected NotBundled, got ${other.describe}")
+            case other                                     => fail(s"expected NotBundled, got ${other.describe}")
     }
 
     /** A system library resolves from the process's own symbol scope and is never packaged, so a LibraryNotFound
@@ -81,7 +82,7 @@ class CapabilityProbeReportTest extends Test:
         // The loader's message reads the same whether koffi is absent or present and unloadable, so the cause is the
         // only thing telling the reader which. A `require` failure carries its resolution stack after the first line.
         val loadFailure = new RuntimeException("/lib/ld-linux-x86-64.so.2: version `GLIBC_2.34' not found\nRequire stack:\n- /app/main.js")
-        val thrown = new FfiLoadError.LibraryNotFound(
+        val thrown      = new FfiLoadError.LibraryNotFound(
             kyo.ffi.internal.KoffiRuntime.LibraryId,
             Chunk("require(\"koffi\")"),
             "the koffi npm package is not installed or not resolvable; install it (npm i koffi) to use the native FFI backend",

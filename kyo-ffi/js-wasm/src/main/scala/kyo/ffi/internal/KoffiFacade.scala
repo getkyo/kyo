@@ -34,10 +34,10 @@ private[ffi] object Koffi:
 
     private def resolve(): js.Dynamic =
         var lastErr: Throwable | Null = null
-        val loaded: js.Dynamic =
+        val loaded: js.Dynamic        =
             try
                 NodeRequire.find() match
-                    case None => null
+                    case None      => null
                     case Some(req) =>
                         val k = req.asInstanceOf[js.Function1[String, js.Dynamic]]("koffi")
                         if js.isUndefined(k) || k == null then null else k

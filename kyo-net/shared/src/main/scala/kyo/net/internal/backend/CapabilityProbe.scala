@@ -105,7 +105,7 @@ private[net] object CapabilityProbe:
       */
     private def loaderReason(e: FfiLoadError.LibraryNotFound): String =
         val cause = e.getCause
-        val line =
+        val line  =
             if cause == null || cause.getMessage == null then ""
             else cause.getMessage.linesIterator.map(_.trim).find(_.nonEmpty).getOrElse("")
         if line.isEmpty then e.getMessage else s"${e.getMessage} ($line)"
