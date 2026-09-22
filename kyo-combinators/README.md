@@ -1,6 +1,6 @@
 # kyo-combinators
 
-Every Kyo computation has the shape `A < S`: a value of type `A` pending one or more effects `S`. `kyo-combinators` is a layer of fluent extension methods on top of that one shape. Instead of writing `Abort.run(eff).map(...)`, `Fiber.init(eff)`, or `Async.sleep(d).andThen(eff)`, you write `eff.result`, `eff.fork`, or `eff.delay(d)`. The library adds no new core type and no new effect: it adds a postfix vocabulary for the effects already in `kyo-prelude` and `kyo-core` (`Abort`, `Async`, `Choice`, `Emit`, `Env`, `Scope`, `Sync`) and for converting emitted values into a `Stream`, plus a `Kyo.*` companion for constructing computations, including a `Poll` constructor.
+Every Kyo computation has the shape `A < S`: a value of type `A` pending one or more effects `S`. `kyo-combinators` is a layer of fluent extension methods on top of that one shape. Instead of writing `Abort.run(eff)`, `Fiber.init(eff)`, or `Async.sleep(d).andThen(eff)`, you write `eff.result`, `eff.fork`, or `eff.delay(d)`. The library adds no new core type and no new effect: it adds a postfix vocabulary for the effects already in `kyo-prelude` and `kyo-core` (`Abort`, `Async`, `Choice`, `Emit`, `Env`, `Scope`, `Sync`) and for converting emitted values into a `Stream`, plus a `Kyo.*` companion for constructing computations, including a `Poll` constructor.
 
 The combinators cluster by which effect row they target. The receiver of each extension carries a type-pattern that constrains where it applies: `.fork` is defined on `A < (Abort[E] & Async & S)`, `.maybe` is defined on `A < (Abort[Absent] & S)`, `.handleChoice` is defined on `A < (S & Choice)`. The same call-site idiom (postfix method on the effect value) handles construction, handling, recovery, retry, repetition, lifecycle, parallel composition, and stream conversion.
 
@@ -237,7 +237,7 @@ val one: Maybe[Order] < Poll[Order] =
 
 ### Logging
 
-`Kyo.log*` are shortcuts for kyo-core's `Log` at each level; they write to whatever logger is in scope, the console by default.
+`Kyo.log*` are shortcuts for kyo-core's `Log` at each level; they write to whatever logger is in scope. The default logger writes to the console at `warn` level, so `info` and below print nothing until the level is lowered with `-Dkyo.Log.defaultLevel` (or `KYO_LOG_DEFAULTLEVEL`), or a console logger at `debug` is installed with `Log.withConsoleLogger`.
 
 ```scala
 val ex: Throwable = new RuntimeException("payment failed")
@@ -268,7 +268,7 @@ val both: (Order, Profile) < (Abort[OrderNotFound] & Async) =
     load <*> profileFor(orderId)
 ```
 
-`*>` keeps the second result; `<*` keeps the first; `<*>` keeps both as a tuple. `<*>` uses a `Zippable` typeclass to flatten nested tuples: `a <*> b <*> c` produces `(A, B, C)`, not `((A, B), C)`.
+`*>` keeps the second result; `<*` keeps the first; `<*>` keeps both as a tuple. `<*>` uses a `Zippable` typeclass to flatten nested tuples: `a <*> b <*> c` produces `(A, B, C)`, not `((A, B), C)`. A `Unit` side is dropped, so `a <*> Kyo.logInfo("x")` produces `A`, and a side whose value is already a tuple is spliced into the result rather than nested.
 
 > **Note:** the parallel siblings `&>`, `<&`, `<&>` under [Concurrency](#concurrency-and-forking) look almost the same. The sequential operators evaluate the second effect after the first; `a &> b` runs both on separate fibers. The ampersand is the only call-site signal, so pick deliberately.
 
@@ -537,7 +537,7 @@ val asChoice: Order < (Abort[InventoryEmpty | PaymentDeclined] & Async & Choice)
     orderEffect.forAbort[OrderNotFound].toChoiceDrop
 ```
 
-`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. Each method applies to the selected branch `E1` and leaves the other branches in the row, with three differences from the top-level forms: `retry(n)` and `retryForever` here retry `E1` failures only, not panics; `recoverSome` keeps the whole union in the row, since an unmatched `E1` stays possible; and `orPanic` leaves panics in the row it started with.
+`ForAbortOps` exposes a parallel surface to the top-level combinators: `result`, `resultPartial`, `recover`, `recoverSome`, `fold`, `mapAbort`, `swap`, `orPanic`, `toChoiceDrop`, `toAbsent`, `toThrowable`, `retry(Int)`, `retry(Schedule)`, `retryForever`. Each method applies to the selected branch `E1` and leaves the other branches in the row, The one behavioral difference from the top-level forms is that `retry(n)` and `retryForever` here retry `E1` failures only, not panics. Unlike the other `forAbort` methods, `recoverSome` keeps the whole union in the row, since an unmatched `E1` stays possible.
 
 ### `PanicException`: the panic wrapper
 
