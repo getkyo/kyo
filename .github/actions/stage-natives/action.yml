@@ -8,11 +8,6 @@ description: >-
   a minutes-long build cached. Checkout is the caller's responsibility, as is the MSVC environment
   on Windows.
 inputs:
-  os:
-    description: >-
-      Cache namespace: the ci os id (linux-x64, linux-arm64, macos-arm64, windows-x64, ...) or,
-      for a container-staged musl leg, its os-arch.
-    required: true
   os-archs:
     description: >-
       Space-separated kyo os-arch tags to stage, for a runner that produces more than one
@@ -56,43 +51,79 @@ outputs:
 runs:
   using: composite
   steps:
-    # The os-arch list is part of every key: a runner that stages both Mac targets must not share
-    # an entry with one that stages only its own, or the second target would be missing from a hit.
-    - id: slug
+    # A compiled tree is keyed on what determines its bytes and nothing else, so every caller on the
+    # same image shares one entry: the os-arch list it holds, and the runner image, which fixes the
+    # compiler and the libc an archive was built against. An archive built on a newer glibc can fail
+    # to link on an older one, so two Linux images never share. ImageOS names the image on a hosted
+    # runner; a self-hosted one has no ImageOS and is named by its distribution release instead.
+    # The list is sorted so that argument order cannot split an entry.
+    - id: key
       shell: bash
+      env:
+        OS_ARCHS: ${{ inputs.os-archs }}
       run: |
-        archs="${{ inputs.os-archs }}"
-        echo "value=${archs:-host}" | tr ' ' '_' >> "$GITHUB_OUTPUT"
+        set -euo pipefail
+        image="${ImageOS:-}"
+        if [ -z "$image" ]; then
+          case "$RUNNER_OS" in
+            Linux) image="$(. /etc/os-release && echo "$ID$VERSION_ID")" ;;
+            macOS) image="macos$(sw_vers -productVersion | cut -d. -f1)" ;;
+            *)     image="$RUNNER_OS" ;;
+          esac
+        fi
+        if [ -n "$OS_ARCHS" ]; then
+          archs="$(printf '%s\n' $OS_ARCHS | sort | paste -sd_ -)"
+        else
+          # The host tag, derived the way the scripts derive it, so an entry is named for the tree
+          # the scripts stage into.
+          case "$RUNNER_OS" in
+            Linux)
+              if [ -e /lib/ld-musl-x86_64.so.1 ] || [ -e /lib/ld-musl-aarch64.so.1 ]; then os=linux-musl; else os=linux; fi
+              ;;
+            macOS)   os=darwin ;;
+            Windows) os=windows ;;
+            *) echo "stage-natives: no os mapping for '$RUNNER_OS'." >&2; exit 1 ;;
+          esac
+          case "$RUNNER_ARCH" in
+            X64)   arch=x86_64 ;;
+            ARM64) arch=aarch64 ;;
+            *) echo "stage-natives: no arch mapping for '$RUNNER_ARCH'." >&2; exit 1 ;;
+          esac
+          archs="$os-$arch"
+        fi
+        echo "prefix=$image-$archs" >> "$GITHUB_OUTPUT"
 
-    # The key of each tree is the files that determine its bytes. No restore-keys: the scripts
-    # rebuild on a stamp mismatch, so a near miss would only download a tree to throw away.
+    # No restore-keys: the scripts rebuild on a stamp mismatch, so a near miss would only download
+    # a tree to throw away.
     - id: restore-boringssl
       if: ${{ inputs.boringssl == 'true' && runner.os != 'Windows' }}
       uses: actions/cache/restore@v6
       with:
         path: kyo-net/build/boringssl/staged
-        key: natives-boringssl-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-net/build/boringssl/BORINGSSL_COMMIT', 'kyo-net/build/boringssl/build-boringssl.sh', 'scripts/native-build-lib.sh') }}
+        key: natives-boringssl-${{ steps.key.outputs.prefix }}-${{ hashFiles('kyo-net/build/boringssl/BORINGSSL_COMMIT', 'kyo-net/build/boringssl/build-boringssl.sh', 'scripts/native-build-lib.sh') }}
 
     - id: restore-aeron
       if: ${{ inputs.aeron == 'true' }}
       uses: actions/cache/restore@v6
       with:
         path: kyo-aeron/build/aeron/staged
-        key: natives-aeron-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-aeron/scripts/build-aeron.sh', 'scripts/native-build-lib.sh') }}
+        key: natives-aeron-${{ steps.key.outputs.prefix }}-${{ hashFiles('kyo-aeron/scripts/build-aeron.sh', 'scripts/native-build-lib.sh') }}
 
+    # SQLite stages C source, identical on every runner, so its key carries neither image nor arch.
+    # actions/cache already keeps a Windows entry apart from a POSIX one.
     - id: restore-sqlite
       if: ${{ inputs.sqlite == 'true' }}
       uses: actions/cache/restore@v6
       with:
         path: kyo-sql-sqlite/build/sqlite/staged
-        key: natives-sqlite-${{ inputs.os }}-${{ hashFiles('kyo-sql-sqlite/scripts/build-sqlite.sh') }}
+        key: natives-sqlite-${{ hashFiles('kyo-sql-sqlite/scripts/build-sqlite.sh') }}
 
     - id: restore-doltlite
       if: ${{ inputs.doltlite == 'true' && runner.os != 'Windows' }}
       uses: actions/cache/restore@v6
       with:
         path: kyo-sql-doltlite/build/doltlite/staged
-        key: natives-doltlite-${{ inputs.os }}-${{ steps.slug.outputs.value }}-${{ hashFiles('kyo-sql-doltlite/scripts/build-doltlite.sh') }}
+        key: natives-doltlite-${{ steps.key.outputs.prefix }}-${{ hashFiles('kyo-sql-doltlite/scripts/build-doltlite.sh') }}
 
     # Only a miss on a tree that is built needs the toolchain: cmake and Go for BoringSSL, cmake and
     # the -luuid link target for the Aeron driver. SQLite and DoltLite's published archives need

@@ -355,7 +355,6 @@ runs:
     # before staging. BoringSSL is staged on every target; the other three follow the target gate.
     - uses: ./.github/actions/stage-natives
       with:
-        os: ${{ inputs.os }}
         aeron: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && 'true' || 'false' }}
         sqlite: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && 'true' || 'false' }}
         doltlite: ${{ (inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm') && 'true' || 'false' }}

@@ -64,7 +64,6 @@ jobs:
       # whole producer. macOS needs no uuid package; the Aeron driver takes it from libSystem.
       - uses: ./.github/actions/stage-natives
         with:
-          os: macos-arm64
           os-archs: darwin-aarch64 darwin-x86_64
       # ONE compile for every FFI module. The plugin knows which projects declare ffiLibraries, so the
       # workflow does not enumerate them: adding an FFI module needs no edit here. Previously this job
@@ -163,11 +162,9 @@ jobs:
         shell: bash
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
-      # The vendored trees, restored from cache or staged, ahead of the retried compile. Host
-      # os-arch, so the entries are the ones ci's linux-x64 legs populate.
+      # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
+      # need to restage anything.
       - uses: ./.github/actions/stage-natives
-        with:
-          os: linux-x64
       - name: Build linux-x86_64 (glibc) natives
         uses: nick-fields/retry@v4
         with:
@@ -189,7 +186,6 @@ jobs:
       - id: natives-musl
         uses: ./.github/actions/stage-natives
         with:
-          os: linux-musl-x64
           os-archs: linux-musl-x86_64
           sqlite: 'false'
           stage: 'false'
@@ -302,11 +298,9 @@ jobs:
         shell: bash
         run: |
           bash scripts/apt-install.sh --if-missing cmake go:golang-go liburing-dev uuid-dev
-      # The vendored trees, restored from cache or staged, ahead of the retried compile. Host
-      # os-arch, so the entries are the ones ci's linux-arm64 legs populate.
+      # Outside the retried compile: the fetches carry their own retries, so a reset in sbt does not
+      # need to restage anything.
       - uses: ./.github/actions/stage-natives
-        with:
-          os: linux-arm64
       - name: Build linux-aarch64 (glibc) natives
         uses: nick-fields/retry@v4
         with:
@@ -328,7 +322,6 @@ jobs:
       - id: natives-musl
         uses: ./.github/actions/stage-natives
         with:
-          os: linux-musl-arm64
           os-archs: linux-musl-aarch64
           sqlite: 'false'
           stage: 'false'

@@ -131,11 +131,9 @@ jobs:
       # libaeron, SQLite and DoltLite (build-time only): `sbt doctest` compiles kyo-aeron's C shim
       # (kyo_aeron.c), which statically links -laeron_driver_static, and kyo-sql's shims together with
       # their vendored engines, all from gitignored staged trees. Same reason as liburing above: this
-      # workflow does not use .github/actions/setup, so the staging is repeated here. The runner is
-      # pinned to ubuntu-24.04-arm, and the host os-arch shares ci's linux-arm64 cache entries.
+      # workflow does not use .github/actions/setup, so the staging is repeated here.
       - uses: ./.github/actions/stage-natives
         with:
-          os: linux-arm64
           boringssl: 'false'
 
       # Doctest result cache. Entries are keyed by SHA-256 over the block body, the scope closure

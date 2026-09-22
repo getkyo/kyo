@@ -71,7 +71,6 @@ runs:
     # every module's shim, so libaeron, SQLite and DoltLite are staged for the same reason.
     - uses: ./.github/actions/stage-natives
       with:
-        os: ${{ steps.osarch.outputs.value }}
         os-archs: ${{ steps.osarch.outputs.value }}
 
     - uses: coursier/setup-action@v3.0.3

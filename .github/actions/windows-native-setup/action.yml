@@ -82,7 +82,6 @@ runs:
     # Aeron bump.
     - uses: ./.github/actions/stage-natives
       with:
-        os: ${{ inputs.os-arch }}
         os-archs: ${{ inputs.os-arch }}
         boringssl: 'false'
         doltlite: 'false'
