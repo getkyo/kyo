@@ -234,6 +234,16 @@ object TestKyo {
         def crossVersions(name: String): Seq[String] =
             allRefs.find(_.project == name).flatMap(ref => (ref / crossScalaVersions).get(structure.data)).getOrElse(Nil)
 
+        def ownVersion(name: String): Option[String] =
+            allRefs.find(_.project == name).flatMap(ref => (ref / scalaVersion).get(structure.data))
+
+        // A module belongs to a pass when it cross-builds for that version OR when that version is
+        // simply the one it compiles under. Reading only crossScalaVersions dropped every module
+        // that narrows it to a version no pass runs: those modules were selected by nothing and
+        // their tests never ran anywhere, on any platform.
+        def buildsAt(name: String, version: String): Boolean =
+            crossVersions(name).contains(version) || ownVersion(name).contains(version)
+
         def platformMatch(name: String): Boolean =
             !aggregateProjects.contains(name) &&
                 (a.platform match {
@@ -251,7 +261,7 @@ object TestKyo {
                 val version     = versions.head
                 val unknown     = names.filterNot(exists)
                 val offPlatform = names.filter(n => exists(n) && !platformMatch(n))
-                val offVersion  = names.filter(n => exists(n) && platformMatch(n) && !crossVersions(n).contains(version))
+                val offVersion  = names.filter(n => exists(n) && platformMatch(n) && !buildsAt(n, version))
                 if (unknown.nonEmpty) Left(s"unknown modules: ${unknown.mkString(", ")}")
                 else if (offPlatform.nonEmpty)
                     Left(s"modules outside platform ${a.platform.getOrElse("all")}: ${offPlatform.mkString(", ")}")
@@ -261,7 +271,7 @@ object TestKyo {
                 val restrict = if (a.isAll) None else diffSelection(state, a, allRefs, extracted)
                 Right(versions.map { v =>
                     val eligible =
-                        allRefs.map(_.project).filter(n => platformMatch(n) && selected(n) && crossVersions(n).contains(v))
+                        allRefs.map(_.project).filter(n => platformMatch(n) && selected(n) && buildsAt(n, v))
                     val chosen = restrict match {
                         case Some(selection) => eligible.filter(selection.contains)
                         case None            => eligible
