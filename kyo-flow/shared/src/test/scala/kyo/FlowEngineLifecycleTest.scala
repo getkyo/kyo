@@ -183,8 +183,9 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                 FlowStore.initMemory.map { store =>
                     val flow = Flow.input[Int]("x")
                     for
-                        gate <- Latch.init(1)
-                        eid  <- Scope.run {
+                        gate    <- Latch.init(1)
+                        entered <- Latch.init(1)
+                        eid     <- Scope.run {
                             FlowEngine.init(
                                 store,
                                 workerCount = 1,
@@ -193,11 +194,14 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                                 pollTimeout = 100.millis
                             ).map { engine =>
                                 for
-                                    _      <- engine.register(Flow.Id.Workflow("stops"), flow.output("y")(_ => gate.await.andThen(1)))
+                                    _ <- engine.register(
+                                        Flow.Id.Workflow("stops"),
+                                        flow.output("y")(_ => entered.release.andThen(gate.await).andThen(1))
+                                    )
                                     handle <- engine.workflows.start(Flow.Id.Workflow("stops"))
                                     eid = handle.executionId
                                     _          <- engine.executions.signal[Int](eid, "x", 1)
-                                    supervised <- settle(tc, step = 100.millis)(engine.supervisions.get.map(_.exists(_.nonEmpty)))
+                                    supervised <- settle(tc, step = 100.millis)(holdsClaim(engine, entered))
                                     _ = assert(supervised, "the engine never started supervising the execution")
                                 yield eid
                             }
@@ -214,5 +218,92 @@ class FlowEngineLifecycleTest extends FlowEngineSupport:
                 }
             }
         }
+
+        // The first attempt runs before the signal, parks, and releases its claim while its supervision is still registered.
+        // A barrier that only sees a registered supervision closes the engine before the attempt that holds the claim exists.
+        "closing the engine after an earlier attempt parked leaves no supervision renewing the claim".times(30) in {
+            Clock.withTimeControl { tc =>
+                FlowStore.initMemory.map { memory =>
+                    val flow = Flow.input[Int]("x")
+                    for
+                        gate      <- Latch.init(1)
+                        entered   <- Latch.init(1)
+                        parked    <- Latch.init(1)
+                        hold      <- Latch.init(1)
+                        polling   <- Latch.init(1)
+                        claimGate <- Latch.init(1)
+                        store = new ParkHoldingStore(memory, parked, hold, polling, claimGate)
+                        eid <- Sync.ensure(hold.release.andThen(claimGate.release).andThen(gate.release)) {
+                            Scope.run {
+                                FlowEngine.init(
+                                    store,
+                                    workerCount = 1,
+                                    lease = 30.seconds,
+                                    renewEvery = 5.seconds,
+                                    pollTimeout = 100.millis
+                                ).map { engine =>
+                                    for
+                                        _ <- engine.register(
+                                            Flow.Id.Workflow("stops"),
+                                            flow.output("y")(_ => entered.release.andThen(gate.await).andThen(1))
+                                        )
+                                        handle <- engine.workflows.start(Flow.Id.Workflow("stops"))
+                                        eid = handle.executionId
+                                        _     <- settle(tc, step = 100.millis)(parked.pending.map(_ == 0))
+                                        _     <- settle(tc, step = 100.millis)(polling.pending.map(_ == 0))
+                                        _     <- engine.executions.signal[Int](eid, "x", 1)
+                                        early <- holdsClaim(engine, entered)
+                                        _ = assert(!early, "the barrier passed while the only registered attempt had released its claim")
+                                        _          <- claimGate.release
+                                        supervised <- settle(tc, step = 100.millis)(holdsClaim(engine, entered))
+                                        _ = assert(supervised, "the engine never started supervising the execution")
+                                    yield eid
+                                }
+                            }
+                        }
+                        before <- store.getExecution(eid).map(_.flatMap(_.claimExpiry))
+                    yield assert(before.nonEmpty, "the execution was supervised but its claim was never written")
+                    end for
+                }
+            }
+        }
     }
+
+    /** Whether a supervised attempt holds the claim. A registered supervision alone does not say so: an attempt that parked has
+      * released its claim before its fiber leaves the registry. The step body runs only under a live claim, and the claim cannot be
+      * released while the body is blocked, so `entered` having fired pins the claim written.
+      */
+    private def holdsClaim(engine: FlowEngine, entered: Latch)(using Frame): Boolean < (Async & Abort[FlowStoreException]) =
+        entered.pending.map(pending => pending == 0).map { stepEntered =>
+            if !stepEntered then false else engine.supervisions.get.map(_.exists(_.nonEmpty))
+        }
+
+    /** Holds an attempt that parks inside `finish`, after its claim is released, so its supervision stays registered, and holds every
+      * claim after that park until `claimGate` opens, so the next attempt cannot take the claim before the test looks.
+      */
+    private class ParkHoldingStore(underlying: FlowStore, parked: Latch, hold: Latch, polling: Latch, claimGate: Latch)
+        extends DelegatingStore(underlying):
+        override def claimReady(
+            served: Set[(Flow.Id.Workflow, String)],
+            executorId: Flow.Id.Executor,
+            lease: Duration,
+            limit: Int,
+            timeout: Duration
+        )(using Frame): Seq[FlowStore.Claimed] < (Async & Abort[FlowStoreException]) =
+            parked.pending.map { pending =>
+                if pending == 0 then
+                    polling.release.andThen(claimGate.await).andThen(super.claimReady(served, executorId, lease, limit, timeout))
+                else super.claimReady(served, executorId, lease, limit, timeout)
+            }
+
+        override protected def wrapClaimed(claimed: FlowStore.Claimed)(using Frame): FlowStore.Claimed =
+            new DelegatingClaimed(claimed):
+                override def finish(outcome: FlowStore.Claimed.Outcome)(using
+                    Frame
+                ): FlowStore.StatusOutcome < (Async & Abort[FlowStoreException]) =
+                    outcome match
+                        case _: FlowStore.Claimed.Outcome.Suspended =>
+                            super.finish(outcome).map(result => parked.release.andThen(hold.await).andThen(result))
+                        case _ => super.finish(outcome)
+    end ParkHoldingStore
 end FlowEngineLifecycleTest
