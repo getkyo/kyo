@@ -191,4 +191,28 @@ absent_sockets_out=$(
 )
 expect_eq "missing netstat" "$absent_sockets_out" ""
 
+# The scheduler snapshot carries its write time as ts= (epoch millis). The age is what exposes a writer
+# that stopped: on JS the writer is a timer on the event loop, so a blocked loop stops refreshing the file.
+cat > "$test_dir/bin/date" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "+%s" ] && { echo 1005; exit 0; }
+exec /bin/date "$@"
+STUB
+chmod +x "$test_dir/bin/date"
+
+sched_run() {
+    PATH="$test_dir/bin:$PATH" SCHED_FILE="$1" bash -c "
+        $(sed -n '/^sched_snapshot()/,/^}/p' "$script_dir/ci-monitor.sh")
+        sched_snapshot
+    " || fail "sched_snapshot exited non-zero for [$1]"
+}
+
+printf 'kyo.sched ts=1000000 platform=js pending=0' > "$test_dir/sched-ts"
+expect_eq "sched snapshot age" "$(sched_run "$test_dir/sched-ts")" 'kyo.sched ts=1000000 platform=js pending=0 age=5s'
+
+printf 'kyo.sched cur=4' > "$test_dir/sched-nots"
+expect_eq "sched snapshot without ts" "$(sched_run "$test_dir/sched-nots")" 'kyo.sched cur=4'
+
+expect_eq "sched snapshot missing file" "$(sched_run "$test_dir/absent")" ""
+
 printf 'ci-monitor-selftest: ok\n'

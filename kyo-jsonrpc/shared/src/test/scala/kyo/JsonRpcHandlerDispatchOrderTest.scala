@@ -47,6 +47,21 @@ class JsonRpcHandlerDispatchOrderTest extends JsonRpcTest:
     private def flush(a: JsonRpcHandler)(using Frame): Unit < Async =
         Abort.run[JsonRpcError | Closed](a.call[Probe, Seen]("no-such-method", Probe("flush"))).unit
 
+    /** Completes `sent` with the id of the first request for `method` once the transport has sent it. A `flush` only orders what
+      * was sent before it, and a call made on another fiber may not have been sent yet, so a leaf that relies on that order waits
+      * for this first.
+      */
+    private def reportingSent(underlying: JsonRpcTransport, method: String, sent: Promise[JsonRpcId, Any]): JsonRpcTransport =
+        new JsonRpcTransport:
+            def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
+                underlying.send(env).andThen {
+                    env match
+                        case request: JsonRpcRequest if request.method == method => sent.completeDiscard(Result.succeed(request.id))
+                        case _                                                   => Kyo.unit
+                }
+            def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] = underlying.incoming
+            def close(using Frame): Unit < Async                                      = underlying.close
+
     "notifications reach their handlers in the order they were sent" in {
         val count = 100
         for
@@ -66,20 +81,25 @@ class JsonRpcHandlerDispatchOrderTest extends JsonRpcTest:
         end for
     }
 
-    "a request starts only after the notifications sent before it have been handled" in {
+    "a request starts only after the notifications sent before it have been handled".times(50) in {
         for
             gate    <- Latch.init(1)
             handled <- AtomicBoolean.init(false)
+            sent    <- Promise.init[JsonRpcId, Any]
             note = JsonRpcRoute.notification[Note]("note") { (_, _) =>
                 gate.await.andThen(handled.set(true))
             }
             probe = JsonRpcRoute.request[Probe, Seen]("probe") { (_, _) =>
                 handled.get.map(Seen(_))
             }
-            result <- mkEndpoints(Seq(note, probe)).map { (a, _) =>
-                a.notify[Note]("note", Note(1)).andThen {
-                    Fiber.initUnscoped(a.call[Probe, Seen]("probe", Probe("after-note"))).map { call =>
-                        flush(a).andThen(gate.release).andThen(call.get)
+            result <- JsonRpcTransport.inMemory.map { (ta, tb) =>
+                JsonRpcHandler.init(reportingSent(ta, "probe", sent), Seq.empty).map { a =>
+                    JsonRpcHandler.init(tb, Seq(note, probe)).map { _ =>
+                        a.notify[Note]("note", Note(1)).andThen {
+                            Fiber.initUnscoped(a.call[Probe, Seen]("probe", Probe("after-note"))).map { call =>
+                                sent.get.andThen(flush(a)).andThen(gate.release).andThen(call.get)
+                            }
+                        }
                     }
                 }
             }
@@ -123,36 +143,29 @@ class JsonRpcHandlerDispatchOrderTest extends JsonRpcTest:
         end for
     }
 
-    "cancelling a request that waits on an earlier notification leaves that notification's handler running" in {
+    "cancelling a request that waits on an earlier notification leaves that notification's handler running".times(50) in {
         for
-            gate       <- Latch.init(1)
-            finished   <- Latch.init(1)
-            completed  <- AtomicBoolean.init(false)
-            capturedId <- AtomicRef.init[Maybe[JsonRpcId]](Absent)
+            gate      <- Latch.init(1)
+            finished  <- Latch.init(1)
+            completed <- AtomicBoolean.init(false)
+            sent      <- Promise.init[JsonRpcId, Any]
             note = JsonRpcRoute.notification[Note]("note") { (_, _) =>
                 Sync.ensure(finished.release)(gate.await.andThen(completed.set(true)))
             }
             probe = JsonRpcRoute.request[Probe, Seen]("probe")((_, _) => Seen(true))
             outcome <- JsonRpcTransport.inMemory.map { (ta, tb) =>
-                JsonRpcHandler.init(ta, Seq.empty, interruptOnCancel).map { a =>
+                JsonRpcHandler.init(reportingSent(ta, "probe", sent), Seq.empty, interruptOnCancel).map { a =>
                     JsonRpcHandler.init(tb, Seq(note, probe), interruptOnCancel).map { _ =>
-                        val captureId = JsonRpcExtrasEncoder(id => capturedId.set(Present(id)).andThen(Absent: Maybe[Structure.Value]))
                         a.notify[Note]("note", Note(1)).andThen {
-                            Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Probe, Seen](
-                                "probe",
-                                Probe("cancelled"),
-                                captureId
-                            )))
-                                .map { call =>
-                                    flush(a).andThen(capturedId.get).map {
-                                        case Present(id) =>
-                                            // The second flush proves the peer has read the cancel, which interrupts the waiting
-                                            // request inline, before the notification is let go.
-                                            a.cancel(id).andThen(call.getResult).andThen(flush(a)).andThen(gate.release)
-                                                .andThen(finished.await).andThen(completed.get)
-                                        case Absent => fail("the probe request's id was not captured")
+                            Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Probe, Seen]("probe", Probe("cancelled")))).map {
+                                call =>
+                                    // The first flush proves the peer has read the probe, the second that it has read the cancel,
+                                    // which interrupts the waiting request inline, before the notification is let go.
+                                    sent.get.map { id =>
+                                        flush(a).andThen(a.cancel(id)).andThen(call.getResult).andThen(flush(a)).andThen(gate.release)
+                                            .andThen(finished.await).andThen(completed.get)
                                     }
-                                }
+                            }
                         }
                     }
                 }

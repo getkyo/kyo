@@ -146,6 +146,30 @@ class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
         }
     }
 
+    "send aborts Closed once incoming has ended, across many concurrent sessions".notNative.times(10) in {
+        withClosingWsServer { url =>
+            val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/bye").getOrThrow
+            val req   = JsonRpcRequest(JsonRpcId.Num(1), "ping", Absent, Absent)
+            // The session end closes both channels in sequence, and a caller woken by incoming ending runs on
+            // another worker while that sequence is still in progress. One session rarely lands in the gap;
+            // 64 at once do on most runs when outbound is not closed first.
+            val sendAfterEnd: Result[Closed | JsonRpcError, Unit] < (Async & Abort[HttpException]) =
+                Scope.run {
+                    JsonRpcHttpTransport.webSocket(wsUrl).map { t =>
+                        Abort.run[Closed](t.incoming.run).andThen(Abort.run[Closed | JsonRpcError](t.send(req)))
+                    }
+                }
+            Async.fill(64, 16)(sendAfterEnd).map { results =>
+                val accepted = results.count(_.isSuccess)
+                assert(accepted == 0, s"$accepted of ${results.size} sends succeeded after incoming ended")
+                assert(results.forall {
+                    case Result.Failure(_: Closed) => true
+                    case _                         => false
+                })
+            }
+        }
+    }
+
     "webSocket drops binary frames with warn".notNative in {
         withBinaryWsServer { url =>
             Scope.run {

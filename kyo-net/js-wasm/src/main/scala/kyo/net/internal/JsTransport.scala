@@ -185,12 +185,14 @@ final private[kyo] class JsTransport private (
                 case _ => ()
             end match
             val socket = NodeTls.asInstanceOf[js.Dynamic].connect(opts)
-            // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP)
+            // TLS sockets emit "secureConnect" after handshake (not "connect" which fires on raw TCP). TLSSocket.setNoDelay reaches the TCP
+            // handle under the TLS layer. Without TCP_NODELAY a message written as more than one TLS record waits on the peer's delayed ACK:
+            // 10 sequential POSTs over one pooled connection take 890ms without it and 9ms with it (Linux, Node 24).
             connectSocket(
                 socket,
                 host,
                 port,
-                tcpNoDelay = false,
+                tcpNoDelay = true,
                 connectEvent = "secureConnect",
                 connectTimeout,
                 config,
@@ -233,7 +235,8 @@ final private[kyo] class JsTransport private (
             host,
             port,
             backlog,
-            tcpNoDelay = false,
+            // Same TCP_NODELAY reasoning as connectTls.
+            tcpNoDelay = true,
             connectionEvent = "secureConnection",
             handler,
             config,

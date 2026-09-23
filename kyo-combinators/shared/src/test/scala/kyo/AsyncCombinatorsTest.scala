@@ -118,7 +118,7 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
 
         "async" - {
             // An orphaned effect never runs its finalizer, which the leaf timeout reports.
-            "interrupting the caller of async interrupts the effect it registered" in {
+            "interrupting the caller of async interrupts the effect it registered".times(100) in {
                 for
                     gate     <- Latch.init(1)
                     entered  <- Latch.init(1)
@@ -132,6 +132,28 @@ class AsyncCombinatorsTest extends kyo.test.Test[Any]:
                     _ <- fiber.interrupt
                     _ <- fiber.getResult
                     _ <- Sync.ensure(gate.release)(assertEventually(released.get))
+                yield succeed
+                end for
+            }
+
+            // The caller parks between registering and joining, so the interrupt lands before the join links it to the
+            // promise. An orphaned effect never releases `finalized`, which the leaf timeout reports.
+            "interrupting the caller before it joins interrupts the effect it registered".timeout(15.seconds) in {
+                for
+                    gate      <- Latch.init(1)
+                    entered   <- Latch.init(1)
+                    hold      <- Latch.init(1)
+                    finalized <- Latch.init(1)
+                    fiber     <- Fiber.initUnscoped {
+                        Kyo.async[Int, Nothing] { register =>
+                            Sync.defer(register(Sync.ensure(finalized.release)(entered.release.andThen(gate.await).andThen(1))))
+                                .andThen(hold.await)
+                        }
+                    }
+                    _ <- entered.await
+                    _ <- fiber.interrupt
+                    _ <- fiber.getResult
+                    _ <- Sync.ensure(gate.release.andThen(hold.release))(finalized.await)
                 yield succeed
                 end for
             }
