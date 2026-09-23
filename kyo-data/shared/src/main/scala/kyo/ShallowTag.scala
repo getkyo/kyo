@@ -10,15 +10,15 @@ import kyo.internal.ShallowTagMacro
   * erased bound, and the top types `Any`, `AnyVal` and `AnyRef` have the tag of `Object`. An array allocated from a ShallowTag has exactly
   * the runtime class that `new Array[A]` gives with a compiler-synthesized ClassTag.
   *
-  * Because it drops type arguments, a ShallowTag can be derived for every concrete type, and its membership check ([[accepts]],
-  * [[unapply]]) is as shallow as the tag: a `List[String]` passes for `ShallowTag[List[Int]]`, and every value passes for a union that
+  * Because it drops type arguments, a ShallowTag can be derived for every concrete type, and its membership check (`accepts`,
+  * `unapply`) is as shallow as the tag: a `List[String]` passes for `ShallowTag[List[Int]]`, and every value passes for a union that
   * erases to `Object`. This is the check `ClassTag` performs. Use [[ConcreteTag]] when membership must be exact: it refuses the types
   * whose membership the runtime cannot decide.
   *
   * Derivation happens at compile time and yields a class constant, so summoning one costs nothing at runtime. An abstract type has no
   * ShallowTag of its own: code generic in `A` must take `(using ShallowTag[A])` from its caller. `Nothing` and `Null` have no ShallowTag.
   *
-  * Arrays of length zero are cached per class and shared: [[emptyArray]] and `newArray(0)` allocate at most once per class.
+  * Arrays of length zero are cached per class and shared: `emptyArray` and `newArray(0)` allocate at most once per class.
   *
   * @tparam A
   *   The type whose erased runtime class this tag holds
@@ -102,7 +102,7 @@ object ShallowTag:
         def accepts(value: Any): Boolean =
             !isNull(value) && boxedOf(self).isInstance(value)
 
-        /** Extracts a value as an `A` when [[accepts]] holds, for use in pattern matching (`case tag(a) =>`).
+        /** Extracts a value as an `A` when `accepts` holds, for use in pattern matching (`case tag(a) =>`).
           *
           * @param value
           *   the value to test
