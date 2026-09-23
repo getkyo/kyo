@@ -1,9 +1,9 @@
 package kyo
 
-import java.util.Arrays
+import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
-import scala.reflect.ClassTag
+import scala.compiletime.summonInline
 
 /** An efficient, immutable array-backed sequence of elements optimized to avoid boxing.
   *
@@ -41,21 +41,16 @@ object Span:
 
     /** Returns an empty Span.
       *
-      * @return
-      *   an empty Span of type A
-      */
-    def empty[A: ClassTag as ct]: Span[A] =
-        if cachedEmpty.contains(ct) then
-            cachedEmpty(ct).asInstanceOf[Array[A]]
-        else
-            Array.empty
-
-    /** Creates an empty Span.
+      * The backing array is shared per element class, so this allocates nothing after the first call for a class.
+      *
+      * The element type may come from the expected type alone (`val s: Span[Int] = Span.empty`). This needs `transparent`: its expansion
+      * happens after `A` is instantiated to the expected type, while a `using` parameter or a non-transparent inline would fix `A` earlier,
+      * where an unconstrained covariant `A` resolves to `Nothing`, which has no [[ShallowTag]].
       *
       * @return
       *   an empty Span of type A
       */
-    inline def apply[A: ClassTag](): Span[A] = empty[A]
+    transparent inline def empty[A]: Span[A] = (summonInline[ShallowTag[A]].emptyArray: Span[A])
 
     /** Creates a new Span containing a single element.
       *
@@ -64,8 +59,8 @@ object Span:
       * @return
       *   a new Span containing the specified element
       */
-    inline def apply[A: ClassTag](a0: A): Span[A] =
-        val arr = new Array[A](1)
+    inline def apply[A: ShallowTag as tag](a0: A): Span[A] =
+        val arr = tag.newArray(1)
         arr(0) = a0
         arr
     end apply
@@ -79,8 +74,8 @@ object Span:
       * @return
       *   a new Span containing the specified elements
       */
-    inline def apply[A: ClassTag](a0: A, a1: A): Span[A] =
-        val arr = new Array[A](2)
+    inline def apply[A: ShallowTag as tag](a0: A, a1: A): Span[A] =
+        val arr = tag.newArray(2)
         arr(0) = a0
         arr(1) = a1
         arr
@@ -97,8 +92,8 @@ object Span:
       * @return
       *   a new Span containing the specified elements
       */
-    inline def apply[A: ClassTag](a0: A, a1: A, a2: A): Span[A] =
-        val arr = new Array[A](3)
+    inline def apply[A: ShallowTag as tag](a0: A, a1: A, a2: A): Span[A] =
+        val arr = tag.newArray(3)
         arr(0) = a0
         arr(1) = a1
         arr(2) = a2
@@ -118,8 +113,8 @@ object Span:
       * @return
       *   a new Span containing the specified elements
       */
-    inline def apply[A: ClassTag](a0: A, a1: A, a2: A, a3: A): Span[A] =
-        val arr = new Array[A](4)
+    inline def apply[A: ShallowTag as tag](a0: A, a1: A, a2: A, a3: A): Span[A] =
+        val arr = tag.newArray(4)
         arr(0) = a0
         arr(1) = a1
         arr(2) = a2
@@ -142,8 +137,8 @@ object Span:
       * @return
       *   a new Span containing the specified elements
       */
-    inline def apply[A: ClassTag](a0: A, a1: A, a2: A, a3: A, a4: A): Span[A] =
-        val arr = new Array[A](5)
+    inline def apply[A: ShallowTag as tag](a0: A, a1: A, a2: A, a3: A, a4: A): Span[A] =
+        val arr = tag.newArray(5)
         arr(0) = a0
         arr(1) = a1
         arr(2) = a2
@@ -162,10 +157,11 @@ object Span:
       * @return
       *   a new Span containing the specified elements
       */
-    def apply[A: ClassTag](values: A*): Span[A] =
+    def apply[A: ShallowTag as tag](values: A*): Span[A] =
         values match
-            case values: ArraySeq[A] => values.unsafeArray.asInstanceOf[Array[A]]
-            case values              => values.toArray
+            case values if values.isEmpty => tag.emptyArray
+            case values: ArraySeq[A]      => values.unsafeArray.asInstanceOf[Array[A]]
+            case values                   => from(values)
 
     /** Creates a Span from an Array without copying the array.
       *
@@ -202,9 +198,9 @@ object Span:
       * @return
       *   a new Span containing a copy of the elements from the Array
       */
-    def from[A: ClassTag](array: Array[A]): Span[A] =
-        val copy = new Array[A](array.length)
-        System.arraycopy(array, 0, copy, 0, array.length)
+    def from[A: ShallowTag as tag](array: Array[A]): Span[A] =
+        val copy = tag.newArray(array.length)
+        copyInto(array, 0, copy, 0, array.length)
         copy
     end from
 
@@ -215,8 +211,28 @@ object Span:
       * @return
       *   a new Span containing the elements from the IterableOnce
       */
-    def from[A: ClassTag](seq: IterableOnce[A]): Span[A] =
-        seq.iterator.toArray
+    def from[A: ShallowTag as tag](seq: IterableOnce[A]): Span[A] =
+        val it = seq.iterator
+        if seq.knownSize >= 0 then
+            val r = tag.newArray(seq.knownSize)
+            discard(it.copyToArray(r, 0, r.length))
+            r
+        else
+            @tailrec def grow(arr: Array[A], size: Int): Span[A] =
+                if !it.hasNext then
+                    if size == arr.length then arr else copyRange(arr, 0, size)
+                else
+                    val target =
+                        if size < arr.length then arr
+                        else
+                            val bigger = tag.newArray(math.max(8, size * 2))
+                            System.arraycopy(arr, 0, bigger, 0, size)
+                            bigger
+                    target(size) = it.next()
+                    grow(target, size + 1)
+            grow(tag.emptyArray, 0)
+        end if
+    end from
 
     extension [A](self: Span[A])
 
@@ -271,7 +287,7 @@ object Span:
           * @return
           *   a new Span containing all elements except the first
           */
-        inline def tail(using ClassTag[A]): Maybe[Span[A]] =
+        inline def tail: Maybe[Span[A]] =
             Maybe.when(nonEmpty)(Span.slice(self)(1, size))
 
         /** Tests whether this Span contains a given value as an element.
@@ -336,13 +352,13 @@ object Span:
           *   the index of the first element satisfying p, or -1 if none found
           */
         inline def indexWhere(inline p: A => Boolean, from: Int = 0): Maybe[Int] =
-            val size                                = self.length
-            val start                               = math.max(0, from)
-            @tailrec def loop(idx: Int): Maybe[Int] =
-                if idx >= size then Absent
-                else if p(self(idx)) then Present(idx)
+            val size                         = self.length
+            val start                        = math.max(0, from)
+            @tailrec def loop(idx: Int): Int =
+                if idx >= size || p(self(idx)) then idx
                 else loop(idx + 1)
-            loop(start)
+            val idx = loop(start)
+            if idx < size then Present(idx) else Absent
         end indexWhere
 
         /** Finds index of last element satisfying some predicate before or at given end index.
@@ -355,13 +371,13 @@ object Span:
           *   the index of the last element satisfying p, or -1 if none found
           */
         inline def lastIndexWhere(inline p: A => Boolean, end: Int = -1): Maybe[Int] =
-            val size                                = self.length
-            val endIdx                              = if end < 0 then size - 1 else math.min(end, size - 1)
-            @tailrec def loop(idx: Int): Maybe[Int] =
-                if idx < 0 then Absent
-                else if p(self(idx)) then Present(idx)
+            val size                         = self.length
+            val endIdx                       = if end < 0 then size - 1 else math.min(end, size - 1)
+            @tailrec def loop(idx: Int): Int =
+                if idx < 0 || p(self(idx)) then idx
                 else loop(idx - 1)
-            loop(endIdx)
+            val idx = loop(endIdx)
+            if idx >= 0 then Present(idx) else Absent
         end lastIndexWhere
 
         /** Finds the first element of the Span satisfying a predicate, if any.
@@ -372,12 +388,12 @@ object Span:
           *   a Maybe value containing the first element satisfying p, or Absent if none found
           */
         inline def find(inline p: A => Boolean): Maybe[A] =
-            val size                     = self.length
-            def loop(idx: Int): Maybe[A] =
-                if idx >= size then Absent
-                else if p(self(idx)) then Present(self(idx))
+            val size                         = self.length
+            @tailrec def loop(idx: Int): Int =
+                if idx >= size || p(self(idx)) then idx
                 else loop(idx + 1)
-            loop(0)
+            val idx = loop(0)
+            if idx < size then Present(self(idx)) else Absent
         end find
 
         /** Counts the number of elements in this Span which satisfy a predicate.
@@ -462,9 +478,9 @@ object Span:
           * @return
           *   a new Span containing the results of applying the function to each element
           */
-        inline def map[B: ClassTag](inline f: A => B): Span[B] =
+        inline def map[B: ShallowTag as tag](inline f: A => B): Span[B] =
             val size                          = self.length
-            val r                             = new Array[B](size)
+            val r                             = tag.newArray(size)
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
                     r(idx) = f(self(idx))
@@ -480,29 +496,29 @@ object Span:
           * @return
           *   a new Span containing the concatenated results
           */
-        inline def flatMap[B: ClassTag](inline f: A => Span[B]): Span[B] =
+        inline def flatMap[B: ShallowTag as tag](inline f: A => Span[B]): Span[B] =
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans                                = new Array[Array[B]](size)
+                // Held as AnyRef: a primitive span widened to B = Any would fail the cast to Array[B].
+                val spans                                = new Array[AnyRef](size)
                 var totalSize                            = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = f(self(idx))
-                        spans(idx) = span.toArrayUnsafe
+                        spans(idx) = span
                         totalSize += span.length
                         collectLoop(idx + 1)
                 collectLoop(0)
 
                 if totalSize == 0 then Span.empty[B]
                 else
-                    val result                                               = new Array[B](totalSize)
+                    val result                                               = tag.newArray(totalSize)
                     @tailrec def populateLoop(idx: Int, writeIdx: Int): Unit =
                         if idx < size then
-                            val span     = spans(idx)
+                            val span     = spans(idx).asInstanceOf[Array[?]]
                             val spanSize = span.length
-                            if spanSize > 0 then
-                                System.arraycopy(span.toArrayUnsafe, 0, result, writeIdx, spanSize)
+                            copyInto(span, 0, result, writeIdx, spanSize)
                             populateLoop(idx + 1, writeIdx + spanSize)
                     populateLoop(0, 0)
                     result
@@ -517,16 +533,16 @@ object Span:
           * @return
           *   a new Span containing all elements that satisfy the predicate
           */
-        inline def filter(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
+        inline def filter(inline p: A => Boolean): Span[A] =
             val size = self.length
-            if size == 0 then Span.empty[A]
+            if size == 0 then self
             else
-                val temp                                        = new Array[A](size)
+                val temp                                        = newArrayLike(self, size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
                         if p(elem) then
-                            temp(writeIdx) = elem
+                            store(temp, writeIdx, elem)
                             loop(idx + 1, writeIdx + 1)
                         else
                             loop(idx + 1, writeIdx)
@@ -534,12 +550,7 @@ object Span:
                     else writeIdx
                 val actualSize = loop(0, 0)
                 if actualSize == size then temp
-                else if actualSize == 0 then Span.empty[A]
-                else
-                    val result = new Array[A](actualSize)
-                    System.arraycopy(temp, 0, result, 0, actualSize)
-                    result
-                end if
+                else copyRange(temp, 0, actualSize)
             end if
         end filter
 
@@ -550,7 +561,7 @@ object Span:
           * @return
           *   a new Span containing all elements that do not satisfy the predicate
           */
-        inline def filterNot(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
+        inline def filterNot(inline p: A => Boolean): Span[A] =
             Span.filter(self)(!p(_))
 
         /** Selects the interval of elements between the given indices.
@@ -562,18 +573,8 @@ object Span:
           * @return
           *   a Span containing the elements from index from up to but not including index until
           */
-        def slice(from: Int, until: Int)(using ClassTag[A]): Span[A] =
-            val size  = self.length
-            val start = math.max(0, from)
-            val end   = math.min(size, until)
-            val len   = math.max(0, end - start)
-            if len == 0 then Span.empty[A]
-            else
-                val r = new Array[A](len)
-                System.arraycopy(self, start, r, 0, len)
-                r
-            end if
-        end slice
+        def slice(from: Int, until: Int): Span[A] =
+            copyRange(self, math.max(0, from), math.min(self.length, until))
 
         /** An Span containing the first n elements of this Span.
           *
@@ -582,7 +583,7 @@ object Span:
           * @return
           *   a Span containing the first n elements
           */
-        inline def take(n: Int)(using ClassTag[A]): Span[A] =
+        inline def take(n: Int): Span[A] =
             Span.slice(self)(0, n)
 
         /** An Span containing the last n elements of this Span.
@@ -592,7 +593,7 @@ object Span:
           * @return
           *   a Span containing the last n elements
           */
-        inline def takeRight(n: Int)(using ClassTag[A]): Span[A] =
+        inline def takeRight(n: Int): Span[A] =
             Span.slice(self)(math.max(0, size - n), size)
 
         /** Takes longest prefix of elements that satisfy a predicate.
@@ -602,20 +603,14 @@ object Span:
           * @return
           *   the longest prefix of this Span whose elements all satisfy the predicate p
           */
-        inline def takeWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
+        inline def takeWhile(inline p: A => Boolean): Span[A] =
             val size                            = self.length
             @tailrec def findEnd(idx: Int): Int =
-                if idx >= size then size
-                else if !p(self(idx)) then idx
+                if idx >= size || !p(self(idx)) then idx
                 else findEnd(idx + 1)
             val end = findEnd(0)
             if end == size then self
-            else if end == 0 then Span.empty[A]
-            else
-                val r = new Array[A](end)
-                System.arraycopy(self, 0, r, 0, end)
-                r
-            end if
+            else copyRange(self, 0, end)
         end takeWhile
 
         /** The rest of the Span without its n first elements.
@@ -625,7 +620,7 @@ object Span:
           * @return
           *   a Span containing all elements except the first n ones
           */
-        inline def drop(n: Int)(using ClassTag[A]): Span[A] =
+        inline def drop(n: Int): Span[A] =
             Span.slice(self)(n, size)
 
         /** The rest of the Span without its n last elements.
@@ -635,7 +630,7 @@ object Span:
           * @return
           *   a Span containing all elements except the last n ones
           */
-        inline def dropRight(n: Int)(using ClassTag[A]): Span[A] =
+        inline def dropRight(n: Int): Span[A] =
             Span.slice(self)(0, size - n)
 
         /** Drops longest prefix of elements that satisfy a predicate.
@@ -645,21 +640,14 @@ object Span:
           * @return
           *   the longest suffix of this Span whose first element does not satisfy the predicate p
           */
-        inline def dropWhile(inline p: A => Boolean)(using ClassTag[A]): Span[A] =
+        inline def dropWhile(inline p: A => Boolean): Span[A] =
             val size                              = self.length
             @tailrec def findStart(idx: Int): Int =
-                if idx >= size then size
-                else if !p(self(idx)) then idx
+                if idx >= size || !p(self(idx)) then idx
                 else findStart(idx + 1)
             val start = findStart(0)
-            if start >= size then Span.empty[A]
-            else if start == 0 then self
-            else
-                val len = size - start
-                val r   = new Array[A](len)
-                System.arraycopy(self, start, r, 0, len)
-                r
-            end if
+            if start == 0 then self
+            else copyRange(self, start, size)
         end dropWhile
 
         /** Returns a new Span with the elements in reversed order.
@@ -667,12 +655,12 @@ object Span:
           * @return
           *   a Span with elements in reverse order
           */
-        inline def reverse(using ClassTag[A]): Span[A] =
+        inline def reverse: Span[A] =
             val size                          = self.length
-            val r                             = new Array[A](size)
+            val r                             = newArrayLike(self, size)
             @tailrec def loop(idx: Int): Unit =
                 if idx < size then
-                    r(size - 1 - idx) = self(idx)
+                    store(r, size - 1 - idx, self(idx))
                     loop(idx + 1)
             loop(0)
             r
@@ -687,10 +675,10 @@ object Span:
           * @return
           *   a new Span with the element at position index replaced by elem
           */
-        inline def update(index: Int, elem: A)(using ClassTag[A]): Span[A] =
+        inline def update(index: Int, elem: A)(using tag: ShallowTag[A]): Span[A] =
             val size = self.length
-            val r    = new Array[A](size)
-            System.arraycopy(self, 0, r, 0, size)
+            val r    = tag.newArray(size)
+            copyInto(self, 0, r, 0, size)
             r(index) = elem
             r
         end update
@@ -702,7 +690,7 @@ object Span:
           * @return
           *   a pair of Spans consisting of the first n elements and the remaining elements
           */
-        inline def splitAt(n: Int)(using ClassTag[A]): (Span[A], Span[A]) =
+        inline def splitAt(n: Int): (Span[A], Span[A]) =
             (Span.take(self)(n), Span.drop(self)(n))
 
         /** Splits this Span into a prefix/suffix pair according to a predicate.
@@ -712,23 +700,15 @@ object Span:
           * @return
           *   a pair consisting of the longest prefix satisfying p and the remainder
           */
-        inline def span(inline p: A => Boolean)(using ClassTag[A]): (Span[A], Span[A]) =
+        inline def span(inline p: A => Boolean): (Span[A], Span[A]) =
             val size                              = self.length
             @tailrec def findSplit(idx: Int): Int =
-                if idx >= size then size
-                else if !p(self(idx)) then idx
+                if idx >= size || !p(self(idx)) then idx
                 else findSplit(idx + 1)
             val split = findSplit(0)
-            if split == size then (self, Span.empty[A])
-            else if split == 0 then (Span.empty[A], self)
-            else
-                val prefix    = new Array[A](split)
-                val suffixLen = size - split
-                val suffix    = new Array[A](suffixLen)
-                System.arraycopy(self, 0, prefix, 0, split)
-                System.arraycopy(self, split, suffix, 0, suffixLen)
-                (prefix, suffix)
-            end if
+            if split == size then (self, emptyArrayLike(self))
+            else if split == 0 then (emptyArrayLike(self), self)
+            else (copyRange(self, 0, split), copyRange(self, split, size))
         end span
 
         /** A pair of, first, all elements that satisfy predicate p and, second, all elements that do not.
@@ -738,36 +718,26 @@ object Span:
           * @return
           *   a pair of Spans: the first contains all elements that satisfy p, the second contains all elements that do not
           */
-        inline def partition(inline p: A => Boolean)(using ClassTag[A]): (Span[A], Span[A]) =
+        inline def partition(inline p: A => Boolean): (Span[A], Span[A]) =
             val size = self.length
-            if size == 0 then (Span.empty[A], Span.empty[A])
+            if size == 0 then (self, self)
             else
-                val trueTemp                                                         = new Array[A](size)
-                val falseTemp                                                        = new Array[A](size)
+                val trueTemp                                                         = newArrayLike(self, size)
+                val falseTemp                                                        = newArrayLike(self, size)
                 @tailrec def loop(idx: Int, trueIdx: Int, falseIdx: Int): (Int, Int) =
                     if idx < size then
                         val elem = self(idx)
                         if p(elem) then
-                            trueTemp(trueIdx) = elem
+                            store(trueTemp, trueIdx, elem)
                             loop(idx + 1, trueIdx + 1, falseIdx)
                         else
-                            falseTemp(falseIdx) = elem
+                            store(falseTemp, falseIdx, elem)
                             loop(idx + 1, trueIdx, falseIdx + 1)
                         end if
                     else (trueIdx, falseIdx)
                 val (trueSize, falseSize) = loop(0, 0, 0)
-                val trueResult            = if trueSize == 0 then Span.empty[A]
-                else if trueSize == size then Span.fromUnsafe(trueTemp)
-                else
-                    val result = new Array[A](trueSize)
-                    System.arraycopy(trueTemp, 0, result, 0, trueSize)
-                    Span.fromUnsafe(result)
-                val falseResult = if falseSize == 0 then Span.empty[A]
-                else if falseSize == size then Span.fromUnsafe(falseTemp)
-                else
-                    val result = new Array[A](falseSize)
-                    System.arraycopy(falseTemp, 0, result, 0, falseSize)
-                    Span.fromUnsafe(result)
+                val trueResult            = if trueSize == size then trueTemp else copyRange(trueTemp, 0, trueSize)
+                val falseResult           = if falseSize == size then falseTemp else copyRange(falseTemp, 0, falseSize)
                 (trueResult, falseResult)
             end if
         end partition
@@ -912,10 +882,10 @@ object Span:
           * @return
           *   a new array containing all elements of this Span
           */
-        def toArray(using ClassTag[A]): Array[A] =
+        def toArray(using tag: ShallowTag[A]): Array[A] =
             val size = self.length
-            val copy = new Array[A](size)
-            System.arraycopy(self, 0, copy, 0, size)
+            val copy = tag.newArray(size)
+            copyInto(self, 0, copy, 0, size)
             copy
         end toArray
 
@@ -936,7 +906,7 @@ object Span:
           * @return
           *   a new Span which contains all elements of this Span followed by all elements of suffix
           */
-        inline def concat(suffix: Span[A])(using ClassTag[A]): Span[A] =
+        inline def concat(suffix: Span[A])(using ShallowTag[A]): Span[A] =
             Span.concat(self, suffix)
 
         /** Alias for concat.
@@ -946,7 +916,7 @@ object Span:
           * @return
           *   a new Span with suffix appended
           */
-        inline infix def ++(suffix: Span[A])(using ClassTag[A]): Span[A] =
+        inline infix def ++(suffix: Span[A])(using ShallowTag[A]): Span[A] =
             Span.concat(self)(suffix)
 
         /** Returns a new Span with an element appended.
@@ -956,29 +926,13 @@ object Span:
           * @return
           *   a new Span with x appended
           */
-        inline def append(x: A)(using ClassTag[A]): Span[A] =
+        inline def append(x: A)(using tag: ShallowTag[A]): Span[A] =
             val size = self.length
-            val r    = new Array[A](size + 1)
-            System.arraycopy(self, 0, r, 0, size)
+            val r    = tag.newArray(size + 1)
+            copyInto(self, 0, r, 0, size)
             r(size) = x
             r
         end append
-
-        /** Returns a new Span with the element at the specified index replaced.
-          *
-          * @throws IndexOutOfBoundsException
-          *   if the index is out of bounds
-          */
-        inline def updated(idx: Int, x: A)(using ClassTag[A]): Span[A] =
-            val size = self.length
-            // Checked here rather than left to the array write: on Scala.js an out-of-bounds write is undefined behavior and
-            // surfaces as a fatal error, not the exception this method promises.
-            if idx < 0 || idx >= size then throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${size - 1})")
-            val r = new Array[A](size)
-            System.arraycopy(self, 0, r, 0, size)
-            r(idx) = x
-            r
-        end updated
 
         /** Alias for append.
           *
@@ -987,7 +941,7 @@ object Span:
           * @return
           *   a new Span with x appended
           */
-        inline def :+(x: A)(using ClassTag[A]): Span[A] =
+        inline def :+(x: A)(using ShallowTag[A]): Span[A] =
             Span.append(self)(x)
 
         /** Returns a new Span with an element prepended.
@@ -997,11 +951,11 @@ object Span:
           * @return
           *   a new Span with x prepended
           */
-        inline def prepend(x: A)(using ClassTag[A]): Span[A] =
+        inline def prepend(x: A)(using tag: ShallowTag[A]): Span[A] =
             val size = self.length
-            val r    = new Array[A](size + 1)
+            val r    = tag.newArray(size + 1)
             r(0) = x
-            System.arraycopy(self, 0, r, 1, size)
+            copyInto(self, 0, r, 1, size)
             r
         end prepend
 
@@ -1012,11 +966,11 @@ object Span:
           * @return
           *   a new Span containing the elements transformed by pf
           */
-        inline def collect[B: ClassTag](pf: PartialFunction[A, B]): Span[B] =
+        inline def collect[B: ShallowTag as tag](pf: PartialFunction[A, B]): Span[B] =
             val size = self.length
-            if size == 0 then Span.empty[B]
+            if size == 0 then tag.emptyArray
             else
-                val temp                                        = new Array[B](size)
+                val temp                                        = tag.newArray(size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
@@ -1029,12 +983,7 @@ object Span:
                     else writeIdx
                 val actualSize = loop(0, 0)
                 if actualSize == size then temp
-                else if actualSize == 0 then Span.empty[B]
-                else
-                    val result = new Array[B](actualSize)
-                    System.arraycopy(temp, 0, result, 0, actualSize)
-                    result
-                end if
+                else copyRange(temp, 0, actualSize)
             end if
         end collect
 
@@ -1061,18 +1010,18 @@ object Span:
           * @return
           *   a new Span which contains the first occurrence of every element of this Span
           */
-        def distinct(using ClassTag[A]): Span[A] =
+        def distinct: Span[A] =
             val size = self.length
-            if size == 0 then Span.empty[A]
+            if size == 0 then self
             else
                 val seen                                        = scala.collection.mutable.Set.empty[A]
-                val temp                                        = new Array[A](size)
+                val temp                                        = newArrayLike(self, size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
                         if !seen.contains(elem) then
                             discard(seen.add(elem))
-                            temp(writeIdx) = elem
+                            store(temp, writeIdx, elem)
                             loop(idx + 1, writeIdx + 1)
                         else
                             loop(idx + 1, writeIdx)
@@ -1080,12 +1029,7 @@ object Span:
                     else writeIdx
                 val actualSize = loop(0, 0)
                 if actualSize == size then temp
-                else if actualSize == 0 then Span.empty[A]
-                else
-                    val result = new Array[A](actualSize)
-                    System.arraycopy(temp, 0, result, 0, actualSize)
-                    result
-                end if
+                else copyRange(temp, 0, actualSize)
             end if
         end distinct
 
@@ -1096,19 +1040,19 @@ object Span:
           * @return
           *   a new Span which contains the first occurrence of every element of this Span after transformation by f
           */
-        inline def distinctBy[B](inline f: A => B)(using ClassTag[A]): Span[A] =
+        inline def distinctBy[B](inline f: A => B): Span[A] =
             val size = self.length
-            if size == 0 then Span.empty[A]
+            if size == 0 then self
             else
                 val seen                                        = scala.collection.mutable.Set.empty[B]
-                val temp                                        = new Array[A](size)
+                val temp                                        = newArrayLike(self, size)
                 @tailrec def loop(idx: Int, writeIdx: Int): Int =
                     if idx < size then
                         val elem = self(idx)
                         val key  = f(elem)
                         if !seen.contains(key) then
                             discard(seen.add(key))
-                            temp(writeIdx) = elem
+                            store(temp, writeIdx, elem)
                             loop(idx + 1, writeIdx + 1)
                         else
                             loop(idx + 1, writeIdx)
@@ -1116,12 +1060,7 @@ object Span:
                     else writeIdx
                 val actualSize = loop(0, 0)
                 if actualSize == size then temp
-                else if actualSize == 0 then Span.empty[A]
-                else
-                    val result = new Array[A](actualSize)
-                    System.arraycopy(temp, 0, result, 0, actualSize)
-                    result
-                end if
+                else copyRange(temp, 0, actualSize)
             end if
         end distinctBy
 
@@ -1134,7 +1073,7 @@ object Span:
           * @return
           *   an iterator producing Spans of size size, except the last element which may be smaller
           */
-        def sliding(size: Int, step: Int = 1)(using ClassTag[A]): Iterator[Span[A]] =
+        def sliding(size: Int, step: Int = 1): Iterator[Span[A]] =
             if size <= 0 then throw new IllegalArgumentException("size must be positive")
             if step <= 0 then throw new IllegalArgumentException("step must be positive")
             val offset = size
@@ -1159,7 +1098,7 @@ object Span:
           * @return
           *   a new Span containing the prefix scan of the elements in this Span
           */
-        inline def scan(z: A)(inline op: (A, A) => A)(using ClassTag[A]): Span[A] =
+        inline def scan(z: A)(inline op: (A, A) => A)(using ShallowTag[A]): Span[A] =
             Span.scanLeft(self)(z)(op)
 
         /** Produces a Span containing cumulative results of applying the binary operator going left to right.
@@ -1172,9 +1111,9 @@ object Span:
           *   Span with intermediate results of inserting op between consecutive elements of this Span, going left to right with the start
           *   value z on the left
           */
-        inline def scanLeft[B: ClassTag](z: B)(inline op: (B, A) => B): Span[B] =
+        inline def scanLeft[B: ShallowTag as tag](z: B)(inline op: (B, A) => B): Span[B] =
             val size = self.length
-            val r    = new Array[B](size + 1)
+            val r    = tag.newArray(size + 1)
             r(0) = z
             @tailrec def loop(idx: Int, acc: B): Unit =
                 if idx < size then
@@ -1195,9 +1134,9 @@ object Span:
           *   Span with intermediate results of inserting op between consecutive elements of this Span, going right to left with the start
           *   value z on the right
           */
-        inline def scanRight[B: ClassTag](z: B)(inline op: (A, B) => B): Span[B] =
+        inline def scanRight[B: ShallowTag as tag](z: B)(inline op: (A, B) => B): Span[B] =
             val size = self.length
-            val r    = new Array[B](size + 1)
+            val r    = tag.newArray(size + 1)
             r(size) = z
             @tailrec def loop(idx: Int, acc: B): Unit =
                 if idx >= 0 then
@@ -1210,43 +1149,37 @@ object Span:
 
         /** Flattens a two-dimensional Span by concatenating all its rows into a single Span.
           *
-          * @param asIterable
+          * @param asSpan
           *   evidence that A can be converted to a Span
-          * @param ct
-          *   class tag for the element type
+          * @param tag
+          *   the erased class of the element type
           * @return
           *   a new Span containing all elements from the nested structures
           */
-        inline def flatten[B](using asSpan: A => Span[B], ct: ClassTag[B]): Span[B] =
+        inline def flatten[B](using asSpan: A => Span[B], tag: ShallowTag[B]): Span[B] =
             val size = self.length
             if size == 0 then Span.empty[B]
             else
-                val spans                                = new Array[Array[B]](size)
+                // Held as AnyRef: a primitive span widened to B = Any would fail the cast to Array[B].
+                val spans                                = new Array[AnyRef](size)
                 var totalSize                            = 0
                 @tailrec def collectLoop(idx: Int): Unit =
                     if idx < size then
                         val span = asSpan(self(idx))
-                        spans(idx) = span.toArrayUnsafe
-                        totalSize += span.size
+                        spans(idx) = span
+                        totalSize += span.length
                         collectLoop(idx + 1)
                 collectLoop(0)
 
                 if totalSize == 0 then Span.empty[B]
                 else
-                    val result                                               = new Array[B](totalSize)
+                    val result                                               = tag.newArray(totalSize)
                     @tailrec def populateLoop(idx: Int, writeIdx: Int): Unit =
                         if idx < size then
-                            val span                                                       = spans(idx)
-                            val spanSize                                                   = span.size
-                            @tailrec def copySpan(elemIdx: Int, currentWriteIdx: Int): Int =
-                                if elemIdx < spanSize then
-                                    result(currentWriteIdx) = span(elemIdx)
-                                    copySpan(elemIdx + 1, currentWriteIdx + 1)
-                                else currentWriteIdx
-                            val nextWriteIdx = copySpan(0, writeIdx)
-                            populateLoop(idx + 1, nextWriteIdx)
-                        end if
-                    end populateLoop
+                            val span     = spans(idx).asInstanceOf[Array[?]]
+                            val spanSize = span.length
+                            copyInto(span, 0, result, writeIdx, spanSize)
+                            populateLoop(idx + 1, writeIdx + spanSize)
                     populateLoop(0, 0)
                     result
                 end if
@@ -1262,7 +1195,7 @@ object Span:
           * @return
           *   a new Span padded to the specified length
           */
-        inline def padTo(len: Int, elem: A)(using ClassTag[A]): Span[A] =
+        inline def padTo(len: Int, elem: A)(using ShallowTag[A]): Span[A] =
             if len <= size then self
             else Span.concat(self)(Span.fill(len - size)(elem))
 
@@ -1312,7 +1245,7 @@ object Span:
     end extension
 
     extension [B](x: B)
-        inline def +:[A >: B: ClassTag](span: Span[A]): Span[A] =
+        inline def +:[A >: B: ShallowTag](span: Span[A]): Span[A] =
             Span.prepend(span)(x)
 
     /** Returns a Span that contains the results of some element computation a number of times.
@@ -1324,10 +1257,10 @@ object Span:
       * @return
       *   a Span with n elements, each computed by the elem expression (which is computed n times)
       */
-    def fill[A: ClassTag](n: Int)(elem: => A): Span[A] =
+    def fill[A: ShallowTag as tag](n: Int)(elem: => A): Span[A] =
         if n <= 0 then empty[A]
         else
-            val r                             = new Array[A](n)
+            val r                             = tag.newArray(n)
             @tailrec def loop(idx: Int): Unit =
                 if idx < n then
                     r(idx) = elem
@@ -1344,10 +1277,10 @@ object Span:
       * @return
       *   a Span with elements f(0), f(1), ..., f(n-1)
       */
-    inline def tabulate[A: ClassTag](n: Int)(inline f: Int => A): Span[A] =
+    inline def tabulate[A: ShallowTag as tag](n: Int)(inline f: Int => A): Span[A] =
         if n <= 0 then empty[A]
         else
-            val r                             = new Array[A](n)
+            val r                             = tag.newArray(n)
             @tailrec def loop(idx: Int): Unit =
                 if idx < n then
                     r(idx) = f(idx)
@@ -1403,10 +1336,10 @@ object Span:
       * @return
       *   the Span returning len values in the sequence start, f(start), f(f(start)), ...
       */
-    inline def iterate[A: ClassTag](start: A, len: Int)(inline f: A => A): Span[A] =
+    inline def iterate[A: ShallowTag as tag](start: A, len: Int)(inline f: A => A): Span[A] =
         if len <= 0 then empty[A]
         else
-            val r                                       = new Array[A](len)
+            val r                                       = tag.newArray(len)
             @tailrec def loop(idx: Int, value: A): Unit =
                 if idx < len then
                     r(idx) = value
@@ -1421,19 +1354,18 @@ object Span:
       * @return
       *   the Span created from concatenating spans
       */
-    def concat[A: ClassTag](spans: Span[A]*): Span[A] =
+    def concat[A: ShallowTag as tag](spans: Span[A]*): Span[A] =
         if spans.isEmpty then empty[A]
         else
             val totalSize = spans.map(_.length).sum
             if totalSize == 0 then empty[A]
             else
-                val r                                                 = new Array[A](totalSize)
+                val r                                                 = tag.newArray(totalSize)
                 @tailrec def loop(spanIdx: Int, targetIdx: Int): Unit =
                     if spanIdx < spans.length then
                         val span     = spans(spanIdx)
                         val spanSize = span.length
-                        if spanSize > 0 then
-                            System.arraycopy(span.toArrayUnsafe, 0, r, targetIdx, spanSize)
+                        copyInto(span, 0, r, targetIdx, spanSize)
                         loop(spanIdx + 1, targetIdx + spanSize)
                 loop(0, 0)
                 r
@@ -1535,24 +1467,55 @@ object Span:
         loop(0)
     end forallZip
 
-    private object internal:
+    /** Allocation for operations that take no element evidence.
+      *
+      * A result built only from a source's elements is allocated with the source's array class. Because Span is covariant that class may be
+      * narrower than `A` (a `Span[Animal]` backed by `Dog[]`), which is sound only while every stored element came from the source; an
+      * operation that stores a caller-supplied `A` must allocate from a [[ShallowTag]] instead.
+      *
+      * Arrays of the source's class are held as `Span[A]` and written through [[store]], never typed `Array[A]`: see
+      * [[kyo.internal.ShallowTagMacro.store]] for the primitive span widened to `Any` that an `Array[A]` would fail on.
+      */
+    @publicInBinary
+    private[kyo] object internal:
 
-        val cachedEmpty =
-            Map[ClassTag[?], Array[?]](
-                summon[ClassTag[Boolean]] -> Array.emptyBooleanArray,
-                summon[ClassTag[Byte]]    -> Array.emptyByteArray,
-                summon[ClassTag[Char]]    -> Array.emptyCharArray,
-                summon[ClassTag[Double]]  -> Array.emptyDoubleArray,
-                summon[ClassTag[Float]]   -> Array.emptyFloatArray,
-                summon[ClassTag[Int]]     -> Array.emptyIntArray,
-                summon[ClassTag[Long]]    -> Array.emptyLongArray,
-                summon[ClassTag[Short]]   -> Array.emptyShortArray
-            )
+        def newArrayLike[A](src: Array[? <: A], len: Int): Span[A] =
+            ShallowTag.fromArray(src.asInstanceOf[Array[A]]).newArray(len)
+
+        def emptyArrayLike[A](src: Array[? <: A]): Span[A] =
+            ShallowTag.fromArray(src.asInstanceOf[Array[A]]).emptyArray
+
+        inline def store[A](array: Array[? <: A], idx: Int, value: A): Unit =
+            ${ kyo.internal.ShallowTagMacro.store('array, 'idx, 'value) }
+
+        def copyRange[A](src: Array[? <: A], from: Int, until: Int): Span[A] =
+            val r = newArrayLike(src, math.max(0, until - from))
+            if r.length > 0 then System.arraycopy(src, from, r, 0, r.length)
+            r
+        end copyRange
+
+        // System.arraycopy refuses a primitive source for a reference destination, which a primitive span widened to Any produces.
+        def copyInto(src: Array[?], srcPos: Int, dst: Array[?], dstPos: Int, len: Int): Unit =
+            if len > 0 then
+                if (src.getClass eq dst.getClass) || !src.getClass.getComponentType.isPrimitive then
+                    System.arraycopy(src, srcPos, dst, dstPos, len)
+                else
+                    @tailrec def box(idx: Int): Unit =
+                        if idx < len then
+                            scala.runtime.ScalaRunTime.array_update(
+                                dst,
+                                dstPos + idx,
+                                scala.runtime.ScalaRunTime.array_apply(src, srcPos + idx)
+                            )
+                            box(idx + 1)
+                    box(0)
+                end if
+        end copyInto
 
     end internal
 
     /** Parses a comma-separated string into a Span, delegating element parsing to the inner reader. */
-    given [A](using r: Flag.Reader.Scalar[A], ct: ClassTag[A]): Flag.Reader[Span[A]] with
+    given [A](using r: Flag.Reader.Scalar[A], tag: ShallowTag[A]): Flag.Reader[Span[A]] with
         def apply(s: String): Either[Throwable, Span[A]] =
             if s.trim.isEmpty then Right(Span.empty[A])
             else

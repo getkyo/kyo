@@ -2,7 +2,6 @@ package kyo
 
 import ZIOs.toExit
 import kyo.Result.*
-import scala.reflect.ClassTag
 import zio.Cause
 import zio.Chunk as ZChunk
 import zio.Exit
@@ -55,7 +54,7 @@ object ZStreams:
         Frame,
         Trace,
         Tag[Emit[Chunk[A]]],
-        ClassTag[A]
+        ShallowTag[A]
     ): ZStream[Any, E, A] =
         // One producer fiber owns the whole consumption, so every resource the stream acquires lives and
         // dies inside a single evaluation's extent; the ZIO scope interrupts that fiber when the ZStream
@@ -84,7 +83,11 @@ object ZStreams:
             }.map { (channel, fiber) =>
                 ZStream.repeatZIOChunkOption {
                     ZIOs.run(Abort.run[Closed](channel.take)).flatMap {
-                        case Result.Success(chunk) => ZIO.succeed(ZChunk.fromArray(chunk.toArray))
+                        case Result.Success(chunk) =>
+                            // ZChunk.fromArray specializes on the array's runtime class, so an int[] stays an unboxed IntArray chunk.
+                            val array = ShallowTag[A].newArray(chunk.size)
+                            discard(chunk.copyToArray(array))
+                            ZIO.succeed(ZChunk.fromArray(array))
                         case _                     =>
                             ZIOs.run(fiber.getResult).flatMap {
                                 case Result.Success(_) => ZIO.fail(None)
