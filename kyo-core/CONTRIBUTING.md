@@ -140,19 +140,26 @@ property when changing the path.
 These are the module's load-bearing invariants. The user-facing statement is the
 "Resource safety" section of `README.md`; this is how the code upholds it.
 
-**A fiber's result arrives after its finalizers.** An interrupted `IOTask` takes the
-interrupt without completing its promise; the promise stays pending while the task
-releases what it holds, and completes once that is done (`scheduler/IOTask.scala`,
-the `Status` states and `abandon`). Anything that joins a fiber therefore observes it
-released. `Fiber.interruptAwait` is the public form of that wait. An interrupt is a
-CAS on the task's status word, and the parent's link to a child is registered before
-the child is scheduled, so an interrupt cannot miss a child.
+**A fiber's result arrives after its synchronous releases.** An interrupted `IOTask`
+takes the interrupt without completing its promise; the promise stays pending while
+the task runs the releases the abandoned computation owes, and completes once they
+have run (`scheduler/IOTask.scala`, the `Status` states and `abandon`).
+`Fiber.interruptAwait` is the public form of that wait. A scope's release is its
+`finalizer.close`, which starts the drain of the scope's async finalizers on a
+detached fiber and does not wait for it: by decision there is no backpressure on
+abnormal exit, so a joiner can observe an interrupted fiber's result while an async
+finalizer is still running (`ScopeTest`, the pending "a scope short-circuited by an
+outer handler awaits its async release before the next effect"). A test that needs
+an async finalizer finished waits on a latch that finalizer releases. An interrupt
+is a CAS on the task's status word, and the parent's link to a child is registered
+before the child is scheduled, so an interrupt cannot miss a child.
 
 **`Scope.run` delivers its result after the drain.** `Scope.run` closes its
 `Finalizer` through `Sync.ensure(finalizer.close)`, so the close runs where the kernel
 ends the region: in place when the body ends, and once after the last branch under a
-handler that resumes more than once. It then waits for the drain before re-raising the
-body's result (`Scope.scala`, `run`). The drain runs on a detached fiber behind an
+handler that resumes more than once. When the body ends, with a value or a failure, it
+then waits for the drain before re-raising the body's result (`Scope.scala`, `run`); an
+abandoned body never reaches that wait. The drain runs on a detached fiber behind an
 uninterruptible promise, so an interrupt at a caller's wait cannot stop the finalizers
 halfway.
 

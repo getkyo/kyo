@@ -329,7 +329,7 @@ def serve: Unit < Async                 = ???
 
 Two cases need care:
 
-- **Interrupting a fiber does not wait for it.** `fiber.interrupt` returns once the interrupt is requested. When the caller must observe the fiber stopped, use `fiber.interruptAwait`: it returns once the fiber has stopped and its brackets and nested `Scope.run`s have released. What a `Fiber.init` fiber registered directly on its scope is released when the enclosing scope reaches it.
+- **Interrupting a fiber does not wait for it.** `fiber.interrupt` returns once the interrupt is requested. When the caller must observe the fiber stopped, use `fiber.interruptAwait`: it returns once the fiber has stopped and its brackets and nested `Scope.run`s have started their releases. A release that is itself `Async`, such as one that waits on a fiber or a latch, may still be running when it returns; when the caller needs it finished, have the release signal a `Latch` and wait on that. What a `Fiber.init` fiber registered directly on its scope is released when the enclosing scope reaches it.
 - **A fiber that outlives its scope cannot register on it.** A registration on a closed scope logs a warning, runs the release at once, detached, and panics the registering computation with `Closed`: the resource was released instead of leaked, but its user is told it no longer has one. This happens to `Fiber.initUnscoped` fibers that capture a scope, and it is the reason to prefer `Fiber.init`.
 
 ### Where the guarantee starts and stops
