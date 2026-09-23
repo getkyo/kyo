@@ -43,7 +43,7 @@ A block can carry a real fact in one sentence and waste four around it, and thos
 
 Do not judge each block once and move on. One holistic look per block is what keeps everything: every sentence looks defensible next to the code it sits on, and the duplication only shows up when you compare blocks to each other. Make a separate pass for each removable class, over the whole file, in this order. Record what each pass removed.
 
-**Pass 0 — claims that are not true.** Before judging whether a block is worth keeping, check whether what it says is so. Read the claim against the code it describes and satisfy yourself it holds: the ordering it asserts, the constant it cites, the behaviour it attributes to a call, the thing it says exists.
+**Pass 0: claims that are not true.** Before judging whether a block is worth keeping, check whether what it says is so. Read the claim against the code it describes and satisfy yourself it holds: the ordering it asserts, the constant it cites, the behaviour it attributes to a call, the thing it says exists.
 
 A false comment is the worst defect in this pass's scope, and redundancy is not close. A redundant comment costs a reader time; a false one makes them reason from something untrue and change the code accordingly, and it is trusted precisely because someone bothered to write it. It is also evidence in itself: prose that no longer matches its code usually means the code moved and nobody updated the comment, so look at what else that edit touched before moving on.
 
@@ -53,7 +53,7 @@ A false comment is the worst defect in this pass's scope, and redundancy is not 
 
 Report every falsehood separately from the verdict counts. It is the finding a maintainer most wants out of this pass, and it is invisible in a diff that only shows deletions. One wave over this repository turned up three: a build file describing a separate project that does not exist, a test listing a scenario that same file disables, and a benchmark row claiming a narrower chain where only the depth differed.
 
-**Pass 1 — whole blocks that restate.** For every block: does grepping the identifier below it recover the content? Does the method, test, or class name already say it? Does the assertion message on the next line say it? If yes, DELETE the block. Do this before anything else; there is no point polishing a block that should not exist.
+**Pass 1: whole blocks that restate.** For every block: does grepping the identifier below it recover the content? Does the method, test, or class name already say it? Does the assertion message on the next line say it? If yes, DELETE the block. Do this before anything else; there is no point polishing a block that should not exist.
 
 One exception, because a name states a **subject** and never a **rationale**. Keep the sentences that say why a thing is *built the way it is*, where a reader who does not know would simplify it and quietly destroy what it does:
 
@@ -62,17 +62,17 @@ One exception, because a name states a **subject** and never a **rationale**. Ke
 
 This licenses the construction rationale and nothing else. The story of how the bug was found, a walkthrough of the body, and a label announcing the block's own topic are all still deleted.
 
-**Pass 2 — duplicates across the file.** Compare every surviving block against every other, and against any block it points at. Where two state the same fact, keep the one at the site that needs it and DELETE the other outright. **Duplication is resolved by deleting a copy, never by merging** — merging is a rewrite, deleting is a cut. A fact stated once where it belongs beats the same fact in three places drifting apart.
+**Pass 2: duplicates across the file.** Compare every surviving block against every other, and against any block it points at. Where two state the same fact, keep the one at the site that needs it and DELETE the other outright. **Duplication is resolved by deleting a copy, never by merging**: merging is a rewrite, deleting is a cut. A fact stated once where it belongs beats the same fact in three places drifting apart.
 
 Before deleting a block that carries a kyo ticket reference, check the reference survives somewhere in the file. A redundant block can still hold the only route back to the report, and losing it costs a reader the discussion the comment was too small to carry. If it is the last occurrence, keep the sentence carrying it.
 
-**Pass 3 — inventories and pointers.** Inside surviving blocks, cut every clause naming a test, file, issue number, call site, or position ("the leaf below", "as above", "same shape as X"). Keep a pointer only when it routes to a substantially fuller argument elsewhere that this sentence merely summarises.
+**Pass 3: inventories and pointers.** Inside surviving blocks, cut every clause naming a test, file, issue number, call site, or position ("the leaf below", "as above", "same shape as X"). Keep a pointer only when it routes to a substantially fuller argument elsewhere that this sentence merely summarises.
 
-**Pass 4 — restatement sentences.** Inside each surviving block, cut any sentence that restates the previous sentence in other words, restates the signature, or narrates the line below it. Including the opening sentence that announces what the block is about before the block gets to it.
+**Pass 4: restatement sentences.** Inside each surviving block, cut any sentence that restates the previous sentence in other words, restates the signature, or narrates the line below it. Including the opening sentence that announces what the block is about before the block gets to it.
 
-**Pass 5 — elaboration.** For each surviving block, find the single sentence carrying the fact. Then take every *other* sentence in turn and ask: without this one, would a maintainer make a wrong change? Cut each that fails. A stated invariant usually does not need its failure story: "the release is registered before the take" is the fact, and the paragraph imagining what happens otherwise is usually the author convincing themselves. Keep the failure only where it is genuinely not deducible from the invariant.
+**Pass 5: elaboration.** For each surviving block, find the single sentence carrying the fact. Then take every *other* sentence in turn and ask: without this one, would a maintainer make a wrong change? Cut each that fails. A stated invariant usually does not need its failure story: "the release is registered before the take" is the fact, and the paragraph imagining what happens otherwise is usually the author convincing themselves. Keep the failure only where it is genuinely not deducible from the invariant.
 
-**Pass 6 — the file as a whole.** Step back and read the surviving comments together, in order, as a maintainer would. Is this the amount of prose this file needs? If several blocks explain the same class of invariant, keep the clearest and delete the echoes. This pass catches what block-by-block judgment structurally cannot.
+**Pass 6: the file as a whole.** Step back and read the surviving comments together, in order, as a maintainer would. Is this the amount of prose this file needs? If several blocks explain the same class of invariant, keep the clearest and delete the echoes. This pass catches what block-by-block judgment structurally cannot.
 
 The default is no comment. A comment is warranted **only** as an answer to one of these:
 
