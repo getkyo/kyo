@@ -69,11 +69,11 @@ jobs:
       # c-boringssl-stub shim, and kyo-net's `Compile / packageBin` runs kyoNetNativeClassifierGuard
       # (build.sbt), which fails on a stub. The site render needs kyo-net's packageBin, so it trips
       # the guard even though it publishes nothing.
-      - name: Prepare BoringSSL
-        shell: bash
-        run: |
-          bash scripts/apt-install.sh --if-missing cmake go:golang-go
-          bash kyo-net/build/boringssl/build-boringssl.sh linux-x86_64
+      - uses: ./.github/actions/stage-natives
+        with:
+          aeron: 'false'
+          sqlite: 'false'
+          doltlite: 'false'
       - name: Link the browser bundle (fullLinkJS)
         run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
       - name: Render and assemble the site from the current repo

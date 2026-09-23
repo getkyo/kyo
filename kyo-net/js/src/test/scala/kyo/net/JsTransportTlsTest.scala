@@ -16,6 +16,9 @@ import scala.scalajs.js as sjs
   * version constraint is genuinely unsatisfiable when the two sides disagree (the handshake cannot fall back). The empty-host test uses the
   * kyo client against a real kyo TLS server. Every step is gated on a connection-fiber or a `Promise` completion fired from the Node
   * `listening`/`secureConnect` callback; there is no sleep or wall-clock timeout used as synchronization.
+  *
+  * Every test builds a [[kyo.net.internal.JsTransport]] by name. `NetPlatform.transport` selects the koffi posix transport wherever its native
+  * loads, and TLS there runs through BoringSSL, so it would neither reach the Node mapping under test nor run on a host without BoringSSL.
   */
 class JsTransportTlsTest extends Test:
 
@@ -112,7 +115,7 @@ class JsTransportTlsTest extends Test:
     end pinnedTlsClientConnects
 
     "client minVersion is enforced against a TLS1.2-pinned server (rejects the silent downgrade)" in {
-        val transport = NetPlatform.transport
+        val transport = JsTransport.init(poolSize = 1)
         // Client demands TLS1.3 only; the real Node server can speak only TLS1.2. With minVersion mapped onto Node's tls options there is no
         // common version, so the handshake must be rejected. If the client minVersion were dropped, Node would negotiate TLS1.2, and the
         // connection would silently succeed (CWE-326).
@@ -133,7 +136,7 @@ class JsTransportTlsTest extends Test:
     }
 
     "client minVersion permits the handshake when the pinned server matches" in {
-        val transport = NetPlatform.transport
+        val transport = JsTransport.init(poolSize = 1)
         // Control arm: same TLS1.3 floor, but the server speaks TLS1.3, so the version constraint is satisfiable and the handshake succeeds.
         // This proves the rejection above is the version mismatch, not minVersion mapping breaking every handshake.
         val clientTls13 = NetTlsConfig(
@@ -156,7 +159,7 @@ class JsTransportTlsTest extends Test:
     }
 
     "server maxVersion is enforced against a TLS1.3-demanding client" in {
-        val transport = NetPlatform.transport
+        val transport = JsTransport.init(poolSize = 1)
         // kyo TLS server capped at TLS1.2; a real Node client demanding a TLS1.3 floor must be rejected once maxVersion is mapped onto the
         // server's tls options. If the server maxVersion were dropped, the server would allow TLS1.3 and the client would succeed.
         val serverTls12 = NetTlsConfig(
@@ -183,7 +186,7 @@ class JsTransportTlsTest extends Test:
     }
 
     "verifying client with an empty host fails closed before connecting" in {
-        val transport = NetPlatform.transport
+        val transport = JsTransport.init(poolSize = 1)
         // Verifying client (hostnameVerification = true, trustAll = false) with an empty host has no reference identity to check the server
         // certificate against. It must fail closed, matching SslEngineProvider/BoringSslProvider/SystemOpenSslProvider. Passing the
         // empty host to Node as the servername would let identity fall back to Node's default checkServerIdentity (RFC 9525 6.1 gap).
@@ -213,7 +216,7 @@ class JsTransportTlsTest extends Test:
     }
 
     "verifying client with a matching host still connects" in {
-        val transport = NetPlatform.transport
+        val transport = JsTransport.init(poolSize = 1)
         // Control arm for the empty-host fail-closed: the same verifying client with a real reference identity must still connect, proving the
         // fail-closed is scoped to the missing-identity case and not a blanket rejection of verifying clients.
         val serverTls = NetTlsConfig(

@@ -47,6 +47,7 @@ class NativeManifestPrecheckTest extends Test:
         assert(msg != null)
         assert(msg.contains(libId))
         assert(msg.contains(platform))
+        assert(ex.platformTag == platform)
 
         // The generated impl was never instantiated: the pre-check threw before FfiReflect.instantiate.
         assert(NativeManifestPrecheckTest.witnessConstructed == false)
@@ -75,6 +76,8 @@ class NativeManifestPrecheckTest extends Test:
         // The message names both sides: where it IS bundled, and the platform it is not bundled for.
         assert(msg.contains("solaris-sparc"))
         assert(msg.contains(platform))
+        // The tag is the platform searched for, never one of the platforms the manifest does carry.
+        assert(ex.platformTag == platform)
         assert(NativeManifestPrecheckTest.witnessElsewhereConstructed == false)
     }
 

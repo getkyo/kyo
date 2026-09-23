@@ -10,10 +10,9 @@ import kyo.net.NetException
   * backend that does not apply to this OS at all. Selection still needs only "can it serve", which is [[isAvailable]]; every other consumer
   * (the demotion warning, the selection report, the terminal exception's cause) needs the reason, which is the rest of this type.
   *
-  * Lives in the SHARED source set and names no FFI type on purpose: kyo-net depends on kyo-ffi from its JVM and Native configurations only,
-  * so the selection identity every platform shares must compile on JS and Wasm, where `kyo.ffi` does not exist. The translation from
-  * `kyo.ffi.FfiLoadError` into these cases therefore lives in the `jvm-native` `CapabilityProbe`, the only source set that has that
-  * hierarchy.
+  * Lives in the SHARED source set and names no FFI type on purpose: an outcome is the selection identity every platform shares, and a
+  * registry reads it without knowing what produced it. The translation from `kyo.ffi.FfiLoadError` into these cases is the shared
+  * `CapabilityProbe`, kyo-ffi being available on all four platforms.
   */
 private[net] enum CapabilityOutcome derives CanEqual:
 
@@ -62,9 +61,15 @@ private[net] enum CapabilityOutcome derives CanEqual:
 
     /** One line for the selection report and for the terminal exception's cause. */
     def describe: String = this match
-        case Available                => "available"
-        case UnsupportedOS            => "not applicable to this OS/runtime"
-        case Unavailable(reason)      => s"unavailable ($reason)"
+        case Available           => "available"
+        case UnsupportedOS       => "not applicable to this OS/runtime"
+        case Unavailable(reason) => s"unavailable ($reason)"
+        // The remedy differs by runtime, and naming the wrong one costs the reader the same hours as naming none:
+        // a classifier artifact is a dependency-resolution fact and there is no classpath on Node, where the
+        // library is found by an operator path or an npm package instead.
+        case NotBundled(id, platform) if kyo.internal.Platform.isJS || kyo.internal.Platform.isWasm =>
+            s"native library '$id' is not reachable for $platform; point KYO_FFI_${id.toUpperCase.replace('-', '_')}_PATH " +
+                s"at its absolute path, or install the '@kyo/ffi-native' package providing $platform"
         case NotBundled(id, platform) =>
             s"native library '$id' is not on the classpath for $platform; on the JVM, add kyo-net's $platform classifier artifact, " +
                 s"""libraryDependencies += "io.getkyo" %% "kyo-net" % <version> classifier "$platform""""
