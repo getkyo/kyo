@@ -39,18 +39,19 @@ extension (kyoObject: Kyo.type)
       *   An effect that can be completed by the given register function
       */
     def async[A, E](register: (A < (Abort[E] & Async) => Unit) => Any < (Abort[E] & Async))(using Frame): A < (Abort[E] & Async) =
-        for
-            promise <- Promise.init[A, Abort[E]]
-            registerFn = (eff: A < (Abort[E] & Async)) =>
+        Promise.initWith[A, Abort[E]] { promise =>
+            val registerFn = (eff: A < (Abort[E] & Async)) =>
                 import AllowUnsafe.embrace.danger
-                // Spawned, wired to the promise, and linked to it in one step: an interrupt of the caller reaches the
-                // promise through the join below and stops the effect, so nothing it registered runs on unowned.
+                // Unsafe: the effect is spawned, wired to the promise, and linked to it in one step, so an interrupt of
+                // the promise stops it and nothing it registered runs on unowned.
                 val effFiber = Fiber.Unsafe.init(eff)
                 effFiber.onComplete(a => promise.unsafe.completeDiscard(a))
                 Fiber.Unsafe.onInterrupt(promise.unsafe)(e => discard(effFiber.interrupt(e)))
-            _ <- register(registerFn)
-            a <- promise.get
-        yield a
+            // The effect runs from the moment it is registered, before the caller reaches the join. Interrupting the
+            // promise whenever this region ends stops the effect wherever an interrupt lands on the caller; after a
+            // completion the interrupt is a no-op.
+            Sync.ensure(promise.interrupt.unit)(register(registerFn).andThen(promise.get))
+        }
 
     /** Creates an effect that attempts to run the given effect and handles any exceptions that occur to Abort[Throwable].
       *
