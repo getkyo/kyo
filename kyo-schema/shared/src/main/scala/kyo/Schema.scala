@@ -2980,7 +2980,7 @@ object Schema:
     end seqSchema
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A], tag: Tag[Span[A]]): Schema[Span[A]] =
+    given spanSchema[A](using inner0: => Schema[A], shallowTag: ShallowTag[A], tag: Tag[Span[A]]): Schema[Span[A]] =
         lazy val inner = inner0
         Schema.init[Span[A]](
             writeFn = (value, writer) =>

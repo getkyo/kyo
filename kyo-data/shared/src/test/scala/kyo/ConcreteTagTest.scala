@@ -720,6 +720,27 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "derivation" - {
+        "derive, summon and apply produce the same tag" in {
+            val derived  = ConcreteTag.derive[Dog | Cat]
+            val summoned = summon[ConcreteTag[Dog | Cat]]
+            val applied  = ConcreteTag[Dog | Cat]
+            assert(derived == summoned)
+            assert(applied == derived)
+            assert(derived.accepts(new Cat))
+            assert(!derived.accepts(new Snake))
+        }
+
+        "derive is the given a using clause resolves to" in {
+            def tagOf[A](using tag: ConcreteTag[A]): ConcreteTag[A] = tag
+            assert(tagOf[Int | String] == ConcreteTag.derive[Int | String])
+        }
+
+        "a derives clause is rejected, since ConcreteTag is not a class type" in {
+            typeCheckFailure("case class Point(x: Int) derives kyo.ConcreteTag")("not a class type")
+        }
+    }
+
     "equality" - {
         "simple types" in {
             assert(ConcreteTag[Int] == ConcreteTag[Int])
@@ -1045,6 +1066,22 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
                 assert(dst.isInstanceOf[Array[Int]])
                 assert(dst.length == 0)
             }
+        }
+
+        "Unit tag produces BoxedUnit arrays" in {
+            val arr = ConcreteTag.newArray[Unit](2)
+            assert(arr.getClass eq classOf[Array[scala.runtime.BoxedUnit]])
+        }
+
+        "union tag produces Object arrays" in {
+            val arr = ConcreteTag.newArray[Int | String](2)
+            assert(arr.getClass eq classOf[Array[AnyRef]])
+        }
+
+        "length zero is the shared empty array of the class" in {
+            assert(ConcreteTag.newArray[Int](0) eq Array.emptyIntArray)
+            assert(ConcreteTag.newArray[String](0) eq ConcreteTag.newArray[String](0))
+            assert(ConcreteTag.copyOf(Array("a"), 0) eq ConcreteTag.newArray[String](0))
         }
 
         "Any tag produces Object arrays" in {

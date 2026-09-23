@@ -153,8 +153,6 @@ val drained: Chunk[Int] < (Abort[Throwable] & Async) =
 ### Running a Kyo `Stream` as `ZStream`
 
 ```scala
-import scala.reflect.ClassTag
-
 val kyoSrc: Stream[Int, Any] = Stream.init(List(1, 2, 3, 4, 5))
 
 val asZioStream: ZStream[Any, Nothing, Int] = ZStreams.run(kyoSrc)
@@ -162,7 +160,7 @@ val asZioStream: ZStream[Any, Nothing, Int] = ZStreams.run(kyoSrc)
 val collected: ZIO[Any, Nothing, zio.Chunk[Int]] = asZioStream.runCollect
 ```
 
-> **Caution:** `ZStreams.run` requires `ClassTag[A]`; each chunk is copied into a `zio.Chunk.fromArray`. Element types without a `ClassTag` (e.g. abstract or generic without the right context bound) will not compile. Add a `: ClassTag` context bound to the type parameter at the call site.
+> **Caution:** `ZStreams.run` requires `ShallowTag[A]`; each chunk is copied into an array of `A`'s runtime class, so an `Int` stream produces unboxed ZIO chunks. The compiler derives the tag for any concrete element type; a generic caller needs a `: ShallowTag` context bound on its type parameter.
 
 `ZStreams.run` wraps each pull in `ZIO.uninterruptibleMask` to keep emission atomic against interruption; the ZIO consumer can still cancel between pulls.
 

@@ -4,7 +4,6 @@ import kyo.Json
 import kyo.Json.JsonSchema
 import kyo.Schema
 import kyo.schema.doc
-import scala.reflect.ClassTag
 
 /** Structured self-prompting woven into the model's required output schema.
   *
@@ -36,13 +35,13 @@ object Thought:
     enum Position derives CanEqual:
         case Opening, Closing
 
-    def opening[A: Schema: ClassTag]: Thought[Any] = opening[A](_ => ())
-    def closing[A: Schema: ClassTag]: Thought[Any] = closing[A](_ => ())
+    def opening[A: Schema]: Thought[Any] = opening[A](_ => ())
+    def closing[A: Schema]: Thought[Any] = closing[A](_ => ())
 
-    def opening[A: Schema](using ClassTag[A])[S](process: A => Unit < (LLM & S)): Thought[S] =
+    def opening[A](using Schema[A])[S](process: A => Unit < (LLM & S)): Thought[S] =
         init[A](Position.Opening)(process)
 
-    def closing[A: Schema](using ClassTag[A])[S](process: A => Unit < (LLM & S)): Thought[S] =
+    def closing[A](using Schema[A])[S](process: A => Unit < (LLM & S)): Thought[S] =
         init[A](Position.Closing)(process)
 
     def aggregate[S](thoughts: Thought[S]*): Thought[S] =
@@ -55,9 +54,7 @@ object Thought:
       */
     def reflective: Thought[Any] = internal.reflective
 
-    def init[A: Schema](position: Position)[S](process: A => Unit < (LLM & S))(
-        using ClassTag[A]
-    ): Thought[S] =
+    def init[A: Schema](position: Position)[S](process: A => Unit < (LLM & S)): Thought[S] =
         new Thought[S]:
             def infos = Chunk(Info(summon[Schema[A]].structure.name, position, summon[Schema[A]], process))
 
