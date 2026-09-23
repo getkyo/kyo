@@ -3,7 +3,6 @@ package kyo
 import kyo.*
 import scala.annotation.tailrec
 import scala.annotation.targetName
-import scala.reflect.ClassTag
 
 /** Runtime structural description of Scala types, used for introspection, generic programming, and bridging to dynamic formats.
   *
@@ -1204,53 +1203,53 @@ object Structure:
         val each: Path                  = root / PathSegment.Each
     end Path
 
-    private def firstAnnotationOf[A](annotations: Chunk[Any])(using ClassTag[A]): Maybe[A] =
+    private def firstAnnotationOf[A](annotations: Chunk[Any])(using ShallowTag[A]): Maybe[A] =
         allAnnotationsOf(annotations).headMaybe
 
-    private def allAnnotationsOf[A](annotations: Chunk[Any])(using ct: ClassTag[A]): Chunk[A] =
-        annotations.collect { case ct(a) => a }
+    private def allAnnotationsOf[A](annotations: Chunk[Any])(using tag: ShallowTag[A]): Chunk[A] =
+        annotations.collect { case tag(a) => a }
 
     extension (product: Structure.Type.Product)
         /** The first captured annotation of type `A` on this product type, or `Maybe.empty`. */
-        def annotationOf[A](using ClassTag[A]): Maybe[A] = firstAnnotationOf(product.annotations)
+        def annotationOf[A](using ShallowTag[A]): Maybe[A] = firstAnnotationOf(product.annotations)
 
         /** Every captured annotation of type `A` on this product type. */
-        def annotationsOf[A](using ClassTag[A]): Chunk[A] = allAnnotationsOf(product.annotations)
+        def annotationsOf[A](using ShallowTag[A]): Chunk[A] = allAnnotationsOf(product.annotations)
     end extension
 
     extension (sum: Structure.Type.Sum)
         /** The first captured annotation of type `A` on this sum type, or `Maybe.empty`. */
-        def annotationOf[A](using ClassTag[A]): Maybe[A] = firstAnnotationOf(sum.annotations)
+        def annotationOf[A](using ShallowTag[A]): Maybe[A] = firstAnnotationOf(sum.annotations)
 
         /** Every captured annotation of type `A` on this sum type. */
-        def annotationsOf[A](using ClassTag[A]): Chunk[A] = allAnnotationsOf(sum.annotations)
+        def annotationsOf[A](using ShallowTag[A]): Chunk[A] = allAnnotationsOf(sum.annotations)
     end extension
 
     extension (field: Structure.Field)
         /** The first captured annotation of type `A` on this field, or `Maybe.empty`. */
-        def annotationOf[A](using ClassTag[A]): Maybe[A] = firstAnnotationOf(field.annotations)
+        def annotationOf[A](using ShallowTag[A]): Maybe[A] = firstAnnotationOf(field.annotations)
 
         /** Every captured annotation of type `A` on this field. */
-        def annotationsOf[A](using ClassTag[A]): Chunk[A] = allAnnotationsOf(field.annotations)
+        def annotationsOf[A](using ShallowTag[A]): Chunk[A] = allAnnotationsOf(field.annotations)
     end extension
 
     extension (variant: Structure.Variant)
         /** The first captured annotation of type `A` on this variant, or `Maybe.empty`. */
-        def annotationOf[A](using ClassTag[A]): Maybe[A] = firstAnnotationOf(variant.annotations)
+        def annotationOf[A](using ShallowTag[A]): Maybe[A] = firstAnnotationOf(variant.annotations)
 
         /** Every captured annotation of type `A` on this variant. */
-        def annotationsOf[A](using ClassTag[A]): Chunk[A] = allAnnotationsOf(variant.annotations)
+        def annotationsOf[A](using ShallowTag[A]): Chunk[A] = allAnnotationsOf(variant.annotations)
     end extension
 
     extension (fields: Chunk[Structure.Field])
         /** Every field carrying an annotation of type `A`, paired with that instance. */
-        def fieldsWith[A](using ClassTag[A]): Chunk[(Structure.Field, A)] =
+        def fieldsWith[A](using ShallowTag[A]): Chunk[(Structure.Field, A)] =
             fields.flatMap(f => f.annotationOf[A].map(a => (f, a)))
     end extension
 
     extension (variants: Chunk[Structure.Variant])
         /** Every variant carrying an annotation of type `A`, paired with that instance. */
-        def variantsWith[A](using ClassTag[A]): Chunk[(Structure.Variant, A)] =
+        def variantsWith[A](using ShallowTag[A]): Chunk[(Structure.Variant, A)] =
             variants.flatMap(v => v.annotationOf[A].map(a => (v, a)))
     end extension
 

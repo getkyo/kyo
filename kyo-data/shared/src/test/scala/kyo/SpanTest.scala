@@ -16,6 +16,8 @@ class SpanTest extends kyo.test.Test[Any]:
         "creates an empty Span when no arguments are provided" in {
             val arr = Span[Int]()
             assert(arr.isEmpty)
+            assert(arr.toArrayUnsafe.getClass eq classOf[Array[Int]])
+            assert(arr.toArrayUnsafe eq Span.empty[Int].toArrayUnsafe)
         }
     }
 
@@ -26,23 +28,130 @@ class SpanTest extends kyo.test.Test[Any]:
         }
 
         "returns cached empty arrays for primitive types" in {
-            val booleanChain = Span.empty[Boolean]
-            val byteChain    = Span.empty[Byte]
-            val charChain    = Span.empty[Char]
-            val doubleChain  = Span.empty[Double]
-            val floatChain   = Span.empty[Float]
-            val intChain     = Span.empty[Int]
-            val longChain    = Span.empty[Long]
-            val shortChain   = Span.empty[Short]
+            assert(Span.empty[Boolean].toArrayUnsafe eq Array.emptyBooleanArray)
+            assert(Span.empty[Byte].toArrayUnsafe eq Array.emptyByteArray)
+            assert(Span.empty[Char].toArrayUnsafe eq Array.emptyCharArray)
+            assert(Span.empty[Double].toArrayUnsafe eq Array.emptyDoubleArray)
+            assert(Span.empty[Float].toArrayUnsafe eq Array.emptyFloatArray)
+            assert(Span.empty[Int].toArrayUnsafe eq Array.emptyIntArray)
+            assert(Span.empty[Long].toArrayUnsafe eq Array.emptyLongArray)
+            assert(Span.empty[Short].toArrayUnsafe eq Array.emptyShortArray)
+        }
 
-            assert(booleanChain.isEmpty)
-            assert(byteChain.isEmpty)
-            assert(charChain.isEmpty)
-            assert(doubleChain.isEmpty)
-            assert(floatChain.isEmpty)
-            assert(intChain.isEmpty)
-            assert(longChain.isEmpty)
-            assert(shortChain.isEmpty)
+        "returns one cached empty array per reference class" in {
+            assert(Span.empty[String].toArrayUnsafe eq Span.empty[String].toArrayUnsafe)
+            assert(Span.empty[String].toArrayUnsafe.getClass eq classOf[Array[String]])
+            assert(Span.empty[Maybe[Int]].toArrayUnsafe eq Span.empty[Maybe[Int]].toArrayUnsafe)
+        }
+
+        "takes the element type from the expected type" - {
+            "of a val" in {
+                val strings: Span[String] = Span.empty
+                assert(strings.toArrayUnsafe.getClass eq classOf[Array[String]])
+                val bytes: Span[Byte] = Span.empty
+                assert(bytes.toArrayUnsafe eq Array.emptyByteArray)
+            }
+
+            "of a return type" in {
+                def bytes(): Span[Byte] = Span.empty
+                assert(bytes().toArrayUnsafe eq Array.emptyByteArray)
+            }
+
+            "of a block result" in {
+                def longs(n: Int): Span[Long] =
+                    val _ = n + 1
+                    Span.empty
+                assert(longs(1).toArrayUnsafe eq Array.emptyLongArray)
+            }
+
+            "of a positional argument" in {
+                def array(span: Span[Char]): Array[Char] = span.toArrayUnsafe
+                assert(array(Span.empty) eq Array.emptyCharArray)
+            }
+
+            "of named arguments" in {
+                def arrays(ints: Span[Int], doubles: Span[Double]): (Array[Int], Array[Double]) =
+                    (ints.toArrayUnsafe, doubles.toArrayUnsafe)
+                val (ints, doubles) = arrays(doubles = Span.empty, ints = Span.empty)
+                assert(ints eq Array.emptyIntArray)
+                assert(doubles eq Array.emptyDoubleArray)
+            }
+
+            "of if and match branches" in {
+                def shorts(b: Boolean): Span[Short] = if b then Span(1.toShort) else Span.empty
+                assert(shorts(false).toArrayUnsafe eq Array.emptyShortArray)
+                def floats(n: Int): Span[Float] =
+                    n match
+                        case 0 => Span.empty
+                        case _ => Span(1f)
+                assert(floats(0).toArrayUnsafe eq Array.emptyFloatArray)
+            }
+
+            "of a generic caller's type" in {
+                def generic[A: ShallowTag]: Span[A] = Span.empty
+                assert(generic[Boolean].toArrayUnsafe eq Array.emptyBooleanArray)
+                assert(generic[String].toArrayUnsafe eq Span.empty[String].toArrayUnsafe)
+            }
+        }
+
+        "is a Span[Any] without an expected type" in {
+            val any = Span.empty
+            typeCheck("val widened: Span[Any] = any")
+            typeCheckFailure("val narrowed: Span[Int] = any")("Span[Any]")
+            assert(any.toArrayUnsafe.getClass eq classOf[Array[AnyRef]])
+        }
+
+        "grows into an array of the element class" in {
+            val grown = Span.empty[String].append("a")
+            assert(grown.toArrayUnsafe.getClass eq classOf[Array[String]])
+        }
+    }
+
+    "operations without element evidence keep the source array class" - {
+        sealed trait Animal
+        final case class Dog(name: String) extends Animal derives CanEqual
+        given CanEqual[Animal, Animal] = CanEqual.derived
+        val dogs: Span[Animal]         = Span(Dog("a"), Dog("b"), Dog("c"))
+        def dogArray(s: Span[Animal])  = s.toArrayUnsafe.getClass eq classOf[Array[Dog]]
+
+        "reference elements" in {
+            assert(dogArray(dogs.slice(0, 2)))
+            assert(dogArray(dogs.take(2)))
+            assert(dogArray(dogs.takeRight(2)))
+            assert(dogArray(dogs.drop(1)))
+            assert(dogArray(dogs.dropRight(1)))
+            assert(dogArray(dogs.takeWhile(_ != Dog("c"))))
+            assert(dogArray(dogs.dropWhile(_ == Dog("a"))))
+            assert(dogArray(dogs.filter(_ != Dog("b"))))
+            assert(dogArray(dogs.filterNot(_ == Dog("b"))))
+            assert(dogArray(dogs.reverse))
+            assert(dogArray(dogs.distinct))
+            assert(dogArray(dogs.distinctBy(_.toString)))
+            assert(dogs.tail.exists(dogArray))
+            val (prefix, suffix) = dogs.span(_ == Dog("a"))
+            assert(dogArray(prefix) && dogArray(suffix))
+            val (matched, rest) = dogs.partition(_ == Dog("a"))
+            assert(dogArray(matched) && dogArray(rest))
+            val (left, right) = dogs.splitAt(1)
+            assert(dogArray(left) && dogArray(right))
+            assert(dogs.sliding(2).forall(dogArray))
+        }
+
+        "primitive elements" in {
+            val ints = Span(1, 2, 3)
+            assert(ints.filter(_ > 1).toArrayUnsafe.getClass eq classOf[Array[Int]])
+            assert(ints.reverse.toArrayUnsafe.getClass eq classOf[Array[Int]])
+            assert(ints.slice(1, 3).toArrayUnsafe.getClass eq classOf[Array[Int]])
+        }
+
+        "empty results share the cached empty array of the source class" in {
+            val strings = Span("a", "b")
+            val empty   = Span.empty[String].toArrayUnsafe
+            assert(strings.filter(_ => false).toArrayUnsafe eq empty)
+            assert(strings.slice(1, 1).toArrayUnsafe eq empty)
+            assert(strings.drop(5).toArrayUnsafe eq empty)
+            assert(strings.takeWhile(_ == "z").toArrayUnsafe eq empty)
+            assert(Span(1, 2).filter(_ > 5).toArrayUnsafe eq Array.emptyIntArray)
         }
     }
 
@@ -1057,40 +1166,6 @@ class SpanTest extends kyo.test.Test[Any]:
         }
     }
 
-    "updated" - {
-        "replaces the element at the index" in {
-            val arr    = Span(1, 2, 3)
-            val result = arr.updated(1, 20)
-            assert(result.size == 3)
-            assert(result(0) == 1)
-            assert(result(1) == 20)
-            assert(result(2) == 3)
-        }
-
-        "leaves the original Span unchanged" in {
-            val arr = Span(1, 2, 3)
-            discard(arr.updated(0, 10))
-            assert(arr(0) == 1)
-        }
-
-        "replaces the first and last elements" in {
-            val arr = Span(1, 2, 3)
-            assert(arr.updated(0, 10).is(Span(10, 2, 3)))
-            assert(arr.updated(2, 30).is(Span(1, 2, 30)))
-        }
-
-        "single element Span" in {
-            val arr = Span(1)
-            assert(arr.updated(0, 2).is(Span(2)))
-        }
-
-        "out of bounds index throws" in {
-            val arr = Span(1, 2, 3)
-            interceptThrown[IndexOutOfBoundsException](arr.updated(3, 4))
-            interceptThrown[IndexOutOfBoundsException](arr.updated(-1, 4))
-        }
-    }
-
     "prepend and +:" - {
         "prepends element to Span" in {
             val arr    = Span(2, 3, 4)
@@ -1730,6 +1805,109 @@ class SpanTest extends kyo.test.Test[Any]:
             }
         }
 
+        "primitive span widened to Any" - {
+            val ints: Span[Int] = Span(1, 2, 3)
+            val anys: Span[Any] = ints
+
+            "slice" in {
+                assert(anys.slice(0, 2).mkString(",") == "1,2")
+            }
+
+            "take, drop and tail" in {
+                assert(anys.take(2).mkString(",") == "1,2")
+                assert(anys.drop(1).mkString(",") == "2,3")
+                assert(anys.tail.map(_.mkString(",")) == Present("2,3"))
+            }
+
+            "takeWhile, dropWhile and span" in {
+                assert(anys.takeWhile(_ != 3).mkString(",") == "1,2")
+                assert(anys.dropWhile(_ == 1).mkString(",") == "2,3")
+                val (prefix, suffix) = anys.span(_ == 1)
+                assert(prefix.mkString(",") == "1")
+                assert(suffix.mkString(",") == "2,3")
+            }
+
+            "filter, reverse, partition and distinct" in {
+                assert(anys.filter(_ != 2).mkString(",") == "1,3")
+                assert(anys.reverse.mkString(",") == "3,2,1")
+                val (twos, rest) = anys.partition(_ == 2)
+                assert(twos.mkString(",") == "2")
+                assert(rest.mkString(",") == "1,3")
+                assert(anys.distinct.mkString(",") == "1,2,3")
+            }
+
+            "append and prepend a value of another class" in {
+                assert(anys.append("x").mkString(",") == "1,2,3,x")
+                assert(("x" +: anys).mkString(",") == "x,1,2,3")
+            }
+
+            "update with a value of another class" in {
+                assert(anys.update(1, "x").mkString(",") == "1,x,3")
+            }
+
+            "concat with a reference span" in {
+                val strings: Span[Any] = Span("a", "b")
+                assert((anys ++ strings).mkString(",") == "1,2,3,a,b")
+                assert((strings ++ anys).mkString(",") == "a,b,1,2,3")
+                assert(Span.concat[Any](anys, strings).mkString(",") == "1,2,3,a,b")
+            }
+
+            "padTo" in {
+                assert(anys.padTo(5, "x").mkString(",") == "1,2,3,x,x")
+            }
+
+            "flatMap into primitive spans" in {
+                assert(Span[Any]("a", "b").flatMap(_ => anys).mkString(",") == "1,2,3,1,2,3")
+            }
+
+            "toArray" in {
+                val arr = anys.toArray
+                arr(0) = "x"
+                assert(arr.mkString(",") == "x,2,3")
+            }
+
+            "from its own array in generic code" in {
+                def copy[A: ShallowTag](span: Span[A]): Span[A] = Span.from(span.toArrayUnsafe)
+                assert(copy(anys).mkString(",") == "1,2,3")
+            }
+        }
+
+        "reference span widened to a supertype" - {
+            val dogs: Span[Dog]       = Span(Dog("Rex"), Dog("Max"))
+            val animals: Span[Animal] = dogs
+
+            "append a sibling" in {
+                assert(animals.append(Cat("Tom")).last == Present(Cat("Tom")))
+            }
+
+            "prepend a sibling" in {
+                assert((Cat("Tom") +: animals).head == Present(Cat("Tom")))
+            }
+
+            "update with a sibling" in {
+                assert(animals.update(0, Cat("Tom")).head == Present(Cat("Tom")))
+            }
+
+            "padTo with a sibling" in {
+                assert(animals.padTo(3, Cat("Tom")).last == Present(Cat("Tom")))
+            }
+
+            "scan producing a sibling" in {
+                assert(animals.scan(Cat("Tom"))((_, b) => b).head == Present(Cat("Tom")))
+            }
+
+            "concat with a sibling span" in {
+                val cats: Span[Animal] = Span(Cat("Tom"))
+                assert((animals ++ cats).last == Present(Cat("Tom")))
+            }
+
+            "toArray accepts a sibling" in {
+                val arr = animals.toArray
+                arr(0) = Cat("Tom")
+                assert(arr(0) == Cat("Tom"))
+            }
+        }
+
         "method compatibility" - {
             sealed trait Animal
             case class Dog(name: String) extends Animal
@@ -1931,6 +2109,67 @@ class SpanTest extends kyo.test.Test[Any]:
             val b = Span[Int](3, 2, 1)
             assert(!a.is(b))
             assert(a.hash != b.hash)
+        }
+    }
+
+    "inline higher-order functions with constant predicates" - {
+        val s = Span(1, 2, 3)
+
+        "indexWhere and lastIndexWhere" in {
+            assert(s.indexWhere(_ => true) == Present(0))
+            assert(s.indexWhere(_ => false) == Absent)
+            assert(s.lastIndexWhere(_ => true) == Present(2))
+            assert(s.lastIndexWhere(_ => false) == Absent)
+        }
+
+        "find" in {
+            assert(s.find(_ => true) == Present(1))
+            assert(s.find(_ => false) == Absent)
+        }
+
+        "count" in {
+            assert(s.count(_ => true) == 3)
+            assert(s.count(_ => false) == 0)
+        }
+
+        "forall and exists" in {
+            assert(s.forall(_ => true))
+            assert(!s.forall(_ => false))
+            assert(s.exists(_ => true))
+            assert(!s.exists(_ => false))
+        }
+
+        "filter, filterNot and partition" in {
+            assert(s.filter(_ => true).is(s))
+            assert(s.filter(_ => false).isEmpty)
+            assert(s.filterNot(_ => true).isEmpty)
+            assert(s.filterNot(_ => false).is(s))
+            val (all, none) = s.partition(_ => true)
+            assert(all.is(s) && none.isEmpty)
+            val (none2, all2) = s.partition(_ => false)
+            assert(none2.isEmpty && all2.is(s))
+        }
+
+        "takeWhile, dropWhile and span" in {
+            assert(s.takeWhile(_ => true).is(s))
+            assert(s.takeWhile(_ => false).isEmpty)
+            assert(s.dropWhile(_ => true).isEmpty)
+            assert(s.dropWhile(_ => false).is(s))
+            val (all, none) = s.span(_ => true)
+            assert(all.is(s) && none.isEmpty)
+            val (none2, all2) = s.span(_ => false)
+            assert(none2.isEmpty && all2.is(s))
+        }
+
+        "existsZip and forallZip" in {
+            assert(Span.existsZip(s, s)((_, _) => true))
+            assert(!Span.existsZip(s, s)((_, _) => false))
+            assert(Span.existsZip(s, s, s)((_, _, _) => true))
+            assert(!Span.existsZip(s, s, s)((_, _, _) => false))
+            assert(Span.forallZip(s, s)((_, _) => true))
+            assert(!Span.forallZip(s, s)((_, _) => false))
+            assert(Span.forallZip(s, s, s)((_, _, _) => true))
+            assert(!Span.forallZip(s, s, s)((_, _, _) => false))
         }
     }
 
