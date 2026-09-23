@@ -1137,6 +1137,32 @@ class AsyncTest extends kyo.test.Test[Any]:
                     assert(result.size == 2)
                     assert(result.forall(Seq(1, 2, 3).contains))
             }
+
+            // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
+            "a panicking input counts as a failed input".pendingUntilFixed(
+                "Fiber.internal.gather counts a Panic as neither a success nor a failure, so ok + nok never reaches the total"
+            ) in {
+                val error = new Exception("test panic")
+                for
+                    result <- Abort.run[Timeout](Async.timeout(5.seconds)(
+                        Async.gather(Seq(Sync.defer(1), Abort.panic(error), Sync.defer(3)))
+                    ))
+                yield assert(result == Result.succeed(Chunk(1, 3)), s"gather did not complete with the successes: $result")
+                end for
+            }
+
+            // deviation: the real-clock timeout only turns a gather that never completes into a failure; it decides no pass.
+            "every input panicking fails with the panic".pendingUntilFixed(
+                "Fiber.internal.gather counts a Panic as neither a success nor a failure, so ok + nok never reaches the total"
+            ) in {
+                val error = new Exception("test panic")
+                for
+                    result <- Abort.run[Timeout](Async.timeout(5.seconds)(
+                        Abort.run[Nothing](Async.gather(Seq(Abort.panic(error), Abort.panic(error))))
+                    ))
+                yield assert(result == Result.succeed(Result.panic(error)), s"gather did not fail with the panic: $result")
+                end for
+            }
         }
 
         "varargs" - {
