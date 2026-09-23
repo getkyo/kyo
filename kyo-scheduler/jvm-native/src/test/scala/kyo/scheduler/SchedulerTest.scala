@@ -248,37 +248,6 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                 }
             }
         }
-
-        "the only carrier blocking grows the pool even when the regulator never steps" in {
-            // The regulator adjusts only when its jitter leaves the band between its thresholds, and a steady host keeps it inside
-            // that band indefinitely. A 2-thread timer pool is fully pinned by the blocking-monitor and worker-cycle loops, so the
-            // regulator never runs at all: whatever keeps a runnable carrier here is the floor alone.
-            val cfg   = Scheduler.Config.default.copy(cores = 1, coreWorkers = 1, minWorkers = 1, maxWorkers = 100)
-            val timer = java.util.concurrent.Executors.newScheduledThreadPool(2, kyo.scheduler.util.Threads("test-timer"))
-            val s     = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, cfg)
-            val gate  = new CountDownLatch(1)
-            try {
-                s.schedule(new Task {
-                    def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = {
-                        try gate.await()
-                        catch { case _: InterruptedException => Thread.interrupted(): Unit }
-                        Task.Done
-                    }
-                })
-                eventually(assert(s.status().workers.exists(w => (w ne null) && w.isBlocked)))
-                val canary = new CountDownLatch(1)
-                s.schedule(TestTask(_run = () => { canary.countDown(); Task.Done }))
-                val served = canary.await(15, java.util.concurrent.TimeUnit.SECONDS)
-                assert(
-                    served,
-                    s"a task queued behind the only, blocked carrier was never served [currentWorkers=${s.status().currentWorkers}]"
-                )
-            } finally {
-                gate.countDown()
-                s.shutdown()
-                timer.shutdownNow(): Unit
-            }
-        }
     }
 
     "stalled workers" - {

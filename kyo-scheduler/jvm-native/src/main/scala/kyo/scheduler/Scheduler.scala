@@ -448,26 +448,19 @@ final class Scheduler(
       *   - Increases workers when system is underutilized
       *   - Decreases workers when detecting scheduling delays
       *   - Maintains count between minWorkers and maxWorkers
-      *
-      * Also called with a zero delta by cycleWorkers to apply the blocked-carrier floor between regulator steps.
       */
-    private def updateWorkers(delta: Int) = synchronized {
-        // The regulator and the worker cycle run on different timer threads, and ensureWorkers must not allocate a
-        // worker slot twice, so the read-modify-write of currentWorkers and allocatedWorkers is serialized.
-        currentWorkers = Math.max(workerFloor(), Math.min(maxWorkers, currentWorkers + delta))
+    private def updateWorkers(delta: Int) = {
+        // Blocked-carrier floor: never let the worker count sit below the number of blocked carriers plus minWorkers, so
+        // blocked carriers (parked I/O drivers, blocking fibers) cannot starve runnable work even when the concurrency
+        // regulator, reading host jitter, would otherwise fail to grow or shrink the pool below the blocked count. When
+        // nothing is blocked the floor is minWorkers (the unchanged idle sizing).
+        val floor = Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
+        currentWorkers = Math.max(floor, Math.min(maxWorkers, currentWorkers + delta))
         ensureWorkers()
     }
 
-    /** Blocked-carrier floor: never let the worker count sit below the number of blocked carriers plus minWorkers, so blocked carriers
-      * (parked I/O drivers, blocking fibers) cannot starve runnable work even when the concurrency regulator, reading host jitter, would
-      * otherwise fail to grow or shrink the pool below the blocked count. When nothing is blocked the floor is minWorkers (the unchanged
-      * idle sizing).
-      */
-    private def workerFloor(): Int =
-        Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
-
     /** Counts the active workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
-      * BlockingMonitor. Read by workerFloor.
+      * BlockingMonitor. Read by updateWorkers to floor the worker count at blocked + minWorkers.
       */
     private def blockedWorkerCount(): Int = {
         @tailrec def loop(i: Int, acc: Int): Int =
@@ -521,11 +514,6 @@ final class Scheduler(
       */
     private def cycleWorkers(): Unit = {
         try {
-            // The regulator steps only when its jitter leaves the band between its thresholds, and a steady host can hold it inside
-            // the band indefinitely, so a carrier that blocks then would leave its queue with no runnable worker to drain to. The
-            // floor is applied before the availability pass so that pass's drain of a blocked worker has a target.
-            if (currentWorkers < workerFloor())
-                updateWorkers(0)
             val nowMs    = clock.currentMillis()
             var position = 0
             while (position < currentWorkers) {
