@@ -386,7 +386,7 @@ The desugar rail is `desugarProductConfig` / `desugarSumConfig`, which read the 
 Reading captured annotations back off a derived `schema.structure`:
 
 - The `Annotated` extractors yield `(name, annotations)`: `Structure.Type.Annotated` (matches a `Product` or `Sum`) [kyo-schema/shared/src/main/scala/kyo/Structure.scala:473-479], `Structure.Field.Annotated` (irrefutable) [kyo-schema/shared/src/main/scala/kyo/Structure.scala:647-650], `Structure.Variant.Annotated` (irrefutable) [kyo-schema/shared/src/main/scala/kyo/Structure.scala:738-741].
-- `annotationOf[A]: Maybe[A]` (first by type) and `annotationsOf[A]: Chunk[A]` (all by type) are extensions on all four annotated nodes (`Product`, `Sum`, `Field`, `Variant`), both backed by a `ClassTag`-driven `collect` [kyo-schema/shared/src/main/scala/kyo/Structure.scala:1016-1051].
+- `annotationOf[A]: Maybe[A]` (first by type) and `annotationsOf[A]: Chunk[A]` (all by type) are extensions on all four annotated nodes (`Product`, `Sum`, `Field`, `Variant`), both backed by a `collect` over `ShallowTag.unapply`, which checks the annotation's erased class [kyo-schema/shared/src/main/scala/kyo/Structure.scala:1206-1242].
 - `fieldsWith[A]` / `variantsWith[A]` are extensions on `Chunk[Structure.Field]` / `Chunk[Structure.Variant]` returning each node paired with its matching annotation instance [kyo-schema/shared/src/main/scala/kyo/Structure.scala:1053-1064].
 
 A codec author drives behavior off a custom marker by, for example, `field.annotations.collectFirst { case r: rename => r.wireName }` or `structure.fields.fieldsWith[MyMarker]`.

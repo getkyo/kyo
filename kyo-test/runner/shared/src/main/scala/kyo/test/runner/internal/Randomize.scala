@@ -1,7 +1,7 @@
 package kyo.test.runner.internal
 
 import kyo.Chunk
-import scala.reflect.ClassTag
+import kyo.discard
 
 /** Deterministic shuffle using a seeded PRNG.
   *
@@ -19,9 +19,10 @@ object Randomize:
       * @return
       *   a new Chunk with elements in the shuffled order
       */
-    def shuffle[A: ClassTag](items: Chunk[A], seed: Long): Chunk[A] =
+    def shuffle[A](items: Chunk[A], seed: Long): Chunk[A] =
         if items.size <= 1 then return items
-        val arr = items.toArray
+        val arr = new Array[Any](items.size)
+        discard(items.copyToArray(arr))
         val rng = new java.util.Random(seed)
         var i   = arr.length - 1
         while i > 0 do
@@ -31,7 +32,7 @@ object Randomize:
             arr(j) = tmp
             i -= 1
         end while
-        Chunk.from(arr)
+        Chunk.from(arr).asInstanceOf[Chunk[A]]
     end shuffle
 
 end Randomize

@@ -42,7 +42,11 @@ object ConcreteTag:
     case object AnyValTag  extends Element
     case object NothingTag extends Element
 
-    inline given apply[A]: ConcreteTag[A] = ${ ConcreteTagMacro.derive[A] }
+    inline given derive[A]: ConcreteTag[A] = ${ ConcreteTagMacro.derive[A] }
+
+    // Expands the macro on `A` as written rather than summoning: an implicit search treats `String | Null` as `String`, so a summoner
+    // would hand back a String tag where the macro refuses the Null.
+    inline def apply[A]: ConcreteTag[A] = derive[A]
 
     /** Creates a ConcreteTag from a Java class, mapping primitive classes to their corresponding Primitive tags.
       *
@@ -75,27 +79,17 @@ object ConcreteTag:
 
     /** Creates a new array with the correct primitive or reference type.
       *
+      * Tags without a single class (unions, intersections, literals, `AnyVal`, `Nothing`) allocate `Object` arrays.
+      *
       * @param len
       *   the length of the array to create
       * @param ct
       *   the ConcreteTag determining the array's component type
       * @return
-      *   a new array of the appropriate type
+      *   a new array of the appropriate type, or the shared empty array of that type when `len` is zero
       */
     def newArray[A](len: Int)(using ct: ConcreteTag[A]): Array[A] =
-        ((ct: @unchecked) match
-            case IntTag        => new Array[Int](len)
-            case LongTag       => new Array[Long](len)
-            case DoubleTag     => new Array[Double](len)
-            case FloatTag      => new Array[Float](len)
-            case ByteTag       => new Array[Byte](len)
-            case ShortTag      => new Array[Short](len)
-            case CharTag       => new Array[Char](len)
-            case BooleanTag    => new Array[Boolean](len)
-            case cls: Class[?] => java.lang.reflect.Array.newInstance(cls, len)
-            case _             => new Array[AnyRef](len)
-        ).asInstanceOf[Array[A]]
-    end newArray
+        ShallowTag.fromClass[A](ct.toClass).newArray(len)
 
     /** Copies an array to a new length, preserving the component type.
       *
@@ -104,13 +98,10 @@ object ConcreteTag:
       * @param newLen
       *   the length of the new array
       * @return
-      *   a new array with elements copied from the source
+      *   a new array with elements copied from the source, or the shared empty array of that type when `newLen` is zero
       */
     def copyOf[A](array: Array[A], newLen: Int): Array[A] =
-        val copy = java.lang.reflect.Array.newInstance(
-            array.getClass.getComponentType,
-            newLen
-        ).asInstanceOf[Array[A]]
+        val copy = ShallowTag.fromArray(array).newArray(newLen)
         System.arraycopy(array, 0, copy, 0, Math.min(array.length, newLen))
         copy
     end copyOf

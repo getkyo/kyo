@@ -2,7 +2,6 @@ package kyo
 
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
-import scala.reflect.ClassTag
 
 /** An immutable dictionary mapping keys of type `K` to values of type `V`. Dict uses a dual representation optimized for both small and
   * large collections:
@@ -502,11 +501,11 @@ object Dict:
         end mapValues
 
         /** Returns all keys as a [[Span]]. */
-        def keys(using ClassTag[K]): Span[K] =
+        def keys(using tag: ShallowTag[K]): Span[K] =
             reduce(
                 span =>
                     val n                           = Span.size(span) / 2
-                    val arr                         = new Array[K](n)
+                    val arr                         = tag.newArray(n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(i).asInstanceOf[K]
@@ -515,7 +514,7 @@ object Dict:
                     Span.fromUnsafe(arr)
                 ,
                 map =>
-                    val arr = new Array[K](map.size)
+                    val arr = tag.newArray(map.size)
                     var i   = 0
                     map.foreachEntry { (k, _) =>
                         arr(i) = k; i += 1
@@ -524,11 +523,11 @@ object Dict:
             )
 
         /** Returns all values as a [[Span]]. */
-        def values(using ClassTag[V]): Span[V] =
+        def values(using tag: ShallowTag[V]): Span[V] =
             reduce(
                 span =>
                     val n                           = Span.size(span) / 2
-                    val arr                         = new Array[V](n)
+                    val arr                         = tag.newArray(n)
                     @tailrec def loop(i: Int): Unit =
                         if i < n then
                             arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
@@ -537,7 +536,7 @@ object Dict:
                     Span.fromUnsafe(arr)
                 ,
                 map =>
-                    val arr = new Array[V](map.size)
+                    val arr = tag.newArray(map.size)
                     var i   = 0
                     map.foreachEntry { (_, v) =>
                         arr(i) = v; i += 1

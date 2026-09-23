@@ -2,7 +2,6 @@ package kyo
 
 import ZIOs.toExit
 import kyo.Result.*
-import scala.reflect.ClassTag
 import zio.Cause
 import zio.Chunk as ZChunk
 import zio.Exit
@@ -55,7 +54,7 @@ object ZStreams:
         Frame,
         Trace,
         Tag[Emit[Chunk[A]]],
-        ClassTag[A]
+        ShallowTag[A]
     ): ZStream[Any, E, A] =
         type EmitType = Unit < (Emit[Chunk[A]] & Abort[E] & Async)
 
@@ -64,7 +63,10 @@ object ZStreams:
                 restore(ZIOs.run(Emit.runFirst(emit))).map: (maybeChunk, contFn) =>
                     maybeChunk
                         .map: chunk =>
-                            ZChunk.fromArray(chunk.toArray) -> contFn()
+                            // ZChunk.fromArray specializes on the array's runtime class, so an int[] stays an unboxed IntArray chunk.
+                            val array = ShallowTag[A].newArray(chunk.size)
+                            discard(chunk.copyToArray(array))
+                            ZChunk.fromArray(array) -> contFn()
                         .toOption
 
         ZStream.unfoldChunkZIO(stream.emit)(peel)
