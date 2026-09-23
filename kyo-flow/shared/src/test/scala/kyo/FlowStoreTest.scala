@@ -222,8 +222,8 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
             Clock.withTimeControl { tc =>
                 makeStore.map { store =>
                     for
-                        one    <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
-                        two    <- Fiber.init(store.claimReady(served, ex2, lease, 10, 2.seconds))
+                        one <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
+                        two <- Fiber.init(store.claimReady(served, ex2, lease, 10, 2.seconds))
                         // Both callers are inside their waits once both sleeps are registered; a jump before that leaves a
                         // sleep registered afterwards with no advance to fire it.
                         _      <- tc.awaitPendingSleepers(2)
@@ -2478,9 +2478,9 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         // First poll: sleep not expired, times out
                         fiber1 <- Fiber.init(store.claimReady(served, ex1, lease, 10, 100.millis))
                         // The timeout can only fire a sleep that is already registered.
-                        _      <- tc.awaitPendingSleepers(1)
-                        _      <- tc.advance(100.millis)
-                        empty  <- fiber1.get
+                        _     <- tc.awaitPendingSleepers(1)
+                        _     <- tc.advance(100.millis)
+                        empty <- fiber1.get
                         // Advance past sleep expiry
                         _ <- tc.advance(500.millis)
                         // Second poll: sleep expired, found immediately
