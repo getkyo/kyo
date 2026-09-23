@@ -31,9 +31,11 @@ jobs:
     # with the staged natives below built for whichever host runs the job. The x64 pool
     # carries most of the repo's jobs and has roughly twice the p90 queue wait.
     runs-on: ubuntu-24.04-arm
-    # The job runs ~50 minutes, nearly all of it doctest. Uncapped, a hang would hold a slot
-    # for GitHub's 360-minute default, which is the resource this job is shaped to conserve.
-    timeout-minutes: 120
+    # Measured: 108 to 112 minutes on main with a warm doctest cache, and about 131 on a run whose
+    # classpath change misses every cached block (about 10 minutes of doctest compiles on top). The
+    # cap leaves room for that cold run. Uncapped, a hang would hold a slot for GitHub's 360-minute
+    # default, which is the resource this job is shaped to conserve.
+    timeout-minutes: 180
     env:
       # No -Xmx here: the checked-in .jvmopts governs the driver heap (12G). The sbt launcher
       # appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx wins and one
@@ -159,8 +161,12 @@ jobs:
       # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
       # ref, readable by nothing but re-runs of the same PR, so it would cost upload time for no
       # reuse. A PR gets its hits from the default branch's cache.
+      #
+      # `always()` because every block's result is its own file, written as it compiles: a doctest
+      # step that fails or times out part-way still leaves the blocks it finished, and the next main
+      # run reuses them instead of recompiling the whole build's READMEs.
       - name: Save doctest cache
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v6
         with:
           path: .doctest-cache
