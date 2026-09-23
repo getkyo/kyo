@@ -79,6 +79,19 @@ class SafepointTest extends AnyFreeSpec:
         Safepoint.endSlice(slot, prev)
     }
 
+    "a stop addressed to a slice that has not begun is honored once it begins" in {
+        // The sender learns the thread from a status word published before the slice is recorded, so the stop can
+        // land between the two; the resolve on the way to beginSlice must not drop it as stale.
+        val slot  = Safepoint.get()
+        val slice = new AnyRef
+        assert(Safepoint.stop(Thread.currentThread(), slice))
+        discard(Safepoint.get())
+        val prev = Safepoint.beginSlice(slot, slice)
+        assert(Safepoint.stopped(slot))
+        assert(Safepoint.consumeStopped(slot))
+        Safepoint.endSlice(slot, prev)
+    }
+
     "the slice boundary drops its own late stop" in {
         val slot  = Safepoint.get()
         val slice = new AnyRef

@@ -119,10 +119,10 @@ object Safepoint:
 
         slots.get(h) match
             case s: Stop if s.thread eq thread =>
-
-                if honored(h, s) then
-                    if depths(h).isArmed then depths(h) = depths(h).drained
-                else slots.set(h, s.thread)
+                // A stop that is not honored yet stays: the sender learned the thread from a status word published
+                // before the slice was recorded, so it may address the slice about to begin. If it is stale instead,
+                // the next slice boundary retires it (`endSlice`, `consumeStopped`).
+                if honored(h, s) && depths(h).isArmed then depths(h) = depths(h).drained
                 h
             case _ =>
                 @tailrec def claim(i: Int, probes: Int): Int =
