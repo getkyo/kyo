@@ -92,9 +92,9 @@ object Emit:
         fr: Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using reduce: Reducible[Emit[VR]]): (Chunk[V], A) < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleLoop(tag, Chunk.empty[V], v)(
-                handle = [C] => (input, state, cont) => Loop.continue(state.append(input), cont(())),
-                done = (state, res) => (state, res)
+            ArrowEffect.handleLoopState(tag, Chunk.empty[V], v)(
+                [C] => (state, input) => Loop.continue(state.append(input), ()),
+                (state, res) => (state, res)
             )
 
     /** Runs an Emit effect, folding over the emitted values.
@@ -115,11 +115,9 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): (A, B) < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoop(tag, acc, v)(
-                handle = [C] =>
-                    (input, state, cont) =>
-                        f(state, input).map(a => Loop.continue(a, cont(()))),
-                done = (state, res) => (state, res)
+            ArrowEffect.handleLoopState(tag, acc, v)(
+                [C] => (state, input) => f(state, input).map(a => Loop.continue(a, ())),
+                (state, res) => (state, res)
             )
 
     /** Runs an Emit effect, discarding all emitted values.
@@ -133,9 +131,7 @@ object Emit:
         using Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using tag: Tag[Emit[V]], reduce: Reducible[Emit[VR]]): A < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handle(tag, v)(
-                handle = [C] => (input, cont) => cont(())
-            )
+            ArrowEffect.handleLoop(tag, v)([C] => _ => Loop.continue(()))
 
     /** Runs an Emit effect, allowing custom handling of each emitted value.
       *
@@ -153,30 +149,29 @@ object Emit:
         reduce: Reducible[Emit[VR]]
     ): A < (reduce.SReduced & S & S2) =
         reduce[A, S & S2]:
-            ArrowEffect.handle(tag, v)([C] => (input, cont) => f(input).map(_ => cont(())))
+            ArrowEffect.handleLoop(tag, v)([C] => input => f(input).map(_ => Loop.continue(())))
 
     /** Runs an Emit effect, allowing custom handling of each emitted value with a boolean result determining whether to continue.
+      *
+      * A false result ends the emitter, not just the calls to `f`: its continuation is never resumed, so an unbounded emitter terminates.
       *
       * @param v
       *   The computation with Emit effect
       * @param f
-      *   A function to process each emitted value
+      *   A function to process each emitted value, returning whether to keep emitting
       * @return
-      *   The result of the computation
+      *   The result of the computation, or `Absent` if `f` ended it first
       */
     def runWhile[V](using
         Frame
     )[A, VR, S, S2](v: A < (Emit[V] & Emit[VR] & S))(f: V => Boolean < S2)(using
         tag: Tag[Emit[V]],
         reduce: Reducible[Emit[VR]]
-    ): A < (reduce.SReduced & S & S2) =
+    ): Maybe[A] < (reduce.SReduced & S & S2) =
         reduce:
-            ArrowEffect.handleLoop(tag, true, v)([C] =>
-                (input, cond, cont) =>
-                    if cond then
-                        f(input).map(c => Loop.continue(c, cont(())))
-                    else
-                        Loop.continue(cond, cont(()))
+            ArrowEffect.handleLoop(tag, v)(
+                [C] => input => f(input).map(c => if c then Loop.continue(()) else Loop.done(Absent)),
+                done = a => Present(a)
             )
 
     /** Runs an Emit effect, capturing only the first emitted value and returning a continuation.
@@ -187,24 +182,23 @@ object Emit:
       *   A tuple containing:
       *
       *   - Maybe[V]: The first emitted value if any (None if no values were emitted)
-      *   - A continuation function that returns the remaining computation
+      *   - The continuation that resumes the remaining computation
       */
-    def runFirst[V](using
+    private[kyo] def runFirst[V](using
         Frame
     )[A, VR, S](v: A < (Emit[V] & Emit[VR] & S))(using
         tag: Tag[Emit[V]],
         reduce: Reducible[Emit[VR]]
-    ): (Maybe[V], () => A < (Emit[V | VR] & S)) < (reduce.SReduced & S) =
+    ): (Maybe[V], Arrow[Unit, A, Emit[V | VR] & S]) < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input an continuation
-                        (Maybe(input), () => cont(())),
+                        (Maybe(input), cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
                     // that returns the result of the computation
-                    (Maybe.empty[V], () => r: A < (Emit[V] & S))
+                    (Maybe.empty[V], Arrow(_ => r: A < (Emit[V] & S)))
             )
 
     object isolate:

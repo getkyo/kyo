@@ -199,7 +199,7 @@ class PollTest extends kyo.test.Test[Any]:
     "runEmit" - {
         "one" in {
             val result = Poll.runEmit(Emit.value(1))(Poll.one[Int])
-            assert(result.eval == ((), Maybe(1)))
+            assert(result.eval == (Present(()), Maybe(1)))
         }
 
         "two" in {
@@ -209,7 +209,7 @@ class PollTest extends kyo.test.Test[Any]:
                     case Present(v) => Maybe(v * 3)
                 }
             }
-            assert(result.eval == ((), Maybe(3)))
+            assert(result.eval == (Absent, Maybe(3)))
         }
 
         "basic emit-poll cycle" in {
@@ -227,7 +227,7 @@ class PollTest extends kyo.test.Test[Any]:
                 yield (v1, v2)
 
             val result = Poll.runEmit(emitter)(poller)
-            assert(result.eval == ("emitted", (Maybe(1), Maybe(2))))
+            assert(result.eval == (Absent, (Maybe(1), Maybe(2))))
         }
 
         "early poller termination" in {
@@ -241,7 +241,7 @@ class PollTest extends kyo.test.Test[Any]:
             val poller = Poll.one[Int]
 
             val result = Poll.runEmit(emitter)(poller)
-            assert(result.eval == ("emitted", Maybe(1)))
+            assert(result.eval == (Absent, Maybe(1)))
         }
 
         "fold with emit" in {
@@ -255,7 +255,7 @@ class PollTest extends kyo.test.Test[Any]:
             val poller = Poll.fold[Int](0)(_ + _)
 
             val result = Poll.runEmit(emitter)(poller)
-            assert(result.eval == ("done", 6))
+            assert(result.eval == (Present("done"), 6))
         }
 
         "interleaved effects" in {
@@ -279,7 +279,7 @@ class PollTest extends kyo.test.Test[Any]:
             val result = Var.runTuple(0) {
                 Poll.runEmit(emitter)(poller)
             }
-            assert(result.eval == (3, ("emitted", (Maybe(1), Maybe(2)))))
+            assert(result.eval == (3, (Present("emitted"), (Maybe(1), Maybe(2)))))
         }
     }
 
@@ -318,9 +318,9 @@ class PollTest extends kyo.test.Test[Any]:
             val ranFirst = Poll.run(Chunk.empty):
                 Poll.runFirst[T.T2](poll).map:
                     case Right(cont) =>
-                        Poll.runFirst[T.T1](cont(Present(T.T2("zero")))).map:
+                        Poll.runFirst[T.T1](cont(Present(T.T2("zero")): Maybe[T.T2])).map:
                             case Right(cont) =>
-                                Poll.run(Chunk.empty)(cont(Present(T.T1(0))))
+                                Poll.run(Chunk.empty)(cont(Present(T.T1(0)): Maybe[T.T1]))
                             case Left(a) => a
                     case Left(a) => a
 
@@ -340,9 +340,24 @@ class PollTest extends kyo.test.Test[Any]:
 
             assert:
                 Poll.runEmit[T.T1](emit)(poll)
-                    .handle(Poll.run(Chunk.empty[T.T2])(_), Emit.runDiscard[T.T2](_)).eval == ((), (Chunk(0, 1, 2), Chunk()))
+                    .handle(Poll.run(Chunk.empty[T.T2])(_), Emit.runDiscard[T.T2](_)).eval == (Present(()), (Chunk(0, 1, 2), Chunk()))
         }
 
+    }
+
+    "runEmit stops the emitter when the poller completes" - {
+        "the emitter is not continued after the poller completed" in {
+            var emitted = 0
+            val emitter =
+                Emit.valueWith(1) { emitted += 1; () }
+                    .andThen(Emit.valueWith(2) { emitted += 1; () })
+                    .andThen(Emit.valueWith(3) { emitted += 1; () })
+            val res = Poll.runEmit(emitter)(Poll.one[Int]).eval
+            assert(
+                res._2 == Maybe(1) && emitted == 1,
+                s"the emitter was continued after the poller completed: emitted $emitted times, $res"
+            )
+        }
     }
 
 end PollTest

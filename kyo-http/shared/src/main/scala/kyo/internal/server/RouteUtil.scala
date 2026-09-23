@@ -1007,14 +1007,14 @@ private[kyo] object RouteUtil:
         val byteTag                            = Tag[Emit[Chunk[Span[Byte]]]]
         given strTag: Tag[Emit[Chunk[String]]] = Tag[Emit[Chunk[String]]]
         Stream(
-            ArrowEffect.handleLoop(byteTag, "", stream.emit)([C] =>
-                (input, leftover, cont) =>
+            ArrowEffect.handleLoopState(byteTag, "", stream.emit)([C] =>
+                (leftover, input) =>
                     val sb = new StringBuilder(leftover)
                     input.foreach(span => discard(sb.append(spanToString(span))))
                     val combined = sb.toString
                     val parts    = combined.split(java.util.regex.Pattern.quote(delimiter), -1)
                     if parts.length <= 1 then
-                        Loop.continue(combined, cont(()))
+                        Loop.continue(combined, ())
                     else
                         val result                      = ChunkBuilder.init[String]
                         @tailrec def loop(i: Int): Unit =
@@ -1024,8 +1024,8 @@ private[kyo] object RouteUtil:
                                 loop(i + 1)
                         loop(0)
                         val out = result.result()
-                        if out.isEmpty then Loop.continue(parts.last, cont(()))
-                        else Emit.valueWith(out)(Loop.continue(parts.last, cont(())))
+                        if out.isEmpty then Loop.continue(parts.last, ())
+                        else Emit.valueWith(out)(Loop.continue(parts.last, ()))
                     end if
             )
         )

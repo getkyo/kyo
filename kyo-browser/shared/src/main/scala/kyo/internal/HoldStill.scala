@@ -95,12 +95,8 @@ private[kyo] object HoldStill:
     )(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
         MutationSettlement.settleForCapture.andThen {
             BrowserEval.evalJsAwaiting(fontsReadyJs).andThen {
-                Browser.use { tab =>
-                    Scope.run {
-                        Scope.acquireRelease(BrowserEval.evalJs(freezeStyleJs)) { token =>
-                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeFreezeStyleJs(token)).unit)
-                        }.andThen(body)
-                    }
+                Scope.run {
+                    BrowserEval.acquireJs(freezeStyleJs)(removeFreezeStyleJs).andThen(body)
                 }
             }
         }

@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Result.Error
+import kyo.Result.flatten
 import kyo.kernel.*
 import kyo.kernel.internal.Safepoint
 
@@ -40,7 +41,7 @@ object Sync:
       * @return
       *   The suspended computation wrapped in an Sync effect.
       */
-    inline def defer[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (Sync & S) =
+    inline def defer[A, S](inline f: => A < S)(using inline frame: Frame): A < (Sync & S) =
         Effect.deferInline(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
@@ -75,17 +76,45 @@ object Sync:
       *   The result of the use computation.
       */
     def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
-        release: A => Any < (Sync & Abort[Throwable])
-    )[B, S2](use: A => B < S2)(using Frame): B < (Sync & S1 & S2) =
-        Sync.defer(acquire).map { resource =>
-            Sync.ensure(release(resource))(use(resource))
+        release: (A, Result[Any, Any]) => Any < (Sync & Abort[Throwable])
+    )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
+        // The kernel bracket owns the exactly-once guarantee and reports how the extent ended, but knows no abort: the use runs under
+        // its own Abort region, its failure routed to the release here and raised again past the bracket, typed as it came. First failure
+        // wins: a replaying handler ends the extent once per resumption, so a branch that aborted must not be overwritten by a later one
+        // that succeeded.
+        Sync.Unsafe.defer {
+            val aborted = AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)
+            // Unsafe: the kernel's release is synchronous, so the effectful release runs to completion here
+            // and only its own Abort surfaces, as a throw.
+            Bracket(acquire) { resource =>
+                Abort.runWith[E](use(resource)) { result =>
+                    result.foldError(
+                        _ => (),
+                        e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                    )
+                    result
+                }
+            } { (resource, failure) =>
+                val outcome: Result[Any, Any] =
+                    failure match
+                        // constructed directly: `Result.Panic.apply` refuses to hold a fatal, and the release is
+                        // owed whatever failure ended its extent
+                        case Present(ex) => new Result.Panic(ex)
+                        case Absent      => aborted.get()(using AllowUnsafe.embrace.danger).getOrElse(Result.unit)
+                discard(Sync.Unsafe.evalOrThrow(release(resource, outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
+            }.ensureMap(result => Abort.get(result))
         }
+    end acquireReleaseWith
+
+    def acquireReleaseWith[A, S1](acquire: => A < (Sync & S1))(
+        release: A => Any < (Sync & Abort[Throwable])
+    )[B, E, S2](use: A => B < (Abort[E] & S2))(using ConcreteTag[E], Frame): B < (Sync & S1 & Abort[E] & S2) =
+        acquireReleaseWith(acquire)((resource, _) => release(resource))(use)
 
     /** Ensures that a finalizer is run after the computation, regardless of success or failure.
       *
-      * This version provides the finalizer with information about whether the computation completed successfully or failed with an
-      * exception. The finalizer receives a `Maybe[Error[Any]]` which will be `Absent` if the computation succeeded, or `Present` if it
-      * failed.
+      * The finalizer receives a `Maybe[Error[Any]]`: `Absent` when the computation completed, the `Failure` when it aborted, and a `Panic`
+      * when it threw or when its extent was ended from outside, as a scheduler does when it abandons a parked remainder.
       *
       * @param f
       *   The finalizer function that receives information about potential errors and performs cleanup actions.
@@ -105,10 +134,33 @@ object Sync:
     // longer conforms to the opaque `Any < (Sync & Abort[Throwable])`. As a non-inline function value
     // the body adapts to the opaque type at the call site; the cost is one finalizer-closure
     // allocation. Restore inline once the upstream inference regression is resolved.
-    inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+    inline def ensure[A, E, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < (Abort[E] & S))(using
+        ct: ConcreteTag[E],
         inline frame: Frame
-    ): A < (Sync & S) =
-        Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))
+    ): A < (Sync & Abort[E] & S) =
+        // `Bracket.ensuringWith`, not a bracket over a `()` acquire: a bracket installs its region only when the acquire's value arrives, so
+        // a computation abandoned before it ran gets no finalizer; `ensuringWith` is a region from the start with a per-run slot for the
+        // recorded failure. The finalizer runs from the release, not the body, so a replaying handler ending the extent per branch releases once.
+        // `ensureMap`, not `map`, raises the recorded abort: a `map` polls after the finalizer, parking a value it handed on with nobody to own it.
+        Bracket.ensuringWith(AtomicRef.Unsafe.init[Maybe[Result.Error[Any]]](Absent)(using AllowUnsafe.embrace.danger)) {
+            (aborted, failure) =>
+                val outcome: Maybe[Result.Error[Any]] =
+                    failure match
+                        // constructed rather than through `Result.Panic.apply`, which refuses to hold a fatal
+                        case Present(ex) => Present(new Result.Panic(ex))
+                        case Absent      => aborted.get()(using AllowUnsafe.embrace.danger)
+                // Unsafe: the kernel's release is synchronous, so the effectful finalizer runs to completion here
+                discard(Sync.Unsafe.evalOrThrow(f(outcome))(using summon[Frame], AllowUnsafe.embrace.danger))
+        } { aborted =>
+            Abort.run[E](v).map { result =>
+                result.foldError(
+                    _ => (),
+                    e => discard(aborted.compareAndSet(Absent, Maybe(e))(using AllowUnsafe.embrace.danger))
+                )
+                result
+            }
+        }.ensureMap(result => Abort.get(result))
+    end ensure
 
     /** Retrieves a local value and applies a function that can perform side effects.
       *

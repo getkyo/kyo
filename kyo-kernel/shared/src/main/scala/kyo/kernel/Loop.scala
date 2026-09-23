@@ -1,23 +1,23 @@
 package kyo.kernel
 
 import kyo.*
+import kyo.kernel.Arrow
+import kyo.kernel.Arrow.Step
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-/** Provides utilities for creating and managing iterative computations with effects.
+/** Iterative computations that can perform effects between rounds.
   *
-  * While Kyo already provides stack-safe recursion through its core functionality, Loop offers a more performant and ergonomic way to write
-  * iterative computations that can perform effects between iterations. It manages state between iterations and provides control over when
-  * to continue or terminate the loop.
+  * Recursion in kyo is already stack-safe, so a loop written recursively is correct. This exists because an explicit loop is cheaper and
+  * reads better: the state is named rather than threaded through arguments, and each round's decision to keep going or stop is a value
+  * rather than a shape the reader has to infer from the recursion.
   *
-  * Loops can maintain multiple state values (up to 4) between iterations through Continue variants. This enables complex stateful
-  * computations while maintaining type safety and pure functional semantics.
-  *
-  * The outcome of each iteration is represented by an Outcome type, which can either signal continuation with new state values or
-  * completion with a final result.
+  * A round's body answers with an [[Loop.Outcome]]: [[Loop.continue]] carrying the state for the next round, or [[Loop.done]] carrying the
+  * loop's result. Up to four state values can be carried, through the `Continue` variants, so a multi-value loop allocates no tuple per
+  * round.
   */
 object Loop:
 
@@ -27,7 +27,10 @@ object Loop:
       *   The type of the single state value maintained between iterations
       */
     sealed abstract class Continue[A] extends Serializable:
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
+        override def toString = s"Continue(${_1})"
+    end Continue
 
     /** Represents the state of two values to be carried forward to the next iteration.
       *
@@ -37,8 +40,11 @@ object Loop:
       *   The type of the second state value
       */
     sealed abstract class Continue2[A, B] extends Serializable:
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
+        override def toString = s"Continue2(${_1}, ${_2})"
+    end Continue2
 
     /** Represents the state of three values to be carried forward to the next iteration.
       *
@@ -50,9 +56,11 @@ object Loop:
       *   The type of the third state value
       */
     sealed abstract class Continue3[A, B, C] extends Serializable:
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C
+        override def toString = s"Continue3(${_1}, ${_2}, ${_3})"
     end Continue3
 
     /** Represents the state of four values to be carried forward to the next iteration.
@@ -67,10 +75,12 @@ object Loop:
       *   The type of the fourth state value
       */
     sealed abstract class Continue4[A, B, C, D] extends Serializable:
+        Debugger.onAlloc(this)
         private[kyo] def _1: A
         private[kyo] def _2: B
         private[kyo] def _3: C
         private[kyo] def _4: D
+        override def toString = s"Continue4(${_1}, ${_2}, ${_3}, ${_4})"
     end Continue4
 
     /** Represents the result of a loop iteration, which can either continue with new state or complete with a final value.
@@ -80,7 +90,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome[A, O] = O | Continue[A]
+    opaque type Outcome[A, +O] = O | Continue[A]
 
     /** Represents the result of a loop iteration with two state values.
       *
@@ -91,7 +101,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome2[A, B, O] = O | Continue2[A, B]
+    opaque type Outcome2[A, B, +O] = O | Continue2[A, B]
 
     /** Represents the result of a loop iteration with three state values.
       *
@@ -104,7 +114,7 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome3[A, B, C, O] = O | Continue3[A, B, C]
+    opaque type Outcome3[A, B, C, +O] = O | Continue3[A, B, C]
 
     /** Represents the result of a loop iteration with four state values.
       *
@@ -119,7 +129,16 @@ object Loop:
       * @tparam O
       *   The type of the final value if completing
       */
-    opaque type Outcome4[A, B, C, D, O] = O | Continue4[A, B, C, D]
+    opaque type Outcome4[A, B, C, D, +O] = O | Continue4[A, B, C, D]
+
+    // Wraps a settled answer that is itself a Continue, so it cannot be read as a request to continue;
+    // `unnest` reads the answer back out.
+    final private[kyo] class Done[O](val value: O)
+
+    private[kyo] def unnest[A, B, C, D, O](v: Outcome[A, O] | Outcome2[A, B, O] | Outcome3[A, B, C, O] | Outcome4[A, B, C, D, O]): O =
+        v match
+            case v: Done[O @unchecked] => v.value
+            case v                     => v.asInstanceOf[O]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
@@ -133,7 +152,7 @@ object Loop:
       * @return
       *   An Outcome indicating continuation with Unit state
       */
-    inline def continue[A]: Outcome[Unit, A] = _continueUnit
+    inline def continue[A]: Outcome[Unit, A] < Any = _continueUnit.asInstanceOf[Outcome[Unit, A] < Any]
 
     /** Creates an outcome signaling continuation with a single state value.
       *
@@ -141,9 +160,12 @@ object Loop:
       *   The state value to continue with
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, O, S](inline v: A): Outcome[A, O] =
-        new Continue:
-            def _1 = v
+    inline def continue[A, O, S](inline v: A): Outcome[A, O] < S =
+        val v0 = v
+        (new Continue[A]:
+            def _1 = v0
+        ).asInstanceOf[Outcome[A, O] < S]
+    end continue
 
     /** Creates an outcome signaling continuation with two state values.
       *
@@ -153,10 +175,14 @@ object Loop:
       *   The second state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, o](inline v1: A, inline v2: B): Outcome2[A, B, o] =
-        new Continue2:
-            def _1 = v1
-            def _2 = v2
+    inline def continue[A, B, o](inline v1: A, inline v2: B): Outcome2[A, B, o] < Any =
+        val v1x = v1
+        val v2x = v2
+        (new Continue2[A, B]:
+            def _1 = v1x
+            def _2 = v2x
+        ).asInstanceOf[Outcome2[A, B, o] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with three state values.
       *
@@ -168,11 +194,16 @@ object Loop:
       *   The third state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] =
-        new Continue3:
-            def _1 = v1
-            def _2 = v2
-            def _3 = v3
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] < Any =
+        val v1x = v1
+        val v2x = v2
+        val v3x = v3
+        (new Continue3[A, B, C]:
+            def _1 = v1x
+            def _2 = v2x
+            def _3 = v3x
+        ).asInstanceOf[Outcome3[A, B, C, O] < Any]
+    end continue
 
     /** Creates an outcome signaling continuation with four state values.
       *
@@ -186,16 +217,22 @@ object Loop:
       *   The fourth state value
       */
     @nowarn("msg=anonymous")
-    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] =
-        new Continue4:
-            def _1 = v1
-            def _2 = v2
-            def _3 = v3
-            def _4 = v4
+    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] < Any =
+        val v1x = v1
+        val v2x = v2
+        val v3x = v3
+        val v4x = v4
+        (new Continue4[A, B, C, D]:
+            def _1 = v1x
+            def _2 = v2x
+            def _3 = v3x
+            def _4 = v4x
+        ).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
+    end continue
 
     /** Creates an outcome signaling completion with no value. */
     @targetName("done0")
-    def done[A]: Outcome[A, Unit] = ()
+    inline def done[A]: Outcome[A, Unit] < Any = ().asInstanceOf[Outcome[A, Unit] < Any]
 
     /** Creates an outcome signaling completion with a final value.
       *
@@ -203,7 +240,10 @@ object Loop:
       *   The final value
       */
     @targetName("done1")
-    def done[A, O](v: O): Outcome[A, O] = v
+    inline def done[A, O](inline v: O): Outcome[A, O] < Any =
+        v match
+            case v: Continue[?] => new Done(v).asInstanceOf[Outcome[A, O] < Any]
+            case v              => Nested.nest[Outcome[A, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a two-state loop.
       *
@@ -211,7 +251,10 @@ object Loop:
       *   The final value
       */
     @targetName("done2")
-    def done[A, B, O](v: O): Outcome2[A, B, O] = v
+    inline def done[A, B, O](inline v: O): Outcome2[A, B, O] < Any =
+        v match
+            case v: Continue2[?, ?] => new Done(v).asInstanceOf[Outcome2[A, B, O] < Any]
+            case v                  => Nested.nest[Outcome2[A, B, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a three-state loop.
       *
@@ -219,7 +262,10 @@ object Loop:
       *   The final value
       */
     @targetName("done3")
-    def done[A, B, C, O](v: O): Outcome3[A, B, C, O] = v
+    inline def done[A, B, C, O](inline v: O): Outcome3[A, B, C, O] < Any =
+        v match
+            case v: Continue3[?, ?, ?] => new Done(v).asInstanceOf[Outcome3[A, B, C, O] < Any]
+            case v                     => Nested.nest[Outcome3[A, B, C, O], Any](v)
 
     /** Creates an outcome signaling completion with a final value for a four-state loop.
       *
@@ -227,7 +273,10 @@ object Loop:
       *   The final value
       */
     @targetName("done4")
-    def done[A, B, C, D, O](v: O): Outcome4[A, B, C, D, O] = v
+    inline def done[A, B, C, D, O](inline v: O): Outcome4[A, B, C, D, O] < Any =
+        v match
+            case v: Continue4[?, ?, ?, ?] => new Done(v).asInstanceOf[Outcome4[A, B, C, D, O] < Any]
+            case v                        => Nested.nest[Outcome4[A, B, C, D, O], Any](v)
 
     /** Executes a loop with a single state value.
       *
@@ -238,27 +287,38 @@ object Loop:
       *   The initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current state and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
-    inline def apply[A, O, S](inline input: A)(inline run: Safepoint ?=> A => Outcome[A, O] < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(
+        using inline _frame: Frame
     ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[A, O] < S)(using Safepoint): O < S =
+        @tailrec def loop(step: Maybe[Arrow[Outcome[A, O], O, S]], v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
-                    loop(run(next._1))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                    loop(step, run(next._1))
+                case kyo: Pending[Outcome[A, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Outcome[A, O], O, S]:
+                            def frame                                                                    = _frame
+                            def apply[C, S2](v: Outcome[A, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Pending[Outcome[A, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome[A, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
-        loop(Loop.continue(input))
+                    res.asInstanceOf[O < S]
+        loop(Maybe.empty, Loop.continue(input))
     end apply
 
     /** Executes a loop with two state values.
@@ -272,27 +332,38 @@ object Loop:
       *   The second initial state value
       * @param run
       *   The function to execute for each iteration, receiving both current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
-    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: Safepoint ?=> (A, B) => Outcome2[A, B, O] < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(
+        using inline _frame: Frame
     ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome2[A, B, O] < S)(using Safepoint): O < S =
+        @tailrec def loop(step: Maybe[Arrow[Outcome2[A, B, O], O, S]], v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
-                    loop(run(next._1, next._2))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                    loop(step, run(next._1, next._2))
+                case kyo: Pending[Outcome2[A, B, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Outcome2[A, B, O], O, S]:
+                            def frame                                                                        = _frame
+                            def apply[C, S2](v: Outcome2[A, B, O] < S2, cont: Arrow[O, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Pending[Outcome2[A, B, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome2[A, B, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
-        loop(Loop.continue(input1, input2))
+                    res.asInstanceOf[O < S]
+        loop(Maybe.empty, Loop.continue(input1, input2))
     end apply
 
     /** Executes a loop with three state values.
@@ -308,25 +379,38 @@ object Loop:
       *   The third initial state value
       * @param run
       *   The function to execute for each iteration, receiving all current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: Safepoint ?=> (A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
+        inline run: (A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome3[A, B, C, O] < S)(using Safepoint): O < S =
+        @tailrec def loop(step: Maybe[Arrow[Outcome3[A, B, C, O], O, S]], v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
-                    loop(run(next._1, next._2, next._3))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                    loop(step, run(next._1, next._2, next._3))
+                case kyo: Pending[Outcome3[A, B, C, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Outcome3[A, B, C, O], O, S]:
+                            def frame                                                                              = _frame
+                            def apply[C2, S2](v: Outcome3[A, B, C, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                                v match
+                                    case kyo: Pending[Outcome3[A, B, C, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome3[A, B, C, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
-        loop(Loop.continue(input1, input2, input3))
+                    res.asInstanceOf[O < S]
+        loop(Maybe.empty, Loop.continue(input1, input2, input3))
     end apply
 
     /** Executes a loop with four state values.
@@ -344,25 +428,38 @@ object Loop:
       *   The fourth initial state value
       * @param run
       *   The function to execute for each iteration, receiving all current states and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: Safepoint ?=> (A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
+        inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome4[A, B, C, D, O] < S)(using Safepoint): O < S =
+        @tailrec def loop(step: Maybe[Arrow[Outcome4[A, B, C, D, O], O, S]], v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
-                    loop(run(next._1, next._2, next._3, next._4))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                    loop(step, run(next._1, next._2, next._3, next._4))
+                case kyo: Pending[Outcome4[A, B, C, D, O], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Outcome4[A, B, C, D, O], O, S]:
+                            def frame                                                                                 = _frame
+                            def apply[C2, S2](v: Outcome4[A, B, C, D, O] < S2, cont: Arrow[O, C2, S2]): C2 < (S & S2) =
+                                v match
+                                    case kyo: Pending[Outcome4[A, B, C, D, O], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome4[A, B, C, D, O] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
-        loop(Loop.continue(input1, input2, input3, input4))
+                    res.asInstanceOf[O < S]
+        loop(Maybe.empty, Loop.continue(input1, input2, input3, input4))
     end apply
 
     /** Executes an indexed loop without state values.
@@ -373,25 +470,22 @@ object Loop:
       *
       * @param run
       *   The function to execute for each iteration, receiving the current index and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using
-        inline _frame: Frame,
-        safepoint: Safepoint
+        inline _frame: Frame
     ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S)(using Safepoint): O < S =
+        def suspended(idx: Int)(v: Outcome[Unit, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S): O < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)(run(idx))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Pending[?, ?] =>
+                    suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue)
     end indexed
 
@@ -404,25 +498,22 @@ object Loop:
       *   The initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and state, and producing an outcome
-      * @return
-      *   The final result after loop completion
       */
-    inline def indexed[A, O, S](input: A)(inline run: Safepoint ?=> (Int, A) => Outcome[A, O] < S)(using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using
+        inline _frame: Frame
     ): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome[A, O] < S)(using Safepoint): O < S =
+        def suspended(idx: Int)(v: Outcome[A, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome[A, O] < S): O < S =
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1)(run(idx, next._1))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[A, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Pending[?, ?] =>
+                    suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input))
     end indexed
 
@@ -437,24 +528,22 @@ object Loop:
       *   The second initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and both states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, O, S](input1: A, input2: B)(
-        inline run: Safepoint ?=> (Int, A, B) => Outcome2[A, B, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome2[A, B, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B) => Outcome2[A, B, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome2[A, B, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome2[A, B, O] < S): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome2[A, B, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Pending[?, ?] =>
+                    suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2))
     end indexed
 
@@ -471,24 +560,22 @@ object Loop:
       *   The third initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and all states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: Safepoint ?=> (Int, A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome3[A, B, C, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome3[A, B, C, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome3[A, B, C, O] < S): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome3[A, B, C, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Pending[?, ?] =>
+                    suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3))
     end indexed
 
@@ -507,24 +594,22 @@ object Loop:
       *   The fourth initial state value
       * @param run
       *   The function to execute for each iteration, receiving the current index and all states
-      * @return
-      *   The final result after loop completion
       */
     inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: Safepoint ?=> (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S)(using Safepoint): O < S =
+        inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        def suspended(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
+            v.map(loop(idx)(_))
+        @tailrec def loop(idx: Int)(v: Outcome4[A, B, C, D, O] < S): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1)(run(idx, next._1, next._2, next._3, next._4))
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome4[A, B, C, D, O], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(idx)(kyo(v, context))
+                case _: Pending[?, ?] =>
+                    suspended(idx)(v)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[O < S]
                 case res =>
-                    res.asInstanceOf[O]
+                    res.asInstanceOf[O < S]
         loop(0)(Loop.continue(input1, input2, input3, input4))
     end indexed
 
@@ -538,19 +623,34 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    inline def foreach[A, S](inline run: Safepoint ?=> Outcome[Unit, A] < S)(using inline _frame: Frame, safepoint: Safepoint): A < S =
+    inline def foreach[A, S](inline run: Outcome[Unit, A] < S)(using inline _frame: Frame): A < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[Unit, A] < S)(using Safepoint): A < S =
+        @tailrec def loop(step: Maybe[Arrow[Outcome[Unit, A], A, S]], v: Outcome[Unit, A] < S): A < S =
             v match
                 case next: Continue[Unit] @unchecked =>
-                    loop(run)
-                case kyo: KyoSuspend[IX, OX, EX, Any, Outcome[Unit, A], S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, A, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
-                case res => res.asInstanceOf[A]
-        loop(Loop.continue)
+                    loop(step, run)
+                case kyo: Pending[Outcome[Unit, A], S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Outcome[Unit, A], A, S]:
+                            def frame                                                                       = _frame
+                            def apply[C, S2](v: Outcome[Unit, A] < S2, cont: Arrow[A, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Pending[Outcome[Unit, A], S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), v.asInstanceOf[Outcome[Unit, A] < S]), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
+                case res: Done[?] =>
+                    res.value.asInstanceOf[A < S]
+                case res => res.asInstanceOf[A < S]
+        loop(Maybe.empty, Loop.continue)
     end foreach
 
     /** Repeats an operation a specified number of times.
@@ -565,22 +665,22 @@ object Loop:
       * @return
       *   Unit after completing all iterations
       */
-    inline def repeat[S](n: Int)(inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
-        @nowarn("msg=anonymous")
-        @tailrec def loop(i: Int)(v: Any < S)(using Safepoint): Unit < S =
-            if i > n then ()
+    inline def repeat[S](n: Int)(inline run: Any < S)(using inline _frame: Frame): Unit < S =
+        def suspended(i: Int)(v: Any < S): Unit < S =
+            v.map(_ => loop(i))
+        @tailrec def loop(i: Int): Unit < S =
+            if i >= n then ()
             else
+                val v: Any < S = run
                 v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                loop(i)(kyo(v, context))
+                    case _: Pending[?, ?] =>
+                        suspended(i + 1)(v)
                     case _ =>
-                        loop(i + 1)(run)
+                        loop(i + 1)
+                end match
             end if
         end loop
-        loop(0)(())
+        loop(0)
     end repeat
 
     /** Executes a loop indefinitely until explicitly terminated.
@@ -593,19 +693,32 @@ object Loop:
       * @return
       *   Nothing, as this loop runs forever unless interrupted
       */
-    inline def forever[S](inline run: Safepoint ?=> Any < S)(using inline _frame: Frame, safepoint: Safepoint): Nothing < S =
+    inline def forever[S](inline run: Any < S)(using inline _frame: Frame): Nothing < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Any < S)(using Safepoint): Nothing < S =
+        @tailrec def loop(step: Maybe[Arrow[Any, Nothing, S]], v: Any < S): Nothing < S =
             v match
-                case kyo: KyoSuspend[IX, OX, EX, Any, Nothing, S] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, Nothing, S](kyo):
-                        def frame                                                = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            loop(kyo(v, context))
+                case kyo: Pending[Any, S] @unchecked =>
+                    val arrow = step.getOrElse {
+                        new Step[Any, Nothing, S]:
+                            def frame                                                                = _frame
+                            def apply[C, S2](v: Any < S2, cont: Arrow[Nothing, C, S2]): C < (S & S2) =
+                                v match
+                                    case kyo: Pending[Any, S2] @unchecked =>
+                                        Effect.defer(kyo, this, cont)
+                                    case _ =>
+                                        val slot = Safepoint.get()
+                                        if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                        else
+                                            val out = cont.head(loop(Maybe(this), run), cont.tail)
+                                            Safepoint.exit(slot)
+                                            out
+                                        end if
+                    }
+                    Effect.defer(kyo, arrow, Arrow.id)
                 case _ =>
-                    loop(run)
+                    loop(step, run)
         end loop
-        loop(())
+        loop(Maybe.empty, ())
     end forever
 
     /** Executes an operation repeatedly while a condition remains true.
@@ -617,26 +730,37 @@ object Loop:
       * @return
       *   Unit after the loop completes
       */
-    inline def whileTrue[S](inline condition: Safepoint ?=> Boolean < S)(inline run: Unit < S)(
-        using
-        inline _frame: Frame,
-        safepoint: Safepoint
+    inline def whileTrue[S](inline condition: Boolean < S)(inline run: Unit < S)(
+        using inline _frame: Frame
     ): Unit < S =
         @nowarn("msg=anonymous")
-        def loop(v: Unit < S)(using Safepoint): Unit < S =
+        def loop(step: Maybe[Arrow[Any, Unit, S]], v: Unit < S): Unit < S =
             condition.map {
                 case true =>
                     v match
-                        case kyo: KyoSuspend[IX, OX, EX, Any, Unit, S] @unchecked =>
-                            new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                                def frame                                                = _frame
-                                def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                    loop(kyo(v, context))
+                        case kyo: Pending[Any, S] @unchecked =>
+                            val arrow = step.getOrElse {
+                                new Step[Any, Unit, S]:
+                                    def frame                                                             = _frame
+                                    def apply[C, S2](v: Any < S2, cont: Arrow[Unit, C, S2]): C < (S & S2) =
+                                        v match
+                                            case kyo: Pending[Any, S2] @unchecked =>
+                                                Effect.defer(kyo, this, cont)
+                                            case _ =>
+                                                val slot = Safepoint.get()
+                                                if !Safepoint.enter(slot) then Effect.defer(v, this, cont)
+                                                else
+                                                    val out = cont.head(loop(Maybe(this), run), cont.tail)
+                                                    Safepoint.exit(slot)
+                                                    out
+                                                end if
+                            }
+                            Effect.defer(kyo, arrow, Arrow.id)
                         case _ =>
-                            loop(run)
+                            loop(step, run)
                 case false => ()
             }
         end loop
-        loop(())
+        loop(Maybe.empty, ())
     end whileTrue
 end Loop

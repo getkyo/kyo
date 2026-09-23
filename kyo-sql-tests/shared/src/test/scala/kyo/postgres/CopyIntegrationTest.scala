@@ -366,7 +366,7 @@ class CopyIntegrationTest extends SqlContainerTest:
                                                     chunksSeen.incrementAndGet.flatMap { v =>
                                                         if v == 1 then
                                                             // After the first chunk: signal readiness and block uninterruptibly.
-                                                            Async.mask {
+                                                            Async.uninterruptible {
                                                                 gate.release.andThen(resumed.await)
                                                             }
                                                         else Kyo.unit

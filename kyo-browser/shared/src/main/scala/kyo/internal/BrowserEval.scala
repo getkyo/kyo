@@ -27,6 +27,27 @@ private[kyo] object BrowserEval:
             }
         }
 
+    /** [[evalJs]] for an expression that leaves something on the page. `remove` builds, from the expression's value, the expression
+      * that takes it off again. The page holds the injection before the reply arrives, so the removal is owed to the enclosing scope
+      * from the reply on: see [[CdpBackend.acquire]]. The removal runs against the tab's main frame and its failure is dropped, since
+      * it runs while the scope is closing.
+      */
+    private[kyo] def acquireJs(expr: String)(remove: String => String)(using
+        Frame
+    ): String < (Browser & Scope & Abort[BrowserReadException]) =
+        Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
+            Browser.use { tab =>
+                kyo.kernel.ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                    CdpBackend.runtimeEvaluateAcquire(tab.session, finalizer, EvalParams(expr, contextId = ctx.map(c => c.value))) {
+                        result =>
+                            Abort.run[BrowserReadException](
+                                Browser.runOn(tab)(CdpEvalDecoder.extractValueOrFail(result).map(token => evalJs(remove(token)).unit))
+                            ).unit
+                    }.map(CdpEvalDecoder.extractValueOrFail)
+                }
+            }
+        }
+
     /** Like [[evalJs]] but evaluates an `async`/Promise-returning expression and waits for the promise to settle in-page before returning
       * its resolved value. Used by [[kyo.internal.StabilitySampler]], which drives an entire in-page sampling loop inside one eval.
       */

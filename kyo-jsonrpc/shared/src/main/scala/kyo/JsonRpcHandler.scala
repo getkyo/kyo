@@ -81,15 +81,18 @@ object JsonRpcHandler:
 
         /** Closes the handler immediately without draining in-flight requests. */
         def close(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
+            Sync.Unsafe.defer(self.close(Duration.Zero).uninterruptible().safe.get)
 
         /** Closes the handler, waiting up to `gracePeriod` for in-flight requests to drain before forcing. */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(gracePeriod).safe.get)
+            // Uninterruptible: `.get` registers the close carrier in the caller's interrupts, so an interrupt of the
+            // caller would cascade into the finalizer and abandon it partway, leaving the transport, exchange and
+            // inbound handlers uncleaned.
+            Sync.Unsafe.defer(self.close(gracePeriod).uninterruptible().safe.get)
 
         /** Closes the handler immediately without draining in-flight requests. Identical to `close(Duration.Zero)`. */
         def closeNow(using Frame): Unit < Async =
-            Sync.Unsafe.defer(self.close(Duration.Zero).safe.get)
+            Sync.Unsafe.defer(self.close(Duration.Zero).uninterruptible().safe.get)
 
         /** Returns the underlying unsafe handler instance. */
         def unsafe: Unsafe = self

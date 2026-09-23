@@ -2,6 +2,8 @@ package kyo
 
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.internal.engine.JsonRpcEndpointImpl
+import scala.jdk.CollectionConverters.*
 
 class JsonRpcHandlerTest extends JsonRpcTest:
 
@@ -228,23 +230,23 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     end drainOnClosePending
 
     "callerRegistry drain on close fails pending calls" in {
-        // A call already registered when the endpoint closes must drain as a JsonRpcError (internalError
-        // -32603), never the raw Closed the Exchange surfaces on its clean-stream-end path. Two completions
-        // race on close (the finalizer drain vs the Exchange reader reacting to transport close); the
-        // finalizer must win. The leak only surfaces under scheduler contention, so the scenario runs
-        // concurrently many times rather than once: a single run passes ~99% of the time and flakes in CI.
+        // The type is asserted, not the code: JsonRpcTransportError shares -32603 with the lifecycle error, so a code
+        // check would let the misclassified drain pass. The leak only surfaces under scheduler contention, so the
+        // scenario runs concurrently many times rather than once.
         val iterations  = 2000
         val concurrency = 64
         Async.foreach(1 to iterations, concurrency)(_ => Scope.run(drainOnClosePending)).map { captured =>
-            val drainedAsError =
-                captured.count { case Present(Result.Failure(e: JsonRpcError)) => e.code == -32603; case _ => false }
-            val leakedClosed = captured.count { case Present(Result.Failure(_: Closed)) => true; case _ => false }
-            val succeeded    = captured.count { case Present(Result.Success(_)) => true; case _ => false }
+            val drainedAsLifecycle =
+                captured.count { case Present(Result.Failure(_: JsonRpcLifecycleError)) => true; case _ => false }
+            val leakedClosed         = captured.count { case Present(Result.Failure(_: Closed)) => true; case _ => false }
+            val leakedTransportError = captured.count { case Present(Result.Failure(_: JsonRpcTransportError)) => true; case _ => false }
+            val succeeded            = captured.count { case Present(Result.Success(_)) => true; case _ => false }
             Sync.defer {
                 assert(
-                    drainedAsError == iterations,
-                    s"drain-on-close over $iterations iterations: drainedAsError=$drainedAsError " +
-                        s"leakedClosed=$leakedClosed succeeded=$succeeded (every call must drain as JsonRpcError -32603)"
+                    drainedAsLifecycle == iterations,
+                    s"drain-on-close over $iterations iterations: drainedAsLifecycle=$drainedAsLifecycle " +
+                        s"leakedClosed=$leakedClosed leakedTransportError=$leakedTransportError succeeded=$succeeded " +
+                        s"(every registered call must drain as JsonRpcLifecycleError(Close))"
                 )
             }
         }
@@ -755,12 +757,15 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }
             JsonRpcTransport.inMemory.map { (ta, tb) =>
                 JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                    val impl = a.unsafe.asInstanceOf[JsonRpcEndpointImpl]
                     JsonRpcHandler.init(tb, Seq(slow)).map { _ =>
                         Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { _ =>
-                            a.close(Duration.Zero).andThen {
-                                Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
-                                    case Result.Failure(_: Closed) => succeed
-                                    case other                     => fail(s"expected Closed, got $other")
+                            assertEventually(Sync.defer(!impl.callerRegistry.isEmpty)).andThen {
+                                a.close(Duration.Zero).andThen {
+                                    Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ())).map {
+                                        case Result.Failure(_: Closed) => succeed
+                                        case other                     => fail(s"expected Closed, got $other")
+                                    }
                                 }
                             }
                         }
@@ -906,6 +911,141 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 case Result.Failure(e: JsonRpcError) =>
                     assert(e.code == -32777, s"expected wire code -32777 from halt response, got ${e.code}")
                 case other => fail(s"expected JsonRpcError with code -32777 from halt, got $other")
+            }
+        }
+    }
+
+    "closing the endpoint interrupts a handler that is running".times(60) in {
+        for
+            entered  <- Latch.init(1)
+            gate     <- Latch.init(1)
+            released <- Latch.init(1)
+            route = JsonRpcRoute.request[AddReq, AddResp]("park") { (_, _) =>
+                Sync.ensure(released.release)(entered.release.andThen(gate.await)).andThen(AddResp(0))
+            }
+            transports <- JsonRpcTransport.inMemory
+            (ta, tb) = transports
+            outcome <- Scope.run {
+                Scope.ensure(gate.release.andThen(ta.close).andThen(tb.close)).andThen {
+                    Scope.run {
+                        JsonRpcHandler.init(tb, Seq(route)).map { _ =>
+                            Scope.run {
+                                JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                                    Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("park", AddReq(0, 0))))
+                                        .map(call => entered.await.andThen(call))
+                                }
+                            }
+                        }
+                    }.map(call => released.await.andThen(call.get))
+                }
+            }
+        yield assert(outcome.isFailure, s"the caller of an interrupted handler got $outcome")
+    }
+
+    private class BlockingCloseTransport(
+        inner: JsonRpcTransport,
+        closeEntered: Latch,
+        blockGate: Latch,
+        transportClosed: AtomicBoolean
+    ) extends JsonRpcTransport:
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = inner.send(env)
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]                  = inner.incoming
+        def close(using Frame): Unit < Async                                                       =
+            closeEntered.release.andThen(blockGate.await).andThen(inner.close).andThen(transportClosed.set(true))
+    end BlockingCloseTransport
+
+    // close spawns the finalizer as a carrier fiber and joins it, and the join registers the carrier in the joiner's
+    // interrupts, so an interrupt of the caller cascades into the carrier and abandons the finalizer partway, leaving
+    // the transport, exchange, progress channels and inbound handlers uncleaned. Blocking the transport-close step
+    // holds the carrier mid-finalizer.
+    "closing the handler finishes its finalizer even when the caller is interrupted mid-close" in {
+        for
+            closeEntered    <- Latch.init(1)
+            blockGate       <- Latch.init(1)
+            transportClosed <- AtomicBoolean.init(false)
+            transports      <- JsonRpcTransport.inMemory
+            (ta, tb) = transports
+            blocking = new BlockingCloseTransport(tb, closeEntered, blockGate, transportClosed)
+            h      <- JsonRpcHandler.initUnscoped(blocking)
+            joiner <- Fiber.initUnscoped(h.close)
+            _      <- closeEntered.await
+            _      <- joiner.interrupt
+            _      <- joiner.getResult
+            _      <- blockGate.release
+            // An abandoned finalizer never closes the transport, which ends this leaf as its timeout.
+            _ <- Scope.run(Scope.ensure(ta.close).andThen(assertEventually(transportClosed.get)))
+        yield succeed
+    }
+
+    // A send that loses to the finalizer's writerChannel.close fails on the closed channel. Reporting that as a
+    // transport error would, through the Exchange, complete the exchange's done promise with it first-writer-wins, so
+    // the finalizer's own Closed becomes a no-op and every later call reads the stale transport error back. The probe
+    // is issued while the finalizer is held at transport.close (writerChannel already closed, done promise not yet),
+    // so its send loses deterministically. requestEnqueued completing is the barrier that the put has been decided
+    // before the gate is released.
+    "a call whose send loses to close(0) sees Closed and leaves the handler Closed" in {
+        for
+            closeEntered    <- Latch.init(1)
+            blockGate       <- Latch.init(1)
+            transportClosed <- AtomicBoolean.init(false)
+            transports      <- JsonRpcTransport.inMemory
+            (peer, main) = transports
+            blocking     = new BlockingCloseTransport(main, closeEntered, blockGate, transportClosed)
+            h <- JsonRpcHandler.initUnscoped(blocking)
+            impl = h.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+            closeFiber <- Fiber.initUnscoped(h.close)
+            _          <- closeEntered.await
+            probe      <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](h.call[Unit, Unit]("probe", ())))
+            _          <- assertEventually(Sync.Unsafe.defer {
+                probe.unsafe.done() || impl.callerRegistry.values.asScala.exists(_.requestEnqueued.unsafe.done())
+            })
+            _      <- blockGate.release
+            _      <- closeFiber.getResult
+            during <- probe.get
+            after  <- Abort.run[JsonRpcError | Closed](h.call[Unit, Unit]("probe", ()))
+            _      <- peer.close
+        yield (during, after) match
+            case (Result.Failure(_: Closed), Result.Failure(_: Closed)) => succeed
+            case other => fail(s"expected (Closed, Closed) during and after close, got $other")
+    }
+
+    "an in-flight call registered before close(0) drains as JsonRpcLifecycleError(Close)" in {
+        Fiber.Promise.init[Unit, Any].map { gate =>
+            val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => gate.get }
+            JsonRpcTransport.inMemory.map { (ta, tb) =>
+                JsonRpcHandler.init(tb, Seq(slow)).map { _ =>
+                    JsonRpcHandler.initUnscoped(ta, Seq.empty).map { a =>
+                        val impl = a.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+                        Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("slow", ()))).map { first =>
+                            assertEventually(Sync.defer(!impl.callerRegistry.isEmpty)).andThen {
+                                a.close(Duration.Zero).andThen(first.get).map {
+                                    case Result.Failure(e: JsonRpcLifecycleError) =>
+                                        assert(e.stage == JsonRpcLifecycleError.Stage.Close)
+                                    case other => fail(s"expected JsonRpcLifecycleError(Close), got $other")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The receive side, reachable only through a custom transport whose incoming aborts Closed (the shipped transports
+    // end cleanly). The Exchange reader takes that Closed as a transport error and completes the done promise with it
+    // unless the receive stream treats it as an orderly end.
+    "a custom transport whose incoming aborts Closed leaves the handler Closed, not a transport error" in {
+        JsonRpcTransport.inMemory.map { (ta, _) =>
+            val custom = new JsonRpcTransport:
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) = ta.send(env)
+                def incoming(using frame: Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]]           =
+                    Stream(Abort.fail[Closed](Closed("custom transport", frame)))
+                def close(using Frame): Unit < Async = ta.close
+            JsonRpcHandler.initUnscoped(custom, Seq.empty).map { a =>
+                Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("probe", ())).map {
+                    case Result.Failure(_: Closed) => succeed
+                    case other                     => fail(s"a call on a Closed-ended transport must fail with Closed, got $other")
+                }
             }
         }
     }

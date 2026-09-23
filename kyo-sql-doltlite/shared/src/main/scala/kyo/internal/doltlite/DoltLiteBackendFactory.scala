@@ -24,7 +24,7 @@ class DoltLiteBackendFactory extends Backend:
     override def parseUrl(raw: String)(using Frame): Result[SqlConnectionException, SqlConfig.Url] =
         DoltLiteUrl.parse(raw)
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
-        DoltLite.openUnscoped(url, config)
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
+        DoltLite.opened(url, config)
 
 end DoltLiteBackendFactory

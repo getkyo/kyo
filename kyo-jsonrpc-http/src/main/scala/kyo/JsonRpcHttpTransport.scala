@@ -85,8 +85,8 @@ object JsonRpcHttpTransport:
             // instead of being swallowed by the fiber's own Abort.run.
             connected <- Fiber.Promise.init[Unit, Abort[HttpException] & Async]
             _         <- Scope.ensure(
-                doneRef.completeUnitDiscard.andThen(Abort.run[Closed](inbound.close).unit)
-                    .andThen(Abort.run[Closed](outbound.close).unit)
+                doneRef.completeUnitDiscard.andThen(Abort.run[Closed](outbound.close).unit)
+                    .andThen(Abort.run[Closed](inbound.close).unit)
             )
         yield
             val transport: JsonRpcTransport = new JsonRpcTransport:
@@ -107,8 +107,8 @@ object JsonRpcHttpTransport:
 
                 def close(using Frame): Unit < Async =
                     doneRef.completeUnitDiscard
-                        .andThen(Abort.run[Closed](inbound.close).unit)
                         .andThen(Abort.run[Closed](outbound.close).unit)
+                        .andThen(Abort.run[Closed](inbound.close).unit)
 
             // Start the WS connection in a background fiber.
             Fiber.initUnscoped {
@@ -164,9 +164,11 @@ object JsonRpcHttpTransport:
                     // completion is what the factory raises. Or the session ended after connecting, and this
                     // completion is a no-op. Either way both channels close: closing only `inbound` would
                     // leave `send` accepting 64 more envelopes into a channel nothing drains, then suspending.
+                    // `outbound` closes first: `incoming` ending is how a caller learns the session is over,
+                    // so a send issued after it must already find `outbound` closed.
                     connected.completeDiscard(result.map(_ => ())).andThen(
-                        Abort.run[Closed](inbound.close).unit
-                            .andThen(Abort.run[Closed](outbound.close).unit)
+                        Abort.run[Closed](outbound.close).unit
+                            .andThen(Abort.run[Closed](inbound.close).unit)
                     )
                 }
             }.andThen(connected.get).andThen(transport)

@@ -24,6 +24,36 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
         }
 
+    // Each round interrupts and then waits for the socket file to go: a
+    // release in flight removes it, a listener nobody owns keeps it, and the leaf timeout is what reports the latter.
+    //
+    // The probe reads a path whose socket may still be open, because the interrupt spawns the scope's drain rather
+    // than waiting for it. Windows answers that state by refusing access rather than by saying the file is there, so
+    // an unreadable path counts as not yet gone; letting it raise would fail the round on the transient rather than
+    // on the leak.
+    "an interrupt landing as the listener binds leaves no listener or socket file behind" in {
+        assumeUnixSockets()
+        Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+            val sock                                 = Path(tempDir, "test.sock")
+            val rounds                               = 40
+            def removed(using Frame): Boolean < Sync =
+                Abort.run[FileSystemException](Path.runReadOnly(sock.exists)).map {
+                    case Result.Success(exists) => !exists
+                    case _                      => false
+                }
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done(succeed)
+                else
+                    for
+                        fiber <- Fiber.initUnscoped(Scope.run(JsonRpcTransport.unixDomain(sock).andThen(Async.never)))
+                        _     <- fiber.interrupt
+                        _     <- fiber.getResult
+                        _     <- assertEventually(removed)
+                    yield Loop.continue
+            }
+        })
+    }
+
     "unixDomain binds and accepts a connection" in {
         assumeUnixSockets()
         Path.run(Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>

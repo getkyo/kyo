@@ -23,7 +23,10 @@ private[kyo] object bug:
     end checkMacro
 
     def apply(msg: String): Nothing =
-        throw KyoBugException(message(msg))
+        throw exception(msg)
+
+    def exception(msg: String): KyoBugException =
+        KyoBugException(message(msg))
 
     private def message(msg: String) =
         s"BUG $msg Please open an issue 🥹 https://github.com/getkyo/kyo/issues"

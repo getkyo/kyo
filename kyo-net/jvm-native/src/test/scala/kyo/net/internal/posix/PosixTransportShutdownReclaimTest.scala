@@ -77,10 +77,6 @@ class PosixTransportShutdownReclaimTest extends Test:
                         address = kyo.net.NetAddress.Tcp("127.0.0.1", 0),
                         createdAt = Frame.internal,
                         sockets = spy,
-                        registry = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[
-                            PosixListener,
-                            java.lang.Boolean
-                        ]()),
                         closedFlag = AtomicBoolean.Unsafe.init(true)
                     )
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)

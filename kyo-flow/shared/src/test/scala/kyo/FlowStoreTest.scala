@@ -224,7 +224,9 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                     for
                         one    <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
                         two    <- Fiber.init(store.claimReady(served, ex2, lease, 10, 2.seconds))
-                        _      <- tc.advance(50.millis)
+                        // Both callers are inside their waits once both sleeps are registered; a jump before that leaves a
+                        // sleep registered afterwards with no advance to fire it.
+                        _      <- tc.awaitPendingSleepers(2)
                         _      <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                         _      <- tc.advance(3.seconds)
                         first  <- one.get
@@ -268,10 +270,11 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                             // Due one second in, while a caller that starts now is still waiting out its two.
                             _      <- mkWait(store, eid1, wf1, "timer", Flow.Wake.At(now + 1.second))
                             caller <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
-                            // A small step first, so the caller reaches its wait while nothing is due yet. Without it the
-                            // jump below lands before the caller has looked once, and it finds the row on its way in
-                            // rather than at the deadline, which is not the moment this leaf is about.
-                            _   <- tc.advance(10.millis)
+                            // Fence on the caller's sleep, so it is inside its wait, with nothing due yet, before the clock
+                            // jumps. A jump that lands before the caller has looked once lets it find the row on its way in
+                            // rather than at the deadline; one that lands before the sleep is registered leaves that sleep
+                            // with no advance to fire it, and the caller never returns.
+                            _   <- tc.awaitPendingSleepers(1)
                             _   <- tc.advance(3.seconds)
                             got <- caller.get
                         yield assert(
@@ -2438,11 +2441,9 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _     <- mkExecution(store, eid1, wf1, Flow.Status.Running)
                         _     <- mkWait(store, eid1, wf1, "x", Flow.Wake.OnField("x"))
                         fiber <- Fiber.init(store.claimReady(served, ex1, lease, 10, 5.seconds))
-                        // Load-bearing, not padding: it is what lets the caller reach its wait before the delivery lands. Without
-                        // it the spawned fiber has not run when the field is written, so it finds the value on its way IN and the
-                        // leaf passes having measured a plain poll rather than a wake. Removing it does not fail this leaf; it
-                        // silently changes what the leaf is about.
-                        _       <- tc.advance(100.millis)
+                        // The caller is inside its wait once its sleep is registered. Delivering before that lets it find the
+                        // value on its way in, and the leaf measures a plain poll rather than a wake.
+                        _       <- tc.awaitPendingSleepers(1)
                         _       <- deliver[Int](store, eid1, wf1, "x", 42)
                         _       <- tc.advance(200.millis)
                         results <- fiber.get
@@ -2456,9 +2457,8 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                 makeStore.map { store =>
                     for
                         fiber <- Fiber.init(store.claimReady(served, ex1, lease, 10, 5.seconds))
-                        // Load-bearing for the same reason as the leaf above: without it the caller has not reached its wait when
-                        // the row is created, so it finds the row on its way in and the leaf measures a plain poll, not a wake.
-                        _   <- tc.advance(100.millis)
+                        // Same fence as the leaf above: the row is created only once the caller is inside its wait.
+                        _   <- tc.awaitPendingSleepers(1)
                         now <- Clock.now
                         _   <- store.createExecutionIfAbsent(eid1, Flow.Status.Running, Flow.Event.Created(wf1, eid1, now), "", Dict.empty)
                         _   <- tc.advance(200.millis)
@@ -2477,9 +2477,9 @@ abstract class FlowStoreTest extends kyo.test.Test[Any]:
                         _   <- mkWait(store, eid1, wf1, "s", Flow.Wake.At(now + 500.millis))
                         // First poll: sleep not expired, times out
                         fiber1 <- Fiber.init(store.claimReady(served, ex1, lease, 10, 100.millis))
-                        _      <- tc.advance(50.millis)
-                        _      <- tc.advance(50.millis)
-                        _      <- tc.advance(50.millis)
+                        // The timeout can only fire a sleep that is already registered.
+                        _      <- tc.awaitPendingSleepers(1)
+                        _      <- tc.advance(100.millis)
                         empty  <- fiber1.get
                         // Advance past sleep expiry
                         _ <- tc.advance(500.millis)

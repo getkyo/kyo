@@ -3,8 +3,8 @@ package kyo.kernel
 import Isolate.internal.*
 import kyo.*
 import kyo.Ansi.*
+import kyo.kernel.Arrow
 import kyo.kernel.internal.*
-import scala.annotation.nowarn
 import scala.quoted.*
 
 /** Provides mechanisms for handling pending effects when forking computations.
@@ -21,8 +21,8 @@ import scala.quoted.*
   * This design unifies two categories of state management:
   *
   * **Simple State Copying** is used for [[ContextEffect]]s, which store their state in a format that can be directly copied from the
-  * original computation to the forked one. These are effects like environment variables, configuration settings, or local values - pieces
-  * of state that can simply be copied as-is when the computation forks.
+  * original computation to the forked one. These are effects like environment variables, configuration settings, or local values: pieces of
+  * state that can simply be copied as-is when the computation forks.
   *
   * **Complex State Management** handles effects that require structured transformation. When forking a computation with these effects, the
   * isolation:
@@ -93,10 +93,8 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *
       * @param f
       *   Function that receives the captured state
-      * @return
-      *   Computation with Remove, Keep, and additional effects
       */
-    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & Keep & S)
+    def capture[A, S](f: State => A < S)(using Frame): A < (Remove & S)
 
     /** Executes a computation with isolated state.
       *
@@ -139,7 +137,7 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       */
     def nest[A, S](v: A < (Remove & S))(using Frame): A < Restore < (Remove & Keep & S) =
         capture { state =>
-            isolate(state, v).map(r => Kyo.lift(restore(r)))
+            isolate(state, v).map(r => Nested.nest[A < Restore, Any](restore(r)))
         }
 
     /** Runs a computation with full state lifecycle management.
@@ -153,14 +151,22 @@ abstract class Isolate[Remove, -Keep, -Restore]:
       *   Result with original Remove effects handled and Restore effects available
       */
     final def run[A, S](v: A < (S & Remove))(using Frame): A < (S & Remove & Keep & Restore) =
-        capture(state => restore(isolate(state, v)))
+        capture(state => run(state, v))
+
+    def run[A, S](state: State, v: A < (S & Remove))(using Frame): A < (Keep & Restore & S) =
+        restore(isolate(state, v))
+
+    final def apply[A, S](v: A < (Remove & S))[B, S2](f: (A < (Restore & Keep & S)) => B < S2)(using
+        Frame
+    ): B < (Remove & Keep & S2) =
+        capture(state => f(run(state, v)))
 
     /** Applies this isolate to a computation that requires it.
       *
       * Provides a more ergonomic way to use isolates with operations:
       * {{{
       * Var.isolate.update[Int].use {
-      *   Async.mask {
+      *   Async.uninterruptible {
       *     // computation with isolated Var[Int] effect
       *   }
       * }
@@ -200,9 +206,26 @@ abstract class Isolate[Remove, -Keep, -Restore]:
                 def restore[A, S](v: Transform[A] < S)(using Frame) =
                     next.restore(self.restore(v))
 
+    /** This isolate, plus the crossing that leaving one fiber for another makes.
+      *
+      * Isolating state in place and carrying it to another fiber are different acts, and only the second asks a context region what a fork
+      * of it holds.
+      *
+      * Capture and isolate must come from the same instance, so a spawn holds the result of one call rather than calling this twice.
+      */
+    final private[kyo] def crossing: Isolate[Remove, Keep, Restore] =
+        Contextual.andThen(this)
+
 end Isolate
 
 object Isolate:
+
+    /** The effect that marks a computation as unable to cross an isolation boundary.
+      *
+      * A continuation a handler clause receives carries `Region.NoEscape`, which is this effect. The derivation refuses
+      * it with an explanation instead of looking for an instance, so moving such a computation to another fiber does not compile.
+      */
+    sealed abstract class Disallowed extends Effect
 
     /** Gets the Isolate instance for given effect types. */
     def apply[Remove, Keep, Restore](using i: Isolate[Remove, Keep, Restore]): Isolate[Remove, Keep, Restore] = i
@@ -224,32 +247,107 @@ object Isolate:
 
     private[kyo] object internal:
 
-        @nowarn("msg=anonymous")
-        private[kyo] inline def runDetached[A, S](inline f: (Trace, Context) => A < S)(using inline _frame: Frame): A < S =
-            new KyoDefer[A, S]:
-                def frame                                                        = _frame
-                def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
-                    f(safepoint.saveTrace(), context.inherit)
-
-        inline def restoring[Ctx, A, S](
-            trace: Trace,
-            interceptor: Safepoint.Interceptor
-        )(
-            inline v: => A < (Ctx & S)
-        )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
-            Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
-
-        /** No-op isolate that performs no state management.
+        /** The isolate that manages nothing, and the base case a composition folds onto.
           *
-          * Used as a base case for isolate composition and when no isolation is needed.
+          * The base has to be the identity of `andThen`, so an isolate for effects nobody named does nothing at all.
           */
-        object Identity extends Isolate[Any, Any, Any]:
+        private[kernel] object Identity extends Isolate[Any, Any, Any]:
             type State        = Unit
             type Transform[A] = A
             def capture[A, S](f: State => A < S)(using Frame)              = f(())
             def isolate[A, S](state: State, v: A < (S & Any))(using Frame) = v
             def restore[A, S](v: A < S)(using Frame)                       = v
         end Identity
+
+        // Reached through
+        // `crossing`, at the sites that leave one fiber for another, never as the base case of a composition: an
+        // isolate asked for in place forks nothing.
+        private[kernel] object Contextual extends Isolate[Any, Any, Any]:
+            type State        = Stack.Snapshot
+            type Transform[A] = (Stack.Snapshot, Stack.Snapshot, A)
+
+            def capture[A, S](f: Stack.Snapshot => A < S)(using _frame: Frame): A < S =
+                new Pending.SnapshotWith[A, S]:
+                    override def frame = _frame
+                    def cont           = this
+
+                    override def apply[C, S2](v: Stack < S2, cont2: Arrow[A, C, S2]) =
+                        v match
+                            case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
+                            case _                                => cont2(f(Nested.unnest[Stack](v).contextual()), Arrow.id)
+
+            def isolate[A, S](state: Stack.Snapshot, v: A < S)(using Frame): (Stack.Snapshot, Stack.Snapshot, A) < S =
+                val forked                          = fork(state)
+                val inner: (Stack.Snapshot, A) < S  = v.map(a => capture(finals => (finals, a)))
+                val parked: (Stack.Snapshot, A) < S = Pending.Park[(Stack.Snapshot, A), S](inner.asInstanceOf[Any < Any], forked)
+                parked.map((finals, a) => (forked, finals, a))
+            end isolate
+
+            def restore[A, S](v: (Stack.Snapshot, Stack.Snapshot, A) < S)(using _frame: Frame): A < S =
+                v.map { (forked, finals, a) =>
+                    new Pending.SnapshotWith[A, S]:
+                        override def frame = _frame
+                        def cont           = this
+
+                        override def apply[C, S2](cur: Stack < S2, cont2: Arrow[A, C, S2]) =
+                            cur match
+                                case p: Pending[Stack, S2] @unchecked => Effect.defer(p, this, cont2)
+                                case _                                =>
+                                    val av: A < Any = a
+                                    join(forked, finals, Nested.unnest[Stack](cur))
+                                    cont2(av, Arrow.id)
+                }
+
+            final private class Forked[State, E <: ContextEffect[State], A, S](val origin: Handler.ContextHandler[State, E, A, S])
+                extends Handler.ContextHandler[State, E, A, S]:
+                def tag = origin.tag
+
+                def derive(outer: Maybe[State]): State                      = origin.derive(outer)
+                def fork(parent: State): State                              = origin.fork(parent)
+                def join(parent: State, forked: State, child: State): State = origin.join(parent, forked, child)
+                def release(state: State, failure: Maybe[Throwable]): Unit  = origin.release(state, failure)
+            end Forked
+
+            private def fork(entries: Stack.Snapshot): Stack.Snapshot =
+                if entries.isEmpty then entries
+                else
+                    val out = Stack.Snapshot.Builder(entries.regions)
+                    var i   = 0
+                    while i < entries.regions do
+                        val origin = entries.handler(i).asInstanceOf[Handler.ContextHandler[Any, ContextEffect[Any], Any, Any]]
+                        out.add(new Forked(origin), origin.fork(entries.state(i)))
+                        i += 1
+                    end while
+                    out.result()
+            end fork
+
+            private def join(forked: Stack.Snapshot, finals: Stack.Snapshot, stack: Stack): Unit =
+                var i = 0
+                while i < forked.regions do
+                    forked.handler(i) match
+                        case copy: Forked[Any, ContextEffect[Any], Any, Any] @unchecked =>
+                            val origin = copy.origin
+                            var j      = stack.depth - 1
+                            while j >= 0 && !(stack.handler(j) eq origin) do j -= 1
+                            if j >= 0 then
+                                val parent = stack.state(j)
+                                var child  = forked.state(i)
+                                var k      = finals.regions - 1
+                                while k >= 0 do
+                                    if finals.handler(k) eq copy then
+                                        child = finals.state(k)
+                                        k = -1
+                                    else k -= 1
+                                end while
+                                val joined = origin.join(parent, forked.state(i), child)
+                                if joined.asInstanceOf[AnyRef] ne parent.asInstanceOf[AnyRef] then stack.setState(j, joined)
+                            end if
+                        case _ => ()
+                    end match
+                    i += 1
+                end while
+            end join
+        end Contextual
 
         def deriveImpl[Remove: Type, Keep: Type, Restore: Type](using Quotes): Expr[Isolate[Remove, Keep, Restore]] =
             import quotes.reflect.*
@@ -258,12 +356,35 @@ object Isolate:
                 tpe match
                     case AndType(left, right)        => flatten(left) ++ flatten(right)
                     case t if t =:= TypeRepr.of[Any] => Nil
-                    case t                           => List(t)
+                    // The bottom type has to be dropped rather than left to the tests: every `t <:< X` holds
+                    // for it, so a row inferred as Nothing, which is what an unconstrained row in a contravariant
+                    // position becomes, would read as naming the no-escape marker and be refused as a region escape.
+                    case t if t =:= TypeRepr.of[Nothing] => Nil
+                    case t                               => List(t)
 
-            val keep = flatten(TypeRepr.of[Keep])
+            val keep   = flatten(TypeRepr.of[Keep])
+            val remove = flatten(TypeRepr.of[Remove])
+
+            // before Keep is subtracted: naming the marker in Keep must not buy an isolate for it
+            remove.find(_ <:< TypeRepr.of[Isolate.Disallowed]).foreach { t =>
+                report.errorAndAbort(
+                    s"""|This computation cannot leave the region that handed it out:
+                        |
+                        |  ${t.show.red}
+                        |
+                        |It is the continuation a handler clause received, and it carries the regions that sat
+                        |between the handler and the suspension, a bracket included. The handler releases what
+                        |they carry when the clause returns, so the continuation is only valid on this fiber,
+                        |inside that clause. It cannot be forked, raced, timed out, or sent to another fiber.
+                        |
+                        |Answer with it here, or move its values across the boundary through a Channel and
+                        |consume them on this fiber.
+                        |""".stripMargin
+                )
+            }
 
             val isolates =
-                flatten(TypeRepr.of[Remove])
+                remove
                     .filterNot(t => keep.exists(t =:= _))
                     .filterNot(_ <:< TypeRepr.of[ContextEffect[Any]])
                     .map { t =>
@@ -301,10 +422,10 @@ object Isolate:
                         |     }
                         |
                         |4. For custom state management:
-                        |   val isolate = new Isolate.Stateful[MyEffect, Any] {
+                        |   val isolate = new Isolate[MyEffect, Any, MyEffect] {
                         |     type State = MyState        // Your effect's state
                         |     type Transform[A] = (State, A)
-                        |     ...
+                        |     ...                         // capture, isolate, restore
                         |   }
                         |   isolate.use {
                         |     Async.foreach(parallelism)(tasks)

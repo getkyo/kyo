@@ -150,6 +150,31 @@ class RuntimeTest extends Test:
         }
     }
 
+    "init closes what it opened when an interrupt lands before the caller registers".timeout(15.seconds) in {
+        // Unsafe: test-only gates, completed from inside the computation under test and awaited from the leaf.
+        import AllowUnsafe.embrace.danger
+        val factory = new StubFactory
+        val handed  = Promise.Unsafe.init[Unit, Any]()
+        val parked  = Promise.Unsafe.init[Unit, Any]()
+        for
+            fiber <- Fiber.initUnscoped(
+                Scope.run(
+                    Runtime.init(urlOf(), SqlConfig(minConnections = 2, maxConnections = 2), factory).map { rt =>
+                        handed.completeUnitDiscard()
+                        parked.safe.get
+                            .andThen(Scope.ensure(rt.close(Duration.Zero)))
+                            .andThen(Async.never[Unit])
+                    }
+                )
+            )
+            _ <- handed.safe.get
+            _ <- fiber.interrupt
+            _ <- fiber.getResult
+            _ <- assertEventually(Sync.defer(factory.opened.size == 2 && factory.opened.forall(_.closed)))
+        yield succeed
+        end for
+    }
+
     // Warm-up runs behind a bracket that closes whatever it opened on any failure edge, so a partial warm-up leaves no session open.
     "init closes what it opened when warm-up fails".timeout(15.seconds) in {
         val factory = new StubFactory(failingFrom = 1)

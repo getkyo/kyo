@@ -145,13 +145,23 @@ object JsonRpcTransport:
       * @param sockPath path to the socket file (must not already exist)
       * @param framer   byte-stream framing strategy; defaults to [[JsonRpcFramer.lineDelimited]]
       * @param codec    envelope serialisation; defaults to the strict `Schema[JsonRpcEnvelope]`
+      * @param releaseTimeout
+      *   how long the cleanup waits for the listener's descriptor to be released before it removes the socket file regardless. The wait
+      *   keeps the unlink after the release on platforms that refuse to unlink an open socket; the bound keeps a release that never
+      *   arrives from wedging the scope. Defaults to [[DefaultReleaseTimeout]].
       */
     def unixDomain(
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
-        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
+        codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]],
+        releaseTimeout: Duration = DefaultReleaseTimeout
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
-        internal.transport.UdsBackend.connect(sockPath, framer, codec)
+        internal.transport.UdsBackend.connect(sockPath, framer, codec, releaseTimeout)
+
+    /** Default bound on [[unixDomain]]'s wait for the listener's descriptor release during cleanup. A release completes within one event-loop
+      * pass on every backend, so the bound is only ever reached when the release cannot arrive at all.
+      */
+    val DefaultReleaseTimeout: Duration = 5.seconds
 
     /** Content-Length-framed stdio transport for JSON-RPC (LSP, DAP, BSP).
       *

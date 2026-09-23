@@ -172,6 +172,57 @@ class ChunkTest extends kyo.test.Test[Any]:
         }
     }
 
+    "updated" - {
+        "replaces the last element" in {
+            assert(Chunk(1, 2, 3).updated(2, 30) == Chunk(1, 2, 30))
+        }
+
+        "replaces a middle element" in {
+            assert(Chunk(1, 2, 3).updated(1, 20) == Chunk(1, 20, 3))
+        }
+
+        "replaces the head" in {
+            assert(Chunk(1, 2, 3).updated(0, 10) == Chunk(10, 2, 3))
+        }
+
+        "works across appended chains" in {
+            val chunk = Chunk.empty[Int].append(1).append(2).append(3)
+            assert(chunk.updated(2, 30) == Chunk(1, 2, 30))
+            assert(chunk.updated(0, 10) == Chunk(10, 2, 3))
+        }
+
+        "leaves the original unchanged" in {
+            val chunk = Chunk(1, 2, 3)
+            assert(chunk.updated(1, 20) == Chunk(1, 20, 3))
+            assert(chunk == Chunk(1, 2, 3))
+        }
+
+        "out of bounds fails" in {
+            assert(Try(Chunk(1, 2, 3).updated(3, 4)).isFailure)
+            assert(Try(Chunk(1, 2, 3).updated(-1, 4)).isFailure)
+            assert(Try(Chunk.empty[Int].updated(0, 1)).isFailure)
+        }
+    }
+
+    "toIndexed" - {
+        "flattens a chain of appends preserving the elements" in {
+            val chunk = Chunk.empty[Int].append(1).append(2).append(3).toIndexed
+            assert(chunk == Chunk(1, 2, 3))
+            assert(chunk(0) == 1)
+            assert(chunk(2) == 3)
+        }
+
+        "returns the same instance when already indexed" in {
+            val chunk = Chunk(1, 2, 3).toIndexed
+            assert(chunk.toIndexed eq chunk)
+        }
+
+        "flattens a dropped view" in {
+            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(2).toIndexed
+            assert(chunk == Chunk(3, 4, 5))
+        }
+    }
+
     "headMaybe" - {
         "returns Present with the first element for a non-empty chunk" in {
             val chunk = Chunk(1, 2, 3)

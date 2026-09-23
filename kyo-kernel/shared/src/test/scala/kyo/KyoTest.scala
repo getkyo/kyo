@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-class KyoTest extends kyo.test.Test[Any]:
+class KyoTest extends Test:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect1:
@@ -14,7 +14,7 @@ class KyoTest extends kyo.test.Test[Any]:
             ArrowEffect.suspend[Any](Tag[TestEffect1], i)
 
         def run[A, S](v: A < (TestEffect1 & S)): A < S =
-            ArrowEffect.handle(Tag[TestEffect1], v)([C] => (input, cont) => cont(input + 1))
+            ArrowEffect.handleCont(Tag[TestEffect1], v)([C] => (input, cont) => cont(input + 1))
     end TestEffect1
 
     sealed trait TestEffect2 extends ArrowEffect[Const[String], Const[String]]
@@ -23,17 +23,21 @@ class KyoTest extends kyo.test.Test[Any]:
             ArrowEffect.suspend[Any](Tag[TestEffect2], s)
 
         def run[A, S](v: A < (TestEffect2 & S)): A < S =
-            ArrowEffect.handle(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.toUpperCase))
+            ArrowEffect.handleCont(Tag[TestEffect2], v)([C] => (input, cont) => cont(input.toUpperCase))
     end TestEffect2
 
-    def widen[A](v: A): A < Any = v
+    // Inline because Kyo.lift's match on the lifted type cannot reduce for an abstract A.
+    inline def widen[A](inline v: A): A < Any = Kyo.lift(v)
 
+    // The sites
+    // embed file:line:col, so adding or removing a line anywhere above breaks these strings and they have to
+    // be re-read from the failure rather than recomputed.
     "toString" in {
         assert(TestEffect1(1).map(_ + 1).toString ==
-            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:32:41, assert(TestEffect1(1).map(_ + 1))")
+            "Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:14:37)), this(?.map(KyoTest.scala:36:41)), Id)")
         assert(
             TestEffect1(1).map(_ + 1).map(_ + 2).toString ==
-                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:35:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
+                "Defer(Defer(Kyo(kyo.KyoTest.TestEffect1, apply.suspend(KyoTest.scala:14:37)), this(?.map(KyoTest.scala:39:38)), Id), this(?.map(KyoTest.scala:39:49)), Id)"
         )
     }
 
@@ -94,7 +98,7 @@ class KyoTest extends kyo.test.Test[Any]:
     }
 
     "nested" - {
-        def lift[A](v: A): A < Any                                          = widen(v)
+        inline def lift[A](inline v: A): A < Any                            = widen(v)
         def add(v: Int < TestEffect1)                                       = v.map(_ + 1)
         def transform[A, B](v: A < TestEffect1, f: A => B): B < TestEffect1 = v.map(f(_))
         val io: Int < TestEffect1 < TestEffect1                             = lift(TestEffect1(1))
@@ -156,11 +160,9 @@ class KyoTest extends kyo.test.Test[Any]:
                 assert(incr(0, n).eval == n)
             }
 
-            "suspension at the start".notNative.notWasm.pendingUntilFixed(
-                "deep effect suspension is not yet stack-safe (StackOverflowError)"
-            ) in {
+            "suspension at the start" in {
                 try
-                    assert(TestEffect1.run(incr(TestEffect1(n), n)).eval == 0)
+                    assert(TestEffect1.run(incr(TestEffect1(n), n)).eval == 2 * n + 1)
                 catch
                     case ex: StackOverflowError => fail()
                 end try
@@ -171,7 +173,7 @@ class KyoTest extends kyo.test.Test[Any]:
                 assert(TestEffect1.run(incr(n, n).map(n => TestEffect1(n + n))).eval == n * 4 + 1)
             }
 
-            "multiple effects".notNative.notWasm.pendingUntilFixed("deep effect suspension is not yet stack-safe (StackOverflowError)") in {
+            "multiple effects" in {
                 @tailrec def incr(v: Int < TestEffect1, n: Int): Int < TestEffect1 =
                     n match
                         case 0 => v
@@ -179,7 +181,7 @@ class KyoTest extends kyo.test.Test[Any]:
                             incr(v.map(v => TestEffect1(v + 1)), n - 1)
                         case n => incr(v.map(_ + 1), n - 1)
 
-                try assert(TestEffect1.run(incr(0, n)).eval == 0)
+                try assert(TestEffect1.run(incr(0, n)).eval == n + n / 32)
                 catch
                     case ex: StackOverflowError => fail()
                 end try

@@ -73,7 +73,7 @@ object StreamPublisher:
             Abort.recover[Closed](_ => supervisor.interrupt.unit)(
                 Loop.foreach(
                     Fiber.initUnscoped[Closed, Unit, S, Any](setUpOne)
-                        .map(_.mask)
+                        .map(_.uninterruptible)
                         .map(_.get)
                         .andThen(Loop.continue)
                 )

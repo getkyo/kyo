@@ -1057,6 +1057,40 @@ class SpanTest extends kyo.test.Test[Any]:
         }
     }
 
+    "updated" - {
+        "replaces the element at the index" in {
+            val arr    = Span(1, 2, 3)
+            val result = arr.updated(1, 20)
+            assert(result.size == 3)
+            assert(result(0) == 1)
+            assert(result(1) == 20)
+            assert(result(2) == 3)
+        }
+
+        "leaves the original Span unchanged" in {
+            val arr = Span(1, 2, 3)
+            discard(arr.updated(0, 10))
+            assert(arr(0) == 1)
+        }
+
+        "replaces the first and last elements" in {
+            val arr = Span(1, 2, 3)
+            assert(arr.updated(0, 10).is(Span(10, 2, 3)))
+            assert(arr.updated(2, 30).is(Span(1, 2, 30)))
+        }
+
+        "single element Span" in {
+            val arr = Span(1)
+            assert(arr.updated(0, 2).is(Span(2)))
+        }
+
+        "out of bounds index throws" in {
+            val arr = Span(1, 2, 3)
+            interceptThrown[IndexOutOfBoundsException](arr.updated(3, 4))
+            interceptThrown[IndexOutOfBoundsException](arr.updated(-1, 4))
+        }
+    }
+
     "prepend and +:" - {
         "prepends element to Span" in {
             val arr    = Span(2, 3, 4)

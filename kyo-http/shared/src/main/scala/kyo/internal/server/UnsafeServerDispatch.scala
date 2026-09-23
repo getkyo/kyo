@@ -11,8 +11,6 @@ import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
 import kyo.internal.websocket.*
-import kyo.kernel.internal.Context
-import kyo.kernel.internal.Trace
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOTask
 import scala.annotation.tailrec
@@ -357,8 +355,15 @@ private[kyo] object UnsafeServerDispatch:
                 // subtype, structurally different from that alias even though both erase to the same runtime object. The alias is transparent
                 // only inside kyo.Fiber's own defining scope, so exposing the scheduled task as the Fiber.Unsafe[Unit, Any] the inflight slot
                 // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
-                val fiber = IOTask(serveRequest(router, endpoint, lookup, streamCtx, request, config), Trace.init, Context.empty)
+                val fiber = IOTask.detached(serveRequest(router, endpoint, lookup, streamCtx, request, config))
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                // Nothing reads a handler fiber's result, so a panic that is not a connection-lifecycle interrupt
+                // (a Closed sentinel) would vanish silently.
+                fiber.onComplete {
+                    case p: Result.Panic if !p.exception.isInstanceOf[Closed] =>
+                        Log.live.unsafe.error("UnsafeServerDispatch: handler fiber panic", p.exception)
+                    case _ => ()
+                }
                 inflightHandler.set(Present(fiber))
                 // Recheck: the watcher may have already fired (and seen Absent, or a prior completed fiber)
                 // before this fiber was registered. Consult the connection's close signal directly, not
@@ -404,7 +409,7 @@ private[kyo] object UnsafeServerDispatch:
         // handler must be able to read it via req.query, exactly as a non-upgrade request can.
         val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
         val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
-        discard(IOTask(
+        discard(IOTask.detached(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
                     serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)
@@ -415,9 +420,7 @@ private[kyo] object UnsafeServerDispatch:
                 case Result.Panic(t) =>
                     Log.error("UnsafeServerDispatch: HttpWebSocket upgrade panic", t)
                 case Result.Success(_) => Kyo.unit
-            }.unit,
-            Trace.init,
-            Context.empty
+            }.unit
         ))
     end dispatchWebSocket
 
@@ -538,9 +541,9 @@ private[kyo] object UnsafeServerDispatch:
       * `streamCtx.readBody` accesses the mutable `_bodySpan` field which is safe because the callback runs synchronously -- the body is set
       * before this method is invoked and not modified until the next request.
       */
-    private def serveRequest(
+    private def serveRequest[In, Out, E](
         router: HttpRouter,
-        endpoint: HttpHandler[?, ?, ?],
+        endpoint: HttpHandler[In, Out, E],
         lookup: RouteLookup,
         streamCtx: Http1StreamContext,
         request: ParsedRequest,
@@ -699,18 +702,21 @@ private[kyo] object UnsafeServerDispatch:
         end if
     end serveRequest
 
-    /** Runs the handler computation and encodes the response. The `handlerComputation` retains endpoint-specific types from
-      * `endpoint.serveBuffered/serveStreaming` so that `endpoint.encodeResponse` can be called with proper types.
+    /** Runs the handler computation and encodes the response.
+      *
+      * Generic over the endpoint's types so the computation keeps its pending type: erased to `Any` it re-enters
+      * the kernel through the lift, which nests it as data, and the unrun computation is delivered as the response.
       */
-    private def dispatchHandler(
-        handlerComputation: Any,
-        endpoint: HttpHandler[?, ?, ?],
+    private def dispatchHandler[Out, E](
+        handlerComputation: HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt]),
+        endpoint: HttpHandler[?, Out, E],
         streamCtx: Http1StreamContext,
         isHead: Boolean
     )(using Frame): Unit < Async =
+        // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag.
         Abort.run[Any](handlerComputation).map {
             case Result.Success(response) =>
-                endpoint.encodeResponseUnchecked(response)(
+                endpoint.encodeResponse(response)(
                     onEmpty = (status, hdrs) =>
                         Sync.Unsafe.defer {
                             // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk

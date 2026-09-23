@@ -54,7 +54,7 @@ abstract class Flag[A] private[kyo] (final val default: A, final val validate: A
     }
 
     /** Environment variable name: flag name with dots replaced by underscores, uppercased. */
-    final val envName: String = name.replace('.', '_').toUpperCase
+    final val envName: String = Flag.envName(name)
 
     // --- Internal ---
 
@@ -234,12 +234,15 @@ object Flag {
         val prop = FlagPlatform.property(name)
         if (prop ne null) reader.parse(name, prop)
         else {
-            val envName = name.replace('.', '_').toUpperCase
-            val env     = FlagPlatform.env(envName)
+            val env = FlagPlatform.env(envName(name))
             if (env ne null) reader.parse(name, env)
             else default
         }
     }
+
+    /** Pure, with no config source behind it, so [[kyo.CompileTimeFlag]] can share it from inside the compiler.
+      */
+    private[kyo] def envName(name: String): String = name.replace('.', '_').toUpperCase
 
     /** Returns a formatted table string with columns: Name, Type, Value/Expression, Default, Source. */
     def dump(): String = {

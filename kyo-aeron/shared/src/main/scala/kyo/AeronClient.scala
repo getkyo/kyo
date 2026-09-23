@@ -54,9 +54,9 @@ object AeronClient:
       *   when no driver is reachable
       */
     def connectUnscoped(aeronDir: Path)(using Frame): AeronClient < (Async & Abort[TopicTransportFailedException]) =
-        AeronPlatform.external(aeronDir.unsafe.show).map(runtime =>
-            Sync.Unsafe.defer(Unsafe.fromRuntime(runtime).safe)
-        )
+        // `ensureMap`, not `map`: [[connect]] brackets this, and a `map` would poll for a stop between the connected
+        // runtime arriving and the bracket registering its close.
+        AeronPlatform.external(aeronDir.unsafe.show).ensureMap(runtime => Unsafe.fromRuntime(runtime).safe)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code.
       * See AllowUnsafe for more details.
@@ -69,9 +69,11 @@ object AeronClient:
 
     object Unsafe:
         /** Wraps an already-connected runtime. The connect, and its eager failure catch, happens in
-          * `AeronPlatform.external`, not here.
+          * `AeronPlatform.external`, not here. It only allocates, so it takes no `AllowUnsafe`: the connect applies it in
+          * the step the runtime arrives, where a deferred step would be a place for a stop to land before the client has
+          * an owner.
           */
-        private[kyo] def fromRuntime(runtime: AeronRuntime)(using AllowUnsafe): AeronClient.Unsafe =
+        private[kyo] def fromRuntime(runtime: AeronRuntime): AeronClient.Unsafe =
             new AeronClient.Unsafe:
                 private[kyo] def transport: AeronTransport = runtime.transport
                 def close()(using AllowUnsafe): Unit       = runtime.close()

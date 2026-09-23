@@ -197,4 +197,24 @@ class KyoAppTest extends kyo.test.Test[Any]:
         )
     }
 
+    // The body releases a latch as it starts and owes
+    // a finalizer, so the check is on that finalizer once the body has started. The timeout is a real one because the
+    // block parks the calling thread (nothing asserts on elapsed time).
+    "runAndBlock's timeout does not leave the forked computation running".notJs.notWasm in {
+        for
+            gate     <- Promise.init[Unit, Any]
+            started  <- Latch.init(1)
+            released <- AtomicBoolean.init(false)
+            result   <- Abort.run[Timeout](KyoApp.runAndBlock(10.millis)(
+                Sync.ensure(released.set(true))(started.release.andThen(gate.get))
+            ))
+            _ = assert(result.failure.exists(_.isInstanceOf[Timeout]), s"the block must report the timeout, got $result")
+            // A body the deadline beat to its first step owes nothing, and "never started" has no event to wait on, so this
+            // one wait is bounded. A body that did start must run its finalizer, which the leaf timeout reports otherwise.
+            ran <- Abort.run[Timeout](Async.timeout(2.seconds)(started.await))
+            _   <- if ran.isSuccess then assertEventually(released.get) else Kyo.unit
+        yield succeed
+        end for
+    }
+
 end KyoAppTest

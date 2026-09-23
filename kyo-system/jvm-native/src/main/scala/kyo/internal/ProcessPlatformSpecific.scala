@@ -425,7 +425,7 @@ final private[kyo] class JvmCommandUnsafe(
                         case Result.Panic(ex)    => Result.panic(ex)
                         case Result.Success(pb)  =>
                             try
-                                val jp   = pb.start()
+                                val jp   = ProcessSpawnPlatform.start(pb)
                                 val proc = new JvmProcessUnsafe(jp)
                                 // Feed stdin if needed
                                 stdinStream match
@@ -473,7 +473,7 @@ final private[kyo] class JvmCommandUnsafe(
                     if chain.last.redirectError then discard(pb.redirectErrorStream(true))
 
                     try
-                        val jp   = pb.start()
+                        val jp   = ProcessSpawnPlatform.start(pb)
                         val proc = new JvmProcessUnsafe(jp)
                         firstCmd.stdinStream match
                             case Present(s) => proc.registerInputFeed(feedStream(s, jp.getOutputStream))
