@@ -2,9 +2,16 @@ package kyo
 
 import Record.*
 
+enum FTLight derives CanEqual, Schema:
+    case Green, Red
+    case Blinking(times: Int)
+
 class FocusTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
+
+    enum MemberLight derives CanEqual, Schema:
+        case Green, Red
 
     val person     = MTPerson("Alice", 30)
     val address    = MTAddress("123 Main St", "Portland", "97201")
@@ -456,6 +463,19 @@ class FocusTest extends kyo.test.Test[Any]:
         "update non-matching variant" in {
             val result = Schema[MTDrawing].focus(_.shape.MTCircle.radius).update(rectDrw)(_ * 2.0)
             assert(result == rectDrw)
+        }
+
+        "an enum value selects that case only" in {
+            val green = Schema[FTLight].focus(_.Green)
+            assert(green.get(FTLight.Green) == Maybe(FTLight.Green))
+            assert(green.get(FTLight.Red) == Maybe.empty)
+            assert(green.get(FTLight.Blinking(2)) == Maybe.empty)
+        }
+
+        "an enum value of an enum declared as a member of a class selects that case only" in {
+            val green = Schema[MemberLight].focus(_.Green)
+            assert(green.get(MemberLight.Green) == Maybe(MemberLight.Green))
+            assert(green.get(MemberLight.Red) == Maybe.empty)
         }
 
     }

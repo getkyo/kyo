@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.Record.*
+import scala.annotation.tailrec
 import scala.quoted.*
 
 /** Shared macro utility methods used across multiple macro files in kyo-schema.
@@ -43,6 +44,86 @@ private[internal] object MacroUtils:
             case _ => false
         end match
     end isTildeApplication
+
+    // ---- Sum cases ----
+
+    /** The reference derived code reaches `child`, a case of the sealed `parent`, through when the sum is `sumType`.
+      *
+      * A case object or an enum value is a term, so its reference is its singleton `TermRef`; a class case's is its
+      * `TypeRef`. Either is selected from the path `sumType` was reached through, the rule the compiler's own sum mirror
+      * follows (`TypeOps.childPrefix`).
+      *
+      * `child.typeRef` would be wrong twice. On a term it builds a `TypeRef` designating a value, which denotes that
+      * value's info in whatever phase reads it: an enum value in a static object is a static field and keeps its type,
+      * but one in the companion of a class member becomes a getter whose `=> T` info erases to `Function0`, so a schema
+      * typed at it erases to `Schema[Function0]` and loses its bridges. And its prefix is the declaring owner's `this`,
+      * which does not exist at a derivation site outside that owner.
+      */
+    private[internal] def sumCaseReference(using
+        Quotes
+    )(
+        sumType: quotes.reflect.TypeRepr,
+        parent: quotes.reflect.Symbol,
+        child: quotes.reflect.Symbol
+    ): quotes.reflect.TypeRepr =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        def unreachable(reason: String): Nothing =
+            report.errorAndAbort(
+                s"Cannot derive the cases of ${sumType.show}: its case ${child.name.stripSuffix("$")} $reason, " +
+                    "so the derived code has no path to it. Provide a given Schema built with Schema.init."
+            )
+
+        def ownersFromRoot(sym: Symbol): List[Symbol] =
+            @tailrec def loop(s: Symbol, acc: List[Symbol]): List[Symbol] =
+                if s.isNoSymbol then acc else loop(s.maybeOwner, s :: acc)
+            loop(sym, Nil)
+        end ownersFromRoot
+
+        @tailrec def dropCommon(a: List[Symbol], b: List[Symbol]): (List[Symbol], List[Symbol]) =
+            (a, b) match
+                case (x :: xs, y :: ys) if x == y => dropCommon(xs, ys)
+                case _                            => (a, b)
+
+        @tailrec def outward(pre: TypeRepr, steps: Int): Option[TypeRepr] =
+            if steps == 0 then Some(pre)
+            else
+                pre match
+                    case ThisType(TypeRef(outer, _)) => outward(outer, steps - 1)
+                    case TermRef(outer, _)           => outward(outer, steps - 1)
+                    case _                           => None
+
+        def isPath(pre: TypeRepr): Boolean =
+            pre match
+                case NoPrefix() => true
+                case _          => pre.isSingleton
+
+        val sumPrefix = sumType.dealias match
+            case TypeRef(pre, _)                 => pre
+            case AppliedType(TypeRef(pre, _), _) => pre
+            case other                           => unreachable(s"belongs to ${other.show}, which is not a named type")
+
+        val (parentRest, childRest) = dropCommon(ownersFromRoot(parent.owner), ownersFromRoot(child.owner))
+
+        val commonPrefix = outward(sumPrefix, parentRest.size).filter(isPath).getOrElse(
+            unreachable(s"cannot be selected from ${sumPrefix.show}")
+        )
+        val childPrefix = childRest.foldLeft(commonPrefix) { (pre, owner) =>
+            if owner.isClassDef && owner.flags.is(Flags.Module) then pre.select(owner.companionModule)
+            else unreachable(s"is declared inside ${owner.name}, which is not an object")
+        }
+        val caseSym = if child.isClassDef && child.flags.is(Flags.Module) then child.companionModule else child
+        childPrefix.select(caseSym)
+    end sumCaseReference
+
+    /** The type a case's schema is typed at: a case object's module class, otherwise the case's own reference. */
+    private[internal] def sumCaseType(using Quotes)(reference: quotes.reflect.TypeRepr): quotes.reflect.TypeRepr =
+        import quotes.reflect.*
+        reference match
+            case ref: TermRef if ref.termSymbol.flags.is(Flags.Module) => ref.widen
+            case other                                                 => other
+    end sumCaseType
 
     // ---- Field operations ----
 

@@ -2120,72 +2120,65 @@ import scala.quoted.*
 
     /** Emits a `Schema[T]` for a sealed-trait variant child: a case-class variant delegates to the fully-static
       * [[emitProductSchemaStatic]] (per-field direct dispatch, no runtime walk); a case-object /
-      * no-arg variant emits the same trivial empty-object Schema.
+      * enum-value variant emits the trivial empty-object Schema. `childRef` is the case's reference from
+      * [[MacroUtils.sumCaseReference]].
       */
     private def emitVariantSchemaStatic[T: Type](using
         Quotes
     )(
-        childType: quotes.reflect.TypeRepr,
+        childRef: quotes.reflect.TypeRepr,
         child: quotes.reflect.Symbol,
         parentSelf: Option[(quotes.reflect.TypeRepr, quotes.reflect.Term)] = None
     ): Expr[Schema[T]] =
         import quotes.reflect.*
-        given CanEqual[Symbol, Symbol] = CanEqual.derived
 
-        val childSym        = childType.typeSymbol
-        val childName       = child.name.stripSuffix("$")
-        val isSingletonCase = !child.isType || child.flags.is(Flags.Module)
+        val childName = child.name.stripSuffix("$")
 
-        // Sealed intermediate child in a multi-level hierarchy: derive its own Schema[T], which routes
-        // back through the static sealed emitter, so the parent sum delegates to it instead of
-        // mis-treating it as a zero-field product. The child qualifies when it is itself a sealed
-        // parent, whether written as a trait or as an abstract class; a `sealed case class` child is
-        // constructible and takes the product path below.
-        if childSym.flags.is(Flags.Sealed) && !child.flags.is(Flags.Module) && !isConstructibleCaseClass(childSym) &&
-            (childSym.flags.is(Flags.Trait) || childSym.flags.is(Flags.Abstract))
-        then
-            '{ kyo.Schema.derived[T] }
-        else if isSingletonCase && childSym.caseFields.isEmpty then
-            // Case object variant: serialize as empty object
-            val singletonRef: Expr[T] =
-                if child.flags.is(Flags.Module) && child.companionModule != Symbol.noSymbol then
-                    Ref(child.companionModule).asExprOf[T]
-                else
-                    val parentSym = child.owner
-                    if parentSym.companionModule != Symbol.noSymbol then
-                        Select.unique(Ref(parentSym.companionModule), child.name).asExprOf[T]
-                    else
-                        Ref(child).asExprOf[T]
-                    end if
-            '{
-                kyo.Schema.init[T](
-                    writeFn = (_, w) =>
-                        w.objectStart(${ Expr(childName) }, 0)
-                        w.objectEnd()
-                    ,
-                    readFn = r =>
-                        kyo.discard(r.objectStart())
-                        r.objectEnd()
-                        $singletonRef
-                    ,
-                    structure = kyo.Structure.Type.Product(
-                        ${ Expr(childName) },
-                        kyo.Tag[Any],
-                        kyo.Chunk.empty,
-                        kyo.Chunk.empty,
-                        kyo.Chunk.empty
+        childRef match
+            case singleton: TermRef =>
+                // Case object or enum value variant: serialize as empty object
+                val singletonRef: Expr[T] = Ref.term(singleton).asExprOf[T]
+                '{
+                    kyo.Schema.init[T](
+                        writeFn = (_, w) =>
+                            w.objectStart(${ Expr(childName) }, 0)
+                            w.objectEnd()
+                        ,
+                        readFn = r =>
+                            kyo.discard(r.objectStart())
+                            r.objectEnd()
+                            $singletonRef
+                        ,
+                        structure = kyo.Structure.Type.Product(
+                            ${ Expr(childName) },
+                            kyo.Tag[Any],
+                            kyo.Chunk.empty,
+                            kyo.Chunk.empty,
+                            kyo.Chunk.empty
+                        )
                     )
-                )
-            }
-        else
-            emitProductSchemaStatic[T](
-                childType,
-                childSym,
-                sourceFields = '{ Seq.empty[kyo.Field[?, ?]] },
-                focusedType = childType,
-                parentSelf = parentSelf
-            )
-        end if
+                }
+            case childType =>
+                val childSym = childType.typeSymbol
+                // Sealed intermediate child in a multi-level hierarchy: derive its own Schema[T], which routes
+                // back through the static sealed emitter, so the parent sum delegates to it instead of
+                // mis-treating it as a zero-field product. The child qualifies when it is itself a sealed
+                // parent, whether written as a trait or as an abstract class; a `sealed case class` child is
+                // constructible and takes the product path below.
+                if childSym.flags.is(Flags.Sealed) && !isConstructibleCaseClass(childSym) &&
+                    (childSym.flags.is(Flags.Trait) || childSym.flags.is(Flags.Abstract))
+                then
+                    '{ kyo.Schema.derived[T] }
+                else
+                    emitProductSchemaStatic[T](
+                        childType,
+                        childSym,
+                        sourceFields = '{ Seq.empty[kyo.Field[?, ?]] },
+                        focusedType = childType,
+                        parentSelf = parentSelf
+                    )
+                end if
+        end match
     end emitVariantSchemaStatic
 
     /** Emits a fully-static `Schema[A]` for a sealed trait or enum: no runtime walk,
@@ -2220,11 +2213,8 @@ import scala.quoted.*
         val n = children.length
 
         val childNames: List[String]   = children.map(_.name.stripSuffix("$"))
-        val childTypes: List[TypeRepr] = children.map { child =>
-            if child.isType then child.typeRef
-            else if child.flags.is(Flags.Module) then child.termRef.widen
-            else child.typeRef
-        }
+        val childRefs: List[TypeRepr]  = children.map(MacroUtils.sumCaseReference(tpe, sym, _))
+        val childTypes: List[TypeRepr] = childRefs.map(MacroUtils.sumCaseType)
 
         val tagExpr                  = summonSchemaTag(tpe)
         val enumValues: List[String] = children.zip(childNames).collect {
@@ -2244,25 +2234,14 @@ import scala.quoted.*
 
         val selfRef: Term = Ref(selfSym)
 
-        // Variant instance check: `v eq Singleton` for objects, `v.isInstanceOf[Child]` for classes.
+        // Variant instance check: `v eq Singleton` for case objects and enum values, `v.isInstanceOf[Child]` for classes.
         def variantCheck(idx: Int, v: Expr[A]): Expr[Boolean] =
-            val child = children(idx)
-            if !child.isType then
-                val singletonRef: Expr[AnyRef] =
-                    if child.flags.is(Flags.Module) && child.companionModule != Symbol.noSymbol then
-                        Ref(child.companionModule).asExprOf[AnyRef]
-                    else
-                        val parentSym = child.owner
-                        if parentSym.companionModule != Symbol.noSymbol then
-                            Select.unique(Ref(parentSym.companionModule), child.name).asExprOf[AnyRef]
-                        else
-                            Ref(child).asExprOf[AnyRef]
-                        end if
-                '{ $v.asInstanceOf[AnyRef] eq $singletonRef }
-            else
-                childTypes(idx).asType match
-                    case '[t] => '{ $v.isInstanceOf[t] }
-            end if
+            childRefs(idx) match
+                case singleton: TermRef =>
+                    '{ $v.asInstanceOf[AnyRef] eq ${ Ref.term(singleton).asExprOf[AnyRef] } }
+                case childType =>
+                    childType.asType match
+                        case '[t] => '{ $v.isInstanceOf[t] }
         end variantCheck
 
         def writeBody(v: Expr[A], w: Expr[Writer]): Expr[Unit] =
@@ -2375,7 +2354,7 @@ import scala.quoted.*
         val variantDefs: List[ValDef] = children.zip(childTypes).zipWithIndex.map { case ((child, childType), idx) =>
             childType.asType match
                 case '[t] =>
-                    val vSchema = emitVariantSchemaStatic[t](childType, child, parentSelf = Some((tpe, selfRef)))
+                    val vSchema = emitVariantSchemaStatic[t](childRefs(idx), child, parentSelf = Some((tpe, selfRef)))
                     val rhs     = '{ $vSchema.asInstanceOf[Schema[Any]] }.asTerm
                     ValDef(variantSyms(idx), Some(rhs.changeOwner(variantSyms(idx))))
         }
