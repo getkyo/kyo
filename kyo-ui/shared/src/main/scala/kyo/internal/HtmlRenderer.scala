@@ -179,6 +179,15 @@ private[kyo] object HtmlRenderer:
       * Called by `UI.runRenderPage`.
       */
     private[kyo] def page(head: UI.PageHead, body: String): String =
+        document(head, "", body, "")
+
+    /** A server-push page: the document [[page]] builds for `head`, with the page's pseudo-state rules after `head.css` and the
+      * WebSocket client for `basePath` at the end of the body.
+      */
+    private[kyo] def serverPage(head: UI.PageHead, body: String, css: String, basePath: String): String =
+        document(head, css, body, s"<script>${clientJs(jsStr(basePath))}</script>")
+
+    private def document(head: UI.PageHead, css: String, body: String, client: String): String =
         val metaTags = head.meta.map((n, c) => s"""<meta name="${esc(n)}" content="${esc(c)}">""").mkString
         val linkTags = head.links.map((r, h) => s"""<link rel="${esc(r)}" href="${esc(h)}">""").mkString
         val script   = head.moduleScript match
@@ -195,12 +204,12 @@ private[kyo] object HtmlRenderer:
            |<meta name="viewport" content="width=device-width, initial-scale=1">
            |<title>${esc(head.title)}</title>
            |$metaTags$linkTags
-           |<style>$baseCss${head.css}</style>
+           |<style>$baseCss${head.css}$css</style>
            |$ldBlock</head>
-           |<body>$body$islands</body>
+           |<body>$body$islands$client</body>
            |$script
            |</html>""".stripMargin
-    end page
+    end document
 
     // Render a data island as `<script type="..."[ id="..."]>ESCAPED-JSON</script>`. The type
     // and id attributes use the HTML-entity escape (`esc`); the JSON body uses the JS-unicode
@@ -1198,7 +1207,8 @@ private[kyo] object HtmlRenderer:
            |  // connection with a session attached whose frames are all dropped.
            |  if(ws&&ws.readyState<2)return;
            |  __live=false;
-           |  var sock=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
+           |  // The page's own path and query ride the upgrade, so a request-aware session evaluates the UI for the same page the GET served.
+           |  var sock=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws?${UIServer.pageParam}="+encodeURIComponent(location.pathname+location.search));
            |  ws=sock;
            |  // Each handler serves ONE socket and stands down once a newer one has replaced it, closing itself on the way out so
            |  // a superseded connection is torn down instead of lingering with a server session attached.
@@ -1507,7 +1517,8 @@ private[kyo] object HtmlRenderer:
            |      }
            |      return;
            |    }
-           |    var mid=e.target&&e.target.id?e.target.id:null;if(el.tagName&&el.tagName.toLowerCase()==='a')e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
+           |    // An anchor the UI handles stays on the page; one it does not handle is a link, and the browser follows it.
+           |    var mid=e.target&&e.target.id?e.target.id:null;if(el.tagName&&el.tagName.toLowerCase()==='a'&&he(el,"click"))e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
            |  }
            |  else if(t==="input"&&he(el,"input"))post({Input:{path:p,value:e.target.value}});
            |  else if(t==="change"&&he(el,"change")){

@@ -1329,6 +1329,31 @@ val server: Unit < (Async & Scope & Abort[HttpBindException]) =
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
 
+In server-push mode an anchor that declares an `onClick` stays on the page and runs the handler; an anchor without one is an ordinary link, and the browser follows its `href`.
+
+### `UI.runHandlers(basePath, head)(request => ui)`: an app of many pages
+
+When an app has pages of its own, each at its own URL, the request-aware overload serves every path under `basePath`. `ui` receives a `UI.Request(path, query)` and builds the page for it: `path` is relative to `basePath` (`/` for the base itself, never ending in `/` otherwise) and `query` holds the first value of each parameter. The GET evaluates `ui` for the request it serves; the page's client opens its session socket with its own path and query, and the session evaluates `ui` again for that same request, so the SSR page and the live session agree. A link between pages is a plain `a.href(Href.Path(...))`: the browser loads the other page, so back, forward and reload land on the page of the URL.
+
+The served document carries `head`, the same `PageHead` the static runner takes: the title, meta and link tags, and the app's own css after the framework reset, with a responsive viewport always present.
+
+```scala
+import UI.*
+import kyo.*
+
+def app(request: Request): UI < Async =
+    request.path match
+        case "/" => div(h1("Channels"), a.href(Href.Path("/app/channel?id=1"))("general"))
+        case "/channel" =>
+            div(h1(s"Channel ${request.query.getOrElse("id", "?")}"), a.href(Href.Path("/app"))("All channels"))
+        case other => div(h1("Not found"), p(other))
+
+val pages: Seq[HttpHandler[?, ?, ?]] < Sync =
+    runHandlers("/app", PageHead(title = "Chat", css = "h1{font-size:20px}"))(app)
+```
+
+Paths under `basePath/_kyo` are the framework's own; the page catch-all never sees them.
+
 ### `UI.runRender(ui)`
 
 `Stream[String, Async]` of full HTML. First emission is the initial render; subsequent emissions are full re-renders on any signal change. Use for SSR, tests, snapshot exports, or a custom transport.
