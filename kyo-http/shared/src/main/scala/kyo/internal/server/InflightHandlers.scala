@@ -27,7 +27,7 @@ final private[kyo] class InflightHandlers(using AllowUnsafe):
     end enter
 
     /** Releases the handler counted by [[enter]] once its fiber completes, finalizers included. */
-    def track(fiber: Fiber.Unsafe[?, ?])(using Frame): Unit =
+    def track(fiber: Fiber.Unsafe[Unit, Any])(using Frame): Unit =
         fiber.onComplete { _ =>
             if state.addAndGet(-2L) == 1L then drain()
         }

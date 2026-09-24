@@ -552,8 +552,8 @@ private[kyo] object UnsafeServerDispatch:
         // Carry the query string into the handler's request url: a WebSocket upgrade target
         // may put data in the query (e.g. the Slack Socket Mode connection ticket), so a
         // handler must be able to read it via req.query, exactly as a non-upgrade request can.
-        val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
-        val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
+        val url     = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
+        val conn    = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
         val session =
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
