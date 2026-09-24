@@ -762,7 +762,7 @@ import scala.quoted.*
 
         sym.annotations.foreach { term =>
             if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
-                firstStringArg(term).foreach(txt => typeDocOpt = Some(Expr(txt)))
+                typeDocOpt = Some(Expr(docText(term)))
         }
 
         fields.zipWithIndex.foreach { (f, idx) =>
@@ -778,9 +778,8 @@ import scala.quoted.*
                 else if term.tpe <:< TypeRepr.of[kyo.schema.transient] then
                     droppedExprs = Expr(f.name) :: droppedExprs
                 else if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
-                    firstStringArg(term).foreach { txt =>
-                        fieldDocPairs = '{ (Seq($wireExpr), ${ Expr(txt) }) } :: fieldDocPairs
-                    }
+                    val txt = Expr(docText(term))
+                    fieldDocPairs = '{ (Seq($wireExpr), $txt) } :: fieldDocPairs
                 else if term.tpe <:< TypeRepr.of[kyo.schema.alias] then
                     varargStrings(term).foreach { a =>
                         aliasPairs = '{ (${ Expr(a) }, $wireExpr) } :: aliasPairs
@@ -1004,7 +1003,7 @@ import scala.quoted.*
                             // wire-functional for the Protobuf codec and surfaced by fieldNumberAudit.
                             fieldIdPairs = '{ (Seq(${ Expr(f.name) }), ${ Expr(n) }) } :: fieldIdPairs
                         case scala.None =>
-                            // A non-constant pin hard-fails rather than silently skipping like @rename and @doc do:
+                            // A non-constant pin hard-fails rather than silently skipping like @rename does:
                             // with no compile-time number, encode would fall back to the hash-derived field number
                             // and silently break the Protobuf wire interop the pin exists to guarantee.
                             report.errorAndAbort(
@@ -1154,7 +1153,7 @@ import scala.quoted.*
             else if term.tpe <:< TypeRepr.of[kyo.schema.untagged] then
                 representationOpt = Some('{ kyo.Schema.UnionRepresentation.Untagged })
             else if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
-                firstStringArg(term).foreach(txt => docOpt = Some(Expr(txt)))
+                docOpt = Some(Expr(docText(term)))
         }
 
         // Variant-level: @rename and @alias on each child symbol.
@@ -1260,6 +1259,33 @@ import scala.quoted.*
       * T` before the macro sees it, `asExprOf[T]` is safe and produces an `Expr[T]` whose runtime
       * value is the singleton object the user named in the annotation.
       */
+    /** The text of a `@doc` annotation, its argument folded to a constant: a string literal, a concatenation of constants (the shape of
+      * a description split across lines), or a constant `final val`. Anything else is a compile error: a doc the macro cannot read would
+      * otherwise be dropped from the schema without a word.
+      */
+    private def docText(using Quotes)(annotation: quotes.reflect.Term): String =
+        import quotes.reflect.*
+        def fold(term: Term): Option[String] =
+            term match
+                case Literal(StringConstant(s))            => Some(s)
+                case NamedArg(_, arg)                      => fold(arg)
+                case Typed(arg, _)                         => fold(arg)
+                case Inlined(_, Nil, arg)                  => fold(arg)
+                case Apply(Select(left, "+"), List(right)) => fold(left).flatMap(l => fold(right).map(l + _))
+                case _                                     =>
+                    term.tpe.widenTermRefByName match
+                        case ConstantType(StringConstant(s)) => Some(s)
+                        case _                               => None
+        annotation match
+            case Apply(_, List(arg)) =>
+                fold(arg).getOrElse(report.errorAndAbort(
+                    "@doc expects a constant string: a literal, a concatenation of literals, or a constant final val",
+                    arg.pos
+                ))
+            case other => report.errorAndAbort("@doc expects a constant string argument", other.pos)
+        end match
+    end docText
+
     private def liftObjectArg[T: Type](using Quotes)(argTerm: quotes.reflect.Term): Expr[T] =
         import quotes.reflect.*
         argTerm.asExprOf[T]
@@ -1999,11 +2025,7 @@ import scala.quoted.*
             // branch-free: one buildProductSchema per derivation, no per-field annotation read.
             val docSym                        = TypeRepr.of[kyo.schema.doc].typeSymbol
             val ctorDocs: Map[String, String] =
-                sym.primaryConstructor.paramSymss.flatten.flatMap { p =>
-                    p.getAnnotation(docSym).collect {
-                        case Apply(_, List(Literal(StringConstant(s)))) => p.name -> s
-                    }
-                }.toMap
+                sym.primaryConstructor.paramSymss.flatten.flatMap(p => p.getAnnotation(docSym).map(a => p.name -> docText(a))).toMap
             val fieldStructures: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (f, idx) =>
                 val rawType  = tpe.memberType(f)
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)

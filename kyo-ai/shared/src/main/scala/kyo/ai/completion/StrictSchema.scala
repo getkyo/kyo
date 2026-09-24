@@ -45,10 +45,10 @@ private[completion] object StrictSchema:
                     deprecated,
                     examples
                 )
-            case arr: JsonSchema.Arr        => arr.copy(items = requireAll(arr.items))
-            case JsonSchema.Nullable(inner) => JsonSchema.Nullable(requireAll(inner))
-            case JsonSchema.OneOf(variants) => JsonSchema.OneOf(variants.map((name, s) => (name, requireAll(s))))
-            case other                      => other
+            case arr: JsonSchema.Arr           => arr.copy(items = requireAll(arr.items))
+            case nullable: JsonSchema.Nullable => nullable.copy(inner = requireAll(nullable.inner))
+            case union: JsonSchema.OneOf       => union.copy(variants = union.variants.map((name, s) => (name, requireAll(s))))
+            case other                         => other
     end requireAll
 
     private def strictSchema(schema: JsonSchema, path: String, allowMaps: Boolean)(using Frame): Result[String, Structure.Value] =
@@ -119,14 +119,22 @@ private[completion] object StrictSchema:
                     Chunk("type" -> Structure.Value.Str("null")) ++
                         description.map(d => Chunk("description" -> Structure.Value.Str(d))).getOrElse(Chunk.empty)
                 ))
-            case JsonSchema.Nullable(inner) =>
+            case JsonSchema.Nullable(inner, description) =>
                 strictSchema(inner, path, allowMaps).map { innerSchema =>
-                    anyOfSchema(Chunk(innerSchema, Structure.Value.Record(Chunk("type" -> Structure.Value.Str("null")))))
+                    described(
+                        anyOfSchema(Chunk(innerSchema, Structure.Value.Record(Chunk("type" -> Structure.Value.Str("null"))))),
+                        description
+                    )
                 }
-            case JsonSchema.OneOf(variants) =>
-                transformVariants(variants, path, allowMaps).map(anyOfSchema)
+            case JsonSchema.OneOf(variants, description) =>
+                transformVariants(variants, path, allowMaps).map(values => described(anyOfSchema(values), description))
         end match
     end strictSchema
+
+    private def described(schema: Structure.Value, description: Maybe[String]): Structure.Value =
+        (schema, description) match
+            case (Structure.Value.Record(fields), Present(d)) => Structure.Value.Record(fields :+ ("description" -> Structure.Value.Str(d)))
+            case _                                            => schema
 
     private def strictObjectSchema(
         props: Chunk[(String, Structure.Value)],
