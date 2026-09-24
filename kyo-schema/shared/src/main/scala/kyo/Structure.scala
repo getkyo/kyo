@@ -90,7 +90,7 @@ object Structure:
       *   - Optional: Null conforms; anything else is checked against the inner type.
       *   - Sum, Mapping, Open: accepted without inspection (not modeled).
       */
-    private[kyo] def conform(value: Structure.Value, tpe: Structure.Type): Maybe[String] =
+    def conform(value: Structure.Value, tpe: Structure.Type): Maybe[String] =
         tpe match
             case p: Type.Product =>
                 value match

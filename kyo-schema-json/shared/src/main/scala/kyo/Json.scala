@@ -217,10 +217,10 @@ object Json:
         case Null(description: Maybe[String] = Maybe.empty)
 
         /** Nullable wrapper (JSON Schema `oneOf` with null). */
-        case Nullable(inner: JsonSchema)
+        case Nullable(inner: JsonSchema, description: Maybe[String] = Maybe.empty)
 
         /** Sum type represented as `oneOf` with discriminated variants. */
-        case OneOf(variants: List[(String, JsonSchema)])
+        case OneOf(variants: List[(String, JsonSchema)], description: Maybe[String] = Maybe.empty)
     end JsonSchema
 
     object JsonSchema:
@@ -371,7 +371,7 @@ object Json:
                     n.description match
                         case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
                         case _                => ()
-                case Nullable(inner) =>
+                case Nullable(inner, description) =>
                     // JSON Schema convention: nullable as oneOf with the inner schema and the null type.
                     discard(entries.addOne("oneOf" -> { () =>
                         writer.arrayStart(2)
@@ -379,7 +379,13 @@ object Json:
                         writeJsonSchema(Null(), writer)
                         writer.arrayEnd()
                     }))
-                case OneOf(variants) =>
+                    description match
+                        case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
+                        case _                => ()
+                case OneOf(variants, description) =>
+                    description match
+                        case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
+                        case _                => ()
                     discard(entries.addOne("oneOf" -> { () =>
                         writer.arrayStart(variants.size)
                         variants.foreach { (name, sub) =>
@@ -427,8 +433,12 @@ object Json:
                         case Some(Structure.Value.Str("null"))    => fromNull(byName)
                         case _                                    =>
                             byName.get("oneOf") match
-                                case Some(Structure.Value.Sequence(elems)) => fromOneOf(elems)
-                                case _                                     =>
+                                case Some(Structure.Value.Sequence(elems)) =>
+                                    val description = byName.get("description") match
+                                        case Some(Structure.Value.Str(s)) => Maybe(s)
+                                        case _                            => Maybe.empty
+                                    withDescription(fromOneOf(elems), description)
+                                case _ =>
                                     // Treat untyped records as opaque Obj with no declared properties; downstream code may
                                     // populate properties via `additionalProperties` or treat as Any.
                                     Obj(properties = List.empty, required = List.empty)
@@ -614,20 +624,20 @@ object Json:
           */
         inline def from[A](using s: Schema[A]): JsonSchema = fromStructure(s.structure)
 
-        // Attaches a field's @doc to its property node's description, for every JsonSchema case that
-        // carries an optional description field (Obj, Arr, Str, Num, Integer, Bool, Null).
+        // Attaches a field's @doc to its property node's description; every JsonSchema case carries one.
         private def withDescription(node: JsonSchema, doc: Maybe[String]): JsonSchema =
             doc match
                 case Maybe.Present(d) =>
                     node match
-                        case o: Obj     => o.copy(description = Maybe(d))
-                        case a: Arr     => a.copy(description = Maybe(d))
-                        case s: Str     => s.copy(description = Maybe(d))
-                        case n: Num     => n.copy(description = Maybe(d))
-                        case i: Integer => i.copy(description = Maybe(d))
-                        case b: Bool    => b.copy(description = Maybe(d))
-                        case n: Null    => n.copy(description = Maybe(d))
-                        case other      => other
+                        case o: Obj      => o.copy(description = Maybe(d))
+                        case a: Arr      => a.copy(description = Maybe(d))
+                        case s: Str      => s.copy(description = Maybe(d))
+                        case n: Num      => n.copy(description = Maybe(d))
+                        case i: Integer  => i.copy(description = Maybe(d))
+                        case b: Bool     => b.copy(description = Maybe(d))
+                        case n: Null     => n.copy(description = Maybe(d))
+                        case n: Nullable => n.copy(description = Maybe(d))
+                        case o: OneOf    => o.copy(description = Maybe(d))
                 case _ => node
 
         /** Derives a JsonSchema from a Structure.Type at runtime. */
@@ -721,7 +731,7 @@ object Json:
           * recursion by name: two sibling objects sharing one name would re-derive the second as an empty
           * `{}`, silently erasing its properties.
           */
-        private[kyo] def toStructure(schema: JsonSchema): Structure.Type =
+        def toStructure(schema: JsonSchema): Structure.Type =
             toStructure(schema, "Root")
 
         private def toStructure(schema: JsonSchema, path: String): Structure.Type =
@@ -734,13 +744,13 @@ object Json:
                 // reading of a JSON `null` type that the structural vocabulary offers.
                 case _: Null => unitStructure
 
-                case Nullable(inner) =>
+                case Nullable(inner, _) =>
                     Structure.Type.Optional("Option", anyTag, toStructure(inner, path))
 
                 case arr: Arr =>
                     Structure.Type.Collection("Chunk", anyTag, toStructure(arr.items, s"$path[]"))
 
-                case OneOf(variants) =>
+                case OneOf(variants, _) =>
                     Structure.Type.Sum(
                         path,
                         anyTag,
@@ -780,14 +790,15 @@ object Json:
         /** The description a node carries, if its variant has one. */
         private def descriptionOf(schema: JsonSchema): Maybe[String] =
             schema match
-                case o: Obj     => o.description
-                case a: Arr     => a.description
-                case s: Str     => s.description
-                case n: Num     => n.description
-                case i: Integer => i.description
-                case b: Bool    => b.description
-                case n: Null    => n.description
-                case _          => Absent
+                case o: Obj      => o.description
+                case a: Arr      => a.description
+                case s: Str      => s.description
+                case n: Num      => n.description
+                case i: Integer  => i.description
+                case b: Bool     => b.description
+                case n: Null     => n.description
+                case n: Nullable => n.description
+                case o: OneOf    => o.description
 
         // Reuse the derived structures so a recovered primitive is indistinguishable from the one a
         // `Schema[String]` (and friends) produces, tag included.

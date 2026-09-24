@@ -236,8 +236,9 @@ private[kyo] object OpenApiGenerator:
       *   - Obj(properties, required, additionalProperties) → type=object + properties + required + additionalProperties.
       *   - Arr(items) → SchemaObject.array(items).
       *   - Str/Num/Integer/Bool → primitive helpers.
-      *   - Nullable(inner) → recurse on inner (optionality is captured in the parent's required list).
-      *   - OneOf(variants) → if all variants map to an empty Obj, emit enum with variant names; otherwise emit oneOf.
+      *   - Nullable(inner) → recurse on inner (optionality is captured in the parent's required list), keeping its description.
+      *   - OneOf(variants) → if all variants map to an empty Obj, emit enum with variant names; otherwise emit oneOf; either with its
+      *     description.
       */
     private[kyo] def jsonSchemaToHttpOpenApi(js: JsonSchema): HttpOpenApi.SchemaObject =
         js match
@@ -362,11 +363,12 @@ private[kyo] object OpenApiGenerator:
                     description = description.toOption
                 )
 
-            case JsonSchema.Nullable(inner) =>
-                jsonSchemaToHttpOpenApi(inner)
+            case JsonSchema.Nullable(inner, description) =>
+                val schema = jsonSchemaToHttpOpenApi(inner)
+                description.fold(schema)(d => schema.copy(description = Some(d)))
 
-            case JsonSchema.OneOf(variants) =>
-                if variants.isEmpty then HttpOpenApi.SchemaObject.string
+            case JsonSchema.OneOf(variants, description) =>
+                if variants.isEmpty then HttpOpenApi.SchemaObject.string.copy(description = description.toOption)
                 else
                     val allSimple = variants.forall {
                         case (_, obj: JsonSchema.Obj) => obj.properties.isEmpty && obj.additionalProperties.isEmpty
@@ -382,7 +384,8 @@ private[kyo] object OpenApiGenerator:
                             additionalProperties = None,
                             oneOf = None,
                             `enum` = Some(variants.map(_._1)),
-                            `$ref` = None
+                            `$ref` = None,
+                            description = description.toOption
                         )
                     else
                         HttpOpenApi.SchemaObject(
@@ -394,7 +397,8 @@ private[kyo] object OpenApiGenerator:
                             additionalProperties = None,
                             oneOf = Some(variants.map { case (_, sub) => jsonSchemaToHttpOpenApi(sub) }),
                             `enum` = None,
-                            `$ref` = None
+                            `$ref` = None,
+                            description = description.toOption
                         )
                     end if
         end match
