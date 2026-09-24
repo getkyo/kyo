@@ -676,7 +676,7 @@ A name in main sources belongs to one module, since users combine published modu
 
 Name a platform facade after its module. kyo-http binds Node's `path` module as `HttpNodePath` because kyo-system already binds it as `NodePath`.
 
-`sbt 'checkClassNames JVM'` compiles that platform and fails on a duplicate, naming both projects; the other arguments are `JS`, `Native` and `Wasm`. CI runs all four on every pull request. Projects that produce one name by design, as kyo-compat's five bindings do, declare `ClassNameCheck.classNameGroup`; the check then accepts the shared name and instead fails if any project's classpath reaches two of them.
+`sbt 'checkClassNames JVM'` compiles that platform and fails on a duplicate, naming both projects; the other arguments are `JS`, `Native` and `Wasm`. CI runs only the JVM row, which reuses the compile the doctest step already paid for; run the others locally when adding a class to `js`, `js-wasm`, `native` or `wasm` sources. Projects that produce one name by design, as kyo-compat's five bindings do, declare `ClassNameCheck.classNameGroup`; the check then accepts the shared name and instead fails if any project's classpath reaches two of them.
 
 #### File Template
 
