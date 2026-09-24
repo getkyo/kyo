@@ -1,11 +1,6 @@
 package kyo.internal.server
 
 import java.nio.charset.StandardCharsets
-import java.time.Instant
-import java.time.ZonedDateTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.http1.*
@@ -45,9 +40,6 @@ private[kyo] object UnsafeServerDispatch:
 
     // -- Date header caching (RFC 9110 section 6.6.1) --
 
-    private val dateFormatter: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.ENGLISH)
-
     @volatile private var cachedDateSecond: Long  = 0L
     @volatile private var cachedDateValue: String = ""
 
@@ -55,11 +47,7 @@ private[kyo] object UnsafeServerDispatch:
     private[internal] def currentDate(): String =
         val nowSecond = java.lang.System.currentTimeMillis() / 1000
         if nowSecond != cachedDateSecond then
-            val dt = ZonedDateTime.ofInstant(
-                Instant.ofEpochSecond(nowSecond),
-                ZoneOffset.UTC
-            )
-            cachedDateValue = dateFormatter.format(dt)
+            cachedDateValue = HttpDate.format(nowSecond)
             cachedDateSecond = nowSecond
         end if
         cachedDateValue
