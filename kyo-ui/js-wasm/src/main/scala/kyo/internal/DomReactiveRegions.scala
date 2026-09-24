@@ -116,6 +116,11 @@ final private[kyo] class DomReactiveRegions private (
         if !tryMorph(oldElements, newElements, incoming.isEmpty) then
             val incomingMarkup = incoming.iterator.map((id, nested) => id -> serializeBetween(nested)).toSeq
             val state          = before(oldElements, newElements)
+            // A <select>'s value is its own state: new option elements reset the selection to the first, so it is kept across the swap.
+            val keptSelect = liveHost match
+                case DomReactiveRegions.LiveHost.Siblings(parent: dom.Element) => Maybe(parent.closest("select"))
+                case _                                                         => Absent
+            val keptValue = keptSelect.map(_.asInstanceOf[dom.html.Select].value)
             range.deleteContents()
             removed.foreach { id =>
                 discard(ranges.remove(id))
@@ -162,6 +167,13 @@ final private[kyo] class DomReactiveRegions private (
             ranges.addAll(incoming)
             discard(inserted.addAll(incomingMarkup))
             after(state, insertedRoots)
+            keptSelect.foreach { element =>
+                val select = element.asInstanceOf[dom.html.Select]
+                keptValue.foreach { value =>
+                    if (0 until select.options.length).exists(i => select.options(i).value == value) then
+                        select.value = value
+                }
+            }
         end if
     end replaceContent
 

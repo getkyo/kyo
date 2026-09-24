@@ -773,21 +773,16 @@ private[kyo] object HtmlRenderer:
                 ta.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
             case sel: Select =>
                 boolAttr(sb, "disabled", sel.disabled)
-                val selValue: Unit < Sync = sel.value match
-                    case Present(Bound.Const(s)) => w(sb, s""" value="${esc(s)}"""")
+                // HTML has no `value` attribute on <select>: one is ignored and the first option shows. The value is set as the DOM
+                // property once the options are in place (applyJsProps runs on the whole inserted subtree), which also reaches options
+                // rendered from a signal. Without a value, an option's own `selected` attribute chooses.
+                sel.value match
+                    case Present(Bound.Const(s)) => w(sb, s""" data-kyo-prop-value="${esc(s)}"""")
                     case Present(Bound.Ref(ref)) =>
                         for s <- ref.get
-                        yield w(sb, s""" value="${esc(s)}"""")
-                    case _ =>
-                        // Fall back to first Opt child with selected(true)
-                        val selected = Maybe.fromOption(sel.children.toSeq.collectFirst {
-                            case opt: Opt if opt.selected == Present(true) =>
-                                opt.value.getOrElse("")
-                        })
-                        selected match
-                            case Present(v) if v.nonEmpty => w(sb, s""" value="${esc(v)}"""")
-                            case _                        => ()
-                selValue
+                        yield w(sb, s""" data-kyo-prop-value="${esc(s)}"""")
+                    case _ => ()
+                end match
             case opt: Opt =>
                 opt.value.foreach(v => w(sb, s""" value="${esc(v)}""""))
                 boolAttr(sb, "selected", opt.selected)
@@ -1156,6 +1151,8 @@ private[kyo] object HtmlRenderer:
           |  var se=inside&&typeof active.selectionEnd==="number"?active.selectionEnd:null;
           |  var oldEnter=kyoEnterPathsRoots(oldRoots),ghosts=kyoLeavePrepareRoots(oldRoots,kyoLeavePathsRoots(newSemanticRoots));
           |  var oldFocus=kyoFocusPathsRoots(oldRoots);
+          |  // A <select>'s value is its own state: new option elements reset the selection to the first, so it is kept across the swap.
+          |  var keptSelect=parent.closest?parent.closest("select"):null,keptValue=keptSelect?keptSelect.value:null;
           |  range.deleteContents();for(var i=0;i<removed.length;i++)__kyoRanges.delete(removed[i]);
           |  var finalRoots=newSemanticRoots;if(synthetic&&newRoots.length===1&&newRoots[0].tagName==="TBODY"&&newRoots[0].getAttribute("data-kyo-range-host")===id){
           |    var incomingHost=newRoots[0];kyoRangeSyncHost(parent,incomingHost,id);while(incomingHost.firstChild)parent.insertBefore(incomingHost.firstChild,endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);
@@ -1165,6 +1162,7 @@ private[kyo] object HtmlRenderer:
           |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
           |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
+          |  if(keptSelect){for(var i=0;i<keptSelect.options.length;i++)if(keptSelect.options[i].value===keptValue){keptSelect.value=keptValue;break;}}
           |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
           |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
           |}

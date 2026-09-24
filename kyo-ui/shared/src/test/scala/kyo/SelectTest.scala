@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.UI.foreach
 
 class SelectTest extends UITest:
 
@@ -131,6 +132,12 @@ class SelectTest extends UITest:
         }
     }
 
+    // What the page shows as selected: the select's value and the selected option's text.
+    private def shown(using Frame) =
+        Browser.value(Selector.id("s")).map(value =>
+            Browser.eval("document.getElementById('s').selectedOptions[0].textContent").map(text => (value, text))
+        )
+
     "value initial assertValue" in {
         val app: UI < Async =
             for ref <- Signal.initRef("b")
@@ -141,7 +148,71 @@ class SelectTest extends UITest:
                 ).id("s").value(ref)
             )
         withUI(app) {
-            Browser.assertVisible(Selector.id("s")).unit
+            shown.map(s => assert(s == ("b", "Beta")))
+        }
+    }
+
+    "a constant value selects its option on the page" in {
+        withUI(UI.div(
+            UI.select(
+                UI.option("Alpha").value("a"),
+                UI.option("Beta").value("b"),
+                UI.option("Gamma").value("c")
+            ).id("s").value("c")
+        )) {
+            shown.map(s => assert(s == ("c", "Gamma")))
+        }
+    }
+
+    "a bound value set after mount selects its option on the page" in {
+        val app: UI < Async =
+            for ref <- Signal.initRef("a")
+            yield UI.div(
+                UI.select(
+                    UI.option("Alpha").value("a"),
+                    UI.option("Beta").value("b"),
+                    UI.option("Gamma").value("c")
+                ).id("s").value(ref),
+                UI.button("Pick gamma").id("pick").onClick(ref.set("c"))
+            )
+        withUI(app) {
+            for
+                before <- shown
+                _      <- Browser.click(Selector.id("pick"))
+                _      <- Browser.waitForText(Selector.css("#s option:checked"), "Gamma")
+                after  <- shown
+            yield assert((before, after) == (("a", "Alpha"), ("c", "Gamma")))
+        }
+    }
+
+    "a value selects its option among options rendered from a signal" in {
+        val app: UI < Async =
+            for
+                rows <- Signal.initRef(Chunk("a", "b", "c"))
+                ref  <- Signal.initRef("b")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref)
+            )
+        withUI(app) {
+            shown.map(s => assert(s == ("b", "B")))
+        }
+    }
+
+    "the selection survives the options being re-rendered" in {
+        val app: UI < Async =
+            for
+                rows <- Signal.initRef(Chunk("a", "b", "c"))
+                ref  <- Signal.initRef("b")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref),
+                UI.button("Add").id("add").onClick(rows.set(Chunk("a", "b", "c", "d")))
+            )
+        withUI(app) {
+            for
+                _     <- Browser.click(Selector.id("add"))
+                _     <- Browser.waitForText(Selector.css("#s option:last-child"), "D")
+                after <- shown
+            yield assert(after == ("b", "B"))
         }
     }
 
