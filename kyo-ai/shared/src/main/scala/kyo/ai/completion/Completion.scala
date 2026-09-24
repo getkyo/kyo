@@ -386,7 +386,16 @@ object Completion:
                                                 ).addField("body", req.body)
                                                 sseStream <- HttpClient.withConfig(_.timeout(config.timeout)) {
                                                     HttpClient.use { client =>
-                                                        client.sendWith(route, httpRequest)(_.fields.body)
+                                                        client.sendWith(route, httpRequest) { response =>
+                                                            if response.status.isSuccess then response.fields.body
+                                                            else
+                                                                Abort.fail(HttpStatusException(
+                                                                    response.status,
+                                                                    "POST",
+                                                                    req.url,
+                                                                    response.rawBody.getOrElse("")
+                                                                ))
+                                                        }
                                                     }
                                                 }
                                             yield sseStream
