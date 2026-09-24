@@ -452,4 +452,114 @@ class MarkdownTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // ---- Untrusted sources: Options(html = false) ----
+
+    private val untrusted = Markdown.Options(html = false)
+
+    private def renderUntrusted(source: String)(using Frame): String < Async =
+        renderHtml(Markdown.render(source, untrusted).article)
+
+    "untrusted: a block img with an onerror handler renders as escaped text" in {
+        for html <- renderUntrusted("<img src=x onerror=alert(1)>\n")
+        yield
+            assert(!html.contains("<img"), s"no img element may be emitted: $html")
+            assert(html.contains("&lt;img src=x onerror=alert(1)&gt;"), s"the snippet shows as text: $html")
+        end for
+    }
+
+    "untrusted: an inline HTML tag renders as escaped text" in {
+        for html <- renderUntrusted("hi <img src=x onerror=alert(1)> there\n")
+        yield
+            assert(!html.contains("<img"), s"no img element may be emitted: $html")
+            assert(html.contains("hi &lt;img src=x onerror=alert(1)&gt; there"), s"the tag shows as text in place: $html")
+        end for
+    }
+
+    "untrusted: a multi-line anchor embed renders as escaped text" in {
+        for html <- renderUntrusted("<a href=\"javascript:alert(1)\">\n<b>x</b>\n</a>\n")
+        yield
+            assert(!html.contains("<a "), s"no anchor may be emitted: $html")
+            assert(!html.contains("<b>"), s"no b element may be emitted: $html")
+            assert(html.contains("&lt;a href="), s"the embed shows as text: $html")
+        end for
+    }
+
+    "untrusted: an HTML comment renders as escaped text" in {
+        for html <- renderUntrusted("<!-- hidden -->\nvisible\n")
+        yield
+            assert(html.contains("&lt;!-- hidden --&gt;"), s"the comment shows as text: $html")
+            assert(html.contains("visible"), s"the text after it stays: $html")
+        end for
+    }
+
+    "untrusted: a javascript: link renders as its text with no href" in {
+        for html <- renderUntrusted("[click](javascript:alert`1`) here\n")
+        yield
+            assert(!html.contains("javascript:"), s"no javascript: URL may be emitted: $html")
+            assert(!html.contains("<a"), s"no anchor may be emitted: $html")
+            assert(html.contains("click here"), s"the link text stays in place: $html")
+        end for
+    }
+
+    "untrusted: a scheme hidden by case, a tab or leading space is still refused" in {
+        for
+            upper  <- renderUntrusted("[a](JavaScript:alert`1`)\n")
+            tabbed <- renderUntrusted("[b](java\tscript:alert`1`)\n")
+            spaced <- renderUntrusted("[c]( javascript:alert`1`)\n")
+            data   <- renderUntrusted("[d](data:text/html,x)\n")
+        yield
+            assert(!upper.contains("<a") && upper.contains(">a<"), s"uppercase scheme: $upper")
+            assert(!tabbed.contains("<a") && tabbed.contains(">b<"), s"tab inside the scheme: $tabbed")
+            assert(!spaced.contains("<a") && spaced.contains(">c<"), s"leading space: $spaced")
+            assert(!data.contains("<a") && data.contains(">d<"), s"data scheme: $data")
+        end for
+    }
+
+    "untrusted: an image with an unsafe source renders as its alt text" in {
+        for html <- renderUntrusted("see ![logo](javascript:alert`1`) now\n")
+        yield
+            assert(!html.contains("<img"), s"no img element may be emitted: $html")
+            assert(html.contains("see logo now"), s"the alt text stays in place: $html")
+        end for
+    }
+
+    "untrusted: a linked image with an unsafe link keeps the image without the anchor" in {
+        for html <- renderUntrusted("[![logo](kyo.png)](javascript:alert`1`)\n")
+        yield
+            assert(!html.contains("<a"), s"no anchor may be emitted: $html")
+            assert(html.contains("<img") && html.contains("kyo.png"), s"the safe image stays: $html")
+        end for
+    }
+
+    "untrusted: http, https, fragment and relative links keep their href" in {
+        for html <- renderUntrusted("[a](https://getkyo.io) [b](http://x.io/p) [c](#top) [d](../docs/a.md) [e](docs/a:b)\n")
+        yield
+            assert(html.contains("getkyo.io"), s"https link: $html")
+            assert(html.contains("x.io/p"), s"http link: $html")
+            assert(html.contains("#top"), s"fragment link: $html")
+            assert(html.contains("../docs/a.md"), s"relative link: $html")
+            assert(html.contains("docs/a:b"), s"a colon after a slash is a path, not a scheme: $html")
+            assert(html.split("<a ").length - 1 == 5, s"five anchors: $html")
+        end for
+    }
+
+    "untrusted: HTML inside a heading, list item, table cell and blockquote is escaped" in {
+        val tag    = "<b onclick=x>"
+        val source = s"# h $tag\n\n- item $tag\n\n1. step $tag\n\n| a |\n| - |\n| $tag |\n\n> quote $tag\n"
+        for html <- renderUntrusted(source)
+        yield
+            assert(!html.contains("<b "), s"no b element may be emitted: $html")
+            assert(html.split("&lt;b onclick=x&gt;", -1).length - 1 == 5, s"each of the five shows as text: $html")
+        end for
+    }
+
+    "untrusted: markdown constructs render the same as trusted" in {
+        val source = "# Title\n\n**bold** and `code`\n\n- one\n- two\n"
+        for
+            trusted   <- renderMd(source)
+            untrusted <- renderUntrusted(source)
+        yield assert(trusted == untrusted)
+        end for
+    }
+
 end MarkdownTest
