@@ -1,0 +1,131 @@
+package kyo.kernel.internal
+
+import kyo.StaticFlag
+
+private[kyo] class Safepoint
+
+private object periodBounds extends (Int => Either[Throwable, Int]):
+    def apply(n: Int): Either[Throwable, Int] = Right(Math.min(Math.max(1, n), 0x7fff))
+
+/** The single-threaded counterpart of the JVM and Native safepoint: same contract, no slot table.
+  *
+  * The budget and the arming bit mean exactly what they do there.
+  * What is absent is the per-thread machinery: there is one execution context, so the state is one
+  * value rather than a strided array indexed by a claimed slot.
+  *
+  * @see
+  *   The `jvm-native` variant of this file for the budget's purpose and the state layout
+  */
+object Safepoint:
+
+    opaque type Slot >: Int = Int
+
+    opaque type State = Int
+
+    private inline def DepthGuard = 1 << 15
+    private inline def Armed      = 1 << 30
+
+    private[kyo] object period extends StaticFlag[Int](maxStackDepth, periodBounds)
+
+    private[kyo] object State:
+
+        private val Initial: State = DepthGuard | period()
+
+        private[Safepoint] def init: State = Initial
+
+        extension (self: State)
+            private[Safepoint] inline def drained: State   = (self & Armed) | DepthGuard
+            private[Safepoint] inline def reset: State     = (self & Armed) | Initial
+            private[Safepoint] inline def armed: State     = self | Armed
+            private[Safepoint] inline def isArmed: Boolean = (self & Armed) != 0
+        end extension
+    end State
+
+    import State.*
+
+    private var depth: State        = State.init
+    private var armedDeadline: Long = Long.MaxValue
+
+    // A pending stop drains the budget of an armed run at the next poll, as the slot table's resolve does on the JVM
+    // and Native: the bind after the step that requested it then defers instead of running under the stop.
+    def get(): Slot =
+        if depth.isArmed && stopped(0) then depth = depth.drained
+        0
+    end get
+
+    def enter(slot: Slot): Boolean =
+        val s  = depth
+        val s2 = s - 1
+        if (s2 & DepthGuard) != 0 then
+            depth = s2
+            true
+        else enterPark(slot, s)
+        end if
+    end enter
+
+    private def enterPark(slot: Slot, s: State): Boolean =
+
+        if Debugger.enabled && {
+                val d = Debugger.get
+                (d ne Debugger.Noop) && !(s.isArmed && stopped(slot)) && d.enter()
+            }
+        then
+            true
+        else
+            depth = s.drained
+            false
+        end if
+    end enterPark
+
+    private[kyo] def drain(slot: Slot): Unit =
+        depth = depth.drained
+
+    def exit(slot: Slot): Unit =
+        depth = depth + 1
+
+    def save(slot: Slot): State =
+        val d = depth
+        depth = State.init
+        d
+    end save
+
+    def restore(slot: Slot, saved: State): Unit =
+        depth = saved
+
+    private[kyo] def reset(slot: Slot): Unit =
+        depth = depth.reset
+
+    private[kyo] def arm(slot: Slot): Unit =
+        depth = depth.armed
+
+    def deadline(d: Long): Unit =
+        armedDeadline = d
+
+    // A stop stands until the slice boundary consumes it. Single-threaded, so the only running slice is the
+    // caller's: a stop is always addressed to it, and beginSlice and endSlice carry nothing here.
+    private var stopRequested: Boolean = false
+
+    private[kyo] def stop(thread: Thread): Boolean = stop(thread, null)
+
+    private[kyo] def stop(thread: Thread, slice: AnyRef): Boolean =
+        stopRequested = true
+        true
+
+    private[kyo] def beginSlice(slot: Slot, slice: AnyRef): AnyRef = null
+
+    private[kyo] def endSlice(slot: Slot, prev: AnyRef): Unit = ()
+
+    private def expired(): Boolean =
+        armedDeadline != Long.MaxValue && java.lang.System.currentTimeMillis() >= armedDeadline
+
+    private[kyo] def stopped(slot: Slot): Boolean =
+        stopRequested || expired()
+
+    private[kyo] def consumeStopped(slot: Slot): Boolean =
+        val pending = stopRequested || expired()
+        stopRequested = false
+        if expired() then armedDeadline = Long.MaxValue
+        pending
+    end consumeStopped
+
+end Safepoint

@@ -189,6 +189,7 @@ class SeqAsyncShift[A, C[X] <: Iterable[X] & IterableOps[X, C, C[X]], CA <: C[A]
     end extension
 
     extension [S, X, Y](iterables: (Iterable[X], Iterable[Y]) < S)
+        @targetName("resultIntoTuple")
         def resultInto(c: CA): (C[X], C[Y]) < S = iterables.map((x, y) => (c.iterableFactory.from(x), c.iterableFactory.from(y)))
 
     extension [S, K, V](iterables: Map[K, Iterable[V]] < S)

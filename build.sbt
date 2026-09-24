@@ -62,6 +62,8 @@ inThisBuild(List(
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
+inThisBuild(ClassNameCheck.settings)
+
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 Global / commands += TestKyo.doneCommand
@@ -809,17 +811,37 @@ lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
-        .withKyoTest
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
+            // The kernel tests on ScalaTest, not kyo-test: kyo-test runs its leaves as fibers on
+            // the scheduler the kernel powers, and the scheduler's preemption writes into the
+            // stop channel and safepoint state the kernel suites assert on.
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
-        .jvmSettings(mimaCheck(false))
-        .jvmConfigure(_.settings(
-            doctestFreshDriver := true
-        ))
+        .jvmSettings(
+            mimaCheck(false),
+            // The kernel's lift is a same-module splice macro, and a resident doctest driver
+            // reusing one compiler across blocks trips dotty's denotation validation on the
+            // suspended-unit retries. A fresh driver per block sidesteps it.
+            doctestFreshDriver                    := true,
+            libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
+            // Benchmarks run on default JVM flags: Jmh extends Test, which carries
+            // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
+            // flag must not be baked into the canonical numbers.
+            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            libraryDependencies ++= Seq(
+                "dev.zio"        %% "zio"             % zioVersion,
+                "org.typelevel"  %% "cats-effect"     % catsVersion,
+                "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
+            ).map(_ % "jmh"),
+            // The Safepoint overflow suite fills the global slot table; a suite running
+            // concurrently in the same classloader would see its threads degraded to the
+            // overflow slot for the duration.
+            Test / parallelExecution := false
+        )
+        .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
@@ -2672,7 +2694,7 @@ lazy val `kyo-net` =
             ),
             Test / compile := (Test / compile).dependsOn(kyoNetKoffiInstall).value
         )
-        // Wasm runs the same koffi posix transport on Node as JS (it `import`s koffi at module load), so it needs the identical koffi bootstrap
+        // Wasm runs the same koffi posix transport on Node as JS (koffi is required on first use, never statically), so it needs the identical koffi bootstrap
         // and native-path env; only the NodeJSEnv args differ (the WASM backend needs `--experimental-wasm-exnref`, Node 24+, matching
         // `wasm-settings`).
         .wasmSettings(
@@ -3115,12 +3137,17 @@ lazy val `kyo-zio` =
         .jvmSettings(mimaCheck(false))
         .wasmSettings(`wasm-settings`)
 
+// Every binding declares the same `kyo.compat` surface, one implementation per runtime, and the shared conformance suite compiles into
+// each one's tests. A library written against kyo-compat resolves those names from whichever binding the consumer links, so the
+// duplication is the design: `classNameGroup` records it, and `checkClassNames` then enforces what the design assumes, that no
+// classpath holds two of them.
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             // Default compile under scala39Version so unidoc reads consistent TASTy with the rest of the build.
@@ -3160,6 +3187,7 @@ lazy val `kyo-compat-kyo` =
         .dependsOn(`kyo-core`, `kyo-data`)
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup           := Some("kyo-compat"),
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
@@ -3191,6 +3219,7 @@ lazy val `kyo-compat-zio` =
         .in(file("kyo-compat/bindings/zio"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3226,6 +3255,7 @@ lazy val `kyo-compat-ox` =
         .in(file("kyo-compat/bindings/ox"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3256,6 +3286,7 @@ lazy val `kyo-compat-twitter-future` =
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
             `kyo-settings`,
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             crossScalaVersions                      := List(scala33Version),
@@ -3292,6 +3323,8 @@ lazy val `kyo-compat-tests` =
         .disablePlugins(KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
+            // It compiles the bindings' shared suite a sixth time, so it shares their test class names.
+            ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
             scalaVersion                           := scala33Version,
@@ -3735,7 +3768,17 @@ lazy val `kyo-bench` =
             `kyo-settings`,
             publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            Test / testForkedParallel               := true,
+            // The Jmh fork runs on the background-job service's re-materialized classpath, where an
+            // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
+            // natives (they ship in per-platform classifier jars). Without them the transport
+            // silently floors to NIO and the benches measure the floor instead of the primary posix
+            // backend.
+            Jmh / unmanagedJars += {
+                val artifacts = (`kyo-net`.jvm / kyoNetClassifierArtifacts).value
+                val jar       = artifacts.collectFirst { case (a, f) if a.classifier.contains("all-natives") => f }
+                Attributed.blank(jar.getOrElse(sys.error("[kyo-bench] kyo-net all-natives classifier jar was not produced")))
+            },
+            Test / testForkedParallel := true,
             // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector

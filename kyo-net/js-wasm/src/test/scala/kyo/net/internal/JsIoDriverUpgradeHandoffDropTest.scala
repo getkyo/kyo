@@ -1,0 +1,137 @@
+package kyo.net.internal
+
+import kyo.*
+import kyo.net.internal.transport.*
+import kyo.net.internal.util.HandleId
+import kyo.scheduler.IOPromise
+import scala.scalajs.js as sjs
+
+/** Reproduce-first regression for a STARTTLS upgrade-handoff drop on the JS Node driver: without an `onInboundClosedDuringRead` override,
+  * [[JsIoDriver]] falls back to [[kyo.net.internal.transport.IoDriver]]'s no-op default, so a STARTTLS upgrade racing the plaintext
+  * [[kyo.net.internal.transport.ReadPump]]'s parked put silently drops bytes already pulled off the socket instead of salvaging them into the
+  * handle's leftover queue that [[JsTransport.upgradeToTls]]'s afterDetach drains and unshifts into the handshake.
+  *
+  * The main scenario drives the race directly rather than through a real TLS handshake:
+  * with `channelCapacity=1` and nothing consuming `conn.inbound`, chunk A fills the channel; chunk B's delivery then parks the pump's
+  * putFiber (`Channel.offer` returns false, `ReadPump.offerToChannel` falls to the putFiber branch).
+  */
+class JsIoDriverUpgradeHandoffDropTest extends kyo.net.Test:
+
+    import AllowUnsafe.embrace.danger
+    given Frame = Frame.internal
+
+    // `NodeNet` rather than `sjs.Dynamic.global.require("net")`: this suite is shared with the Wasm backend, which links as an ES module, where
+    // `require` is not defined.
+    private def net: sjs.Dynamic = NodeNet.asInstanceOf[sjs.Dynamic]
+
+    private def openPair()(using Frame): (sjs.Dynamic, sjs.Dynamic) < (Async & Abort[Closed]) =
+        val p = new IOPromise[Closed, (sjs.Dynamic, sjs.Dynamic)]
+        Sync.defer {
+            val server              = net.createServer()
+            var client: sjs.Dynamic = null
+            discard(server.on(
+                "connection",
+                { (sock: sjs.Dynamic) =>
+                    discard(sock.pause())
+                    discard(server.close())
+                    p.completeDiscard(Result.succeed((sock, client)))
+                }: sjs.Function1[sjs.Dynamic, Unit]
+            ))
+            discard(server.listen(
+                0,
+                "127.0.0.1",
+                { () =>
+                    val port = server.address().port
+                    client = net.connect(port, "127.0.0.1")
+                }: sjs.Function0[Unit]
+            ))
+        }.andThen(p.asInstanceOf[Fiber.Unsafe[(sjs.Dynamic, sjs.Dynamic), Abort[Closed]]].safe.get)
+    end openPair
+
+    private def buffer(bytes: Array[Byte]): sjs.Dynamic =
+        sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
+
+    /** An inert stand-in for a socket the leftover-only scenarios never drive: `onInboundClosedDuringRead` touches `upgrading` and the leftover
+      * queue, never the socket.
+      */
+    private def inertSocket(): sjs.Dynamic = sjs.Dynamic.literal()
+
+    "JsIoDriver STARTTLS upgrade-handoff" - {
+
+        "salvages a plaintext ReadPump chunk parked on a full inbound channel when detachForUpgrade races it" in {
+            val driver = JsIoDriver.init()
+            openPair().map { case (serverSock, clientSock) =>
+                val handle = JsHandle.init(serverSock, driver, Frame.internal)
+                val conn   = Connection.init(handle, driver, channelCapacity = 1)
+                conn.start()
+
+                val chunkA = Array[Byte](1, 2, 3, 4, 5)
+                val chunkB = Array[Byte](9, 8, 7)
+
+                def cleanup: Unit < Sync =
+                    Sync.defer {
+                        discard(clientSock.destroy())
+                        driver.closeHandle(handle)
+                        driver.close()
+                    }
+
+                discard(clientSock.write(buffer(chunkA)))
+
+                Sync.ensure(cleanup) {
+                    assertEventually(conn.inbound.size().getOrElse(-1) == 1 && handle.pendingRead.isDefined).andThen {
+                        discard(clientSock.write(buffer(chunkB)))
+
+                        // Chunk B's 'data' clears the pending read and offerToChannel parks its put (channel full, A unconsumed); the pump does NOT
+                        // re-arm while parked, so pendingRead stays empty.
+                        assertEventually(handle.pendingRead.isEmpty)
+                    }.andThen {
+                        handle.upgrading = true
+                        val buffered = conn.detachForUpgrade().poll() match
+                            case Present(Result.Success(v)) => v.eval
+                            case other                      => fail(s"detachForUpgrade did not settle synchronously: $other")
+                        val bufferedBytes: Array[Byte] =
+                            buffered.map(chunks => chunks.toArray.flatMap(_.toArray)).getOrElse(Array.emptyByteArray)
+                        assert(
+                            bufferedBytes.toSeq == chunkA.toSeq,
+                            s"detachForUpgrade must return the already-buffered chunk A, got ${bufferedBytes.toSeq}"
+                        )
+
+                        // The parked put's onComplete (which invokes onInboundClosedDuringRead) is a raw IOPromise callback that runs
+                        // synchronously inside inbound.close() on this single-threaded platform, so the leftover is staged by now.
+                        assert(handle.hasLeftover, "chunk B was dropped instead of salvaged into the handle's leftover queue")
+                        val leftover = handle.dequeueLeftover() match
+                            case Present(JsHandle.Leftover(buf, off, len)) => java.util.Arrays.copyOfRange(buf, off, off + len)
+                            case Absent                                    => Array.emptyByteArray
+                        assert(
+                            leftover.toSeq == chunkB.toSeq,
+                            s"salvaged leftover bytes ${leftover.toSeq} did not match chunk B ${chunkB.toSeq}"
+                        )
+                        succeed
+                    }
+                }
+            }
+        }
+
+        "stages the peer's first flight as leftover when the handle is upgrading (afterDetach replays it)" in {
+            val driver = JsIoDriver.init()
+            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal)
+            handle.upgrading = true
+            val bytes = Array[Byte](11, 22, 33)
+            driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(bytes))
+            assert(handle.hasLeftover, "an upgrading close must stage the read as leftover for the handshake, not drop it")
+            handle.dequeueLeftover() match
+                case Present(JsHandle.Leftover(buf, off, len)) =>
+                    assert(java.util.Arrays.copyOfRange(buf, off, off + len).toSeq == bytes.toSeq, "staged leftover bytes did not match")
+                case Absent => fail("upgrading close staged nothing")
+            end match
+        }
+
+        "discards the bytes when the handle is not upgrading (ordinary close, unchanged behavior)" in {
+            val driver = JsIoDriver.init()
+            val handle = new JsHandle(inertSocket(), HandleId.next(0), Frame.internal)
+            driver.onInboundClosedDuringRead(handle, Span.fromUnsafe(Array[Byte](44, 55)))
+            assert(!handle.hasLeftover, "an ordinary (non-upgrade) close must discard the read, not stage it as leftover")
+        }
+    }
+
+end JsIoDriverUpgradeHandoffDropTest

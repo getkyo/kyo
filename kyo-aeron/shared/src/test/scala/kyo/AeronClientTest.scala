@@ -1,7 +1,17 @@
 package kyo
 
+import kyo.ffi.Buffer
+import kyo.ffi.Ffi
+import kyo.internal.AeronAsyncPub
+import kyo.internal.AeronAsyncSub
+import kyo.internal.AeronBindings
+import kyo.internal.AeronClientHandle
+import kyo.internal.AeronDriverHandle
 import kyo.internal.AeronPlatform
+import kyo.internal.AeronPlatformTransport
+import kyo.internal.AeronPublication
 import kyo.internal.AeronRuntime
+import kyo.internal.AeronSubscription
 import kyo.internal.AeronTransport
 
 class AeronClientTest extends Test:
@@ -26,6 +36,38 @@ class AeronClientTest extends Test:
                 Sync.Unsafe.defer(AeronClient.Unsafe.fromRuntime(countingRuntime).safe)
             }
         )(client => Sync.Unsafe.defer(client.unsafe.close()))
+
+    // The client is a native handle with no Scala reference once abandoned, so the leaf
+    // asserts what the driver can show: after rounds of connects stopped while in flight, with every client the rounds
+    // did receive closed, the embedded driver still closes rather than waiting on a client that nobody closed. A driver
+    // that does not close ends this leaf as its timeout.
+    "connects stopped in flight leave a driver that still closes" in {
+        Path.run(Path.tempDir("kyo-aeron-client-stops")).map { root =>
+            val dir    = root / AeronDriver.mediaDirName
+            val rounds = 40
+            Scope.run {
+                withExternalDriver(dir) {
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(rounds)
+                        else
+                            for
+                                connecting <- Latch.init(1)
+                                fiber      <- Fiber.initUnscoped(
+                                    connecting.release.andThen(Abort.run[TopicException](AeronClient.connectUnscoped(dir)))
+                                )
+                                _ <- connecting.await
+                                _ <- fiber.interrupt
+                                r <- fiber.getResult
+                                _ <- r match
+                                    case Result.Success(Result.Success(client)) => Sync.Unsafe.defer(client.unsafe.close())
+                                    case _                                      => Kyo.unit
+                            yield Loop.continue
+                            end for
+                    }
+                }
+            }.map(stopped => assert(stopped == rounds))
+        }
+    }
 
     "connect + single Topic.run(client) round-trip: received == Chunk(1L,2L)" in {
         Path.run(Path.tempDir("kyo-aeron-client-l1")).map { root =>
@@ -163,6 +205,71 @@ class AeronClientTest extends Test:
             val escaped: AeronClient = Scope.run(AeronClient.connect(Path("/dev/shm", "never-runs")))
         """)
         succeed
+    }
+
+    // Every other method is unused by this reproduction: the caller is interrupted at the connect join before any transport op.
+    final private class FakeBindings(
+        connectFiber: Promise.Unsafe[Ffi.Handle[AeronClientHandle], Any],
+        onConnect: () => Unit,
+        closed: java.util.concurrent.atomic.AtomicBoolean
+    ) extends AeronBindings:
+        def clientConnect(dir: String)(using AllowUnsafe): Fiber.Unsafe[Ffi.Handle[AeronClientHandle], Any] =
+            onConnect()
+            connectFiber
+        def clientClose(client: Ffi.Handle[AeronClientHandle])(using AllowUnsafe): Unit = closed.set(true)
+        def driverStart(dir: String, clientLivenessNs: Long, publicationUnblockNs: Long)(using
+            AllowUnsafe
+        ): Fiber.Unsafe[Ffi.Handle[AeronDriverHandle], Any]                             = ???
+        def driverClose(driver: Ffi.Handle[AeronDriverHandle])(using AllowUnsafe): Unit = ???
+        def asyncAddPublication(client: Ffi.Handle[AeronClientHandle], uri: String, streamId: Int)(using
+            AllowUnsafe
+        ): Maybe[Ffi.Handle[AeronAsyncPub]]                                                                                  = ???
+        def asyncAddPublicationPoll(async: Ffi.Handle[AeronAsyncPub])(using AllowUnsafe): Long                               = ???
+        def asyncAddPublicationGet(async: Ffi.Handle[AeronAsyncPub])(using AllowUnsafe): Maybe[Ffi.Handle[AeronPublication]] = ???
+        def asyncAddPublicationFree(async: Ffi.Handle[AeronAsyncPub])(using AllowUnsafe): Unit                               = ???
+        def asyncAddPublicationErrCode(async: Ffi.Handle[AeronAsyncPub])(using AllowUnsafe): Int                             = ???
+        def asyncAddPublicationErrMsg(async: Ffi.Handle[AeronAsyncPub])(using AllowUnsafe): Ffi.Borrowed[String]             = ???
+        def publicationIsConnected(pub: Ffi.Handle[AeronPublication])(using AllowUnsafe): Int                                = ???
+        def publicationOffer(pub: Ffi.Handle[AeronPublication], buffer: Buffer[Byte], length: Int)(using AllowUnsafe): Long  = ???
+        def publicationMaxMessageLength(pub: Ffi.Handle[AeronPublication])(using AllowUnsafe): Int                           = ???
+        def publicationClose(pub: Ffi.Handle[AeronPublication])(using AllowUnsafe): Unit                                     = ???
+        def asyncAddSubscription(client: Ffi.Handle[AeronClientHandle], uri: String, streamId: Int)(using
+            AllowUnsafe
+        ): Maybe[Ffi.Handle[AeronAsyncSub]]                                                                                    = ???
+        def asyncAddSubscriptionPoll(async: Ffi.Handle[AeronAsyncSub])(using AllowUnsafe): Long                                = ???
+        def asyncAddSubscriptionGet(async: Ffi.Handle[AeronAsyncSub])(using AllowUnsafe): Maybe[Ffi.Handle[AeronSubscription]] = ???
+        def asyncAddSubscriptionFree(async: Ffi.Handle[AeronAsyncSub])(using AllowUnsafe): Unit                                = ???
+        def asyncAddSubscriptionErrCode(async: Ffi.Handle[AeronAsyncSub])(using AllowUnsafe): Int                              = ???
+        def asyncAddSubscriptionErrMsg(async: Ffi.Handle[AeronAsyncSub])(using AllowUnsafe): Ffi.Borrowed[String]              = ???
+        def subscriptionIsConnected(sub: Ffi.Handle[AeronSubscription])(using AllowUnsafe): Int                                = ???
+        def subscriptionPoll(sub: Ffi.Handle[AeronSubscription], dst: Buffer[Byte], dstCap: Int)(using AllowUnsafe): Long      = ???
+        def subscriptionClose(sub: Ffi.Handle[AeronSubscription])(using AllowUnsafe): Unit                                     = ???
+        def hasClientError(client: Ffi.Handle[AeronClientHandle])(using AllowUnsafe): Int                                      = ???
+        def clientErrorMsg(client: Ffi.Handle[AeronClientHandle])(using AllowUnsafe): Ffi.Borrowed[String]                     = ???
+        def clientErrorCode(client: Ffi.Handle[AeronClientHandle])(using AllowUnsafe): Int                                     = ???
+        def testInjectError(client: Ffi.Handle[AeronClientHandle], errcode: Int, errmsg: String)(using AllowUnsafe): Unit      = ???
+    end FakeBindings
+
+    // Deterministic via the seam: a fake binding gates the connect fiber and the interrupt is registered on it via onComplete (LIFO before the resume).
+    "an interrupt landing at the connect join closes the connected client" in {
+        val closed        = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val connectCalled = new java.util.concurrent.atomic.AtomicBoolean(false)
+        for
+            connectFiber <- Sync.Unsafe.defer(Promise.Unsafe.init[Ffi.Handle[AeronClientHandle], Any]())
+            fake = new FakeBindings(connectFiber, () => connectCalled.set(true), closed)
+            fiber <- Fiber.initUnscoped(Scope.run(
+                Scope.acquireRelease(AeronPlatformTransport.externalWith("/fake", fake))(rt =>
+                    Sync.Unsafe.defer(rt.close())
+                ).andThen(Async.never)
+            ))
+            _         <- assertEventually(Sync.defer(connectCalled.get()))
+            _         <- assertEventually(connectFiber.safe.waiters.map(_ >= 1))
+            _         <- connectFiber.safe.onComplete(_ => fiber.interrupt.unit)
+            _         <- Sync.Unsafe.defer(connectFiber.completeDiscard(Result.succeed(Ffi.Handle.wrap[AeronClientHandle](new AnyRef))))
+            _         <- fiber.getResult
+            wasClosed <- Abort.run[Timeout](Async.timeout(1.second)(assertEventually(Sync.defer(closed.get())))).map(_.isSuccess)
+        yield assert(wasClosed, "the connected client was never closed after the connect join was interrupted")
+        end for
     }
 
 end AeronClientTest

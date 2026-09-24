@@ -244,9 +244,11 @@ import kyo.*
 case class HttpResponse(status: Int, body: Span[Byte])
 
 val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
-val empty: Span[Int]  = Span.empty[Int]
+val empty: Span[Int]  = Span.empty
 val mapped: Span[Int] = bytes.map(b => b.toInt * 2)
 ```
+
+`Span.empty` takes its element type from the expected type and allocates nothing: every call for a class returns the same cached array. Operations that create a `Span` from nothing (`apply`, `from`, `fill`, `tabulate`) or produce a new element type (`map`, `flatMap`, `collect`) take a `ShallowTag` for the element type, which the compiler derives for any concrete type. Operations that only copy existing elements (`slice`, `filter`, `take`, `reverse`, `partition`, ...) take no evidence and allocate arrays of the source's runtime class. Generic code that creates spans carries `(using ShallowTag[A])`.
 
 > **Caution:** `Span` is NOT a `Seq` and does not extend Scala's collection hierarchy. You cannot pass a `Span[A]` where a `Seq[A]` is expected. When you need `Seq` compatibility, use `Chunk`.
 
@@ -675,9 +677,9 @@ When building DSLs around records, you may need to prevent Scala from merging fi
 
 ## Type identity at runtime
 
-Effect handlers, heterogeneous maps, and runtime introspection all need a way to identify types after erasure. `kyo-data` provides two complementary tags: `Tag[A]` (full generic-type identity, used by every Kyo effect) and `ConcreteTag[A]` (union/intersection-aware but no generics). The companion `TypeMap[+A]` is a heterogeneous map keyed by `Tag`.
+Effect handlers, heterogeneous maps, and runtime introspection all need a way to identify types after erasure. `kyo-data` provides three tags: `Tag[A]` (full generic-type identity, used by every Kyo effect), `ConcreteTag[A]` (union/intersection-aware but no generics), and `ShallowTag[A]` (the erased runtime class, used to allocate arrays). The companion `TypeMap[+A]` is a heterogeneous map keyed by `Tag`.
 
-`Tag` and `ConcreteTag` are siblings with overlapping names but different jobs: `Tag` handles full generic types, `ConcreteTag` handles unions and intersections but not generic types. The "Tag vs ConcreteTag" section below tells you which to reach for.
+The three have overlapping names but different jobs: `Tag` handles full generic types, `ConcreteTag` checks membership in unions and intersections but refuses generic types, and `ShallowTag` exists for every concrete type but knows only its outer class. The "Choosing a tag" section below tells you which to reach for.
 
 ### Compile-time-derived tags
 
@@ -721,9 +723,29 @@ val arr: Array[Int] = ConcreteTag.newArray[Int](4)
 
 `ConcreteTag.Element` is the sealed runtime representation: `Union`, `Intersection`, `LiteralTag`, and the primitive cases (`IntTag`, `LongTag`, `DoubleTag`, `FloatTag`, `ByteTag`, `ShortTag`, `CharTag`, `BooleanTag`), plus `UnitTag`, `AnyValTag`, and `NothingTag`. Most user code does not pattern-match on these directly; the union and intersection types are introspected through the `Element` cases when needed.
 
-### Tag vs ConcreteTag: when to use which
+### Array element tags
 
-Both `Tag` and `ConcreteTag` identify types at runtime. Use `Tag` for generic types (`Tag[List[Int]]`, `Tag[Result[E, A]]`) and for effect-handler-style code where union/intersection reasoning is bundled into Kyo's effect machinery. Use `ConcreteTag` specifically when you need to check membership in a union or intersection at runtime and the types involved are non-generic (`ConcreteTag[Timeout | BadCredentials]`). `Result.flatMapError` requires `ConcreteTag` rather than `Tag` for exactly that reason.
+When code only needs to allocate arrays of `A`, `ShallowTag[A]` is enough. It holds the class Scala erases `A` to, so `ShallowTag[List[Int]]` holds `List`, `ShallowTag[Duration]` holds the primitive `long`, and `ShallowTag[Int | String]` holds `Object`. Arrays it allocates have exactly the runtime class `new Array[A]` gives, and derivation is a compile-time class constant. It is the evidence `Span` takes.
+
+```scala
+import kyo.*
+
+val longs: Array[Long]             = ShallowTag[Long].newArray(4)
+val maybes: Array[Maybe[Int]]      = ShallowTag[Maybe[Int]].newArray(2)
+val none: Array[String]            = ShallowTag[String].emptyArray
+val sameEmpty: Boolean             = none eq ShallowTag[String].newArray(0) // true
+val erased: Class[?]               = ShallowTag[Maybe[Int]].erasedClass
+```
+
+Zero-length arrays are cached per class, so `emptyArray` and `newArray(0)` allocate at most once per class. On the JVM the cache does not keep classes from unloading.
+
+`accepts` and `unapply` test a value against the erased class, as `ClassTag` does: `case tag(a) =>` narrows a value to `A` when it is an instance of that class.
+
+> **Caution:** The membership check is as shallow as the tag. A `List[String]` passes for `ShallowTag[List[Int]]`, and every value passes for a union that erases to `Object`. Use `ConcreteTag` when membership must be exact.
+
+### Choosing a tag
+
+Use `Tag` for generic types (`Tag[List[Int]]`, `Tag[Result[E, A]]`) and for effect-handler-style code where union/intersection reasoning is bundled into Kyo's effect machinery. Use `ConcreteTag` specifically when you need to check membership in a union or intersection at runtime and the types involved are non-generic (`ConcreteTag[Timeout | BadCredentials]`). `Result.flatMapError` requires `ConcreteTag` rather than `Tag` for exactly that reason. Use `ShallowTag` when the only runtime need is allocating arrays of the type, as `Span` does.
 
 ### Heterogeneous maps
 

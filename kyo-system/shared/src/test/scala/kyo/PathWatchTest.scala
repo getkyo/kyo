@@ -38,9 +38,14 @@ class PathWatchTest extends FileSystemWatchTestSuite:
     ) extends FileSystem.Read[Sync], FileSystem.Watch:
         export delegate.{isDirectory as _, list as _, *}
 
+        /** How many times a directory check answered "not a directory": the fence a leaf needs before it restores the root,
+          * since a restore that lands before the scan looked would leave the scan nothing to invalidate on.
+          */
+        val notDirectoryReports = new java.util.concurrent.atomic.AtomicInteger(0)
+
         override def isDirectory(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
             rootIsDirectory.get.map {
-                case false => false
+                case false => Sync.defer(notDirectoryReports.incrementAndGet()).andThen(false)
                 case true  => delegate.isDirectory(path)
             }
 
@@ -680,6 +685,8 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                             fs.openWatcher(root, WatchOptions()).map { watcher =>
                                 Fiber.initUnscoped(Scope.run(watcher.events.run)).map { fiber =>
                                     rootIsDirectory.set(false).andThen(clock.advance(10.millis)).andThen {
+                                        assertEventually(Sync.defer(fs.notDirectoryReports.get() > 0))
+                                    }.andThen {
                                         rootIsDirectory.set(true).andThen(delegate.write(
                                             root / "later",
                                             "later",

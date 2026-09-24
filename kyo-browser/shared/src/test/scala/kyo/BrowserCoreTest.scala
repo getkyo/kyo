@@ -1152,7 +1152,8 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Browser critical methods + describe ----
 
-    /** Helper: navigates to Chrome's localhost devtools JSON endpoint (which is a real http://localhost URL), then replaces the body with
+    /** Helper: navigates to Chrome's devtools JSON endpoint (a real http URL, on 127.0.0.1 for the reason given on
+      * [[BrowserTest.withBrowserOnLocalhost]]), then replaces the body with
       * the given HTML so we exercise selectors against an injected DOM while still benefiting from a real keyboard event pipeline (keyboard
       * events don't fire reliably on `data:` URLs).
       */
@@ -1161,7 +1162,7 @@ class BrowserCoreTest extends BrowserTest:
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         SharedChrome.init.map { url =>
             val port    = url.split(":")(2).split("/")(0)
-            val httpUrl = s"http://localhost:$port/json/version"
+            val httpUrl = s"http://127.0.0.1:$port/json/version"
             val escaped = html.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
             Browser.run(url) {
                 Browser.goto(httpUrl).andThen {
@@ -1570,7 +1571,7 @@ class BrowserCoreTest extends BrowserTest:
     // setCookie with a non-default `path` round-trips through Browser.cookies.
     "setCookie with a non-default path round-trips into Browser.cookies" in {
         withBrowserOnLocalhost {
-            Browser.setCookie("custompath", "v1", "localhost", path = "/json").andThen {
+            Browser.setCookie("custompath", "v1", "127.0.0.1", path = "/json").andThen {
                 Browser.cookies.map { cs =>
                     cs.find(_.name == "custompath") match
                         case Some(c) =>
@@ -1590,12 +1591,12 @@ class BrowserCoreTest extends BrowserTest:
     // deleteCookie with explicit domain removes the cookie scoped to that domain.
     "deleteCookie with an explicit domain removes the cookie" in {
         withBrowserOnLocalhost {
-            Browser.setCookie("explicit", "v", "localhost").andThen {
+            Browser.setCookie("explicit", "v", "127.0.0.1").andThen {
                 Browser.cookies.map { cs =>
                     assert(cs.exists(_.name == "explicit"), s"expected 'explicit' to exist after setCookie: ${cs.map(_.name)}")
                 }.andThen {
                     // Delete via explicit-domain branch (Browser.scala:1457-1462): domain.nonEmpty → uses domain= param.
-                    Browser.deleteCookie("explicit", domain = "localhost").andThen {
+                    Browser.deleteCookie("explicit", domain = "127.0.0.1").andThen {
                         Browser.cookies.map { cs =>
                             assert(
                                 !cs.exists(_.name == "explicit"),

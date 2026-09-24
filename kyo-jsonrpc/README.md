@@ -46,7 +46,7 @@ val program: AddResp < (Async & Scope & Abort[JsonRpcError | Closed]) =
 end program
 ```
 
-The handler closes automatically when the scope exits. The dispatch fiber is interrupted, in-flight responses fail with `Closed`, and the transport's `close` runs.
+The handler closes automatically when the scope exits. The dispatch fiber is interrupted, a registered in-flight request fails with `JsonRpcLifecycleError(Close)` (one not yet registered fails with `Closed`), and the transport's `close` runs.
 
 ### Scoped vs unscoped lifecycle
 
@@ -230,7 +230,7 @@ val drainSlowly: Unit < (Async & Scope) =
 end drainSlowly
 ```
 
-The no-arg `close` is identical to `closeNow`: zero grace period, in-flight requests fail with `Closed`. The `close(gracePeriod)` variant waits up to `gracePeriod` for in-flight requests to drain before forcing.
+The no-arg `close` is identical to `closeNow`: zero grace period. A request already registered when the handler closes fails with `JsonRpcLifecycleError(Close)`; one issued after the close, or not yet registered, fails with `Closed`. The `close(gracePeriod)` variant waits up to `gracePeriod` for in-flight requests to drain before forcing.
 
 ### Progress-bearing requests
 

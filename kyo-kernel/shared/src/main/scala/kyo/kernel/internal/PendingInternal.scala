@@ -1,0 +1,209 @@
+package kyo.kernel.internal
+
+import kyo.Chunk
+import kyo.Frame
+import kyo.Maybe
+import kyo.Tag
+import kyo.kernel.<
+import kyo.kernel.Arrow
+import kyo.kernel.ArrowEffect
+import kyo.kernel.ContextEffect
+import kyo.kernel.Effect
+import language.implicitConversions
+import scala.annotation.publicInBinary
+
+/** One node of a suspended computation, the reification of a single combinator.
+  *
+  * The nodes are abstract classes so each construction site implements the members anonymously and keeps its own types, which lets a node
+  * hold a primitive input without boxing it.
+  */
+sealed trait Pending[+A, -S] extends Kyo[A, S]:
+    def frame: Frame
+end Pending
+
+object Pending:
+
+    /** A value with the continuations waiting on it, reifying the application of a continuation rather than running it here.
+      *
+      * Two continuation slots rather than one because a composition arrives as a pair often enough to be worth storing flat: a caller
+      * holding an `Arrow.Chain` hands its links over separately and one node carries both, instead of a node plus the chain. A site with
+      * only one continuation puts `Arrow.id` in the other slot.
+      */
+    abstract class Defer[A, B, C, -S] @publicInBinary private[kyo] () extends Pending[C, S]:
+        Debugger.onAlloc(this)
+
+        def value: A < S
+        def contA: Arrow[A, B, S]
+        def contB: Arrow[B, C, S]
+
+        override def toString =
+            def slot(a: Arrow[?, ?, ?]): String = if a eq this then s"this(${frame.callSite})" else short(a)
+            s"Defer(${short(value)}, ${slot(contA)}, ${slot(contB)})"
+    end Defer
+
+    abstract class DeferWith[A, B, -S] extends Defer[A, B, B, S] with Arrow.Transform[A, B, S]:
+        def contA = this
+        def contB = Arrow.id
+
+    /** An operation waiting for a handler to answer it.
+      */
+    sealed abstract class Suspend[E <: Effect, A, B, S] extends Pending[B, S]:
+        Debugger.onAlloc(this)
+
+        def tag: Tag[E]
+        def cont: Arrow[A, B, S]
+
+        /** This request on its own, as the computation that raises it again: what a masking region's clause is handed in place of an input it
+          * cannot interpret.
+          */
+        private[kyo] def reraise: A < E
+
+        /** The continuation for an answer that has to re-enter regions the evaluator has already left.
+          *
+          * Applied to a computation, it runs it where the clause is and only the settled answer crosses: an effect the answer performs is the
+          * clause's handler's to answer, not one of the regions being crossed into. Applied to a settled answer, it parks a slice carrying the
+          * answer, this suspension's own continuation and `resume`, plus the snapshot of regions to reinstall before it runs again.
+          *
+          * A computation meant instead to be delivered as data, spliced in under those regions, is nested first; nested, it settles here and
+          * takes the second path. That is the only way a computation reaches the interior regions, and it must be asked for. Only `cont` is
+          * involved, so a context read crossing back to the region that masked it works as readily as an arrow operation crossing to its handler.
+          */
+        private[kyo] def crossing[C](entries: Stack.Snapshot, resume: Arrow[B, C, S]): Arrow[A, C, S] =
+            val kc = cont
+            new Arrow.Step[A, C, S]:
+                def frame                                                    = Frame.internal
+                override def apply[D, S3](v: A < S3, cont2: Arrow[C, D, S3]) =
+                    v match
+                        case p: Pending[A, S3] @unchecked => Effect.defer(p, this, cont2)
+                        case _                            =>
+                            cont2(
+                                Park(
+                                    Effect.defer(v, kc, resume).asInstanceOf[Any < Any],
+                                    entries
+                                ),
+                                Arrow.id
+                            )
+            end new
+        end crossing
+
+        override def toString: String =
+            s"Kyo(${tag.show}, ${frame.callSite})"
+    end Suspend
+
+    abstract class SuspendArrow[I[_], O[_], E <: ArrowEffect[I, O], A, B, S] extends Suspend[E, O[A], B, S]:
+        self =>
+        def input: I[A]
+
+        private[kyo] def reraise: O[A] < E =
+            new SuspendArrow[I, O, E, A, O[A], E]:
+                def frame = self.frame
+                def tag   = self.tag
+                def input = self.input
+                def cont  = Arrow.id
+    end SuspendArrow
+
+    abstract class SuspendArrowWith[I[_], O[_], E <: ArrowEffect[I, O], State, A, S]
+        extends SuspendArrow[I, O, E, State, A, S] with Arrow.Transform[O[State], A, S]
+
+    /** A suspended [[kyo.kernel.ContextEffect]] read.
+      *
+      * `default` present is the defaulted form, which is why such a read keeps the effect out of its row: no binding is required.
+      */
+    abstract class SuspendContext[State, E <: ContextEffect[State], A, S] extends Suspend[E, State, A, S]:
+        self =>
+        def default: Maybe[State]
+
+        private[kyo] def reraise: State < E =
+            new SuspendContext[State, E, State, E]:
+                def frame   = self.frame
+                def tag     = self.tag
+                def default = self.default
+                def cont    = Arrow.id
+    end SuspendContext
+
+    abstract class SuspendContextWith[State, E <: ContextEffect[State], A, S]
+        extends SuspendContext[State, E, A, S] with Arrow.Transform[State, A, S]
+
+    def handle[State, E <: Effect, A, B, S](v: A < (E & S), handler: Handler.ArrowHandler[State, E, A, B, S], state: State): B < S =
+        v match
+            case kyo: Pending[A, E & S] @unchecked =>
+                val h  = handler
+                val st = state
+                new HandleArrow[State, E, A, B, B, S]:
+                    def frame   = Frame.internal
+                    def value   = kyo
+                    def handler = h
+                    def state   = st
+                    def cont    = Arrow.id
+                end new
+            case _ =>
+                handler.onDone(state, Nested.unnest[A](v))
+
+    /** A region entry: a computation together with the handler installed over it.
+      */
+    sealed abstract class Handle[E <: Effect, A, C, -S] extends Pending[C, S]:
+        Debugger.onAlloc(this)
+
+        def value: A < (E & S)
+        def handler: Handler[E, ?, S]
+    end Handle
+
+    abstract class HandleArrow[State, E <: Effect, A, B, C, -S] extends Handle[E, A, C, S]:
+        def handler: Handler[E, B, S]
+        def state: State
+        def cont: Arrow[B, C, S]
+
+        override def toString =
+            if cont.isInstanceOf[Arrow.Id[?]] then s"HandleArrow(${short(value)}, $handler, $state)"
+            else s"HandleArrow(${short(value)}, $handler, $state, ${if cont eq this then "this" else short(cont)})"
+    end HandleArrow
+
+    abstract class HandleArrowWith[State, E <: Effect, A, B, C, -S]
+        extends HandleArrow[State, E, A, B, C, S] with Arrow.Transform[B, C, S]
+
+    /** A region binding a [[kyo.kernel.ContextEffect]].
+      *
+      * Binding a value transforms nothing, so this carries no continuation of its own and the region's result is the computation's, which is
+      * why its two result parameters are the same type.
+      */
+    abstract class HandleContext[State, E <: ContextEffect[State], A, -S] extends Handle[E, A, A, S]:
+        def handler: Handler.ContextHandler[State, E, A, S]
+
+        override def toString = s"HandleContext(${short(value)}, $handler)"
+    end HandleContext
+
+    /** A node that hands the evaluator's own stack to its continuation, which is how a computation reads the regions standing around it. */
+    abstract class Snapshot[A, -S] extends Pending[A, S]:
+        Debugger.onAlloc(this)
+
+        def cont: Arrow[Stack, A, S]
+
+        override def toString = s"Snapshot(${frame.callSite})"
+    end Snapshot
+
+    abstract class SnapshotWith[A, -S] extends Snapshot[A, S] with Arrow.Transform[Stack, A, S]
+
+    /** A slice of computation set aside with what it needs to run again elsewhere, or later.
+      *
+      * `entries` is the snapshot of regions to reinstall before `value` resumes, so a parked slice carries
+      * its own context. `entryOwed`, aligned with `entries`, carries the remainders each region owed, so they re-own to the reinstalled
+      * region rather than flattening to the eval root. `releases` and `owedRemainders` are the evaluation's own lanes, owed below those
+      * regions, handed to the stack it resumes on. Empty `entries` is the degenerate case: nothing to reinstall, so the evaluator takes the
+      * eval lanes and continues in place.
+      */
+    final class Park[+A, -S](
+        val value: Any < Any,
+        val entries: Stack.Snapshot,
+        val releases: Stack.Releases = Stack.Releases.empty,
+        val owedRemainders: Chunk[Stack.Snapshot] = Chunk.empty,
+        val entryOwed: Chunk[Chunk[Stack.Snapshot]] = Chunk.empty
+    ) extends Pending[A, S]:
+        Debugger.onAlloc(this)
+
+        def frame = Frame.internal
+
+        override def toString =
+            s"Park(${short(value)}, regions = ${entries.regions})"
+    end Park
+
+end Pending

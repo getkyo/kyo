@@ -25,6 +25,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # Host detection, target validation, cross rejection and the arch assertion are shared with
 # kyo-net's build-boringssl.sh; see scripts/native-build-lib.sh for why they live in one place.
 . "$(cd "$here/../.." && pwd)/scripts/native-build-lib.sh"
+. "$(cd "$here/../.." && pwd)/scripts/fetch-lib.sh"
 
 native_resolve_target "${1:-}" \
     "linux-x86_64 linux-aarch64 linux-musl-x86_64 linux-musl-aarch64 darwin-x86_64 darwin-aarch64 windows-x86_64 windows-aarch64"
@@ -32,17 +33,37 @@ native_resolve_target "${1:-}" \
 AERON_VERSION="1.51.1"
 AERON_TAG="$AERON_VERSION"
 
-src="${AERON_SRC:-${TMPDIR:-/tmp}/kyo-aeron-src}"
-if [ ! -d "$src/.git" ]; then
-    rm -rf "$src"
-    git clone --depth 1 --branch "$AERON_TAG" https://github.com/real-logic/aeron.git "$src"
+dest="$here/../build/aeron/staged/$osArch"
+stamp="$dest/.stamp"
+# The stamp is written last, so its presence means a complete tree, and it names the pin, so a
+# version bump rebuilds rather than accepting whatever tree it finds. The arch assertion runs on
+# this path too: a restored cache is the one tree that never went through the build below, and
+# the staged name is a promise every consumer trusts.
+if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$AERON_TAG" ]; then
+    case "$os" in
+        windows) staged_lib="$dest/lib/aeron_driver_static.lib" ;;
+        *)       staged_lib="$dest/lib/libaeron_driver_static.a" ;;
+    esac
+    native_assert_arch "$staged_lib" "$os" "$arch"
+    echo "staged Aeron $AERON_VERSION for $osArch already at $dest"
+    exit 0
 fi
+
+src="${AERON_SRC:-${TMPDIR:-/tmp}/kyo-aeron-src}"
+clone_src() {
+    fetch_git_clone "$src" --depth 1 --branch "$AERON_TAG" https://github.com/real-logic/aeron.git
+}
+# `[ -d "$src/.git" ]` is not a usable-clone check: the default $src lives under $TMPDIR, which the OS
+# reaps to a skeleton (.git/ survives with HEAD, config and index gone), and every git command below
+# then fails with no way back. Probe the clone instead, as kyo-net's build-boringssl.sh does.
+git -C "$src" rev-parse --git-dir >/dev/null 2>&1 || clone_src
 # Re-point a reused cache to the pinned tag: a $src left over from a different AERON_TAG would
 # otherwise silently build the wrong Aeron version (then statically linked with no further check).
-git -C "$src" fetch --depth 1 origin tag "$AERON_TAG"
-git -C "$src" checkout -q "$AERON_TAG"
+# The checkout is forced because the same reaper removes aged files from the work tree, and an
+# unforced checkout of the tag already checked out restores none of them.
+{ git -C "$src" fetch --depth 1 origin tag "$AERON_TAG" && git -C "$src" checkout -q -f "$AERON_TAG"; } \
+    || { clone_src; git -C "$src" checkout -q -f "$AERON_TAG"; }
 
-dest="$here/../build/aeron/staged/$osArch"
 rm -rf "$dest"
 mkdir -p "$dest/lib" "$dest/include/aeron" "$dest/include/aeronmd"
 
@@ -115,6 +136,7 @@ cp "$src/aeron-driver/src/main/c/aeronmd.h" "$dest/include/aeronmd/"
 find "$src/aeron-driver/src/main/c" -name "*.h" ! -name "aeronmd.h" \
     -exec cp {} "$dest/include/aeronmd/" \;
 
+printf '%s\n' "$AERON_TAG" > "$stamp"
 echo "staged Aeron $AERON_VERSION for $osArch -> $dest"
 echo "  lib archive               $(basename "$staged_lib") ($(wc -c <"$staged_lib") bytes)"
 echo "  include/aeron/aeronc.h       $(test -f "$dest/include/aeron/aeronc.h" && echo present || echo MISSING)"

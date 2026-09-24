@@ -333,19 +333,26 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
                     i += 1
                 x
             }.map(m => if stop.get() then () else kyoBusyLoop(m))
-        val fiber    = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(kyoBusyLoop(0L)))
-        val observed = awaitTrue(2000)(Scheduler.get.busyFiberTraces().exists(_.fiberTrace.nonEmpty))
-        val report   = detectFiberReport(Chunk.empty)
+        val fiber = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(kyoBusyLoop(0L)))
+        // Waits are on this fiber, by the frame its body stamps, not on whichever worker happens to be busy: other suites'
+        // fibers share this scheduler, and on a starved host the fiber is off its worker between slices for longer than a
+        // sample. The bounds fire only on a defect; the fiber is busy until told to stop.
+        val observed = awaitTrue(30_000)(Scheduler.get.busyFiberTraces().exists(_.fiberTrace.contains("LeakCheckTest.scala:")))
+        var report   = Maybe.empty[String]
+        val reported = awaitTrue(30_000) {
+            report = detectFiberReport(Chunk.empty)
+            report.exists(_.contains("LeakCheckTest.scala:"))
+        }
         // Tear the loop down BEFORE asserting so a failed assertion never leaves the fiber pegging a worker.
         stop.set(true)
         val _       = Sync.Unsafe.evalOrThrow(fiber.interrupt)
-        val drained = awaitTrue(2000)(Scheduler.get.busyFiberTraces().isEmpty)
+        val drained = awaitTrue(30_000)(!Scheduler.get.busyFiberTraces().exists(_.fiberTrace.contains("LeakCheckTest.scala:")))
 
-        assert(observed, "an effectful busy IOTask fiber should surface a non-empty fiberTrace within 2s")
+        assert(observed, "an effectful busy IOTask fiber should surface this file's frame in its fiberTrace")
         val text = report.getOrElse("")
+        assert(reported, s"the leak report should name this test's fiber-body file:line; got:\n$text")
         assert(text.contains("kyo trace:"), s"the per-busy-worker dump should carry a 'kyo trace:' label; got:\n$text")
-        assert(text.contains("LeakCheckTest.scala:"), s"the dump should name this test's fiber-body file:line; got:\n$text")
-        assert(drained, "after teardown the scheduler should report no busy workers (no leaked fiber)")
+        assert(drained, "after teardown no worker should still carry this test's fiber (no leaked fiber)")
     }
 
     test("busy non-IOTask worker produces a dump with no kyo trace subsection") {

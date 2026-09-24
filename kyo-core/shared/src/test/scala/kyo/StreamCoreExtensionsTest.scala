@@ -739,24 +739,33 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
 
             "dynamic" - {
-                "broadcasted in unison".notJs in {
-                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
+                "broadcasted gives every element to the run that starts the original and a suffix to the rest" in {
                     {
                         Channel.initWith[Maybe[Int]](1024): channel =>
                             val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
                             lazyStream.broadcasted().map: reusableStream =>
                                 Latch.initWith(10): latch =>
-                                    Fiber.initUnscoped(Async.foreach(1 to 10)(_ => latch.release.andThen(reusableStream.run))).map:
-                                        runFiber =>
-                                            latch.await.andThen:
-                                                Fiber.initUnscoped(
-                                                    Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                                ).andThen:
-                                                    runFiber.get.map: resultChunks =>
-                                                        assert(
-                                                            resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
-                                                                resultChunks.head == (0 to 10)
-                                                        )
+                                    // Every run must be in flight before the latch opens, so the concurrency is explicit:
+                                    // the default is 2 x available processors and starves the latch below 5 cores.
+                                    Fiber.initUnscoped(
+                                        Async.foreach(1 to 10, concurrency = 10)(_ => latch.release.andThen(reusableStream.run))
+                                    ).map: runFiber =>
+                                        latch.await.andThen:
+                                            Fiber.initUnscoped(
+                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                            ).andThen:
+                                                runFiber.get.map: resultChunks =>
+                                                    // A run subscribes as it starts and the original starts with the first
+                                                    // subscription, so a run that gets there later can only have missed a
+                                                    // prefix. Unison across concurrent runs is broadcastDynamic's guarantee,
+                                                    // not this one.
+                                                    val all = Chunk.from(0 to 10)
+                                                    assert(resultChunks.size == 10, resultChunks.toString)
+                                                    assert(resultChunks.contains(all), resultChunks.toString)
+                                                    assert(
+                                                        resultChunks.forall(c => c == all.drop(all.size - c.size)),
+                                                        resultChunks.toString
+                                                    )
                     }
                 }
 
@@ -775,26 +784,22 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                                 assert(res1 == Result.Failure("message") && res2 == Result.Failure("message"))
                 }
 
-                "broadcastDynamic in unison".notJs in {
-                    assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 10 concurrent fibers")
-                    {
-                        Channel.initWith[Maybe[Int]](1024): channel =>
-                            val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
-                            lazyStream.broadcastDynamic().map: streamHub =>
-                                Latch.initWith(10): latch =>
+                "broadcastDynamic in unison" in {
+                    Channel.initWith[Maybe[Int]](1024): channel =>
+                        val lazyStream = channel.streamUntilClosed(256).collectWhile(v => v)
+                        lazyStream.broadcastDynamic().map: streamHub =>
+                            // Subscribing listens; running is what starts the original. Taking all ten subscriptions first is
+                            // what makes the unison exact, since nothing can be published while a listener is still missing.
+                            Kyo.foreach(1 to 10)(_ => streamHub.subscribe).map: streams =>
+                                Fiber.initUnscoped(Async.foreach(streams)(_.run)).map: runFiber =>
                                     Fiber.initUnscoped(
-                                        Async.foreach(1 to 10)(_ => latch.release.andThen(streamHub.subscribe.map(_.run)))
-                                    ).map: runFiber =>
-                                        latch.await.andThen:
-                                            Fiber.initUnscoped(
-                                                Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
-                                            ).andThen:
-                                                runFiber.get.map: resultChunks =>
-                                                    assert(
-                                                        resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
-                                                            resultChunks.head == (0 to 10)
-                                                    )
-                    }
+                                        Kyo.foreach(0 to 10)(i => channel.put(Present(i))).andThen(channel.put(Absent))
+                                    ).andThen:
+                                        runFiber.get.map: resultChunks =>
+                                            assert(
+                                                resultChunks.size == 10 && resultChunks.toSet.size == 1 &&
+                                                    resultChunks.head == (0 to 10)
+                                            )
                 }
 
                 "broadcastDynamic subscriptions should be empty when subscribing after original stream completes" in {
@@ -889,7 +894,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 }.unit
             }
 
-            "scope".ignore("groupedWithin does not yet close scoped resources with the same semantics as a plain stream run") in {
+            "scope" in {
                 class TestResource(var closes: Int = 0) extends java.io.Closeable:
                     def close() = closes += 1
 
@@ -975,8 +980,87 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }
         }
 
-        "Sync.ensure with take documents current behavior".ignore("Sync.ensure interaction with Stream.take is not yet specified") in {
-            ()
+        "Sync.ensure over an unbounded stream releases once when take ends it" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                stream.take(3).run.map { taken =>
+                    released.get.map { r =>
+                        assert(taken == Chunk(0, 1, 2) && r == 1)
+                    }
+                }
+            }
+        }
+
+        // The release is awaited rather than read when `run` returns: Scope.run's close hands its backlog to a
+        // detached fiber, so the finalizer runs, just not before the next effect.
+        "Scope.ensure over an unbounded stream releases once when take ends it" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                stream.take(5).run.map { taken =>
+                    assertEventually(released.get.map(_ == 1)).andThen {
+                        released.get.map { r =>
+                            assert(taken == Chunk(0, 1, 2, 3, 4), s"took $taken")
+                            assert(r == 1, s"released $r times")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Counting releases cannot catch a finalizer that fires at the wrong moment: elements and the
+        // finalizer share one log, pinning when the release happens relative to the last element.
+        "the finalizer of a taken stream runs after the last element it emitted" in {
+            AtomicRef.init(List.empty[String]).map { log =>
+                val stream = Stream:
+                    Sync.ensure(log.updateAndGet("finalized" :: _).unit):
+                        Loop(0) { i =>
+                            log.updateAndGet(i.toString :: _).andThen:
+                                Emit.valueWith(Chunk(i))(Loop.continue(i + 1))
+                        }
+                stream.take(5).run.map { emitted =>
+                    log.get.map { entries =>
+                        assert(emitted == Chunk(0, 1, 2, 3, 4))
+                        assert(entries == List("finalized", "4", "3", "2", "1", "0"), s"order was $entries")
+                    }
+                }
+            }
+        }
+
+        // `take` ends the emitter by discarding its continuation, so the scope leaves by its abnormal-exit path,
+        // which hands the release to a detached drain that nothing awaits (the decision recorded under #1723): the
+        // finalizer lands after `run` has returned. The finalizer suspends on a fiber join first so a round cannot
+        // win the race, and the rounds keep the pending marker stable.
+        "the Scope finalizer of a taken stream runs after the last element it emitted".pendingUntilFixed(
+            "by decision there is no backpressure on abnormal exit: the scope's release runs on a detached drain that the end of take does not await"
+        ) in {
+            val rounds = 50
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    AtomicRef.init(List.empty[String]).map { log =>
+                        val stream = Stream:
+                            Scope.run:
+                                Scope.ensure(
+                                    Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(log.updateAndGet("finalized" :: _).unit)
+                                ).andThen:
+                                    Loop(0) { j =>
+                                        log.updateAndGet(j.toString :: _).andThen:
+                                            Emit.valueWith(Chunk(j))(Loop.continue(j + 1))
+                                    }
+                        stream.take(5).run.map { emitted =>
+                            log.get.map { entries =>
+                                assert(emitted == Chunk(0, 1, 2, 3, 4))
+                                assert(entries == List("finalized", "4", "3", "2", "1", "0"), s"round $i: order was $entries")
+                                Loop.continue
+                            }
+                        }
+                    }
+            }
         }
 
         "takeWhile early exit with scope ensure" in {
@@ -989,6 +1073,548 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                     }
                 }
             }
+        }
+
+        "a resource-carrying remainder from a peel is consumable afterwards" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Emit.runFirst(stream.emit).map { (first, cont) =>
+                    Emit.run(cont(())).map { (rest, _) =>
+                        released.get.map { r =>
+                            assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        "a Sync.ensure remainder from a peel is consumable afterwards" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Emit.runFirst(stream.emit).map { (first, cont) =>
+                    released.get.map { atPeel =>
+                        Emit.run(cont(())).map { (rest, _) =>
+                            released.get.map { r =>
+                                assert(first == Maybe(Chunk(1)) && atPeel == 0 && rest == Chunk(Chunk(2)) && r == 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "a Sync.ensure stream zipped with another releases once after both are consumed" in {
+            AtomicInt.init(0).map { released =>
+                val left = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                left.zip(Stream.init(Seq("a", "b"))).run.map { pairs =>
+                    released.get.map { r =>
+                        assert(pairs == Chunk((1, "a"), (2, "b")) && r == 1)
+                    }
+                }
+            }
+        }
+
+        "splitAt hands out a rest stream that still owns its resource" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Scope.run:
+                        Scope.ensure(released.incrementAndGet.unit).andThen:
+                            Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                stream.splitAt(1).map { (head, rest) =>
+                    rest.run.map { tail =>
+                        released.get.map { r =>
+                            assert(head == Chunk(1) && tail == Chunk(2) && r == 1)
+                        }
+                    }
+                }
+            }
+        }
+
+        "a mapPar stream, which emits from inside the brackets that own its channels, can be peeled" in {
+            Stream.init(1 to 6).mapPar(2)(i => Sync.defer(i + 1)).splitAt(2).map { (head, rest) =>
+                rest.run.map { tail =>
+                    assert(head == Chunk(2, 3) && tail == Chunk(4, 5, 6, 7))
+                }
+            }
+        }
+
+        // The custody rule: a remainder handed out carries its brackets, and what it carries is owed to the
+        // scope enclosing the handler that handed it out. That scope drains the debt at its exit, so a rest is
+        // valid until the nearest enclosing region exits and a dropped rest releases there, not at the drop.
+        "a rest handed out through an enclosing handler's exit is refused afterwards" in {
+            AtomicInt.init(0).map { released =>
+                val stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Env.run(0)(stream.splitAt(1)).map { (head, rest) =>
+                    released.get.map { atExit =>
+                        Fiber.initUnscoped(rest.run).map(_.getResult).map { res =>
+                            assert(head == Chunk(1))
+                            assert(atExit == 1)
+                            assert(res.isPanic)
+                        }
+                    }
+                }
+            }
+        }
+
+        "rests dropped in a loop hold their resource until the enclosing scope exits, and Scope.run bounds that" in {
+            AtomicInt.init(0).map { released =>
+                def stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Env.run(0) {
+                    Kyo.foreach(1 to 3)(_ => stream.splitAt(1).map(_ => released.get.map(r => assert(r == 0))))
+                }.map { _ =>
+                    released.get.map { afterEnclosing =>
+                        assert(afterEnclosing == 3)
+                        Kyo.foreach(1 to 3)(i => Scope.run(stream.splitAt(1)).map(_ => released.get.map(r => assert(r == 3 + i)))).map {
+                            _ =>
+                                released.get.map(r => assert(r == 6))
+                        }
+                    }
+                }
+            }
+        }
+
+        "the finalizer of the side zip drops is told the remainder was discarded" in {
+            AtomicRef.init(Maybe.empty[Maybe[Result.Error[Any]]]).map { seen =>
+                val left = Stream:
+                    Sync.ensure(o => seen.set(Maybe(o))):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                Env.run(0)(left.zip(Stream.init(Seq("a", "b"))).run).map { pairs =>
+                    seen.get.map { outcome =>
+                        assert(pairs == Chunk((0, "a"), (1, "b")))
+                        assert(outcome.exists(_.exists(_.panic.exists(_.isInstanceOf[kyo.KyoException]))))
+                    }
+                }
+            }
+        }
+
+        "zip releases the side it drops when the other side ends" in {
+            AtomicInt.init(0).map { released =>
+                val left = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                left.zip(Stream.init(Seq("a", "b"))).run.map { pairs =>
+                    released.get.map { r =>
+                        assert(pairs == Chunk((0, "a"), (1, "b")))
+                        assert(r == 1)
+                    }
+                }
+            }
+        }
+
+        "a pipe that stops early releases the source it drops" in {
+            AtomicInt.init(0).map { released =>
+                val source = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+                source.into(Pipe.take[Int](2)).run.map { taken =>
+                    released.get.map { r =>
+                        assert(taken == Chunk(0, 1))
+                        assert(r == 1)
+                    }
+                }
+            }
+        }
+
+        // Across fibers, custody goes to whoever acts first on the remainder: a consumer that installed it
+        // keeps the resource until it completes, and the peeling scope's drain then finds nothing to do.
+        "a rest from splitAt run to completion in another fiber before the peeling scope exits releases once, with its value" in {
+            AtomicRef.init(Chunk.empty[Maybe[Result.Error[Any]]]).map { seen =>
+                Latch.init(1).map { finished =>
+                    Promise.init[Stream[Int, Async], Any].map { handoff =>
+                        val stream: Stream[Int, Async] = Stream:
+                            Sync.ensure(o => seen.updateAndGet(_.append(o))):
+                                Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                        for
+                            peeler <- Fiber.initUnscoped {
+                                Env.run(0) {
+                                    stream.splitAt(1).map { (head, rest) =>
+                                        handoff.complete(Result.succeed(rest)).andThen(finished.await).andThen(head)
+                                    }
+                                }
+                            }
+                            consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
+                            tail     <- consumer.get
+                            _        <- finished.release
+                            head     <- peeler.get
+                            outcomes <- seen.get
+                        yield
+                            assert(head == Chunk(1))
+                            assert(tail == Chunk(2))
+                            assert(outcomes == Chunk(Maybe.empty))
+                        end for
+                    }
+                }
+            }
+        }
+
+        // A stream combinator that spawns fibers ends the stream's extent without ending them. A fiber parked
+        // anywhere other than a channel put, which the channel's close wakes, keeps what it holds open after
+        // the consumer stopped. In each leaf below the gate is never opened, so only the stream's end
+        // interrupting the fiber can release it, which is what proves the fiber was parked rather than slow.
+        "mergeHaltingLeft releases the halted side's resource when the merged stream ends" in {
+            for
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                right: Stream[Int, Async] = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(9))(gate.await.andThen(Emit.value(Chunk(10))))
+                left: Stream[Int, Async] = Stream.init(Seq(1))
+                res <- left.mergeHaltingLeft(right).run
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
+            yield
+                assert(res.contains(1))
+                assert(r == 1, s"released $r without the gate ever opening")
+            end for
+        }
+
+        "merge releases a producer's resource when the consumer stops" in {
+            for
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                slow: Stream[Int, Async] = Stream:
+                    Sync.ensure(released.incrementAndGet.unit):
+                        Emit.valueWith(Chunk(9))(gate.await.andThen(Emit.value(Chunk(10))))
+                fast: Stream[Int, Async] = Stream.init(Seq(1))
+                res <- fast.merge(slow).take(1).run
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
+            yield
+                assert(res.size == 1)
+                assert(r == 1, s"released $r without the gate ever opening")
+            end for
+        }
+
+        // Element 1, the one the consumer takes, refuses to finish until the other three have acquired, so the
+        // stop is always observed with exactly three fibers holding rather than however many the scheduler
+        // happened to start.
+        "mapPar releases an element's resource when the consumer stops" in {
+            for
+                started  <- Latch.init(3)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                // one element per chunk, so each gets its own fiber
+                source: Stream[Int, Any] =
+                    Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
+                res <- source.mapPar(8) { v =>
+                    if v == 1 then started.await.andThen(v)
+                    else
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
+                }.take(1).run
+                _ <- assertEventually(released.get.map(_ == 3))
+                r <- released.get
+            yield
+                assert(res == Chunk(1))
+                assert(r == 3, s"released $r of the 3 element fibers that had acquired")
+            end for
+        }
+
+        // The consumer fiber is interrupted while one element fiber is joined and the others sit buffered in the
+        // output channel: the joined one is reached through the join link, and the buffered ones through the
+        // handler's cleanup, so none runs on unowned. The gate opens only on the leaf's way out: a fiber that was not
+        // interrupted stays parked on it and never counts as released, which the leaf timeout reports.
+        "mapPar interrupted with element fibers buffered interrupts every element fiber" in {
+            for
+                started  <- Latch.init(4)
+                released <- AtomicInt.init(0)
+                gate     <- Latch.init(1)
+                source: Stream[Int, Any] =
+                    Stream(Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.valueWith(Chunk(3))(Emit.value(Chunk(4))))))
+                consumer <- Fiber.initUnscoped {
+                    source.mapPar(8) { v =>
+                        Sync.ensure(released.incrementAndGet.unit):
+                            started.release.andThen(gate.await).andThen(v)
+                    }.run
+                }
+                _ <- started.await
+                _ <- consumer.interrupt
+                _ <- consumer.getResult
+                _ <- Sync.ensure(gate.release)(assertEventually(released.get.map(_ == 4)))
+            yield succeed
+            end for
+        }
+
+        "the rest of a public peel cannot be forked" in {
+            typeCheckFailure(
+                """
+                Stream.init(1 to 6).splitAtWith(2) { (head, rest) =>
+                    Fiber.initUnscoped(rest.run).map(_.get)
+                }
+                """
+            )("cannot leave the region that handed it out")
+        }
+
+        "the rest of a public peel cannot be handed to another fiber through a promise" in {
+            typeCheckFailure(
+                """
+                Promise.init[Stream[Int, Any], Any].map { handoff =>
+                    Stream.init(1 to 6).splitAtWith(2) { (head, rest) =>
+                        handoff.complete(Result.succeed(rest)).andThen(rest.run)
+                    }
+                }
+                """
+            )("NoEscape")
+        }
+
+        // A scope cannot tell a remainder nobody will resume from one someone
+        // still intends to resume, so it releases at its own exit: one release, and the late consumer refused.
+        "a rest from splitAt carried to another fiber is released at the peeling scope's exit, and consuming it there is refused" in {
+            AtomicInt.init(0).map { released =>
+                Latch.init(1).map { entered =>
+                    Latch.init(1).map { gate =>
+                        Promise.init[Stream[Int, Async], Any].map { handoff =>
+                            val stream: Stream[Int, Async] = Stream:
+                                Sync.ensure(released.incrementAndGet.unit):
+                                    Emit.valueWith(Chunk(1))(entered.release.andThen(gate.await).andThen(Emit.value(Chunk(2))))
+                            for
+                                peeler <- Fiber.initUnscoped {
+                                    Env.run(0) {
+                                        stream.splitAt(1).map { (head, rest) =>
+                                            handoff.complete(Result.succeed(rest)).andThen(entered.await).andThen(head)
+                                        }
+                                    }
+                                }
+                                consumer <- Fiber.initUnscoped(handoff.get.map(_.run))
+                                _        <- entered.await
+                                head     <- peeler.get
+                                atExit   <- released.get
+                                _        <- gate.release
+                                res      <- consumer.getResult
+                                total    <- released.get
+                            yield
+                                val rendered = res.toString
+                                assert(head == Chunk(1))
+                                assert(atExit == 1, s"the peeling scope released $atExit on its way out")
+                                assert(total == 1, s"released $total times in all")
+                                assert(res.isPanic, rendered)
+                                assert(rendered.contains("released when the scope that owned it ended"), rendered)
+                                assert(rendered.contains("Stream.splitAtWith"), rendered)
+                            end for
+                        }
+                    }
+                }
+            }
+        }
+
+        // A stream that closes over its own Scope.run anchors the resource to whichever evaluation runs it. A
+        // remainder handed across a fiber boundary loses the resource at the peeling fiber's exit (the drain
+        // is the leak backstop), and consuming it afterwards panics on the spent scope. A resource meant to
+        // outlive the peel keeps Scope in the row instead.
+        "a self-contained stream's resource does not survive a fiber hand-out" in {
+            AtomicInt.init(0).map { released =>
+                Latch.init(1).map { drainedGate =>
+                    val stream = Stream:
+                        Scope.run:
+                            Scope.ensure(released.incrementAndGet.unit.andThen(drainedGate.release)).andThen:
+                                Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                    Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
+                        // The backstop drain runs in the peeling fiber's teardown, after its result is
+                        // visible to a joiner, so the join is no happens-after edge for the release; the
+                        // latch the finalizer opens is.
+                        drainedGate.await.andThen:
+                            released.get.map { drained =>
+                                Fiber.initUnscoped(Emit.run(cont(()))).map(_.getResult).map { res =>
+                                    assert(first == Maybe(Chunk(1)))
+                                    assert(drained == 1)
+                                    assert(res.isPanic)
+                                }
+                            }
+                    }
+                }
+            }
+        }
+
+        "a Scope-rowed stream peeled across a fiber releases at the enclosing extent" in {
+            AtomicInt.init(0).map { released =>
+                val stream: Stream[Int, Scope & Sync] = Stream:
+                    Scope.ensure(released.incrementAndGet.unit).andThen:
+                        Emit.valueWith(Chunk(1))(Emit.value(Chunk(2)))
+                Scope.run {
+                    Fiber.initUnscoped(Emit.runFirst(stream.emit)).map(_.get).map { (first, cont) =>
+                        Emit.run(cont(())).map { (rest, _) =>
+                            released.get.map { open =>
+                                assert(first == Maybe(Chunk(1)) && rest == Chunk(Chunk(2)) && open == 0)
+                            }
+                        }
+                    }
+                }.map { inner =>
+                    released.get.map { r =>
+                        assert(r == 1)
+                        inner
+                    }
+                }
+            }
+        }
+    }
+
+    "a peeled rest under interrupts, timeouts, aborts and replay" - {
+
+        def bracketed(released: AtomicInt, done: Latch): Stream[Int, Sync] =
+            Stream:
+                Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
+                    Emit.valueWith(Chunk(1))(Emit.valueWith(Chunk(2))(Emit.value(Chunk(3))))
+
+        def unbounded(released: AtomicInt, done: Latch): Stream[Int, Sync] =
+            Stream:
+                Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
+                    Loop(0)(i => Emit.valueWith(Chunk(i))(Loop.continue(i + 1)))
+
+        "splitAtWith: the callback parks on a promise, then consumes the rest" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                entered  <- Latch.init(1)
+                gate     <- Promise.init[Unit, Any]
+                _        <- Fiber.initUnscoped(entered.await.andThen(gate.complete(Result.succeed(())).unit))
+                res      <- bracketed(released, done).splitAtWith(1) { (head, rest) =>
+                    entered.release.andThen(gate.get).andThen(rest.run.map(tail => (head, tail)))
+                }
+                r <- released.get
+            yield assert(res == (Chunk(1), Chunk(2, 3)) && r == 1, s"$res released $r")
+            end for
+        }
+
+        "splitAtWith: the fiber is interrupted while the callback is parked holding the rest" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                entered  <- Latch.init(1)
+                gate     <- Promise.init[Unit, Any]
+                fiber    <- Fiber.initUnscoped {
+                    bracketed(released, done).splitAtWith(1) { (head, rest) =>
+                        entered.release.andThen(gate.get).andThen(rest.run)
+                    }
+                }
+                _ <- entered.await
+                _ <- fiber.interrupt
+                _ <- done.await
+                r <- released.get
+            yield assert(r == 1, s"released $r")
+            end for
+        }
+
+        "splitAtWith: Async.timeout fires while the callback is parked holding the rest" in {
+            Clock.withTimeControl { control =>
+                for
+                    released <- AtomicInt.init(0)
+                    done     <- Latch.init(1)
+                    entered  <- Latch.init(1)
+                    gate     <- Promise.init[Unit, Any]
+                    fiber    <- Fiber.initUnscoped {
+                        Abort.run[Timeout] {
+                            Async.timeout(1.second) {
+                                bracketed(released, done).splitAtWith(1) { (head, rest) =>
+                                    entered.release.andThen(gate.get).andThen(rest.run)
+                                }
+                            }
+                        }
+                    }
+                    _   <- entered.await
+                    _   <- control.advance(2.seconds)
+                    res <- fiber.get
+                yield (res, released, done)
+            }.map { (res, released, done) =>
+                for
+                    _ <- done.await
+                    r <- released.get
+                yield assert(res.isFailure && r == 1, s"$res released $r")
+            }
+        }
+
+        "splitAtWith nested on the rest" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                res      <- bracketed(released, done).splitAtWith(1) { (h1, rest1) =>
+                    rest1.splitAtWith(1) { (h2, rest2) =>
+                        rest2.run.map(t => (h1, h2, t))
+                    }
+                }
+                r <- released.get
+            yield assert(res == (Chunk(1), Chunk(2), Chunk(3)) && r == 1, s"$res released $r")
+            end for
+        }
+
+        "splitAtWith: an abort inside the callback releases the rest once" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                res      <- Abort.run[String] {
+                    bracketed(released, done).splitAtWith(1) { (head, rest) =>
+                        Abort.fail("boom")
+                    }
+                }
+                r <- released.get
+            yield assert(res.failure.contains("boom") && r == 1, s"$res released $r")
+            end for
+        }
+
+        "splitAtWith under Choice: a second branch resuming the rest never runs the body against a released resource" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                seen     <- AtomicRef.init(Chunk.empty[Int])
+                stream = Stream:
+                    Sync.ensure(released.incrementAndGet.unit.andThen(done.release)):
+                        Emit.valueWith(Chunk(1)):
+                            released.get.map(r => seen.updateAndGet(_.append(r))).andThen(Emit.value(Chunk(2)))
+                res <- Abort.run[Closed] {
+                    Choice.run {
+                        stream.splitAtWith(1) { (head, rest) =>
+                            Choice.eval(1, 2).map(_ => rest.run)
+                        }
+                    }
+                }
+                r <- released.get
+                s <- seen.get
+            yield
+                assert(r == 1, s"released $r")
+                assert(s.forall(_ == 0), s"a branch ran the body after the release: observed $s, result $res")
+            end for
+        }
+
+        "Choice.runStream: no branch runs the body after another branch's completion released the bracket" in {
+            for
+                released <- AtomicInt.init(0)
+                seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                v = Sync.ensure(released.incrementAndGet.unit):
+                    Choice.eval(1, 2).map { n =>
+                        Choice.eval(n * 10, n * 10 + 1).map { m =>
+                            released.get.map(r => seen.updateAndGet(_.append((m, r))).andThen(m))
+                        }
+                    }
+                res <- Abort.run[Closed](Choice.runStream(v).run)
+                r   <- released.get
+                s   <- seen.get
+            yield
+                assert(r == 1, s"released $r")
+                assert(s.forall(_._2 == 0), s"a branch observed the release from inside the bracket: $s, result $res")
+            end for
+        }
+
+        "mapPar peeled and the rest dropped releases the source it was consuming" in {
+            for
+                released <- AtomicInt.init(0)
+                done     <- Latch.init(1)
+                head     <- unbounded(released, done).mapPar(2)(i => Sync.defer(i + 1)).splitAtWith(2) { (head, _) =>
+                    head
+                }
+                _ <- done.await
+                r <- released.get
+            yield assert(head == Chunk(1, 2) && r == 1, s"$head released $r")
+            end for
         }
     }
 

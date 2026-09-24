@@ -374,48 +374,8 @@ object PosixTestSockets:
             throw new kyo.test.TestCancelled("kqueue is macOS/BSD-only")
     end assumeKqueue
 
-    /** Cancel the test if io_uring is unavailable at the PRODUCTION ring depth.
-      *
-      * Probes at max(256, ioPoolSize*64) (the exact formula from IoUringDriver.scala), not depth 2. If io_uring_queue_init fails at that depth
-      * the gate cancels, so the gate never reports available when IoUringDriver.init would actually fail. The ring is closed immediately after
-      * the probe; no resources are leaked.
-      *
-      * Closes the probe-vs-driver-depth gap: a depth-2 probe succeeds in restricted environments where the production-depth ring fails. The
-      * specific failure mode is a container-level cgroup `io_uring.max` cap that limits the total number of io_uring entries a process may
-      * have in flight. A depth-2 ring stays under the cap; a depth-256 ring exceeds it and io_uring_queue_init returns ENOENT. The
-      * `--privileged` container flag does not lift this cgroup limit (it only relaxes seccomp); the gate must probe at the same depth the
-      * driver will use so that "gate passes" iff "driver init succeeds".
-      */
-    def assumeUring()(using Frame): Unit < Any =
-        if !PosixConstants.isLinux then
-            throw new kyo.test.TestCancelled("io_uring is Linux-only")
-        else
-            import AllowUnsafe.embrace.danger
-            val available =
-                try
-                    val uring = Ffi.load[IoUringBindings]
-                    val depth = math.max(256, kyo.net.ioPoolSize() * 64)
-                    val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
-                    val rc    = uring.io_uring_queue_init(depth, ring, 0)
-                    // io_uring_queue_init returns 0 on success or -errno on failure and does NOT set the global errno
-                    // (liburing returns the negated errno directly). Read the return value, not the captured errno: a
-                    // stale errno left by a prior syscall would spuriously report io_uring unavailable here.
-                    if rc != 0 then
-                        ring.close()
-                        false
-                    else
-                        uring.io_uring_queue_exit(ring)
-                        ring.close()
-                        true
-                    end if
-                catch case _: Throwable => false
-            if !available then
-                throw new kyo.test.TestCancelled(
-                    "io_uring unavailable at production depth on this kernel/runtime (needs Linux >= 5.6)"
-                )
-            end if
-        end if
-    end assumeUring
+    /** Cancel the test if io_uring is unavailable at the PRODUCTION ring depth. */
+    def assumeUring()(using Frame): Unit < Any = UringGate.assumeUring()
 
     /** Open a real temporary file, write `content`, and return (raw POSIX fd, backing File) where the fd is opened `O_RDONLY` through the
       * native [[PosixShimBindings.kyo_posix_open]] shim.

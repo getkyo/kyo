@@ -123,6 +123,13 @@ object DoltLite:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): Dolt < (Async & Abort[SqlException]) =
+        Scope.runUnowned(opened(url, config))
+
+    /** Builds a client on `url` under the ambient scope, for the backend factory to hand back.
+      *
+      * The row carries [[kyo.Scope]] because `Runtime.init` registers the pool's release against it as the pool is allocated.
+      */
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): Dolt < (Async & Abort[SqlException] & Scope) =
         // The engine is a compiled library published for some platforms and not others, so failing to reach it is
         // this backend being unavailable HERE rather than anything about the URL. Translated into the declared
         // failure type, since the loader raises outside it and would otherwise reach the caller as a panic.

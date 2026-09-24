@@ -4,6 +4,7 @@ import kyo.internal.*
 import kyo.internal.CdpTypes.*
 import kyo.internal.cdp.Accessibility
 import kyo.internal.cdp.PageDownload
+import kyo.kernel.ContextEffect
 import kyo.kernel.Isolate
 
 /** Drive a real browser (Chrome) from Kyo code.
@@ -2155,9 +2156,7 @@ object Browser:
             HoldStill.withFrozenPage {
                 Browser.use { tab =>
                     Scope.run {
-                        Scope.acquireRelease(BrowserEval.evalJs(injectJs)) { token =>
-                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
-                        }.andThen {
+                        BrowserEval.acquireJs(injectJs)(removeJs).andThen {
                             HoldStill.holdStillFrame {
                                 CdpBackend.captureScreenshot(
                                     tab.session,
@@ -2171,7 +2170,8 @@ object Browser:
 
     /** Applies a transparent default background for `body`'s duration when `enabled`. Sets
       * `Emulation.setDefaultBackgroundColorOverride` to `{r:0,g:0,b:0,a:0}` on enter and clears it on exit (success, failure, or
-      * interruption) via `Scope.acquireRelease`. A no-op when `enabled` is false.
+      * interruption). The override is on the browser before its reply arrives, so the clear is owed from the reply on: see
+      * [[kyo.internal.CdpBackend.acquire]]. A no-op when `enabled` is false.
       */
     private def withTransparentBackground[A, S](enabled: Boolean)(
         body: => A < (Browser & Abort[BrowserReadException] & S)
@@ -2180,18 +2180,13 @@ object Browser:
         else
             Env.use[BrowserTab] { tab =>
                 Scope.run {
-                    Scope.acquireRelease(
-                        CdpBackend.setDefaultBackgroundColorOverride(
-                            tab.session,
-                            SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
-                        )
+                    tab.session.acquire[SetDefaultBackgroundColorOverrideParams, Unit](
+                        "Emulation.setDefaultBackgroundColorOverride",
+                        SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
                     )(_ =>
-                        Browser.releaseHook(tab)(
-                            CdpBackend.setDefaultBackgroundColorOverride(
-                                tab.session,
-                                SetDefaultBackgroundColorOverrideParams(Absent)
-                            )
-                        )
+                        Abort.run[BrowserReadException](
+                            CdpBackend.setDefaultBackgroundColorOverride(tab.session, SetDefaultBackgroundColorOverrideParams(Absent))
+                        ).unit
                     ).andThen(body)
                 }
             }
@@ -2263,13 +2258,7 @@ object Browser:
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
-                    Scope.acquireRelease(
-                        MutationSettlement.afterAction {
-                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
-                                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
-                            )
-                        }(Absent)
-                    ) { _ =>
+                    val restore =
                         tab.viewportOverride.set(prior).andThen(
                             prior match
                                 case Present(vo) =>
@@ -2277,6 +2266,18 @@ object Browser:
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )
+                    // The override is owed its restore on this scope; the restore registers as the override's reply
+                    // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
+                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                        MutationSettlement.afterAction {
+                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                                tab.session.acquire[ViewportParams, Unit](
+                                    finalizer,
+                                    "Emulation.setDeviceMetricsOverride",
+                                    ViewportParams(width, height, deviceScaleFactor)
+                                )(_ => restore)
+                            )
+                        }(Absent)
                     }.andThen(body)
                 }
             }
@@ -2289,8 +2290,9 @@ object Browser:
       * the empty-string clear for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value) and is omitted when `Absent`;
       * `prefers-reduced-motion` is sent as `reduce` only when `reducedMotion = true` and is omitted otherwise. So a color-scheme-only
       * call leaves the page's real `prefers-reduced-motion` untouched, and `reducedMotion = false` means "do not emulate reduced
-      * motion", not "force no-preference". The override is cached on the tab and re-applied on exit via `Scope.acquireRelease` inside
-      * an inner `Scope.run`, so nested calls compose in LIFO order and the restore fires on success, failure, AND interruption. When no
+      * motion", not "force no-preference". The override is cached on the tab and its restore is owed to an inner `Scope.run` from the
+      * moment the override's reply arrives, so nested calls compose in LIFO order and the restore fires on success, failure, AND
+      * interruption, including an interruption at that reply. When no
       * prior override was active the restore clears all media emulation with an empty `Emulation.setEmulatedMedia` send, so the host's
       * real media values return rather than a forced override. The apply settles via `MutationSettlement.afterAction` so any
       * media-query re-layout has quiesced before `body` starts.
@@ -2304,17 +2306,7 @@ object Browser:
             val params = emulatedMediaParams(media.map(_.wire), colorScheme.map(_.wire), reducedMotion)
             Scope.run {
                 tab.emulationOverride.get.map { prior =>
-                    Scope.acquireRelease(
-                        MutationSettlement.afterAction {
-                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
-                                colorScheme.map(_.wire),
-                                media.map(_.wire),
-                                reducedMotion
-                            ))).andThen(
-                                CdpBackend.setEmulatedMedia(tab.session, params)
-                            )
-                        }(Absent)
-                    ) { _ =>
+                    val restore =
                         tab.emulationOverride.set(prior).andThen(
                             prior match
                                 case Present(s) =>
@@ -2327,6 +2319,18 @@ object Browser:
                                     // features list with empty media drops every prefers-* override back to the environment value.
                                     CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
                         )
+                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                        MutationSettlement.afterAction {
+                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
+                                colorScheme.map(_.wire),
+                                media.map(_.wire),
+                                reducedMotion
+                            ))).andThen(
+                                tab.session.acquire[SetEmulatedMediaParams, Unit](finalizer, "Emulation.setEmulatedMedia", params)(_ =>
+                                    restore
+                                )
+                            )
+                        }(Absent)
                     }.andThen(body)
                 }
             }
@@ -3027,9 +3031,7 @@ object Browser:
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.downloadPolicy.get.map { prior =>
-                    Scope.acquireRelease(
-                        setDownloadBehavior(Browser.DownloadBehavior.Allow, Present(toPath))
-                    ) { _ =>
+                    val restore =
                         tab.downloadPolicy.set(prior).andThen(
                             prior match
                                 case Present((behavior, p)) =>
@@ -3037,7 +3039,13 @@ object Browser:
                                 case Absent =>
                                     PageDownload.setDownloadBehavior(tab.session, Browser.DownloadBehavior.Deny.toInternal, Absent)
                         )
-                    }.andThen(body)
+                    recordDownloadPolicy(tab, Browser.DownloadBehavior.Allow, Present(toPath)).andThen(
+                        PageDownload.acquireDownloadBehavior(
+                            tab.session,
+                            Browser.DownloadBehavior.Allow.toInternal,
+                            Present(toPath)
+                        )(restore)
+                    ).andThen(body)
                 }
             }
         }
@@ -3056,6 +3064,15 @@ object Browser:
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
         Env.use[BrowserTab] { tab =>
+            recordDownloadPolicy(tab, behavior, toPath).andThen(
+                PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath)
+            )
+        }
+
+    private def recordDownloadPolicy(tab: BrowserTab, behavior: Browser.DownloadBehavior, toPath: Maybe[String])(using
+        Frame
+    ): Unit < (Sync & Abort[BrowserReadException]) =
+        locally {
             val validate: Unit < Abort[BrowserReadException] = toPath match
                 case Present(p) if !isAbsolutePath(p) =>
                     Abort.fail(BrowserInvalidArgumentException("setDownloadBehavior", s"toPath must be absolute, got '$p'"))
@@ -3074,13 +3091,11 @@ object Browser:
             // Cache write FIRST (post-validate), then issue the CDP call. Skip caching the "Deny + Absent" tear-down state because that
             // matches the implicit "no override active" semantics of Absent in the cache, keeping the restore-to-Absent path correct.
             validate.andThen {
-                val updateCache: Unit < Sync =
-                    if behavior == Browser.DownloadBehavior.Deny && toPath.isEmpty then tab.downloadPolicy.set(Absent)
-                    else tab.downloadPolicy.set(Present((behavior, toPath)))
-                updateCache.andThen(PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath))
+                if behavior == Browser.DownloadBehavior.Deny && toPath.isEmpty then tab.downloadPolicy.set(Absent)
+                else tab.downloadPolicy.set(Present((behavior, toPath)))
             }
         }
-    end setDownloadBehavior
+    end recordDownloadPolicy
 
     /** Subscribes to download events for the duration of `action`. `f` is invoked for each `Page.downloadWillBegin` /
       * `Page.downloadProgress` event observed on the current tab.
@@ -3790,26 +3805,26 @@ object Browser:
 
         /** Creates an isolate that gives each fork a cloned tab (same URL + storage).
           *
-          * Snapshot is captured in `capture`. Tab creation and restoration happen in `isolate` (inside `Scope.run`). `Env.run` strips the
-          * `Env[BrowserTab]` component of the opaque Browser type. The `Isolate.Keep` channel includes `Abort[BrowserReadException]` so
-          * typed Aborts from snapshot capture, child tab creation, snapshot restore, or the user computation flow through the Isolate ABI
-          * directly, without throw-tunneling.
+          * `capture` only reads the parent tab; the snapshot is taken in `isolate` as each fork begins.
+          * The forking scope is parked while its forks start, so the snapshot observes the parent tab as it
+          * stood at the fork. `Isolate.Keep` includes
+          * `Abort[BrowserReadException]` so typed Aborts from any phase (snapshot capture, child tab creation, restore, user computation)
+          * flow through the Isolate ABI directly, without throw-tunneling.
           */
         def clone(using Frame): Isolate[Browser, Async & Abort[BrowserReadException], Any] =
             new Isolate[Browser, Async & Abort[BrowserReadException], Any]:
-                type State        = (BrowserTab, BrowserSnapshot.BrowserSnapshot)
+                type State        = BrowserTab
                 type Transform[A] = A
-                def capture[A, S2](f: ((BrowserTab, BrowserSnapshot.BrowserSnapshot)) => A < S2)(using Frame) =
-                    Env.use[BrowserTab] { tab =>
-                        BrowserSnapshot.captureSnapshot(tab).map(snapshot => f((tab, snapshot)))
-                    }
-                def isolate[A, S2](state: (BrowserTab, BrowserSnapshot.BrowserSnapshot), v: A < (S2 & Browser))(using Frame) =
-                    val (parent, snapshot) = state
+                def capture[A, S2](f: BrowserTab => A < S2)(using Frame) =
+                    Env.use[BrowserTab](f)
+                def isolate[A, S2](state: BrowserTab, v: A < (S2 & Browser))(using Frame) =
                     Scope.run {
-                        BrowserTabSetup.createChildTab(parent).map { tab =>
-                            BrowserSnapshot.restoreSnapshot(tab, snapshot).andThen {
-                                // Reset activeIFrameLocal; handle is session-pinned to parent tab.
-                                activeIFrameLocal.let(Maybe.empty[IFrameHandle])(Env.run(tab)(v))
+                        BrowserSnapshot.captureSnapshot(state).map { snapshot =>
+                            BrowserTabSetup.createChildTab(state).map { tab =>
+                                BrowserSnapshot.restoreSnapshot(tab, snapshot).andThen {
+                                    // handle is session-pinned to parent tab.
+                                    activeIFrameLocal.let(Maybe.empty[IFrameHandle])(Env.run(tab)(v))
+                                }
                             }
                         }
                     }

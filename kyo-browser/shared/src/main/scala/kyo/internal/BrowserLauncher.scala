@@ -12,8 +12,9 @@ private[kyo] object BrowserLauncher:
     /** Launches a Chrome process and returns its CDP WebSocket URL.
       *
       * Uses Chrome's built-in `--remote-debugging-port=0` mode: Chrome picks a free port and writes the address to
-      * `${user-data-dir}/${devToolsActivePortFile}`, which we poll for. The process is spawned via `Command.spawn`, which registers it with
-      * the enclosing `Scope` for automatic termination. The user-data directory is created via `Path.tempDir` and removed on scope exit.
+      * `${user-data-dir}/${devToolsActivePortFile}`, which we poll for. The process is registered with the enclosing `Scope`, whose close
+      * terminates its whole process tree through [[terminateTree]]. The user-data directory is created via `Path.tempDir` and removed on
+      * scope exit, after the tree is gone.
       *
       * Chrome's stderr is inherited from the parent process (`Command.inheritStderr`). The OS forwards Chrome's diagnostic output directly
       * to the test runner's terminal, so nothing on the JVM/Native/Node side has to consume it, and the OS pipe never fills, eliminating
@@ -30,24 +31,20 @@ private[kyo] object BrowserLauncher:
 
     /** Best-effort recursive removal of the Chrome user-data temp directory.
       *
-      * Chrome's helper process tree (renderer / GPU / network service) self-terminates asynchronously after the parent kill and keeps
-      * writing into the user-data-dir until it does. Kill every process still bound to THIS dir first (matched by `killOrphans` on its
-      * unique name), then remove. `removeAll` is retried for the brief OS file-reaping window. Residual failures are swallowed so a leaked
-      * temp dir cannot fail a scope teardown.
+      * `removeAll` is retried for the brief OS file-reaping window. Residual failures are swallowed
+      * so a leaked temp dir cannot fail a scope teardown.
       */
     private def removeTmpDir(tmpDir: Path, removalSchedule: Schedule)(using Frame): Unit < Async =
-        tmpDir.name.fold(Kyo.unit)(name => killOrphans(pattern = name, command = "pgrep")).andThen {
-            Abort.run[FileSystemException] {
-                Retry[FileSystemException](removalSchedule)(Path.run(tmpDir.removeAll))
-            }.map {
-                case Result.Failure(err) =>
-                    // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
-                    // but the silent swallow makes debugging stuck test runs harder. Log so the cleanup decision is auditable.
-                    Log.warn(s"removeTmpDir: failed to remove $tmpDir after retry schedule: ${err.getMessage}")
-                case Result.Panic(ex) =>
-                    Log.warn(s"removeTmpDir: panicked removing $tmpDir: ${ex.getMessage}")
-                case Result.Success(_) => Kyo.unit
-            }
+        Abort.run[FileSystemException] {
+            Retry[FileSystemException](removalSchedule)(Path.run(tmpDir.removeAll))
+        }.map {
+            case Result.Failure(err) =>
+                // Leaked tmp dirs are not a hard failure (they are cleaned up by `killOrphans` next launch),
+                // but the silent swallow makes debugging stuck test runs harder. Log so the cleanup decision is auditable.
+                Log.warn(s"removeTmpDir: failed to remove $tmpDir after retry schedule: ${err.getMessage}")
+            case Result.Panic(ex) =>
+                Log.warn(s"removeTmpDir: panicked removing $tmpDir: ${ex.getMessage}")
+            case Result.Success(_) => Kyo.unit
         }
 
     /** Creates a fresh user-data temp directory for the Chrome process.
@@ -89,11 +86,73 @@ private[kyo] object BrowserLauncher:
                 BrowserSetupFailedException(s"failed to start ${config.executable}", ex)
             )
         } {
-            Command(args*).inheritStderr.spawn.map { proc =>
+            // Released by `terminateTree` rather than by `Command.spawn`'s own release, which kills the main process and
+            // returns: Chrome is a process tree, and the directory removal registered before this must not run while any
+            // of it is still alive. The spawn is the bracket's acquire, so the release registers in the step the process
+            // arrives and a stop cannot park between the two.
+            Scope.acquireRelease(Command(args*).inheritStderr.spawnUnscoped)(terminateTree).map { proc =>
                 BrowserLauncherPlatform.registerShutdownHook(proc).andThen(proc)
             }
         }
     end spawnChrome
+
+    /** Terminates the Chrome process tree and returns once none of it is left.
+      *
+      * Chrome is a tree: the main process, its zygotes, the GPU process, the network service, and the renderers. Killing the main
+      * process alone leaves the helpers to notice its death and exit on their own, a few milliseconds later, and until they do the
+      * GPU process and the network service still write into the user-data-dir: a removal that runs inside that window finds the
+      * directory re-created behind it. The helpers carry no `--user-data-dir` in their argv, so `killOrphans` cannot reach them
+      * either. The descendants are listed while the main process is alive, because its death re-parents them and they can no
+      * longer be found through it.
+      *
+      * The input feeds are stopped first, as `Command.spawn`'s release does: the process may have exited while a feed is still
+      * parked reading its own source. On a host without `pgrep` and `kill` (Windows) the listing is empty and only the main
+      * process is killed.
+      */
+    private[kyo] def terminateTree(proc: Process)(using Frame): Unit < Async =
+        Sync.Unsafe.defer(proc.unsafe.pid()).map { pid =>
+            descendants(pid).map { helpers =>
+                Sync.Unsafe.defer {
+                    proc.unsafe.stopInputFeeds()
+                    if proc.unsafe.isAlive() then proc.unsafe.destroyForcibly()
+                }.andThen(Kyo.foreachDiscard(helpers)(kill))
+                    .andThen(awaitExit(pid +: helpers))
+            }
+        }
+
+    private def descendants(pid: Long)(using Frame): Chunk[Long] < Async =
+        Abort.run[CommandException](Command("pgrep", "-P", pid.toString).text).map {
+            case Result.Success(output) =>
+                val children = Chunk.from(output.linesIterator.flatMap(_.trim.toLongOption).toSeq)
+                Kyo.foreach(children)(child => descendants(child).map(child +: _)).map(_.flattenChunk)
+            case _ => Chunk.empty
+        }
+
+    private def kill(pid: Long)(using Frame): Unit < Async =
+        Abort.run[CommandException](Command("kill", "-9", pid.toString).waitFor).unit
+
+    private def alive(pid: Long)(using Frame): Boolean < Async =
+        Abort.run[CommandException](Command("kill", "-0", pid.toString).waitFor).map {
+            case Result.Success(code) => code.isSuccess
+            case _                    => false
+        }
+
+    /** A killed process is gone within milliseconds, so the bound only ever matters for a pid that could not be
+      * signalled; when it is reached the removal that follows still has its own retries.
+      */
+    private def awaitExit(pids: Chunk[Long])(using Frame): Unit < Async =
+        def poll(remaining: Chunk[Long], polls: Int): Unit < Async =
+            Kyo.filter(remaining)(alive).map { left =>
+                (if left.isEmpty then ()
+                 else if polls >= treeExitPolls then
+                     Log.warn(s"terminateTree: ${left.size} process(es) still alive after $treeExitPolls polls: ${left.mkString(", ")}")
+                 else Async.delay(treeExitPollInterval)(poll(left, polls + 1))) : Unit < Async
+            }
+        poll(pids, 0)
+    end awaitExit
+
+    private val treeExitPollInterval = 5.millis
+    private val treeExitPolls        = 1000
 
     /** Kills any Chrome processes from previous runs that were not cleaned up (e.g. after SIGKILL or abrupt JVM exit).
       *

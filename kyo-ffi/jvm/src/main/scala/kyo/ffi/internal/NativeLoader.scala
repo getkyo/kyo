@@ -224,7 +224,7 @@ object NativeLoader:
                             s"-Dkyo.ffi.$libraryId.path override, or as a system install. Add the platform " +
                             s"classifier dependency if one exists for $osArch, install the native, or set " +
                             s"-Dkyo.ffi.$libraryId.path=<absolute path>."
-                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null)
+                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null, osArch)
                 end if
             else
                 val overridePath = sys.props.get(s"kyo.ffi.$libraryId.path")
@@ -252,7 +252,7 @@ object NativeLoader:
                             s"resource '$path' is not on the classpath and no readable -Dkyo.ffi.$libraryId.path override was given. " +
                             s"Add the native artifact (or the platform classifier dependency) for $osArch, or set " +
                             s"-Dkyo.ffi.$libraryId.path=<absolute path>."
-                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null)
+                    throw new FfiLoadError.LibraryNotFound(libraryId, candidates, msg, null, osArch)
                 end if
             end if
         end if
@@ -314,7 +314,7 @@ object NativeLoader:
                                 s"library named '$id' could be loaded; symbol '$name' is also absent from the native linker's default " +
                                 s"lookup. Bundle or install the '$id' native for $platform, or override the search with " +
                                 s"-Dkyo.ffi.$id.path=<absolute path>. Tried, in order: ${candidates.mkString("; ")}."
-                    throw new FfiLoadError.LibraryNotFound(id, candidates, msg, null)
+                    throw new FfiLoadError.LibraryNotFound(id, candidates, msg, null, platform)
                 end if
             end find
         end new

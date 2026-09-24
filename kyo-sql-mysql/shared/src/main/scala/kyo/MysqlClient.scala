@@ -195,7 +195,7 @@ object MysqlClient:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): MysqlClient < (Async & Abort[SqlException]) =
-        opened(url, config)
+        Scope.runUnowned(opened(url, config))
 
     /** Assembles the carrier through [[kyo.db.Runtime.init]] and wraps it in a client.
       *
@@ -203,7 +203,7 @@ object MysqlClient:
       * that closes whatever it opened on any failure edge, so a caller never receives a half-open client to clean up. MySQL has no type-name
       * validation step, so unlike the PostgreSQL path this is assembly alone.
       */
-    private def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): MysqlClient < (Async & Abort[SqlException]) =
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): MysqlClient < (Async & Abort[SqlException] & Scope) =
         Runtime.init(url, config, MysqlSqlConnection.factory(url.options)).map(rt => new MysqlClient(rt))
 
 end MysqlClient

@@ -860,7 +860,7 @@ object ExampleBackend extends db.Backend:
     def aliases: Set[String] = Set.empty
     def dialect: db.Idiom    = ExampleIdiom
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) = ???
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) = ???
 end ExampleBackend
 ```
 

@@ -74,7 +74,7 @@ object Check:
       *   A computation that may abort with CheckFailed if any checks fail
       */
     def runAbort[A, S](v: A < (Check & S))(using Frame): A < (Abort[CheckFailed] & S) =
-        ArrowEffect.handle(Tag[Check], v)([C] => (input, cont) => Abort.fail(input))
+        ArrowEffect.handleCont(Tag[Check], v)([C] => (input, cont) => Abort.fail(input))
 
     /** Runs a computation with Check effect, collecting all failures.
       *
@@ -84,11 +84,9 @@ object Check:
       *   A tuple of collected failures and the computation result
       */
     def runChunk[A, S](v: A < (Check & S))(using Frame): (Chunk[CheckFailed], A) < S =
-        ArrowEffect.handleLoop(Tag[Check], Chunk.empty[CheckFailed], v)(
-            handle = [C] =>
-                (input, state, cont) =>
-                    Loop.continue(state.append(input), cont(())),
-            done = (state, result) => (state, result)
+        ArrowEffect.handleLoopState(Tag[Check], Chunk.empty[CheckFailed], v)(
+            [C] => (state, input) => Loop.continue(state.append(input), ()),
+            (state, result) => (state, result)
         )
 
     /** Runs a computation with Check effect, discarding any failures.
@@ -99,7 +97,7 @@ object Check:
       *   The result of the computation, ignoring any check failures
       */
     def runDiscard[A, S](v: A < (Check & S))(using Frame): A < S =
-        ArrowEffect.handle(Tag[Check], v)([C] => (_, cont) => cont(()))
+        ArrowEffect.handleLoop(Tag[Check], v)([C] => _ => Loop.continue(()))
 
     /** Default isolate that accumulates and re-emits failures.
       *

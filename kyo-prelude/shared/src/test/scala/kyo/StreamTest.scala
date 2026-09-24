@@ -1219,6 +1219,40 @@ class StreamTest extends kyo.test.Test[Any]:
         }
     }
 
+    "splitAtWith" - {
+        "split under length" in {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAtWith(4) { (chunk, rest) =>
+                rest.run.map { tail =>
+                    assert(chunk == Chunk(0, 1, 2, 3))
+                    assert(tail == Seq(4, 5, 6, 7, 8, 9))
+                }
+            }.eval
+        }
+
+        "split over length" in {
+            val stream = Stream.range(0, 10, 1, 3)
+            stream.splitAtWith(12) { (chunk, rest) =>
+                rest.run.map { tail =>
+                    assert(chunk == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+                    assert(tail == Seq())
+                }
+            }.eval
+        }
+
+        "the rest is confined to the callback: it cannot be stored where the marker is not in the type" in {
+            typeCheckFailure(
+                """
+                var stash: Stream[Int, Any] = null
+                Stream.range(0, 10, 1, 3).splitAtWith(4) { (chunk, rest) =>
+                    stash = rest
+                    rest.run
+                }
+                """
+            )("NoEscape")
+        }
+    }
+
     "edge cases" - {
 
         "flatMap with nested aborts" in {

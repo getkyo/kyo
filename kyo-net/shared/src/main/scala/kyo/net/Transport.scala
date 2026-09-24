@@ -184,6 +184,19 @@ abstract class Listener:
     /** The address this listener is bound to (TCP or Unix). */
     def address: NetAddress
 
-    /** Stop accepting new connections and close the listener. Synchronous, idempotent. Does not close already-accepted connections. */
+    /** Stop accepting new connections and close the listener. Idempotent. Does not close already-accepted connections.
+      *
+      * Returning does NOT mean the descriptor is released; [[released]] is that signal.
+      */
     def close()(using AllowUnsafe, Frame): Unit
+
+    /** Completes once the OS has released this listener's descriptor, which is strictly later than [[close]] returns on every backend that
+      * hands the release to its event loop. Pending until [[close]] is called, never fails, and completes exactly once.
+      *
+      * A caller that must not observe the descriptor still open awaits this: unlinking a Unix socket file on a platform that refuses while
+      * the descriptor is open is the case that needs it. It completes on the backend's event-loop carrier, so await it as an `Async`
+      * suspension; a blocking wait from that carrier deadlocks. On Node the server handle closes only after every accepted connection has
+      * ended, so there this also waits on connections this listener does not own; close them first.
+      */
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any]
 end Listener

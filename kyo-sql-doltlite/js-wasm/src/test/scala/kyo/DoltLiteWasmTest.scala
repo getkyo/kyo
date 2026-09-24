@@ -38,7 +38,7 @@ class DoltLiteWasmTest extends Test:
                 _      <- dolt.executeRaw("INSERT INTO person VALUES (1, 'alice')")
                 commit <- dolt.commit("seed")
                 _      <- dolt.createBranch("work")
-                _ <- dolt.onBranch("work")(
+                _      <- dolt.onBranch("work")(
                     dolt.executeRaw("UPDATE person SET name = 'bob' WHERE id = 1").andThen(dolt.commit("rename"))
                 )
                 onWork <- dolt.onBranch("work")(dolt.query("SELECT name FROM person").map(_(0).decode[String](0)))

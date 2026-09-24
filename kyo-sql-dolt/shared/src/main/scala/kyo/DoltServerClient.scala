@@ -111,6 +111,13 @@ object DoltServer:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): Dolt < (Async & Abort[SqlException]) =
+        Scope.runUnowned(opened(url, config))
+
+    /** Builds a client on `url` under the ambient scope, for the backend factory to hand back.
+      *
+      * The row carries [[kyo.Scope]] because `Runtime.init` registers the pool's release against it as the pool is allocated.
+      */
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): Dolt < (Async & Abort[SqlException] & Scope) =
         Runtime.init(url, config, new DoltConnectionFactory(url.options)).map(rt => new DoltServerClient(rt))
 
     /** Registers this backend so runtime discovery resolves a computed `dolt://` URL, the explicit counterpart to the

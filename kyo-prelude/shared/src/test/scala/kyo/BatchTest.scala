@@ -1,4 +1,5 @@
 import kyo.*
+import kyo.kernel.Bracket
 import scala.collection.mutable.ArrayBuffer
 
 class BatchTest extends kyo.test.Test[Any]:
@@ -846,6 +847,24 @@ class BatchTest extends kyo.test.Test[Any]:
                     (2, 2, 3, 5),
                     (2, 2, 4, 6)
                 ))
+            }
+        }
+    }
+
+    "brackets" - {
+        "a bracket opened inside a batched computation survives into the item that carries it" in {
+            var opens  = 0
+            var closes = 0
+            val source = TestSource[Int, Int, Any](_.map(_ * 10))
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2))
+                    b <- Bracket({ opens += 1; a })(r => source(r))((_, _) => closes += 1)
+                yield b
+            Batch.run(result).map { seq =>
+                assert(seq == Seq(10, 20))
+                assert(opens == 2)
+                assert(closes == 2)
             }
         }
     }

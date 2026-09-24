@@ -258,7 +258,7 @@ class FlowEngineSubflowTest extends FlowEngineSupport:
         /** Two instances of one subflow both run their steps, rather than one running for both.
           *
           * Durable node identity is the node's PATH, not its bare name: a field, a completion event, a wait row and a schema entry
-          * are all keyed by `instance~name` (`kyo.internal.NodePath`). That is what embedding one child twice depends on, and the
+          * are all keyed by `instance~name` (`kyo.internal.FlowNodePath`). That is what embedding one child twice depends on, and the
           * bare name cannot carry it. A `Step` skips itself when its durable name is in the completed set, which is derived once per
           * attempt from history, so under bare names the two instances would both run on the FIRST attempt and then, after any
           * resume, the second would be skipped as work the first already did: a charge that must happen twice happening once, and

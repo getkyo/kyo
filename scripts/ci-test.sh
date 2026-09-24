@@ -1099,9 +1099,9 @@ run_native() {
 # -- strategy derivation: the platform decides, never the caller --
 # The resource monitor wraps the whole run: it reports the kyo scheduler snapshot (cross-platform) and,
 # where available, an OS headline (/proc on Linux, vm_stat on macOS; scheduler-only otherwise).
-# The scheduler (JVM + Native) writes its compact top line to sched_file via the topStatusFile sink;
-# Native reads the flag from the environment (no -D) and forked JVMs inherit it, so exporting it here
-# reaches both. ci-monitor.sh self-gates (CI_MON=0 disables); a no-op where nothing can be sampled.
+# The scheduler (JVM, Native, and JS/Wasm under Node) writes its compact top line to sched_file via the
+# topStatusFile sink; Native and Node read the flag from the environment (no -D) and forked JVMs and Node
+# test processes inherit it, so exporting it here reaches all of them. ci-monitor.sh self-gates (CI_MON=0 disables); a no-op where nothing can be sampled.
 monitor="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/ci-monitor.sh"
 sched_file="${RUNNER_TEMP:-/tmp}/kyo-sched-$PLATFORM.status"
 rm -f "$sched_file"

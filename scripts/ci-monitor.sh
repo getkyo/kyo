@@ -144,8 +144,19 @@ os_headline() {
     esac
 }
 
+# The snapshot's ts= (epoch millis) is when its writer last ran; age= is how long ago that was. On JS the
+# writer is a timer on the process's single event loop, so a slice that never returns stops the rewrites
+# and the age keeps growing: the only outside sign of a blocked loop, whose own timeouts cannot fire.
 sched_snapshot() {
-    { [ -n "$SCHED_FILE" ] && [ -r "$SCHED_FILE" ]; } && cat "$SCHED_FILE" 2>/dev/null
+    { [ -n "$SCHED_FILE" ] && [ -r "$SCHED_FILE" ]; } || return 0
+    local line ts
+    line=$(cat "$SCHED_FILE" 2>/dev/null) || return 0
+    ts=$(printf '%s' "$line" | sed -n 's/.*ts=\([0-9][0-9]*\).*/\1/p')
+    if [ -n "$ts" ]; then
+        printf '%s age=%ss' "$line" "$(( $(date +%s) - ts / 1000 ))"
+    else
+        printf '%s' "$line"
+    fi
 }
 
 # Per-process attribution: total RSS and process count aggregated by command name, top 3 by RSS,

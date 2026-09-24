@@ -7,8 +7,8 @@ import kyo.net.Test
 
 /** The regression guard for the incident this whole consolidation exists to close, plus the rest of the FFI-failure mapping.
   *
-  * A readiness backend whose libc gate passes on a host with NO bundled shim used to win selection and then die per connection, past the
-  * point any fallback could engage. The probe now touches the bundled shim, but that alone is not enough: the generated binding resolves its
+  * A readiness backend whose libc gate passes on a host with NO bundled shim would win selection and then die per connection, past the
+  * point any fallback could engage. The probe touches the bundled shim, but that alone is not enough: the generated binding resolves its
   * library in the COMPANION's static initializer, so the loader's `FfiLoadError.LibraryNotFound` never reaches a probe as itself. The JVM
   * wraps the first touch in `ExceptionInInitializerError(cause = ...)` and answers every touch after with a cause-less
   * `NoClassDefFoundError`. Without the unwrap the incident case classifies as an opaque `ProbeFailed` and reads like a bug in the probe
@@ -119,11 +119,6 @@ class CapabilityProbeTest extends Test:
             case Result.Success(chosen) => assert(chosen.name == "nio", s"selection must demote to the floor, got ${chosen.name}")
             case other                  => fail(other.toString)
         end match
-    }
-
-    "the platform tag reads as <os>-<arch>" in {
-        assert(CapabilityProbe.platform.contains("-"), s"expected an <os>-<arch> tag, got ${CapabilityProbe.platform}")
-        assert(CapabilityProbe.platform.nonEmpty)
     }
 
 end CapabilityProbeTest

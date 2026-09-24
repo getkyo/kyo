@@ -120,6 +120,17 @@ final private[net] class IoUringDriver private[posix] (
     // drained inline at the top of each reap cycle). The per-field comments name each field's owning carrier; no raw type is shared unsafely.
     private val pending = new ConcurrentHashMap[Long, PendingOp]()
 
+    // JS only: the reap task of a chain that parked instead of taking another turn, Absent while the chain runs.
+    //
+    // On Node the fused submit-and-wait is a `koffi.callAsync` request on a libuv worker, and Node does not exit while one is outstanding, so a
+    // chain that re-arms with nothing outstanding keeps an idle application alive forever. JVM and Native park a thread the process owns, which
+    // holds nothing open, so they always re-arm.
+    //
+    // No atomic and no recheck after the store: on JS the scheduler, every submit and every `@Ffi.blocking` completion run on the Node main
+    // thread, and the JS scheduler always defers to the macrotask queue, so the store and the read in `wakeReapLoop` cannot interleave.
+    // `private[posix]` so a test can park a task and observe the resume.
+    private[posix] var idleTask: Maybe[Task] = Absent
+
     // Cross-carrier submission handoff: every SQ operation (get_sqe + prep + submit) and every TLS engine op for every connection on this driver
     // runs on the single reap carrier, which drains this queue at the top of each reap cycle (see [[submitEngineOp]] / [[runCycle]]). One producer
     // for the io_uring submission ring; no two engine ops overlap on the same engine because one carrier runs them in FIFO order.
@@ -1007,10 +1018,14 @@ final private[net] class IoUringDriver private[posix] (
       */
     override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         submitEngineOp { () =>
-            cancel(handle)
-            handle.requestClose()
-            flushSubmits()
-            closeFd()
+            // The engine drain contains a throwing op and carries on, so `closeFd` is in a `finally`: a throw from the cancel's inline
+            // promise callbacks must not leave the listen fd open with its release never reported.
+            try
+                cancel(handle)
+                handle.requestClose()
+                flushSubmits()
+            finally closeFd()
+            end try
         }
     end closeListener
 
@@ -1536,6 +1551,7 @@ final private[net] class IoUringDriver private[posix] (
                 val cad = new StringBuilder
                 closeAfterDrain.forEach((k, _) => discard(cad.append(k).append(' ')))
                 s"closed=${closedFlag.get()} reapExited=${reapExited.get()} ringExited=${ringExited.get()} reapCycles=$diagReapCycles " +
+                    s"idle=${idleTask.isDefined} " +
                     s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] " +
                     s"pendingCloses=${pendingCloses.size} stalledSends=${stalledSends.size} " +
                     s"cancelSubmitted=${diagCancelSubmitted.get()} cancelParked=${diagCancelParked.get()} " +
@@ -1597,6 +1613,14 @@ final private[net] class IoUringDriver private[posix] (
       * reap carrier is already running cost only a coalesced counter increment and at most one spurious early return from the next park.
       */
     private def wakeReapLoop()(using AllowUnsafe): Unit =
+        // A parked chain has no wait to cut short, so the wake is a re-arm instead. Taken before the eventfd write so the work just offered is
+        // never left with neither a running turn nor a scheduled one. See idleTask for why this needs no atomic.
+        if kyo.internal.Platform.isJS then
+            val parked = idleTask
+            if parked.isDefined then
+                idleTask = Absent
+                reArm(parked.get)
+        end if
         if wakeFd >= 0 && acquireWake() then
             try discard(uring.kyo_uring_eventfd_write(wakeFd))
             finally releaseWake()
@@ -1788,9 +1812,38 @@ final private[net] class IoUringDriver private[posix] (
             // Every benign turn re-arms ops parked on a full SQ: the fused submit+wait freed the slots, and SQ space is freed by submitting,
             // not by reaping, so they must not wait for an unrelated CQE.
             reArmStalled()
-            reArm(task)
+            // A turn that leaves the driver with nothing outstanding would wait for a completion no submission can produce, and on Node that
+            // wait is what keeps the process alive (see idleTask). Park the chain instead: tested after this turn's drain, so what it reads is
+            // the state the next turn would start from, and every path that gives work goes through `wakeReapLoop`, which resumes the task.
+            if kyo.internal.Platform.isJS && idleNow then idleTask = Present(task)
+            else reArm(task)
         end if
     end afterWait
+
+    /** Whether the driver has nothing outstanding: no submitted operation awaiting its completion, no cancel awaiting one, no close
+      * obligation, no queued engine op, and nothing parked on a full submission queue.
+      *
+      * Read on the reap carrier after a turn's drain. `pending` and `pendingCloses` are the pair [[start]]'s diagnostics probe calls `pending`,
+      * and the three stalled queues plus `closeAfterDrain` are the same set `runCycle` refuses to park indefinitely on, for the same reason:
+      * each is re-driven by a turn rather than by a completion, so parking on one would strand it.
+      *
+      * `cancelTargets` is here because a cancel is keyed there and NOT in `pending`, and the kernel does not order a cancel's completion
+      * against its target's. So the target can reap and leave `pending` empty with the cancel's own completion still owed, and parking then
+      * would be parking with a completion in the ring. Nothing strands if it does, since the deferred close is discharged on the target's
+      * completion and a late cancel receipt is a no-op, but this method would report idle with a completion still owed.
+      *
+      * `inFlight` is deliberately not among them. Its entries can sit at zero for a handle that has no operation outstanding, so it reports
+      * activity that `pending` does not, and a driver keyed on it would never park. Nothing is lost: `register` increments both, so a handle
+      * with work outstanding has an entry in `pending` by construction.
+      *
+      * A server process stays alive here for a different reason than in the poller, where a listener sits in `activeFds` continuously. Accept
+      * is single-shot, so a listener between one accept's completion and the handler's next `awaitAccept` is genuinely idle and the chain
+      * parks. What carries the process across that gap is the re-arm itself: it arrives through `submitEngineOp` as a macrotask, which is work
+      * Node is already counting.
+      */
+    private[posix] def idleNow: Boolean =
+        pending.isEmpty && pendingCloses.isEmpty && engineQueue.isEmpty && cancelTargets.isEmpty &&
+            stalledSends.isEmpty && stalledSubmits.isEmpty && stalledCancels.isEmpty && closeAfterDrain.isEmpty
 
     /** Re-arm the next turn onto a DIFFERENT carrier, so the one that just ran the turn is free to run the completions it produced.
       *
@@ -1815,8 +1868,8 @@ final private[net] class IoUringDriver private[posix] (
       * submitEngineOp either lands in this drain or runs its own under the shared claim. Then drainAfterReapExit, which fails every still-queued
       * op through the driver-closed rejection rather than dropping it, and fires the single-owner ring teardown.
       *
-      * Routing the CRASH path through here is what makes a crashed loop release the ring: previously it completed the
-      * done-promise with the ring, cqePtr and wake eventfd still held.
+      * Routing the CRASH path through here is what makes a crashed loop release the ring rather than completing the done-promise with the
+      * ring, cqePtr and wake eventfd still held.
       */
     private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =
         closedFlag.set(true)

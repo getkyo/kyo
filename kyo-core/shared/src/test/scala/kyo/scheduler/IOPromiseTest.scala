@@ -170,25 +170,49 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p.block(deadline()).isPanic)
         }
 
-        "onInterrupted fires once, after the CAS, only on the interrupt path" in {
+        "the interrupt hook runs once, on the interrupt path only, and settles through settleInterrupt" in {
             class HookedPromise extends IOPromise[Nothing, Int]:
-                var fired                                    = 0
-                var pendingAtHook                            = true
-                override protected def onInterrupted(): Unit =
+                var fired                                                                                               = 0
+                var doneAtHook                                                                                          = false
+                override protected def interrupt(p: IOPromise.Pending[Nothing, Int], v: Result.Error[Nothing]): Boolean =
                     fired += 1
-                    pendingAtHook = !done()
+                    val settled = settleInterrupt(p, v)
+                    doneAtHook = done()
+                    settled
+                end interrupt
             end HookedPromise
 
             val interrupted = new HookedPromise
             assert(interrupted.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(interrupted.fired == 1)
-            assert(!interrupted.pendingAtHook, "hook must observe the promise already completed (post-CAS)")
+            assert(interrupted.doneAtHook, "the hook settles the promise before it returns")
             assert(!interrupted.interrupt(Result.Panic(new Exception("again"))))
             assert(interrupted.fired == 1)
 
             val completed = new HookedPromise
             assert(completed.complete(Result.succeed(1)))
             assert(completed.fired == 0)
+        }
+
+        "a hook that takes the interrupt without completing refuses the next through preInterrupt" in {
+            class TakingPromise extends IOPromise[Nothing, Int]:
+                var taken = Maybe.empty[Result.Error[Nothing]]
+                override protected def interrupt(p: IOPromise.Pending[Nothing, Int], v: Result.Error[Nothing]): Boolean =
+                    taken.isEmpty && {
+                        taken = Maybe(v)
+                        true
+                    }
+                override def preInterrupt(): Boolean = taken.isEmpty
+                def settle(): Boolean                = taken.exists(v => settleInterrupt(v))
+            end TakingPromise
+
+            val p = new TakingPromise
+            assert(p.interrupt(Result.Panic(new Exception("first"))))
+            assert(!p.done())
+            assert(!p.interrupt(Result.Panic(new Exception("second"))))
+            assert(p.settle())
+            assert(p.done())
+            assert(p.block(deadline()).isPanic)
         }
     }
 
@@ -305,173 +329,173 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
     }
 
-    "mask" - {
+    "uninterruptible" - {
         "doesn't propagate interrupts to parent" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var originalCompleted                         = false
-            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
+            var originalCompleted                                  = false
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(_ => originalCompleted = true)
-            masked.onComplete(r => maskedResult = Maybe(r))
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
-            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(maskedResult.isEmpty)
+            assert(!uninterruptible.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(uninterruptibleResult.isEmpty)
             assert(!originalCompleted)
         }
 
         "completes when original completes" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
-            masked.onComplete(r => maskedResult = Maybe(r))
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
             original.complete(Result.succeed(42))
-            assert(maskedResult.contains(Result.succeed(42)))
+            assert(uninterruptibleResult.contains(Result.succeed(42)))
         }
 
         "propagates failure" in {
-            val original = new IOPromise[Exception, Int]()
-            val masked   = original.mask()
+            val original        = new IOPromise[Exception, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var maskedResult: Maybe[Result[Exception, Int]] = Absent
-            masked.onComplete(r => maskedResult = Maybe(r))
+            var uninterruptibleResult: Maybe[Result[Exception, Int]] = Absent
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
             val ex = new Exception("Test exception")
             original.complete(Result.fail(ex))
-            assert(maskedResult.contains(Result.fail(ex)))
+            assert(uninterruptibleResult.contains(Result.fail(ex)))
         }
 
-        "allows completion of masked promise" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
+        "allows completion of uninterruptible promise" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Absent
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
+            var originalResult: Maybe[Result[Nothing, Int]]        = Absent
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
-            masked.onComplete(r => maskedResult = Maybe(r))
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
-            masked.complete(Result.succeed(99))
-            assert(maskedResult.contains(Result.succeed(99)))
+            uninterruptible.complete(Result.succeed(99))
+            assert(uninterruptibleResult.contains(Result.succeed(99)))
             assert(originalResult.isEmpty)
         }
 
-        "chained masks" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask()
-            val masked2  = masked1.mask()
+        "chained uninterruptibles" in {
+            val original         = new IOPromise[Nothing, Int]()
+            val uninterruptible1 = original.uninterruptible()
+            val uninterruptible2 = uninterruptible1.uninterruptible()
 
-            var originalCompleted                          = false
-            var masked1Completed                           = false
-            var masked2Result: Maybe[Result[Nothing, Int]] = Absent
+            var originalCompleted                                   = false
+            var uninterruptible1Completed                           = false
+            var uninterruptible2Result: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(_ => originalCompleted = true)
-            masked1.onComplete(_ => masked1Completed = true)
-            masked2.onComplete(r => masked2Result = Maybe(r))
+            uninterruptible1.onComplete(_ => uninterruptible1Completed = true)
+            uninterruptible2.onComplete(r => uninterruptible2Result = Maybe(r))
 
-            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(masked2Result.isEmpty)
-            assert(!masked1Completed)
+            assert(!uninterruptible2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(uninterruptible2Result.isEmpty)
+            assert(!uninterruptible1Completed)
             assert(!originalCompleted)
 
             original.complete(Result.succeed(42))
-            assert(masked1Completed)
+            assert(uninterruptible1Completed)
         }
 
-        "mask after completion" in {
+        "uninterruptible after completion" in {
             val original = new IOPromise[Nothing, Int]()
             original.complete(Result.succeed(42))
 
-            val masked                                    = original.mask()
-            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
-            masked.onComplete(r => maskedResult = Maybe(r))
+            val uninterruptible                                    = original.uninterruptible()
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
-            assert(maskedResult.contains(Result.succeed(42)))
+            assert(uninterruptibleResult.contains(Result.succeed(42)))
         }
 
-        "interrupt original completes masked" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
+        "interrupt original completes uninterruptible" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Absent
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
+            var originalResult: Maybe[Result[Nothing, Int]]        = Absent
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
-            masked.onComplete(r => maskedResult = Maybe(r))
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
 
             val panic = Result.Panic(new Exception("Interrupted"))
             assert(original.interrupt(panic))
             assert(originalResult == Maybe(panic))
-            assert(maskedResult == Maybe(panic))
+            assert(uninterruptibleResult == Maybe(panic))
         }
 
-        "chained masks with interrupt" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask()
-            val masked2  = masked1.mask()
+        "chained uninterruptibles with interrupt" in {
+            val original         = new IOPromise[Nothing, Int]()
+            val uninterruptible1 = original.uninterruptible()
+            val uninterruptible2 = uninterruptible1.uninterruptible()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Absent
-            var masked1Result: Maybe[Result[Nothing, Int]]  = Absent
-            var masked2Result: Maybe[Result[Nothing, Int]]  = Absent
+            var originalResult: Maybe[Result[Nothing, Int]]         = Absent
+            var uninterruptible1Result: Maybe[Result[Nothing, Int]] = Absent
+            var uninterruptible2Result: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
-            masked1.onComplete(r => masked1Result = Maybe(r))
-            masked2.onComplete(r => masked2Result = Maybe(r))
+            uninterruptible1.onComplete(r => uninterruptible1Result = Maybe(r))
+            uninterruptible2.onComplete(r => uninterruptible2Result = Maybe(r))
 
-            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptible2.interrupt(Result.Panic(new Exception("Interrupted"))))
 
-            assert(masked2Result.isEmpty)
-            assert(masked1Result.isEmpty)
+            assert(uninterruptible2Result.isEmpty)
+            assert(uninterruptible1Result.isEmpty)
             assert(originalResult.isEmpty)
 
             original.complete(Result.succeed(42))
 
             assert(originalResult.contains(Result.succeed(42)))
-            assert(masked1Result.contains(Result.succeed(42)))
-            assert(masked2Result.contains(Result.succeed(42)))
+            assert(uninterruptible1Result.contains(Result.succeed(42)))
+            assert(uninterruptible2Result.contains(Result.succeed(42)))
         }
 
-        "mask interaction with become" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
-            val other    = new IOPromise[Nothing, Int]()
+        "uninterruptible interaction with become" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
+            val other           = new IOPromise[Nothing, Int]()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Absent
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
-            var otherResult: Maybe[Result[Nothing, Int]]    = Absent
+            var originalResult: Maybe[Result[Nothing, Int]]        = Absent
+            var uninterruptibleResult: Maybe[Result[Nothing, Int]] = Absent
+            var otherResult: Maybe[Result[Nothing, Int]]           = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
-            masked.onComplete(r => maskedResult = Maybe(r))
+            uninterruptible.onComplete(r => uninterruptibleResult = Maybe(r))
             other.onComplete(r => otherResult = Maybe(r))
 
-            assert(masked.become(other))
+            assert(uninterruptible.become(other))
 
             other.complete(Result.succeed(99))
 
             assert(originalResult.isEmpty)
-            assert(maskedResult.contains(Result.succeed(99)))
+            assert(uninterruptibleResult.contains(Result.succeed(99)))
             assert(otherResult.contains(Result.succeed(99)))
 
             original.complete(Result.succeed(42))
 
             assert(originalResult.contains(Result.succeed(42)))
-            assert(maskedResult.contains(Result.succeed(99)))
+            assert(uninterruptibleResult.contains(Result.succeed(99)))
             assert(otherResult.contains(Result.succeed(99)))
         }
 
-        "mask with interrupts" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
-            val other    = new IOPromise[Nothing, Int]()
+        "uninterruptible with interrupts" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
+            val other           = new IOPromise[Nothing, Int]()
 
-            masked.interrupts(other)
+            uninterruptible.interrupts(other)
 
-            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptible.interrupt(Result.Panic(new Exception("Interrupted"))))
 
-            assert(!masked.done())
+            assert(!uninterruptible.done())
             assert(!other.done())
             assert(!original.done())
         }
@@ -504,37 +528,37 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!interrupted)
         }
 
-        "onInterrupt with mask" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
+        "onInterrupt with uninterruptible" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
 
-            var originalInterrupted = false
-            var maskedInterrupted   = false
+            var originalInterrupted        = false
+            var uninterruptibleInterrupted = false
 
             original.onInterrupt(_ => originalInterrupted = true)
-            masked.onInterrupt(_ => maskedInterrupted = true)
+            uninterruptible.onInterrupt(_ => uninterruptibleInterrupted = true)
 
-            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(!maskedInterrupted)
+            assert(!uninterruptible.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptibleInterrupted)
             assert(!originalInterrupted)
         }
 
         "onInterrupt with chained masks" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask()
-            val masked2  = masked1.mask()
+            val original         = new IOPromise[Nothing, Int]()
+            val uninterruptible1 = original.uninterruptible()
+            val uninterruptible2 = uninterruptible1.uninterruptible()
 
-            var originalInterrupted = false
-            var masked1Interrupted  = false
-            var masked2Interrupted  = false
+            var originalInterrupted         = false
+            var uninterruptible1Interrupted = false
+            var uninterruptible2Interrupted = false
 
             original.onInterrupt(_ => originalInterrupted = true)
-            masked1.onInterrupt(_ => masked1Interrupted = true)
-            masked2.onInterrupt(_ => masked2Interrupted = true)
+            uninterruptible1.onInterrupt(_ => uninterruptible1Interrupted = true)
+            uninterruptible2.onInterrupt(_ => uninterruptible2Interrupted = true)
 
-            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(!masked2Interrupted)
-            assert(!masked1Interrupted)
+            assert(!uninterruptible2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptible2Interrupted)
+            assert(!uninterruptible1Interrupted)
             assert(!originalInterrupted)
         }
 
@@ -555,24 +579,24 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p2Interrupted)
         }
 
-        "onInterrupt with mask and become" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
-            val other    = new IOPromise[Nothing, Int]()
+        "onInterrupt with uninterruptible and become" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
+            val other           = new IOPromise[Nothing, Int]()
 
-            var originalInterrupted = false
-            var maskedInterrupted   = false
-            var otherInterrupted    = false
+            var originalInterrupted        = false
+            var uninterruptibleInterrupted = false
+            var otherInterrupted           = false
 
             original.onInterrupt(_ => originalInterrupted = true)
-            masked.onInterrupt(_ => maskedInterrupted = true)
+            uninterruptible.onInterrupt(_ => uninterruptibleInterrupted = true)
             other.onInterrupt(_ => otherInterrupted = true)
 
-            assert(masked.become(other))
+            assert(uninterruptible.become(other))
             assert(other.interrupt(Result.Panic(new Exception("Interrupted"))))
 
             assert(!originalInterrupted)
-            assert(maskedInterrupted)
+            assert(uninterruptibleInterrupted)
             assert(otherInterrupted)
         }
 
@@ -594,25 +618,25 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p2Interrupted)
         }
 
-        "onInterrupt with mask and interrupts" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
-            val other    = new IOPromise[Nothing, Int]()
+        "onInterrupt with uninterruptible and interrupts" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
+            val other           = new IOPromise[Nothing, Int]()
 
-            var originalInterrupted = false
-            var maskedInterrupted   = false
-            var otherInterrupted    = false
+            var originalInterrupted        = false
+            var uninterruptibleInterrupted = false
+            var otherInterrupted           = false
 
             original.onInterrupt(_ => originalInterrupted = true)
-            masked.onInterrupt(_ => maskedInterrupted = true)
+            uninterruptible.onInterrupt(_ => uninterruptibleInterrupted = true)
             other.onInterrupt(_ => otherInterrupted = true)
 
-            masked.interrupts(other)
+            uninterruptible.interrupts(other)
 
-            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptible.interrupt(Result.Panic(new Exception("Interrupted"))))
 
             assert(!originalInterrupted)
-            assert(!maskedInterrupted)
+            assert(!uninterruptibleInterrupted)
             assert(!otherInterrupted)
         }
     }
@@ -656,11 +680,11 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p2.block(deadline()) == Result.succeed(42))
         }
 
-        "complex chaining with interrupts and masks" in {
+        "complex chaining with interrupts and uninterruptibles" in {
             val p1 = new IOPromise[Nothing, Int]()
-            val p2 = p1.mask()
+            val p2 = p1.uninterruptible()
             val p3 = new IOPromise[Nothing, Int]()
-            val p4 = p3.mask()
+            val p4 = p3.uninterruptible()
 
             p2.become(p4)
             p1.interrupts(p3)
@@ -768,16 +792,16 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(chainCompleted)
         }
 
-        "exceptions with masked promises" in {
-            val original               = new IOPromise[Nothing, Int]()
-            val masked                 = original.mask()
-            var maskedCallbackExecuted = false
+        "exceptions with uninterruptible promises" in {
+            val original                        = new IOPromise[Nothing, Int]()
+            val uninterruptible                 = original.uninterruptible()
+            var uninterruptibleCallbackExecuted = false
 
-            masked.onComplete(_ => throw ex)
-            masked.onComplete(_ => maskedCallbackExecuted = true)
+            uninterruptible.onComplete(_ => throw ex)
+            uninterruptible.onComplete(_ => uninterruptibleCallbackExecuted = true)
 
             original.complete(Result.succeed(42))
-            assert(maskedCallbackExecuted)
+            assert(uninterruptibleCallbackExecuted)
         }
     }
 
@@ -895,21 +919,21 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!p3.done())
         }
 
-        "remove with mask" in {
-            val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask()
-            val other    = new IOPromise[Nothing, Int]()
+        "remove with uninterruptible" in {
+            val original        = new IOPromise[Nothing, Int]()
+            val uninterruptible = original.uninterruptible()
+            val other           = new IOPromise[Nothing, Int]()
 
-            masked.interrupts(other)
-            masked.remove(other)
+            uninterruptible.interrupts(other)
+            uninterruptible.remove(other)
 
-            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!uninterruptible.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(!other.done())
         }
 
         "an interrupt on a masked await wakes the awaiter itself" in {
             val awaited = new IOPromise[Nothing, Int]()
-            val masked  = awaited.mask()
+            val masked  = awaited.uninterruptible()
             val awaiter = new IOPromise[Nothing, Int]()
 
             var fired                                = 0

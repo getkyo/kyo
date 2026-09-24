@@ -130,14 +130,20 @@ object Batch:
 
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
+        // handleFirst, not handleCont: the clause answers one suspension and hands its cont out inside the item, resumed by the loop
+        // after this region ends; the region owes what it dumped to the scope below, so a bracket opened inside survives into its item.
         def capture(v: Item < (Batch & S)): Item < S =
-            ArrowEffect.handle(Tag[Batch], v) {
-                [C] => (input, cont) =>
-                    val contAny = cont.asInstanceOf[ContAny[A, S]]
-                    input match
-                        case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny[S]], contAny)
-                        case Eval(v)         => ToExpand(v, contAny)
-            }
+            ArrowEffect.handleFirst(Tag[Batch], v)(
+                handle = [C] =>
+                    (input, cont) =>
+                        input match
+                            case Call(v, source) =>
+                                Expanded(v, source.asInstanceOf[SourceAny[S]], cont.asInstanceOf[ContCall[A, S]]): Item
+                            case Eval(v) =>
+                                ToExpand(v, cont.asInstanceOf[ContEval[A, S]]): Item
+                ,
+                done = (a: Item) => a
+            )
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
@@ -204,9 +210,13 @@ object Batch:
         case class Call[A, B, S](v: A, source: Source[A, B, S]) extends Op[B < (Batch & S)]
 
         enum Pending[A, S]:
-            case ToExpand(op: Seq[Any], cont: ContAny[A, S])
-            case Expanded(value: Any, source: SourceAny[S], cont: ContAny[A, S])
+            case ToExpand(op: Seq[Any], cont: ContEval[A, S])
+            case Expanded(value: Any, source: SourceAny[S], cont: ContCall[A, S])
 
-        type ContAny[A, S] = Any < (Batch & S) => (ToExpand[A, S] | Expanded[A, S] | A) < (Batch & S)
+        // The captured cont is the kernel's Arrow, applied strictly, so multi-shot replay carries the batching. Its
+        // input keeps what the op answers with: an element for Eval, the source's result computation for Call. Typed over a computation the
+        // arrow receives it as data and splices it at the call site under the regions installed there; typed over Any it would run it at the resume.
+        type ContEval[A, S] = Arrow[Any, ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
+        type ContCall[A, S] = Arrow[Any < (Batch & S), ToExpand[A, S] | Expanded[A, S] | A, Batch & S]
     end internal
 end Batch

@@ -1050,4 +1050,18 @@ class QueueTest extends kyo.test.Test[Any]:
         }
     }
 
+    // `q.closed` only reports true once the close's first instruction landed, so an interrupt requested after it
+    // reaches the drain rather than the commit.
+    "a close interrupted after it committed leaves the queue closed" in {
+        for
+            q      <- Queue.Unbounded.init[Int]()
+            _      <- Kyo.foreachDiscard(1 to 8)(q.add)
+            closer <- Fiber.initUnscoped(q.close)
+            _      <- assertEventually(q.closed)
+            _      <- closer.interrupt
+            _      <- closer.getResult
+            p      <- Abort.run[Closed](q.poll)
+        yield assert(p.isFailure, s"a poll after the committed close was served: $p")
+    }
+
 end QueueTest

@@ -687,13 +687,20 @@ final class FlowEngine private (
         lease: Duration,
         renewEvery: Duration
     )(using Frame): Unit < Sync =
-        Fiber.initUnscoped(supervise(claimed, defn, lease, renewEvery)).map { fiber =>
-            supervisions.updateAndGet {
-                case Present(live) => Present(live + fiber)
-                case _             => Absent
-            }.map {
-                case Present(_) => fiber.onComplete(_ => supervisions.updateAndGet(_.map(_ - fiber)).unit)
-                case _          => fiber.interrupt.unit
+        // The supervision is live once the spawn returns and only the registry can stop it, so it is recorded with no
+        // suspension in between: `ensureMap` applies as the fiber arrives and the recording is one unsafe block. A `map`
+        // or a step inside the recording is where the engine's close, which interrupts this loop, would park and leave
+        // the supervision renewing a claim nobody tracks. The spawn stays `initUnscoped` because the supervision has to
+        // inherit the engine's context, its `Clock` included.
+        Fiber.initUnscoped(supervise(claimed, defn, lease, renewEvery)).ensureMap { fiber =>
+            // Unsafe: the registry update and the completion callback have to share one step.
+            Sync.Unsafe.defer {
+                val tracked = supervisions.unsafe.updateAndGet {
+                    case Present(live) => Present(live + fiber)
+                    case _             => Absent
+                }
+                if tracked.isDefined then fiber.unsafe.onComplete(_ => discard(supervisions.unsafe.updateAndGet(_.map(_ - fiber))))
+                else discard(fiber.unsafe.interrupt())
             }
         }
 
@@ -1685,7 +1692,7 @@ object FlowEngine:
                 // subflow embedded twice would otherwise contribute two entries a renderer cannot tell apart.
                 def onSubflow(name: String, childFlow: Flow[?, ?, ?], child: Chunk[NodeProgress], frame: Frame, meta: Flow.Meta) =
                     Chunk(NodeProgress(name, NodeType.Subflow, NodeStatus.Pending, frame.snippetShort)) ++
-                        child.map(n => n.copy(name = NodePath.qualify(name, n.name)))
+                        child.map(n => n.copy(name = FlowNodePath.qualify(name, n.name)))
                 def onAndThen(first: Chunk[NodeProgress], second: Chunk[NodeProgress], frame: Frame) = first ++ second
                 def onZip(left: Chunk[NodeProgress], right: Chunk[NodeProgress], frame: Frame)       = left ++ right
                 def onGather(flows: Seq[Chunk[NodeProgress]], frame: Frame) = flows.foldLeft(Chunk.empty[NodeProgress])(_ ++ _)
@@ -1700,7 +1707,7 @@ object FlowEngine:
             def owner(path: String): Maybe[String] =
                 if nodeNames.contains(path) then Maybe(path)
                 else
-                    val cut = path.lastIndexWhere(c => c == '#' || c == NodePath.Separator)
+                    val cut = path.lastIndexWhere(c => c == '#' || c == FlowNodePath.Separator)
                     if cut <= 0 then Maybe.empty else owner(path.substring(0, cut))
             // Sorted so that two items of one fan-out failing paint their parent with the same message on every platform, rather
             // than with whichever the map happened to yield first.
@@ -1755,7 +1762,7 @@ object FlowEngine:
             end assignStatuses
             val walked                                                                   = assignStatuses(0, false, Chunk.empty)
             def under(nodes: Chunk[NodeProgress], instance: String): Chunk[NodeProgress] =
-                val prefix = s"$instance${NodePath.Separator}"
+                val prefix = s"$instance${FlowNodePath.Separator}"
                 nodes.filter(_.name.startsWith(prefix))
             // A recorded failure keeps its place ahead of the derivation, here as everywhere else: it is a fact the execution wrote,
             // and only the resolver decides which node owns it.

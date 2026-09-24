@@ -239,7 +239,7 @@ class BrowserCookieTest extends BrowserTest:
         // CDP normalises absent / negative-expiry cookies to "session"; our Maybe-Instant translation surfaces that as Absent).
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("session-flag", "v", "localhost").andThen {
+                Browser.setCookie("session-flag", "v", "127.0.0.1").andThen {
                     Browser.cookies.map { cs =>
                         cs.find(_.name == "session-flag") match
                             case Some(c) =>
@@ -260,7 +260,7 @@ class BrowserCookieTest extends BrowserTest:
                     val cookie   = Browser.Cookie(
                         name = "with-expiry",
                         value = "v",
-                        domain = Present("localhost"),
+                        domain = Present("127.0.0.1"),
                         path = Present("/"),
                         expires = Present(expected)
                     )
@@ -292,7 +292,7 @@ class BrowserCookieTest extends BrowserTest:
         // Cookies require a real HTTP URL; use Chrome's own DevTools endpoint
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("testcookie", "testvalue", "localhost").andThen {
+                Browser.setCookie("testcookie", "testvalue", "127.0.0.1").andThen {
                     Browser.cookies.map { cs =>
                         val found = cs.exists(c => c.name == "testcookie" && c.value == "testvalue")
                         assert(found, s"Expected to find 'testcookie' in cookies but got: ${cs.map(_.name)}")
@@ -307,7 +307,7 @@ class BrowserCookieTest extends BrowserTest:
     "setCookie and deleteCookie round-trip" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("mycookie", "myvalue", "localhost").andThen {
+                Browser.setCookie("mycookie", "myvalue", "127.0.0.1").andThen {
                     Browser.cookies.map { cs =>
                         val found = cs.exists(c => c.name == "mycookie")
                         assert(found, "Expected 'mycookie' to exist after setCookie")
@@ -330,7 +330,7 @@ class BrowserCookieTest extends BrowserTest:
                 val full = Browser.Cookie(
                     name = "sess",
                     value = "abc123",
-                    domain = Present("localhost"),
+                    domain = Present("127.0.0.1"),
                     path = Present("/"),
                     httpOnly = Present(true),
                     secure = Present(false),
@@ -341,7 +341,7 @@ class BrowserCookieTest extends BrowserTest:
                         cs.find(_.name == "sess") match
                             case Some(c) =>
                                 assert(c.value == "abc123", s"Expected value 'abc123' but got '${c.value}'")
-                                assert(c.domain == Present("localhost"), s"Expected domain 'localhost' but got '${c.domain}'")
+                                assert(c.domain == Present("127.0.0.1"), s"Expected domain '127.0.0.1' but got '${c.domain}'")
                                 assert(c.path == Present("/"), s"Expected path '/' but got '${c.path}'")
                                 assert(c.httpOnly == Present(true), s"Expected httpOnly true but got '${c.httpOnly}'")
                                 assert(c.secure == Present(false), s"Expected secure false but got '${c.secure}'")
@@ -363,10 +363,10 @@ class BrowserCookieTest extends BrowserTest:
                 val viaCookie = Browser.Cookie(
                     name = "fullForm",
                     value = "v",
-                    domain = Present("localhost"),
+                    domain = Present("127.0.0.1"),
                     path = Present("/")
                 )
-                Browser.setCookie("shortForm", "v", "localhost", "/").andThen {
+                Browser.setCookie("shortForm", "v", "127.0.0.1", "/").andThen {
                     Browser.setCookie(viaCookie).andThen {
                         Browser.cookies.map { cs =>
                             (cs.find(_.name == "shortForm"), cs.find(_.name == "fullForm")) match
@@ -391,7 +391,7 @@ class BrowserCookieTest extends BrowserTest:
     "deleteCookie(name) removes the cookie from the current page's jar" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("token", "tv", "localhost").andThen {
+                Browser.setCookie("token", "tv", "127.0.0.1").andThen {
                     Browser.cookies.map { cs =>
                         assert(cs.exists(_.name == "token"), s"Expected 'token' to exist before delete but got: ${cs.map(_.name)}")
                     }.andThen {
@@ -409,11 +409,11 @@ class BrowserCookieTest extends BrowserTest:
     "deleteCookie(name, domain) removes the cookie from the explicit domain's jar" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("session", "v", "localhost").andThen {
+                Browser.setCookie("session", "v", "127.0.0.1").andThen {
                     Browser.cookies.map { cs =>
                         assert(cs.exists(_.name == "session"), s"Expected 'session' to exist before delete but got: ${cs.map(_.name)}")
                     }.andThen {
-                        Browser.deleteCookie("session", "localhost").andThen {
+                        Browser.deleteCookie("session", "127.0.0.1").andThen {
                             Browser.cookies.map { cs =>
                                 assert(!cs.exists(_.name == "session"), s"Expected 'session' to be deleted but got: ${cs.map(_.name)}")
                             }
@@ -425,14 +425,14 @@ class BrowserCookieTest extends BrowserTest:
     }
 
     // `restoreCookies` (called transitively via `withFork`) iterates with `Kyo.foreachDiscard`. Verify that the multi-input
-    // path (every cookie applied) lands all cookies in the fork; uses Chrome's localhost DevTools page (cookies are forbidden on
+    // path (every cookie applied) lands all cookies in the fork; uses Chrome's DevTools page (cookies are forbidden on
     // `data:` URLs). Single- and multi-cookie cases exercise the per-iteration `Network.setCookie` send.
     "withFork preserves multiple cookies (multi-input restoreCookies)" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("p1", "v1", "localhost").andThen {
-                    Browser.setCookie("p2", "v2", "localhost").andThen {
-                        Browser.setCookie("p3", "v3", "localhost").andThen {
+                Browser.setCookie("p1", "v1", "127.0.0.1").andThen {
+                    Browser.setCookie("p2", "v2", "127.0.0.1").andThen {
+                        Browser.setCookie("p3", "v3", "127.0.0.1").andThen {
                             Browser.withFork {
                                 Browser.cookies.map { cs =>
                                     val names = cs.map(_.name).toSet
@@ -665,13 +665,13 @@ class BrowserCookieTest extends BrowserTest:
     "cookies(forUrl) filters by Domain attribute" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("a", "1", "localhost", "/").andThen {
-                    Browser.setCookie("b", "2", "127.0.0.1", "/").andThen {
-                        Browser.cookies(forUrl = "http://localhost/").map { cs =>
-                            assert(cs.exists(_.name == "a"), s"Expected cookie 'a' (localhost) in filtered jar but got: ${cs.map(_.name)}")
+                Browser.setCookie("a", "1", "127.0.0.1", "/").andThen {
+                    Browser.setCookie("b", "2", "localhost", "/").andThen {
+                        Browser.cookies(forUrl = "http://127.0.0.1/").map { cs =>
+                            assert(cs.exists(_.name == "a"), s"Expected cookie 'a' (127.0.0.1) in filtered jar but got: ${cs.map(_.name)}")
                             assert(
                                 !cs.exists(_.name == "b"),
-                                s"Expected cookie 'b' (127.0.0.1) NOT in filtered jar but got: ${cs.map(_.name)}"
+                                s"Expected cookie 'b' (localhost) NOT in filtered jar but got: ${cs.map(_.name)}"
                             )
                         }
                     }
@@ -683,10 +683,10 @@ class BrowserCookieTest extends BrowserTest:
     "cookies(forUrl) is a strict subset of cookies" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("alpha", "1", "localhost", "/").andThen {
-                    Browser.setCookie("beta", "2", "localhost", "/").andThen {
+                Browser.setCookie("alpha", "1", "127.0.0.1", "/").andThen {
+                    Browser.setCookie("beta", "2", "127.0.0.1", "/").andThen {
                         Browser.cookies.map { full =>
-                            Browser.cookies(forUrl = "http://localhost/").map { filtered =>
+                            Browser.cookies(forUrl = "http://127.0.0.1/").map { filtered =>
                                 assert(
                                     filtered.size <= full.size,
                                     s"Expected filtered size (${filtered.size}) <= full size (${full.size})"
@@ -708,7 +708,7 @@ class BrowserCookieTest extends BrowserTest:
     "cookies(forUrl) with unrelated origin returns empty" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("only", "v", "localhost", "/").andThen {
+                Browser.setCookie("only", "v", "127.0.0.1", "/").andThen {
                     Browser.cookies(forUrl = "http://other-host.example.org/").map { cs =>
                         assert(cs.isEmpty, s"Expected empty Chunk for unrelated origin but got: ${cs.map(_.name)}")
                     }
@@ -720,9 +720,9 @@ class BrowserCookieTest extends BrowserTest:
     "cookies(forUrl) filters by Path attribute" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("apionly", "v", "localhost", "/api").andThen {
-                    Browser.setCookie("adminonly", "v", "localhost", "/admin").andThen {
-                        Browser.cookies(forUrl = "http://localhost/api/v1").map { cs =>
+                Browser.setCookie("apionly", "v", "127.0.0.1", "/api").andThen {
+                    Browser.setCookie("adminonly", "v", "127.0.0.1", "/admin").andThen {
+                        Browser.cookies(forUrl = "http://127.0.0.1/api/v1").map { cs =>
                             assert(cs.exists(_.name == "apionly"), s"Expected 'apionly' for /api/v1 but got: ${cs.map(_.name)}")
                             assert(!cs.exists(_.name == "adminonly"), s"Expected 'adminonly' NOT for /api/v1 but got: ${cs.map(_.name)}")
                         }
@@ -735,8 +735,8 @@ class BrowserCookieTest extends BrowserTest:
     "zero-arg cookies still returns the full jar after overload added" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
-                Browser.setCookie("a", "1", "localhost", "/").andThen {
-                    Browser.setCookie("b", "2", "localhost", "/").andThen {
+                Browser.setCookie("a", "1", "127.0.0.1", "/").andThen {
+                    Browser.setCookie("b", "2", "127.0.0.1", "/").andThen {
                         Browser.cookies.map { cs =>
                             assert(cs.exists(_.name == "a"), s"Expected 'a' in full jar but got: ${cs.map(_.name)}")
                             assert(cs.exists(_.name == "b"), s"Expected 'b' in full jar but got: ${cs.map(_.name)}")

@@ -26,6 +26,12 @@ private[kyo] object PathWatch:
         derives CanEqual
     final private case class ScanPanic(error: Throwable)
 
+    /** A scan that found the root itself gone or not a directory. The scan already knows why it failed, so the poll
+      * invalidates on it directly; a re-check of the root after the fact could find it restored and misreport the
+      * invalidation as `error`.
+      */
+    final private case class RootInvalid(error: FileWatchException)
+
     private def watchFailure(root: Path, error: FileSystemException)(using Frame): FileWatchException =
         error match
             case watch: FileWatchException => watch
@@ -33,7 +39,7 @@ private[kyo] object PathWatch:
 
     private def scan[S](service: FileSystem.Read[S], root: Path, options: WatchOptions)(using
         Frame
-    ): Result[FileWatchException, Map[Path, Snapshot]] < S =
+    ): Result[FileWatchException | RootInvalid, Map[Path, Snapshot]] < S =
         def hash(bytes: Span[Byte]): Int =
             var value = 1
             var index = 0
@@ -91,22 +97,23 @@ private[kyo] object PathWatch:
             }
 
         val read = service.exists(root, options.followLinks).map {
-            case false => Abort.fail[FileWatchException](FileWatchInvalidatedException(root))
+            case false => Abort.fail[RootInvalid](RootInvalid(FileWatchInvalidatedException(root)))
             case true  =>
                 service.isDirectory(root).map {
                     case false =>
-                        Abort.fail[FileReadException](
+                        Abort.fail[RootInvalid](RootInvalid(
                             FileIOException(root, FileSystemOperation.Watch, new java.io.IOException("watched path is not a directory"))
-                        )
+                        ))
                     case true =>
                         if options.followLinks then
                             service.realPath(root).map(real => children(root, options.depth == WatchDepth.Recursive, Set(real)))
                         else children(root, options.depth == WatchDepth.Recursive, Set.empty)
                 }
         }
-        Abort.run[FileReadException | FileStructureException | FileWatchException | ScanPanic](read).map {
+        Abort.run[FileReadException | FileStructureException | RootInvalid | ScanPanic](read).map {
             case Result.Success(snapshot)                   => Result.Success(snapshot)
             case Result.Failure(scanPanic: ScanPanic)       => Result.Panic(scanPanic.error)
+            case Result.Failure(invalid: RootInvalid)       => Result.Failure(invalid)
             case Result.Failure(error: FileSystemException) => Result.Failure(watchFailure(root, error))
             case Result.Panic(error)                        => Result.Panic(error)
         }
@@ -192,9 +199,10 @@ private[kyo] object PathWatch:
                     case MatchCase.Sensitive         => Glob.CaseSensitivity.Sensitive
                     case MatchCase.Insensitive       => Glob.CaseSensitivity.Insensitive
                 scan(service, root, options).map {
-                    case Result.Failure(error)   => Abort.fail(error)
-                    case Result.Panic(error)     => Abort.panic[FileWatchException](error)
-                    case Result.Success(initial) =>
+                    case Result.Failure(RootInvalid(error))        => Abort.fail(error)
+                    case Result.Failure(error: FileWatchException) => Abort.fail(error)
+                    case Result.Panic(error)                       => Abort.panic[FileWatchException](error)
+                    case Result.Success(initial)                   =>
                         Channel.init[Result[FileWatchException, PathChange]](options.capacity).map { channel =>
                             AtomicInt.init(0).map { pending =>
                                 AtomicBoolean.init(false).map { overflowed =>
@@ -272,8 +280,9 @@ private[kyo] object PathWatch:
                                                 }
                                                 if removalOnly && !deferredRemoval then loop(previous, true)
                                                 else publish(detected).andThen(loop(current, false))
-                                            case Result.Failure(error) => terminate(error)
-                                            case Result.Panic(error)   => panic(error)
+                                            case Result.Failure(_: RootInvalid)            => invalidate
+                                            case Result.Failure(error: FileWatchException) => terminate(error)
+                                            case Result.Panic(error)                       => panic(error)
                                         }
                                     // Async.sleep, not Clock.sleep: the latter hands back the timer Fiber rather than
                                     // suspending on it, so discarding it would leave this loop free-running.

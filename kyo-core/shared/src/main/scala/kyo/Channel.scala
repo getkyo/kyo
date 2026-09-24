@@ -43,7 +43,7 @@ import scala.annotation.tailrec
   * indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent
   * resource exhaustion.
   *
-  * WARNING: On the JVM, the actual capacity of a Channel is rounded up to the next power of two for performance reasons. For example, if
+  * WARNING: The actual capacity of a Channel is rounded up to the next power of two for performance reasons. For example, if
   * you specify a capacity of 10, the actual capacity will be 16.
   *
   * @tparam A

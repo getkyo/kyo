@@ -1637,6 +1637,105 @@ class CacheTest extends kyo.test.Test[Any]:
         }
     }
 
+    "memo interruption" - {
+
+        /** A memo whose computation of `v` yields `v * 10`, held open until `gate` is released, counting every
+          * evaluation so a leaf can tell a reused entry from a recomputed one.
+          */
+        def gatedMemo(gate: Latch, calls: AtomicInteger)(using Frame): (Int => Int < Async) < Sync =
+            Cache.memo(4) { (v: Int) =>
+                discard(calls.incrementAndGet())
+                gate.await.andThen(v * 10)
+            }
+
+        /** A caller of a memoized key parks by registering the entry's promise as something its own interrupt
+          * reaches, so one waiter on the fiber is exactly "parked on the pending entry".
+          */
+        def parkedOnEntry(caller: Fiber[Int, Any])(using Frame): Boolean < Sync =
+            caller.waiters.map(_ == 1)
+
+        "a caller's interrupt leaves the value intact for the other callers".pendingUntilFixed(
+            "the entry's promise is handed to every caller of the key, so one caller's interrupt completes it for all of them"
+        ) in {
+            // The entry's promise is the entry, shared by every caller of the key, and one caller going away is
+            // not the computation going away. Both survivors are checked, one already parked when the interrupt
+            // landed and one that arrived after it, because an entry broken by the interrupt fails them in
+            // different ways.
+            val calls = new AtomicInteger(0)
+            for
+                gate    <- Latch.init(1)
+                m       <- gatedMemo(gate, calls)
+                winner  <- Fiber.initUnscoped(m(1))
+                _       <- assertEventually(Sync.defer(calls.get() == 1))
+                leaving <- Fiber.initUnscoped(m(1))
+                parked  <- Fiber.initUnscoped(m(1))
+                _       <- assertEventually(Kyo.zip(parkedOnEntry(leaving), parkedOnEntry(parked)).map { case (a, b) => a && b })
+                _       <- leaving.interrupt
+                _       <- leaving.getResult
+                arrived <- Fiber.initUnscoped(m(1))
+                _       <- gate.release
+                w       <- winner.get
+                first   <- parked.get
+                second  <- arrived.get
+            yield
+                assert(w == 10)
+                assert(first == 10, "a caller parked when another was interrupted must still get the value")
+                assert(second == 10, "a caller arriving after another was interrupted must still get the value")
+                assert(calls.get() == 1, "an interrupted caller must not cost a recomputation")
+            end for
+        }
+
+        "a caller's interrupt does not poison the entry for later callers".pendingUntilFixed(
+            "the interrupted entry stays in the store, so the key serves that interrupt until it is evicted"
+        ) in {
+            // The interrupted caller is gone before the value is produced, so nothing it did can reach the caller
+            // that asks for the same key once the entry is settled: that one is an ordinary hit.
+            val calls = new AtomicInteger(0)
+            for
+                gate    <- Latch.init(1)
+                m       <- gatedMemo(gate, calls)
+                winner  <- Fiber.initUnscoped(m(1))
+                _       <- assertEventually(Sync.defer(calls.get() == 1))
+                leaving <- Fiber.initUnscoped(m(1))
+                _       <- assertEventually(parkedOnEntry(leaving))
+                _       <- leaving.interrupt
+                _       <- leaving.getResult
+                _       <- gate.release
+                w       <- winner.get
+                later   <- m(1)
+            yield
+                assert(w == 10)
+                assert(later == 10, "the entry must still serve the value after one of its callers was interrupted")
+                assert(calls.get() == 1, "the settled entry must be reused, not recomputed")
+            end for
+        }
+
+        "the computing caller's interrupt fails the waiters and the next caller recomputes".ignore(
+            "the gate is a Latch awaited by the interrupted caller, so the interrupt can complete the latch's shared promise and fail the recompute; that defect is pinned by LatchTest's waiter-interrupt leaf"
+        ) in {
+            // The other half of the contract: a value that was never produced must not be served, and the entry
+            // must be gone by the time a waiter learns its computation was cancelled, so a waiter that reacts by
+            // asking again recomputes rather than finding the dead entry.
+            val calls = new AtomicInteger(0)
+            for
+                gate      <- Latch.init(1)
+                m         <- gatedMemo(gate, calls)
+                computing <- Fiber.initUnscoped(m(1))
+                _         <- assertEventually(Sync.defer(calls.get() == 1))
+                waiting   <- Fiber.initUnscoped(m(1))
+                _         <- assertEventually(parkedOnEntry(waiting))
+                _         <- computing.interrupt
+                _         <- gate.release
+                failed    <- waiting.getResult
+                retried   <- m(1)
+            yield
+                assert(failed.panic.exists(_.isInstanceOf[Interrupted]), "a waiter on a cancelled computation must fail")
+                assert(retried == 10)
+                assert(calls.get() == 2, "the next caller must recompute rather than read a value never produced")
+            end for
+        }
+    }
+
     "memo concurrency" - {
 
         val repeats = if Platform.isNative then 10 else 100

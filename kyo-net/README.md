@@ -39,7 +39,7 @@ val viaUnix: Connection < (Async & Abort[NetException]) =
     NetPlatform.transport.connectUnix("/tmp/app.sock").safe.get
 ```
 
-For a connection that is encrypted from its first byte, use the `connect` overload that takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
+For a connection that is encrypted from its first byte, use `connectTls`, which takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
 
 ## Reading and writing
 
@@ -97,13 +97,13 @@ val listening: Listener < (Async & Abort[NetException]) =
 
 Binding to port `0` asks the OS for a free port; the `Listener` reports the address it actually bound to, so read `listener.port` after `listen` returns to learn it. `close()` on the listener stops accepting new connections and releases the bound socket, but does NOT close connections already accepted (those are owned by their handler), so a graceful shutdown closes the listener first, then drains the live connections.
 
-A second `listen` overload takes a `NetTlsConfig` and terminates TLS for every accepted connection (see [TLS](#tls)), and `listenUnix` binds a Unix-domain server socket by path.
+`listenTls` takes a `NetTlsConfig` and terminates TLS for every accepted connection (see [TLS](#tls)), and `listenUnix` binds a Unix-domain server socket by path.
 
 ## TLS
 
 A connection carries plaintext until you secure it, and there are two moments to do that. When the protocol is encrypted from its first byte, terminate TLS at the point of connect or accept. When the protocol speaks plaintext first and then negotiates the switch in band, upgrade the live connection in place. One `NetTlsConfig` drives both, on both the client and the server side.
 
-When you control the endpoint and the protocol is TLS from the start (HTTPS, a TLS-only service), use `connect(tls)` on the client or `listen(tls)` on the server: the handshake completes before you see the first byte. When the protocol exchanges a plaintext preamble and then negotiates an upgrade (SMTP STARTTLS, an IMAP `STARTTLS`, a database `sslmode` handshake), use `upgradeToTls` on the already-open connection.
+When you control the endpoint and the protocol is TLS from the start (HTTPS, a TLS-only service), use `connectTls` on the client or `listenTls` on the server: the handshake completes before you see the first byte. When the protocol exchanges a plaintext preamble and then negotiates an upgrade (SMTP STARTTLS, an IMAP `STARTTLS`, a database `sslmode` handshake), use `upgradeToTls` on the already-open connection.
 
 ### Configuration
 
@@ -262,7 +262,8 @@ The native I/O backend and BoringSSL are the primary on every posix platform; th
 
 - `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
-- On JS and Wasm the transport runs on Node. The koffi-loaded posix transport (kqueue on macOS, epoll/io_uring on Linux) and its in-process BoringSSL TLS run through Node's libuv worker pool, so a Node host gets the native readiness transport; where the posix native is not staged, the `node` floor uses Node's own event loop and TLS. Native compiles the C shims at link time. Windows uses the NIO floor and JDK TLS only, with no native transport and no native TLS.
+- On JS and Wasm the transport runs on Node. The koffi-loaded posix transport (kqueue on macOS, epoll/io_uring on Linux) and its in-process BoringSSL TLS run through Node's libuv worker pool, so a Node host gets the native readiness transport; where the posix native is not staged, the `node` floor uses Node's own event loop and TLS. A CommonJS and an ESModule bundle both reach the posix transport; an ESModule bundle has no `require` global and reaches koffi through `process.getBuiltinModule`, which needs Node 20.16 or 22.3 and later, so an older Node runs it on the `node` floor. Native compiles the C shims at link time. Windows uses the NIO floor and JDK TLS only, with no native transport and no native TLS.
+- A Node process stays alive while a listener or a connection is open and exits once the last one closes, on the posix transport as on the `node` floor, so an application needs no explicit shutdown to end.
 - The transport degrades rather than failing: if the native I/O backend or the native TLS engine is unavailable, selection falls to the next available (`epoll`/`kqueue` to `nio`; `boringssl` to `jdk` or `openssl`), and a plain JVM jar with no bundled natives runs on the NIO floor with JDK TLS. A `-D`-forced selection is the exception: it fails closed instead of degrading.
 
 ## Native transport distribution (JVM)

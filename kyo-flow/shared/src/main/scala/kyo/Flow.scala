@@ -1321,7 +1321,13 @@ object Flow:
         interpreter: FlowInterpreter[S]
     )(using Frame): Record[In & Out] < S =
 
-        case class Compensation(name: String, ctx: Record[Any], handler: Record[Any] => Any)
+        /** A registered handler, kept as the computation it is.
+          *
+          * The row is erased the way the rest of this walk erases one, but the result is `Any < Any` rather than `Any`: at `Any` the
+          * pending type's lift fires at the `Abort.run` that runs it and wraps the computation as data, so the unwind hands itself that
+          * value, matches neither failure arm, and records the node compensated without running anything.
+          */
+        case class Compensation(name: String, ctx: Record[Any], handler: Record[Any] => Any < Any)
 
         def addField(ctx: Record[Any], name: String, value: Any): Record[Any] =
             new Record[Any](ctx.toDict ++ Dict(name -> value))
@@ -1330,9 +1336,9 @@ object Flow:
             def pushComp(
                 name: String,
                 ctx: Record[Any],
-                handler: Record[Any] => Any
+                handler: internal.Handler[Any]
             ): Unit < Sync =
-                compsRef.getAndUpdate(Compensation(name, ctx, handler) +: _).unit
+                compsRef.getAndUpdate(Compensation(name, ctx, handler.asInstanceOf[Record[Any] => Any < Any]) +: _).unit
 
             /** Runs the handlers this attempt registered, in reverse order of registration, skipping the ones already recorded.
               *
@@ -1380,7 +1386,7 @@ object Flow:
               * mapped record, so such a child starts from the store alone, its recorded inputs included.
               */
             def childRecord(childPath: String, mapped: Record[Any]): Record[Any] =
-                val prefix    = s"$childPath${NodePath.Separator}"
+                val prefix    = s"$childPath${FlowNodePath.Separator}"
                 val inherited = durable.foldLeft(Dict.empty[String, Any]) { (acc, name, value) =>
                     if name.startsWith(prefix) then acc.update(name.substring(prefix.length), value) else acc
                 }
@@ -1398,7 +1404,7 @@ object Flow:
 
                     case n: Output[?, ?, ?, ?, ?] @unchecked =>
                         val e         = n.erased
-                        val qualified = NodePath.qualify(path, n.name)
+                        val qualified = FlowNodePath.qualify(path, n.name)
                         if fieldCompleted(ctx, n.name) then
                             e.compensate match
                                 case Present(handler) => pushComp(qualified, ctx, handler).andThen(ctx)
@@ -1417,7 +1423,7 @@ object Flow:
 
                     case n: Step[?, ?] @unchecked =>
                         val e         = n.erased
-                        val qualified = NodePath.qualify(path, n.name)
+                        val qualified = FlowNodePath.qualify(path, n.name)
                         if eventCompleted(qualified) then
                             e.compensate match
                                 case Present(handler) => pushComp(qualified, ctx, handler).andThen(ctx)
@@ -1436,21 +1442,21 @@ object Flow:
                         // wrote. Nothing else records it: a satisfied input proceeds with the value in hand and writes no progress of
                         // its own, so a row written here would be outstanding forever and keep the execution permanently ready.
                         if fieldCompleted(ctx, n.name) then
-                            interpreter.onInputDischarged(NodePath.qualify(path, n.name), n.frame, n.meta).andThen(ctx)
+                            interpreter.onInputDischarged(FlowNodePath.qualify(path, n.name), n.frame, n.meta).andThen(ctx)
                         else
-                            interpreter.onInput(NodePath.qualify(path, n.name), n.frame, n.meta)(using n.erased.tag, n.erased.schema)
+                            interpreter.onInput(FlowNodePath.qualify(path, n.name), n.frame, n.meta)(using n.erased.tag, n.erased.schema)
                                 .map(v => addField(ctx, n.name, v))
 
                     case n: Sleep =>
-                        if eventCompleted(NodePath.qualify(path, n.name)) then ctx
+                        if eventCompleted(FlowNodePath.qualify(path, n.name)) then ctx
                         else
-                            interpreter.onSleep(NodePath.qualify(path, n.name), n.duration, n.frame, n.meta)
+                            interpreter.onSleep(FlowNodePath.qualify(path, n.name), n.duration, n.frame, n.meta)
                                 .andThen(ctx)
 
                     case n: Dispatch[?, ?, ?, ?, ?] @unchecked =>
                         val d               = n.erased
                         val nameStr: String = n.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         // The handler undoes what the branch that ran did, so it is registered on the replay path too: a dispatch
                         // whose field is already stored ran its branch under an earlier attempt of this same execution.
@@ -1507,7 +1513,7 @@ object Flow:
                     case n: LoopNode[?, ?, ?, ?, ?] @unchecked =>
                         val r               = n.erased
                         val nameStr: String = r.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         import kyo.kernel.Loop.Continue
                         import kyo.kernel.Loop.Continue2
@@ -1627,7 +1633,7 @@ object Flow:
                     case n: ForEach[?, ?, ?, ?, ?] @unchecked =>
                         val r               = n.erased
                         val nameStr: String = n.name
-                        val durableName     = NodePath.qualify(path, nameStr)
+                        val durableName     = FlowNodePath.qualify(path, nameStr)
 
                         // Items above a bound of 1 run in their own fibers. Nothing is isolated across that boundary because
                         // the AST is erased at `S`: the row is `Any` here, so the isolate is the identity, and what carries an
@@ -1742,12 +1748,12 @@ object Flow:
                         if fieldCompleted(ctx, n.name) then ctx
                         else
                             val nameStr   = n.name: String
-                            val childPath = NodePath.qualify(path, nameStr)
+                            val childPath = FlowNodePath.qualify(path, nameStr)
                             // The inputs this entry still owes the store: the ones the record does not already hold. An input the
                             // store holds is what the child ran against and is never written again and never compared with the
                             // mapper's answer, which is the same rule a recorded dispatch branch follows.
                             val owed = n.erased.childInputs.filter(input =>
-                                durable.get(NodePath.qualify(childPath, input.name)) match
+                                durable.get(FlowNodePath.qualify(childPath, input.name)) match
                                     case Present(_) => false
                                     case _          => true
                             )
@@ -1761,7 +1767,7 @@ object Flow:
                               * just refused as occupied, and if it ever did the mapper's own value is the honest fallback.
                               */
                             def record(acc: Dict[String, Any], input: ChildInput): Dict[String, Any] < S =
-                                val qualified = NodePath.qualify(childPath, input.name)
+                                val qualified = FlowNodePath.qualify(childPath, input.name)
                                 acc.get(input.name) match
                                     case Present(value) =>
                                         interpreter.onInputSupplied(qualified, value, input.frame, input.meta)(using
@@ -1911,9 +1917,9 @@ object Flow:
         /** The durable key a fan-out's item at `index` records its result under.
           *
           * An item is a composition step the way a subflow instance is, one level down, so its key is built the same way: item 2 of
-          * `charges` is `charges~2`. See [[kyo.internal.NodePath]].
+          * `charges` is `charges~2`. See [[kyo.internal.FlowNodePath]].
           */
-        def itemKey(foreach: String, index: Int): String = NodePath.qualify(foreach, index.toString)
+        def itemKey(foreach: String, index: Int): String = FlowNodePath.qualify(foreach, index.toString)
 
         /** The durable key a fan-out records how many items it had under.
           *
@@ -1922,7 +1928,7 @@ object Flow:
           * a duplicate the same refusal catches. It cannot ride `#` instead, because a progress walk reads every `name#...` as an
           * iteration of `name` and would draw the fan-out as done the moment its count landed.
           */
-        def countKey(foreach: String): String = NodePath.qualify(foreach, "count")
+        def countKey(foreach: String): String = FlowNodePath.qualify(foreach, "count")
 
         final case class BranchData[Ctx, V, S](
             name: String,

@@ -83,7 +83,17 @@ object HttpServer:
     def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
-        Scope.acquireRelease(initUnscoped(config)(handlers*))(_.closeNow)
+        // The listener is owned by a scope finalizer registered before the bind's join, reading the bound server from a
+        // cell the bind fills: a plain `Scope.acquireRelease` over the join leaves a window (the JVM bind completes
+        // synchronously) where an abandoned caller strands the listener.
+        Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map { serverCell =>
+            Scope.ensure { _ =>
+                Sync.Unsafe.defer(serverCell.get()).map {
+                    case Present(server) => server.closeNow
+                    case Absent          => ()
+                }
+            }.andThen(initInto(config, serverCell)(handlers*))
+        }
 
     def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
@@ -113,6 +123,11 @@ object HttpServer:
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
     ): HttpServer < (Async & Abort[HttpBindException]) =
+        Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map(serverCell => initInto(config, serverCell)(handlers*))
+
+    private def initInto(config: HttpServerConfig, serverCell: AtomicRef.Unsafe[Maybe[HttpServer]])(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -135,18 +150,36 @@ object HttpServer:
         Sync.Unsafe.defer {
             val transport   = kyo.net.NetPlatform.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
-            Abort.run[NetException](listenFiber.safe.get).map {
-                case Result.Success(server) => server.safe
-                case Result.Failure(netEx)  =>
-                    val bindTarget = config.unixSocket match
-                        case Present(path) => path
-                        case Absent        => config.host
-                    Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
-                case Result.Panic(t) =>
-                    throw t
+            // The bound server reaches the caller through a promise, with the bind failure already translated, so no
+            // step separates the join from what the caller registers on the value. A caller stopped at the join settles
+            // the promise first; a bind completing afterwards finds nobody to hand the server to and closes it.
+            val bound = Promise.Unsafe.init[HttpServer, Abort[HttpBindException]]()
+            listenFiber.onComplete { result =>
+                result.foldError(
+                    // The cell is set in
+                    // the same step `bound` completes, so `init`'s finalizer finds it whether or not the caller took the handoff.
+                    serverComp =>
+                        val server = serverComp.eval.safe
+                        serverCell.set(Maybe(server))
+                        if !bound.complete(Result.succeed(server)) then discard(server.closeFiber(Duration.Zero))
+                    ,
+                    {
+                        // Type patterns, not the `Failure` extractor: its `unapply` returns `Maybe`, so an extractor match
+                        // is not provably exhaustive over the opaque `Error` union and `-Werror` rejects it.
+                        case panic: Result.Panic                              => bound.completeDiscard(panic)
+                        case failure: Result.Failure[NetException] @unchecked =>
+                            val bindTarget = config.unixSocket match
+                                case Present(path) => path
+                                case Absent        => config.host
+                            bound.completeDiscard(
+                                Result.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(failure.failure.getMessage)))
+                            )
+                    }
+                )
             }
+            bound.safe.get
         }
-    end initUnscoped
+    end initInto
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
