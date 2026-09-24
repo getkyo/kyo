@@ -335,7 +335,7 @@ class BrowserSettlementTest extends BrowserTest:
         // so it always lands inside that evaluation.
         withBrowserOnLocalhost {
             Browser.eval("window.location.host").map { host =>
-                val target = s"http://$host/json"
+                val target  = s"http://$host/json"
                 val install =
                     s"""(() => {
                        |  const b = document.createElement('button');

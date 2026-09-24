@@ -236,11 +236,21 @@ private[kyo] object MutationSettlement:
         Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
             val ctxOpt = ctx.map(c => CdpTypes.ExecutionContextId.value(c))
             Browser.use { tab =>
-                CdpBackend.runtimeEvaluate(
-                    tab.session,
-                    EvalParams(js, returnByValue = true, awaitPromise = true, contextId = ctxOpt)
-                )
-                    .map { env =>
+                // An action with no navigation intent the actionability gate can see may still navigate once this wait is under way
+                // (a handler that assigns the location after a round trip). The document this evaluation runs on is then replaced
+                // under it, and the settled state the caller is owed is the new page's, as after a navigating click.
+                Abort.recover[BrowserProtocolErrorException] { e =>
+                    if e.error.contains(CdpErrorStrings.TargetNavigatedErrorMessage) then
+                        NavigationWatcher.awaitCommitted(Browser.Settle.NetworkIdle, throwOnFailure = true).andThen(Maybe.empty[EvalResult])
+                    else Abort.fail(e)
+                } {
+                    CdpBackend.runtimeEvaluate(
+                        tab.session,
+                        EvalParams(js, returnByValue = true, awaitPromise = true, contextId = ctxOpt)
+                    ).map(env => Maybe(env))
+                }.map {
+                    case Absent       => ()
+                    case Present(env) =>
                         CdpEvalDecoder.extractValueOrFail(env).map { value =>
                             parseSettlementValue(value) match
                                 case SettlementResult.Done                  => ()
@@ -269,7 +279,7 @@ private[kyo] object MutationSettlement:
                                         ))
                             end match
                         }
-                    }
+                }
             }
         }
     end awaitQuiescence

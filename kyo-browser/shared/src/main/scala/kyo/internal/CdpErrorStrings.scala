@@ -24,4 +24,9 @@ private[kyo] object CdpErrorStrings:
       */
     val UnreturnableValueErrorMessage: String = "Object couldn't be returned by value"
 
+    /** Emitted by `Runtime.evaluate` on the page's own context (code -32000) when the document it runs on is replaced mid-evaluation: a
+      * navigation committed. Triggers the navigated-during-settlement path in [[MutationSettlement]].
+      */
+    val TargetNavigatedErrorMessage: String = "Inspected target navigated or closed"
+
 end CdpErrorStrings

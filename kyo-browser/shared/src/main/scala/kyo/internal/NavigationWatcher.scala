@@ -60,24 +60,31 @@ private[kyo] object NavigationWatcher:
             Scope.run {
                 installWatcher.andThen {
                     Scope.acquireRelease(snapshotState)(_ => releaseWatcher(tab)).map { _ =>
-                        trigger.map { result =>
-                            Browser.configLocal.use { cfg =>
-                                Clock.nowMonotonic.map { now =>
-                                    val settleDeadline = now + loadScheduleTimeout(cfg.loadSchedule)
-                                    // The reload is still committing when we start waiting for it to settle: a settle-poll
-                                    // Runtime.evaluate can race the navigation and come back with CDP -32000 "Inspected
-                                    // target navigated or closed" (old execution context gone, new one not yet up). That
-                                    // surfaces as a BrowserProtocolErrorException and is transient, so retry the settle
-                                    // wait until the reloaded page is reachable. A genuine navigation failure is a
-                                    // BrowserNavigationFailedException (a different type) and is not retried here.
-                                    Retry[BrowserProtocolErrorException](navTransientRetrySchedule)(
-                                        awaitSettle(Absent, settle, settleDeadline, throwOnFailure)
-                                    ).andThen(result)
-                                }
-                            }
-                        }
+                        trigger.map(result => awaitCommitted(settle, throwOnFailure).andThen(result))
                     }
                 }
+            }
+        }
+
+    /** Waits for a navigation already known to be under way to settle per `settle`, whatever its URL: a reload, or a document replaced
+      * under an evaluation that was not watching for a navigation. Raises [[BrowserNavigationFailedException]] on 4xx/5xx when
+      * `throwOnFailure = true`.
+      */
+    def awaitCommitted(settle: Browser.Settle, throwOnFailure: Boolean)(using
+        Frame
+    ): Unit < (Browser & Async & Abort[BrowserReadException]) =
+        Browser.configLocal.use { cfg =>
+            Clock.nowMonotonic.map { now =>
+                val settleDeadline = now + loadScheduleTimeout(cfg.loadSchedule)
+                // The navigation is still committing when we start waiting for it to settle: a settle-poll
+                // Runtime.evaluate can race it and come back with CDP -32000 "Inspected target navigated or
+                // closed" (old execution context gone, new one not yet up). That surfaces as a
+                // BrowserProtocolErrorException and is transient, so retry the settle wait until the new page is
+                // reachable. A genuine navigation failure is a BrowserNavigationFailedException (a different type)
+                // and is not retried here.
+                Retry[BrowserProtocolErrorException](navTransientRetrySchedule)(
+                    awaitSettle(Absent, settle, settleDeadline, throwOnFailure)
+                )
             }
         }
 
