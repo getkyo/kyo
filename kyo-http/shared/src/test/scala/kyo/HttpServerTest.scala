@@ -1562,6 +1562,7 @@ class HttpServerTest extends BaseHttpTest:
                 Promise.init[Unit, Any].map { never =>
                     Sync.ensure(started.release.andThen(finish.await).andThen(finalized.set(true)))(entered.release.andThen(never.get))
                 }
+        end Parked
 
         def parked(using Frame): Parked < Sync =
             for
@@ -1571,43 +1572,40 @@ class HttpServerTest extends BaseHttpTest:
                 finalized <- AtomicBoolean.init
             yield Parked(entered, started, finish, finalized)
 
-        /** Closes `server` once the handler entered, and answers which came first: the handler's finalizer starting or the close
-          * returning; then lets the finalizer finish and answers whether it had run by the time the close returned.
+        /** Closes `server` once the handler entered, lets the interrupted handler's finalizer finish once it started, and answers
+          * whether the finalizer had run by the time the close returned.
           */
-        def close(server: HttpServer, work: Parked)(using Frame): (String, Boolean) < Async =
-            for
-                _       <- work.entered.await
-                closing <- Fiber.init(server.closeNow)
-                first   <- Async.race(work.started.await.andThen("the finalizer started"), closing.get.andThen("the close returned"))
-                _       <- work.finish.release
-                _       <- closing.get
-                ran     <- work.finalized.get
-            yield (first, ran)
+        def close(server: HttpServer, work: Parked)(using Frame): Boolean < Async =
+            Scope.run {
+                for
+                    _       <- work.entered.await
+                    closing <- Fiber.init(server.closeNow.andThen(work.finalized.get))
+                    _       <- work.started.await
+                    _       <- work.finish.release
+                    ran     <- closing.get
+                yield ran
+            }
 
         "a WebSocket handler parked on a foreign await is interrupted, and the close returns after its finalizer ran" in {
             for
-                work   <- parked
-                server <- HttpServer.initUnscoped(0, "127.0.0.1")(HttpHandler.webSocket("ws/park")((_, _) => work.run))
+                work         <- parked
+                server       <- HttpServer.initUnscoped(0, "127.0.0.1")(HttpHandler.webSocket("ws/park")((_, _) => work.run))
                 client <- Fiber.init(Abort.run[Any](HttpClient.webSocket(s"ws://127.0.0.1:${server.port}/ws/park")(_ => Async.never)))
-                (first, ran) <- close(server, work)
-                _            <- client.interrupt
-            yield
-                assert(first == "the finalizer started")
-                assert(ran, "the close returned before the handler's finalizer ran")
+                ran    <- close(server, work)
+                _      <- client.interrupt
+            yield assert(ran, "the close returned before the handler's finalizer ran")
             end for
         }
 
         "a plain handler parked on a foreign await is interrupted, and the close returns after its finalizer ran" in {
             val route = HttpRoute.getRaw("park").response(_.bodyText)
             for
-                work   <- parked
-                server <- HttpServer.initUnscoped(0, "127.0.0.1")(route.handler(_ => work.run.andThen(HttpResponse.ok("never"))))
+                work         <- parked
+                server       <- HttpServer.initUnscoped(0, "127.0.0.1")(route.handler(_ => work.run.andThen(HttpResponse.ok("never"))))
                 client <- Fiber.init(Abort.run[Any](HttpClient.getText(s"http://127.0.0.1:${server.port}/park")))
-                (first, ran) <- close(server, work)
-                _            <- client.interrupt
-            yield
-                assert(first == "the finalizer started")
-                assert(ran, "the close returned before the handler's finalizer ran")
+                ran    <- close(server, work)
+                _      <- client.interrupt
+            yield assert(ran, "the close returned before the handler's finalizer ran")
             end for
         }
     }
