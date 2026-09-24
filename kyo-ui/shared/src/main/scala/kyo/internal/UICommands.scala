@@ -13,12 +13,32 @@ import kyo.*
   */
 private[kyo] object UICommands:
 
-    private[kyo] val scrollSink: Local[Maybe[String => Unit < Async]] = Local.init(Absent)
+    enum Command derives CanEqual:
+        case ScrollIntoView(id: String)
+        case Navigate(path: String)
+
+    private[kyo] val sink: Local[Maybe[Command => Unit < Async]] = Local.init(Absent)
 
     def scrollIntoView(id: String)(using Frame): Unit < Async =
-        scrollSink.use {
-            case Present(sink) => sink(id)
-            case Absent        => ()
+        send(Command.ScrollIntoView(id))
+
+    def navigate(path: String)(using Frame): Unit < Async =
+        if isSameOriginPath(path) then send(Command.Navigate(path)) else ()
+
+    /** A path the client resolves against its own origin: a leading `/` not followed by `/` or `\`, and no control character.
+      *
+      * Browsers read `//host` and `/\host` as a host, and strip tab and newline from a URL before parsing it, so `/\t/host` reaches
+      * another origin too. The clients check the resolved origin again before assigning; this check keeps a refused path off the wire.
+      */
+    private[kyo] def isSameOriginPath(path: String): Boolean =
+        path.nonEmpty && path.charAt(0) == '/' &&
+            !(path.length > 1 && (path.charAt(1) == '/' || path.charAt(1) == '\\')) &&
+            !path.exists(c => c < ' ' || c == '\u007f')
+
+    private def send(command: Command)(using Frame): Unit < Async =
+        sink.use {
+            case Present(s) => s(command)
+            case Absent     => ()
         }
 
 end UICommands

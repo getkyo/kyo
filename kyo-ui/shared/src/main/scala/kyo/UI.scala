@@ -289,6 +289,19 @@ object UI:
     def scrollIntoView(id: String)(using Frame): Unit < Async =
         UICommands.scrollIntoView(id)
 
+    /** Sends the client's browser to `path` on the page's own origin, from inside an event handler, as a new history entry.
+      *
+      * The command rides the session the handler runs in, like [[scrollIntoView]]: under [[runHandlers]] it travels the session's
+      * WebSocket and the connected browser calls `location.assign`; under a browser mount it assigns the local document's location.
+      * Outside any session the call is a no-op.
+      *
+      * Only a path on the page's origin is followed: it starts with `/` and does not name a host. `//host/x`, `/\host`, `https://host/x`
+      * and relative paths are refused and the call is a no-op, and the client checks the resolved origin again before it moves, so a
+      * handler that builds the path from user input cannot send the browser to another site.
+      */
+    def navigate(path: String)(using Frame): Unit < Async =
+        UICommands.navigate(path)
+
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.
       */
@@ -1991,11 +2004,21 @@ object UI:
             def alt(v: String): Img = copy(alt = Present(v))
         end Img
 
-        /** An inline frame embedding another document at `src`. `title` names the frame for assistive technology. Size it with `.style`. */
+        /** An inline frame embedding another document, loaded from `src` or given inline as `srcdoc`. `title` names the frame for
+          * assistive technology. Size it with `.style`.
+          *
+          * `sandbox` restricts what the embedded document may do: with no tokens it may do nothing, and each token lifts one restriction
+          * (`allow-scripts`, `allow-forms`, ...). A document shown from content the page does not trust, such as an HTML block a user
+          * posted, goes in `srcdoc` with a sandbox that never includes `allow-same-origin` together with `allow-scripts`: its scripts
+          * then run in an opaque origin and cannot read the page, its cookies or its storage. When both `src` and `srcdoc` are set, the
+          * browser shows `srcdoc`.
+          */
         final case class Iframe(
             attrs: Attrs = Attrs(),
             src: Maybe[String] = Absent,
-            frameTitle: Maybe[String] = Absent
+            frameTitle: Maybe[String] = Absent,
+            sandbox: Maybe[String] = Absent,
+            srcdoc: Maybe[String] = Absent
         )(using val frame: Frame) extends Block with Void:
             type Self = Iframe
             def withAttrs(a: Attrs): Iframe            = copy(attrs = a)
@@ -2004,6 +2027,15 @@ object UI:
                 given Frame = frame
                 Reactive[Self](v.map(s => this.src(s): UI))
             def title(v: String): Iframe = copy(frameTitle = Present(v))
+
+            /** Sandboxes the frame, lifting only the restrictions `tokens` names; no tokens is the most restrictive sandbox. */
+            def sandbox(tokens: String*): Iframe = copy(sandbox = Present(tokens.mkString(" ")))
+
+            /** Shows `html` as the frame's document instead of loading `src`. */
+            def srcdoc(html: String): Iframe = copy(srcdoc = Present(html))
+            def srcdoc(html: Signal[String]): Reactive[Self] =
+                given Frame = frame
+                Reactive[Self](html.map(s => this.srcdoc(s): UI))
         end Iframe
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----

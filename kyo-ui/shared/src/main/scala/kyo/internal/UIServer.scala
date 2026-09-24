@@ -90,11 +90,11 @@ private[kyo] object UIServer:
                 // the upgrade proves only that the transport is up, not that anything is reading this socket.
                 _   <- ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.SessionReady())))
                 sub <- ReactiveUI.subscribe(root, exchange)
-                // Session command sink: an event handler calling UI.scrollIntoView sends the op over this
-                // connection's socket, riding the same channel as the reactive updates. runPartial drops
+                // Session command sink: an event handler calling UI.scrollIntoView or UI.navigate sends the op over
+                // this connection's socket, riding the same channel as the reactive updates. runPartial drops
                 // only a Closed (the socket closed, so the command is moot); a Panic propagates.
-                scrollSink = (id: String) =>
-                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ScrollIntoView(id))))).unit
+                commandSink = (command: UICommands.Command) =>
+                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.of(command))))).unit
                 resolveSink = (sessionId: String, decision: Drag.Decision) =>
                     Abort.runPartial[Closed](
                         ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](HtmlOp.ResolveDrag(sessionId, decision))))
@@ -104,7 +104,7 @@ private[kyo] object UIServer:
                 )
                 // Peer close (or any session end) fails every pending file read with Disconnected.
                 _ <- Scope.ensure(files.close())
-                _ <- UICommands.scrollSink.let(Present(scrollSink)) {
+                _ <- UICommands.sink.let(Present(commandSink)) {
                     DragCommands.resolveSink.let(Present(resolveSink)) {
                         DragFiles.local.let(Present(files)) {
                             Async.race(

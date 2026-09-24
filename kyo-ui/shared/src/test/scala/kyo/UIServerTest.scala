@@ -131,11 +131,14 @@ class UIServerTest extends UITest:
             )
         }
 
-    /** Serves `page` under `/app` on its own server and runs `f` in the shared Chrome against the server's origin. */
+    /** Serves `pages` under `/app` on its own server and runs `f` in the shared Chrome against the server's origin. */
     private def withPages[A](f: String => A < (Browser & Abort[BrowserException]))(using Frame) =
+        withPagesOf(page)(f)
+
+    private def withPagesOf[A](pages: UI.Request => UI < Async)(f: String => A < (Browser & Abort[BrowserException]))(using Frame) =
         cancelOnUnsupportedPlatform {
             for
-                handlers <- UI.runHandlers("/app", head)(page)
+                handlers <- UI.runHandlers("/app", head)(pages)
                 server   <- HttpServer.init(0, "localhost")(handlers*)
                 result   <- Browser.runShared()(f(s"http://localhost:${server.port}"))
             yield result
@@ -252,6 +255,74 @@ class UIServerTest extends UITest:
                 _ <- Browser.click(Selector.id("count"))
                 _ <- Browser.assertText(Selector.id("session"), "/two none 1")
             yield ()
+        }
+    }
+
+    // ---- UI.navigate: a handler sends the browser to another page of the same origin ----
+
+    private def navigatingPage(request: UI.Request)(using Frame): UI < Async =
+        Signal.initRef(0).map { clicks =>
+            UI.div(
+                UI.h1(s"page ${request.path}").id("title"),
+                UI.button("Two").id("to-two").onClick(UI.navigate("/app/two")),
+                UI.button("Scheme").id("to-scheme-relative").onClick(UI.navigate("//evil.example/app")),
+                UI.button("Absolute").id("to-absolute").onClick(UI.navigate("https://x/app")),
+                UI.button("Count").id("count").onClick(clicks.updateAndGet(_ + 1)),
+                clicks.map(n => UI.span(s"${request.path} $n").id("session"))
+            )
+        }
+
+    "a handler's navigate lands on the page of the path, and back returns" in {
+        withPagesOf(navigatingPage) { origin =>
+            for
+                _ <- Browser.goto(s"$origin/app/one")
+                _ <- Browser.assertText(Selector.id("title"), "page /one")
+                _ <- Browser.click(Selector.id("to-two"))
+                _ <- Browser.assertUrl(s"$origin/app/two")
+                _ <- Browser.assertText(Selector.id("title"), "page /two")
+                _ <- Browser.click(Selector.id("count"))
+                _ <- Browser.assertText(Selector.id("session"), "/two 1")
+                _ <- Browser.back
+                _ <- Browser.assertUrl(s"$origin/app/one")
+                _ <- Browser.assertText(Selector.id("title"), "page /one")
+            yield ()
+        }
+    }
+
+    "a handler's navigate to another origin is refused and the page stays" in {
+        // The count click is the barrier: its update arrives after anything the refused handlers sent, on the same socket.
+        withPagesOf(navigatingPage) { origin =>
+            for
+                _       <- Browser.goto(s"$origin/app/one")
+                history <- Browser.eval("String(history.length)")
+                _       <- Browser.click(Selector.id("to-scheme-relative"))
+                _       <- Browser.click(Selector.id("to-absolute"))
+                _       <- Browser.click(Selector.id("count"))
+                _       <- Browser.assertText(Selector.id("session"), "/one 1")
+                _       <- Browser.assertUrl(s"$origin/app/one")
+                after   <- Browser.eval("String(history.length)")
+            yield assert(after == history)
+        }
+    }
+
+    "the client refuses a Navigate op whose path resolves to another origin" in {
+        // The ops go straight into the live socket's message handler, past the server's own check. The Navigation API's navigate event
+        // fires synchronously inside location.assign, and the same-document hash path fed last is the control that proves it is observed.
+        val feed =
+            """(function(){
+              |  var seen=[];
+              |  navigation.addEventListener('navigate',function(e){seen.push(e.destination.url);});
+              |  var paths=['//evil.example/app','https://x/app','/\\evil.example/app','/\t/evil.example/app','/app/one#after'];
+              |  for(var i=0;i<paths.length;i++)window.__kyoWs.onmessage({data:JSON.stringify({Navigate:{path:paths[i]}})});
+              |  return seen.join(' ');
+              |})()""".stripMargin
+        withPagesOf(navigatingPage) { origin =>
+            for
+                _    <- Browser.goto(s"$origin/app/one")
+                _    <- Browser.click(Selector.id("count"))
+                _    <- Browser.assertText(Selector.id("session"), "/one 1")
+                seen <- Browser.eval(feed)
+            yield assert(seen == s"$origin/app/one#after")
         }
     }
 

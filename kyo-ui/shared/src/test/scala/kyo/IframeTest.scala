@@ -42,4 +42,39 @@ class IframeTest extends UITest:
         }
     }
 
+    "iframe sandbox attribute" in {
+        withUI(UI.div(UI.iframe("about:blank").sandbox("allow-scripts", "allow-forms").id("f"))) {
+            Browser.assertAttribute(Selector.id("f"), "sandbox", "allow-scripts allow-forms").unit
+        }
+    }
+
+    "iframe srcdoc attribute" in {
+        withUI(UI.div(UI.iframe("about:blank").srcdoc("<p>hello</p>").id("f"))) {
+            Browser.assertAttribute(Selector.id("f"), "srcdoc", "<p>hello</p>").unit
+        }
+    }
+
+    // The frame reports through postMessage rather than being read in place: Chrome may isolate a sandboxed frame in its own process,
+    // where the page's frame tree does not reach it. The listener is installed before the click that sets the srcdoc, so the frame's one
+    // message cannot arrive before anything listens.
+    "a script in an allow-scripts sandbox runs and cannot read the parent document" in {
+        val script =
+            "<script>var r;try{r='read:'+parent.document.title}catch(e){r='blocked:'+e.name}parent.postMessage(r,'*')</script>"
+        val app: UI < Async =
+            for doc <- Signal.initRef("")
+            yield UI.div(
+                UI.button("Load").id("b").onClick(doc.set(script)),
+                UI.iframe("about:blank").sandbox("allow-scripts").id("f").srcdoc(doc)
+            )
+        withUI(app) {
+            for
+                _ <- Browser.eval(
+                    "window.addEventListener('message',function(e){document.body.setAttribute('data-frame',String(e.data))});'ok'"
+                )
+                _ <- Browser.click(Selector.id("b"))
+                _ <- Browser.assertAttribute(Selector.css("body"), "data-frame", "blocked:SecurityError")
+            yield ()
+        }
+    }
+
 end IframeTest

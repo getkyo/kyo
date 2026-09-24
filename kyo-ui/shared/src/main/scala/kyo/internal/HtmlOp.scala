@@ -25,6 +25,12 @@ private[kyo] object HtmlOp:
     case class Remove(path: Seq[String])                    extends HtmlOp derives Schema
     case class InjectCss(css: String)                       extends HtmlOp derives Schema
     case class ScrollIntoView(id: String)                   extends HtmlOp derives Schema
+    case class Navigate(path: String)                       extends HtmlOp derives Schema
+
+    def of(command: UICommands.Command): HtmlOp =
+        command match
+            case UICommands.Command.ScrollIntoView(id) => ScrollIntoView(id)
+            case UICommands.Command.Navigate(path)     => Navigate(path)
 
     // --- Drag operations ---
 

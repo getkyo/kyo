@@ -129,6 +129,7 @@ Finite value domains are typed the same way, each covered in its own section bel
 - Links: `UI.a` with `.href(v: Href)`, `.href(v, target)`, `.target(v)`. See [Domain enums for attributes](#domain-enums-for-attributes).
 - Labels: `UI.label.forId(v)` (alias `.\`for\`(v)` for HTML symmetry).
 - Images: `UI.img(src, alt)` with `.src(v: ImgSrc)` and `.alt(v)`.
+- Frames: `UI.iframe(src)` with `.title(v)`, `.srcdoc(html)` (a `String` or a `Signal[String]`) to show a document given inline, and `.sandbox(tokens*)` to restrict it, where no tokens is the strictest sandbox. HTML the page does not trust goes in `srcdoc` under a sandbox that does not combine `allow-scripts` with `allow-same-origin`, so its scripts run in an opaque origin with no access to the page.
 
 ```scala
 import UI.*
@@ -1355,6 +1356,16 @@ val pages: Seq[HttpHandler[?, ?, ?]] < Sync =
 ```
 
 Paths under `basePath/_kyo` are the framework's own; the page catch-all never sees them.
+
+A handler sends the browser to another page with `UI.navigate(path)`, which reaches the client over the session like `UI.scrollIntoView(id)` and lands as a new history entry, so back returns. Only a path on the page's own origin is followed: `//host/x`, `https://host/x` and relative paths are refused, and outside a session the call is a no-op.
+
+```scala
+import UI.*
+import kyo.*
+
+def channel(id: String): UI =
+    button("Open").onClick(UI.navigate(s"/app/channel?id=$id"))
+```
 
 ### `UI.runRender(ui)`
 

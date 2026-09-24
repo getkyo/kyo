@@ -860,4 +860,65 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
     }
 
+    // ==================== navigate command over WS ====================
+
+    // Clicks the first button of `app` and returns the first frame the session sends after the click.
+    private def frameAfterClick(app: UI)(using Frame): Maybe[String] < (Async & Abort[Throwable]) =
+        for
+            captured <- AtomicRef.init(Absent: Maybe[String])
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            _ <- awaitSessionStart(clientWs)
+                            clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
+                            _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
+                            frame <- clientWs.take()
+                            _ <- captured.set(frame match
+                                case HttpWebSocket.Payload.Text(data) => Present(data)
+                                case _                                => Absent)
+                        yield ()
+                )
+            }
+            data <- captured.get
+        yield data
+
+    // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
+    "navigate: a click handler's command reaches the client as a Navigate op".notNative in {
+        for
+            ref <- Signal.initRef("static")
+            data <- frameAfterClick(UI.div(
+                UI.button("Go").id("btn").onClick(UI.navigate("/docs/next?tab=2#top")),
+                ref.map(v => UI.span(v))
+            ))
+        yield assert(data.map(Json.decode[HtmlOp](_)) == Present(Result.Success(HtmlOp.Navigate("/docs/next?tab=2#top"))))
+    }
+
+    // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
+    "navigate: a path naming another origin sends nothing".notNative in {
+        // The accepted navigate last in the handler is the barrier: the first frame after the click is its op only if every refused
+        // path before it put nothing on the socket.
+        val refused = Chunk("//evil.example", "https://x", "/\\evil.example", "/\t/evil.example", "relative/path", "")
+        for
+            ref <- Signal.initRef("static")
+            data <- frameAfterClick(UI.div(
+                UI.button("Go").id("btn").onClick(Kyo.foreachDiscard(refused)(UI.navigate(_)).andThen(UI.navigate("/ok"))),
+                ref.map(v => UI.span(v))
+            ))
+        yield assert(data.map(Json.decode[HtmlOp](_)) == Present(Result.Success(HtmlOp.Navigate("/ok"))))
+        end for
+    }
+
+    "navigate outside any session is a no-op" in {
+        UI.navigate("/anywhere").andThen(succeed)
+    }
+
+    "Navigate JSON round-trips through the wire codec" in {
+        val op      = HtmlOp.Navigate("/a b?q=\"x\"")
+        val encoded = Json.encode[HtmlOp](op)
+        assert(encoded.contains("Navigate"), s"the client dispatches on the op name; got $encoded")
+        assert(Json.decode[HtmlOp](encoded) == Result.Success(op))
+    }
+
 end UIServerWsTest

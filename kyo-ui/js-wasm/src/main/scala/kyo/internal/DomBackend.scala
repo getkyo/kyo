@@ -96,10 +96,10 @@ private[kyo] object DomBackend:
             events <- Channel.init[Unit < Async](256)
             // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
             // Panic propagates rather than being silently swallowed as a clean drain end.
-            // The drain carries the session's scroll sink: a handler calling UI.scrollIntoView scrolls the
-            // local document, the browser-mount counterpart of the server session's WebSocket op.
+            // The drain carries the session's command sink: a handler calling UI.scrollIntoView or UI.navigate
+            // acts on the local document, the browser-mount counterpart of the server session's WebSocket op.
             drain <- Scope.acquireRelease(
-                Fiber.initUnscoped(UICommands.scrollSink.let(Present(scrollLocal)) {
+                Fiber.initUnscoped(UICommands.sink.let(Present(commandLocal)) {
                     DragCommands.resolveSink.let(Present(resolveLocal)) {
                         Sync.defer(diagnostics.drainStarted()).andThen(
                             Loop.foreach(Abort.runPartial[Closed](events.take).map {
@@ -138,14 +138,21 @@ private[kyo] object DomBackend:
         end for
     end mountInto
 
-    // The local-document scroll sink installed on the mount's event-drain fiber; mirrors the embedded
-    // client's ScrollIntoView handling exactly (missing id = no-op, smooth scroll to the block start),
-    // so the same command behaves the same under either runner.
-    private def scrollLocal(id: String)(using Frame): Unit < Async =
+    // The local-document command sink installed on the mount's event-drain fiber; mirrors the embedded
+    // client's ScrollIntoView and Navigate handling exactly (missing id = no-op, smooth scroll to the block
+    // start; a path resolving to another origin is dropped), so the same command behaves the same under either runner.
+    private def commandLocal(command: UICommands.Command)(using Frame): Unit < Async =
         Sync.defer {
-            val el = document.getElementById(id)
-            if el != null then
-                discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
+            command match
+                case UICommands.Command.ScrollIntoView(id) =>
+                    val el = document.getElementById(id)
+                    if el != null then
+                        discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
+                case UICommands.Command.Navigate(path) =>
+                    val location = js.Dynamic.global.location
+                    val url      = js.Dynamic.newInstance(js.Dynamic.global.URL)(path, location.href)
+                    if url.origin.asInstanceOf[String] == location.origin.asInstanceOf[String] then
+                        discard(location.assign(url.href))
         }
 
     /** Publishes a typed drag resolution for the local drag runtime without retaining listeners or

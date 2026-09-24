@@ -784,6 +784,36 @@ class HtmlRendererTest extends UITest:
         }
     }
 
+    "iframe srcdoc and sandbox are written as single escaped attributes" in {
+        val doc = """<p class="a">Tom & 'Jerry'</p><script>alert(1)</script></iframe><b id="out">x</b>"""
+        kyo.internal.HtmlRenderer.render(UI.iframe("about:blank").sandbox("allow-scripts", "allow-forms").srcdoc(doc), Seq.empty).map {
+            html =>
+                assert(html.contains(" sandbox=\"allow-scripts allow-forms\""))
+                assert(html.contains(
+                    " srcdoc=\"&lt;p class=&quot;a&quot;&gt;Tom &amp; &#39;Jerry&#39;&lt;/p&gt;" +
+                        "&lt;script&gt;alert(1)&lt;/script&gt;&lt;/iframe&gt;&lt;b id=&quot;out&quot;&gt;x&lt;/b&gt;\""
+                ))
+                assert(html.indexOf("</iframe>") == html.length - "</iframe>".length, html)
+                assert(!html.contains("<script") && !html.contains("<b"), html)
+        }
+    }
+
+    "iframe sandbox with no tokens renders the full sandbox" in {
+        kyo.internal.HtmlRenderer.render(UI.iframe("about:blank").sandbox(), Seq.empty).map { html =>
+            assert(html.contains(" sandbox=\"\""), html)
+        }
+    }
+
+    "iframe srcdoc markup stays inside the frame document" in {
+        val doc = """<b id="inner">"quoted" & 'single'</b></iframe><b id="out">escaped</b>"""
+        withUI(UI.div(UI.iframe("about:blank").srcdoc(doc).id("f"))) {
+            for
+                _   <- Browser.assertAttribute(Selector.id("f"), "srcdoc", doc)
+                out <- Browser.eval("String(document.getElementById('out'))")
+            yield assert(out == "null")
+        }
+    }
+
     // ---- renderPage JS-string-literal escaping (pure unit tests, no browser) ----
 
     "renderPage: trailing backslash in basePath produces valid JS string literal" in {

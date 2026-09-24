@@ -823,6 +823,8 @@ private[kyo] object HtmlRenderer:
             case f: Iframe =>
                 f.src.foreach(s => w(sb, s""" src="${esc(s)}""""))
                 f.frameTitle.foreach(t => w(sb, s""" title="${esc(t)}""""))
+                f.sandbox.foreach(s => w(sb, s""" sandbox="${esc(s)}""""))
+                f.srcdoc.foreach(s => w(sb, s""" srcdoc="${esc(s)}""""))
             case td: Td =>
                 td.colspan.foreach(n => w(sb, s""" colspan="$n""""))
                 td.rowspan.foreach(n => w(sb, s""" rowspan="$n""""))
@@ -1315,6 +1317,11 @@ private[kyo] object HtmlRenderer:
            |      var el=document.getElementById(op.ScrollIntoView.id);
            |      if(el)el.scrollIntoView({behavior:"smooth",block:"start"});
            |    });
+           |  }else if(op.Navigate){
+           |    try{
+           |      var u=new URL(op.Navigate.path,location.href);
+           |      if(u.origin===location.origin)location.assign(u.href);
+           |    }catch(e){}
            |  }
            |};
            |function fp(el){
