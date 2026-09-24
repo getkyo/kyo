@@ -88,7 +88,7 @@ object ZStreams:
                             val array = ShallowTag[A].newArray(chunk.size)
                             discard(chunk.copyToArray(array))
                             ZIO.succeed(ZChunk.fromArray(array))
-                        case _                     =>
+                        case _ =>
                             ZIOs.run(fiber.getResult).flatMap {
                                 case Result.Success(_) => ZIO.fail(None)
                                 case Result.Failure(e) => ZIO.fail(Some(e))

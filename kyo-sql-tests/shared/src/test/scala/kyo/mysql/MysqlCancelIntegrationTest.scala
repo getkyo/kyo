@@ -11,8 +11,8 @@ import kyo.internal.SqlSharedContainers
   * lets a cancel race the query's own completion without failing.
   *
   * A fourth covers the other direction, where the caller walks away from a stream rather than being released from a query. Abandoning a
-  * stream leaves the server mid-scan, and the cleanup drain has to stop it rather than read the rest of the result set off the wire. That
-  * one is measured on the streaming session's own rows-read counter; see [[rowsReadOnSession]] for why nothing global can answer it.
+  * stream leaves the server mid-scan, and the cleanup drain has to stop it rather than read the rest of the result set off the wire. The
+  * result there is too large for any drain to finish, so only the kill lets the leaf complete.
   *
   * Which reclaim steps the pool runs after an interrupt, in what order, and under what budget is pinned at the pool boundary by
   * [[kyo.internal.SqlConnectionCancelTest]]; what these add is the live server underneath.
@@ -37,53 +37,19 @@ class MysqlCancelIntegrationTest extends SqlContainerTest:
             )
         )(f)
 
-    /** How many rows the server has read off an index for ONE session, paired with the id of the session it was read on.
+    /** The id of the session a plain query runs on.
       *
-      * This is the observable the drain leaf rests on, and every clause of it holds on mysql:8.0.
-      *
-      * WHY A ROWS-READ COUNTER AND NOT A KILL COUNTER. The harm the escalation exists to prevent is the server running an abandoned batch
-      * to completion, so rows read IS the harm, measured at the only place that knows it. `Com_kill` cannot serve: it is GLOBAL, so it
-      * counts every kill the server executes for any session, and this leaf's own teardown issues one by a different route when the client
-      * closes. With the escalation unwired entirely, so the drain can kill nothing, that counter still moves and the leaf still passes. A
-      * global counter cannot attribute anything to the code under test.
-      *
-      * WHY `Handler_read_next` SPECIFICALLY, out of the plausible candidates. `EXPLAIN` on the leaf's own statement reports `type: index,
-      * key: PRIMARY`, so the scan walks the clustered index and lands on `Handler_read_next`, one increment per row after the first.
-      * Measured end to end: a full 100000-row scan moves it by exactly 100000, a `LIMIT 10` scan moves it by exactly 9, and
-      * `Handler_read_rnd_next`, which is the counter a heap table scan would use, stays at 0 throughout. So the number is the row count and
-      * not a proxy for it. Any change to the leaf's statement has to be re-measured against the plan, since a different statement can take
-      * a different plan and the counter would then be reporting on a query nothing runs.
-      *
-      * `Innodb_rows_read` was the other candidate and is DISQUALIFIED, which is worth recording because it does not look disqualified. It
-      * moves by the same 100000 for the same scan, and `SHOW SESSION STATUS LIKE 'Innodb_rows_read'` is accepted without complaint, but the
-      * variable is global-only and MySQL serves the global value under either scope: a second, idle session reads 100000 from it while
-      * reading 0 from `Handler_read_next`. Asking for session scope is not the same as getting it.
-      *
-      * WHY BOTH COLUMNS COME OUT OF ONE STATEMENT. A counter is only session-local evidence if the session it was read on is known, and the
-      * pool can hand back a different connection than the one before it. Reading `connection_id()` alongside the value makes each reading
-      * carry its own session, so a replaced connection is a loud mismatch instead of a silently negative delta.
-      *
-      * THE PROBE DOES NOT MOVE WHAT IT READS, which cannot be assumed of a statement that scans a table to answer. Four consecutive
-      * executions of this exact SQL in one session, with nothing between them, leave the value at 0.
-      *
-      * AN ABSENT COUNTER IS ZERO ROWS, NOT A ZERO. `WHERE VARIABLE_NAME = ...` matching nothing returns an empty result set, which this
-      * method turns into a hard failure. A probe reading a view that does not carry the counter it names, such as `Com_xxx` in
-      * `performance_schema.global_status`, matches no row and would otherwise answer a zero it never observed.
+      * An empty answer is a hard failure rather than a missing id: a connection left mid-result answers this `COM_QUERY` out of the
+      * previous statement's unread packets and yields no row, so an empty result is how a dirty wire shows up.
       */
-    private def rowsReadOnSession(client: MysqlClient)(using Frame): (Long, Long) < (Async & Abort[SqlException]) =
-        client.simpleQuery(
-            "SELECT connection_id(), CAST(VARIABLE_VALUE AS UNSIGNED) FROM performance_schema.session_status " +
-                "WHERE VARIABLE_NAME = 'Handler_read_next'"
-        ).flatMap { rows =>
+    private def sessionId(client: MysqlClient)(using Frame): Long < (Async & Abort[SqlException]) =
+        client.simpleQuery("SELECT connection_id()").flatMap { rows =>
             if rows.isEmpty then
                 Abort.panic(new IllegalStateException(
-                    "performance_schema.session_status carries no Handler_read_next row, so this server cannot answer how many rows " +
-                        "the session read and the drain assertion below would be reading a number it never observed"
+                    "SELECT connection_id() returned no row, so the connection was reused with a previous result still on the wire"
                 ))
             else
-                Abort.recover((e: SqlDecodeException) => Abort.fail(e: SqlException)) {
-                    rows(0).decode[Long](0).flatMap(session => rows(0).decode[Long](1).map(read => (session, read)))
-                }
+                Abort.recover((e: SqlDecodeException) => Abort.fail(e: SqlException))(rows(0).decode[Long](0))
         }
 
     /** The id of the session a stream runs on, read through `streamQuery` so it is the streaming path that answers.
@@ -108,105 +74,32 @@ class MysqlCancelIntegrationTest extends SqlContainerTest:
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
-                    // 100k stored rows of ~200 bytes, streamed back ten times as wide, so one full drain moves about
-                    // 191MB while the table on disk stays 20MB. The row count and the byte count are separate
-                    // dimensions here on purpose.
-                    //
-                    // The budget is denominated in ELAPSED TIME, so what the drain gets through before escalating is a
-                    // fixed number of BYTES, and the fixture has to be several times that for the assertion below to
-                    // have any margin. At 20MB the escalating drain reads about 70000 of the 100000 rows on this
-                    // machine, leaving a threshold window of only (70000, 100000). Streaming the rows wide multiplies
-                    // the bytes the budget has to chew through while leaving the row count, and therefore the insert,
-                    // where it was.
-                    //
-                    // `REPEAT(payload, 10)` rather than a wider COLUMN for two reasons. `CHAR` caps at 255 so the
-                    // column cannot hold this directly, and widening in the SELECT keeps the stored table, the INSERT
-                    // and the container's disk unchanged. It does not disturb the measurement: the widened statement
-                    // still plans as `type: index, key: PRIMARY` and a full scan of it still moves
-                    // `Handler_read_next` by exactly 100000 with `Handler_read_rnd_next` at 0.
-                    //
-                    // The large result set costs nothing on the passing path. When the escalation works the drain
-                    // stops after its 250ms regardless of how much is queued behind it; only a BROKEN mechanism ever
-                    // transfers the whole 191MB, which is the run that is supposed to be slow.
-                    val rows = 100000
+                    // A billion-row result from a 1000-row table: the cross join without `ORDER BY` streams its rows as it
+                    // produces them, so nothing is materialized and the table stays small. No drain reads a billion rows
+                    // within the leaf's timeout, so the scope below closes only if the drain kills the statement, and the
+                    // leaf needs no count of how far the server got.
+                    val rows = 1000
                     for
-                        _ <- client.execute("CREATE TABLE drain_t (id INT PRIMARY KEY, payload CHAR(200) NOT NULL)")
-                        _ <- client.execute(s"SET SESSION cte_max_recursion_depth = ${rows + 1}")
+                        _ <- client.execute("CREATE TABLE drain_t (id INT PRIMARY KEY)")
                         _ <- client.execute(
-                            "INSERT INTO drain_t (id, payload) WITH RECURSIVE seq(n) AS (" +
+                            "INSERT INTO drain_t (id) WITH RECURSIVE seq(n) AS (" +
                                 s"SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < $rows" +
-                                ") SELECT n, REPEAT('x', 200) FROM seq"
+                                ") SELECT n FROM seq"
                         )
-                        // Which session the streaming path runs on, asked through that path rather than inferred from
-                        // `maxConnections = 1`. Every number below is session-scoped, so a probe on another session
-                        // would answer for a session that streamed nothing and read a quiet, wrong 0.
                         streamSession <- streamSessionId(client)
-                        before        <- rowsReadOnSession(client)
-                        // Take one row and let the Scope close. The cleanup drain runs here, and with 100k rows still
-                        // queued it must escalate rather than read them all.
-                        taken <- Scope.run(client.streamQuery("SELECT id, REPEAT(payload, 10) FROM drain_t ORDER BY id").take(1).run)
-                        after <- rowsReadOnSession(client)
-                    yield
-                        val (beforeSession, beforeRead) = before
-                        val (afterSession, afterRead)   = after
-                        assert(taken.size == 1, s"the stream must yield the one row it asked for, got ${taken.size}")
-                        // THIS IS WHAT STOPS THE MEASUREMENT BELOW FROM BEING TAKEN ON A SESSION THAT DID NOTHING, and
-                        // it is the assertion the whole leaf rests on rather than a sanity check on the fixture.
-                        //
-                        // The fixture constant does not give what it appears to give. `maxConnections = 1` bounds
-                        // CONCURRENCY, through the pool's per-address slot channel, and does NOT bound this leaf to one
-                        // physical session: `SqlConnectionPool` floors the transport at `config.maxConnections.max(2)`
-                        // because the underlying ring requires at least two, and its own comment at that site records
-                        // that this raises retention rather than concurrency. So a second session for this address is
-                        // reachable, and "the probe reads the session the stream ran on" is an empirical regularity
-                        // rather than a guarantee.
-                        //
-                        // What makes that worth an assertion is the direction it fails in. A probe on the wrong session
-                        // reports a session that read nothing, so the delta below is ZERO, which is comfortably under
-                        // the threshold and PASSES. The leaf would then go green on its headline claim while measuring
-                        // a session that never ran the stream, permanently and silently.
-                        //
-                        // Reading the counter through a second client to the same database fires this assertion, with
-                        // the two sessions differing and the delta at 0 against a threshold of 50000, which is exactly
-                        // the shape it exists to catch.
-                        //
-                        // WHAT THIS ASSERTION DOES NOT CATCH. A drain that merely GAVE UP at the budget without killing
-                        // never reaches here. It leaves unread row packets on the wire, the next probe answers its
-                        // `COM_QUERY` out of those leftovers and yields no row at all, and `rowsReadOnSession` fails
-                        // hard on the empty result first. It cannot present as a different session either, because the
-                        // pool's `isAlive` is the socket alone, so a dirty connection is reused rather than replaced.
-                        //
-                        // So the three defences are disjoint and each one is the only cover for its own mutation: this
-                        // assertion for a wrong-session probe, the probe's empty-result guard for an abandoned wire, and
-                        // the rows-read delta below for an escalation that never fires.
-                        assert(
-                            beforeSession == streamSession && afterSession == streamSession,
-                            s"both readings must come from the session the stream ran on ($streamSession), but the " +
-                                s"first read session $beforeSession and the second $afterSession; a mismatch means this " +
-                                "connection did not survive the early-terminated stream, so the drain did not leave the " +
-                                "session reusable and the delta below compares two different sessions"
+                        taken         <- Scope.run(
+                            client.streamQuery("SELECT a.id FROM drain_t a CROSS JOIN drain_t b CROSS JOIN drain_t c").take(1).run
                         )
-                        // HALF THE RESULT SET, and the number comes from the two measured endpoints rather than from
-                        // picking a round fraction.
-                        //
-                        // The two endpoints do not have the same character, which is what sets where the margin goes.
-                        // The DEFECT value is exact and has no variance: an unescalated drain reads to the terminator,
-                        // so the counter delta equals the row count by construction, and it lands at 100000 of 100000.
-                        // The WORKING value is around 12300 and is the only one that moves, because it is whatever the
-                        // wire carries in 250ms and so scales with the machine.
-                        //
-                        // So the margin is deliberately asymmetric. Below the threshold there is nothing to guard
-                        // against, since the defect cannot land at 99000; it lands at exactly `rows`, and any
-                        // threshold under `rows` catches it. All the headroom therefore belongs above the working
-                        // value, and half the result set is the largest fraction that still asserts a MINORITY of it,
-                        // which is what "instead of draining all of it" claims. That leaves roughly 4x over the
-                        // working value, so a machine four times faster than this one still passes.
+                        afterSession <- sessionId(client)
+                    yield
+                        assert(taken.size == 1, s"the stream must yield the one row it asked for, got ${taken.size}")
+                        // `maxConnections = 1` bounds concurrency, not the number of sessions (the pool floors its
+                        // transport at two), so the same session answering before and after is checked rather than
+                        // assumed. A drain that gave up without killing fails `sessionId` first, on the unread rows.
                         assert(
-                            afterRead - beforeRead < rows / 2,
-                            s"the cleanup drain must stop the server rather than let it run the abandoned scan to the end, " +
-                                s"but session $streamSession read ${afterRead - beforeRead} of the table's $rows rows " +
-                                s"(Handler_read_next $beforeRead then $afterRead). Reading all of them is the defect: with " +
-                                "the escalation absent the drain outlasts the server instead of stopping it"
+                            afterSession == streamSession,
+                            s"the query after the stream must run on the session the stream ran on ($streamSession), but it ran on " +
+                                s"$afterSession, so the early-terminated stream did not leave its connection reusable"
                         )
                     end for
                 }
