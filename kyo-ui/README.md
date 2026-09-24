@@ -504,7 +504,7 @@ val sortBy: UI < Async =
     )
 ```
 
-A `Select`'s value picks the option whose `value` matches it, including options rendered from a `Foreach`, and the choice survives those options re-rendering while one of them still carries it. Without a value, an option's own `.selected` chooses.
+A `Select`'s value picks the option whose `value` matches it, including options rendered from a `Foreach`, and the choice survives those options re-rendering while one of them still carries it. When the re-rendered options no longer carry it, the page shows the first option and a value bound to a `SignalRef` follows the page, so the ref and what the reader sees never disagree. Without a value, an option's own `.selected` chooses.
 
 `Dropdown` takes its options up front at construction as `(String, String)*` pairs, NOT as children:
 

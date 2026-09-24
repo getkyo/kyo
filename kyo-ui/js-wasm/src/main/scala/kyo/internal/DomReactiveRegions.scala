@@ -172,6 +172,10 @@ final private[kyo] class DomReactiveRegions private (
                 keptValue.foreach { value =>
                     if (0 until select.options.length).exists(i => select.options(i).value == value) then
                         select.value = value
+                    // The page now shows another option; a change event makes a bound value follow it. An empty kept value is a
+                    // select whose options were not in place yet, which has no choice to lose.
+                    else if value.nonEmpty && select.value != value then
+                        discard(select.dispatchEvent(new dom.Event("change", new dom.EventInit { bubbles = true })))
                 }
             }
         end if

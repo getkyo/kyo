@@ -216,6 +216,27 @@ class SelectTest extends UITest:
         }
     }
 
+    "a bound value follows the page when the re-rendered options no longer carry it" in {
+        val app: UI < Async =
+            for
+                rows <- Signal.initRef(Chunk("a", "b", "c"))
+                ref  <- Signal.initRef("b")
+            yield UI.div(
+                UI.select(rows.foreach(v => UI.option(v.toUpperCase).value(v))).id("s").value(ref),
+                ref.map(v => UI.span(s"bound:$v").id("bound")),
+                UI.button("Replace").id("replace").onClick(rows.set(Chunk("x", "y")))
+            )
+        withUI(app) {
+            for
+                before <- Browser.text(Selector.id("bound"))
+                _      <- Browser.click(Selector.id("replace"))
+                _      <- Browser.waitForText(Selector.css("#s option:last-child"), "Y")
+                _      <- Browser.waitForText(Selector.id("bound"), "bound:x")
+                after  <- shown
+            yield assert((before, after) == ("bound:b", ("x", "X")))
+        }
+    }
+
     "select each option in sequence" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")

@@ -1169,7 +1169,10 @@ private[kyo] object HtmlRenderer:
           |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
           |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
-          |  if(keptSelect){for(var i=0;i<keptSelect.options.length;i++)if(keptSelect.options[i].value===keptValue){keptSelect.value=keptValue;break;}}
+          |  // When no new option carries the kept value, the page now shows another one; a change event makes a bound value follow it.
+          |  // An empty kept value is a select whose options were not in place yet, which has no choice to lose.
+          |  if(keptSelect){var keptFound=false;for(var i=0;i<keptSelect.options.length;i++)if(keptSelect.options[i].value===keptValue){keptSelect.value=keptValue;keptFound=true;break;}
+          |    if(!keptFound&&keptValue!==""&&keptSelect.value!==keptValue)keptSelect.dispatchEvent(new Event("change",{bubbles:true}));}
           |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
           |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
           |}
