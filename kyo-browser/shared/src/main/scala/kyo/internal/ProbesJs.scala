@@ -14,8 +14,12 @@ private[kyo] object ProbesJs:
 
     /** Minimal readability extraction script inspired by Mozilla's Readability.js.
       *
-      * Clones the document, removes non-content elements (scripts, styles, navigation, footers, ads, etc.), then returns the text content
-      * of the best article/main element found, or falls back to the full body text.
+      * Clones the document, removes non-content elements (scripts, styles, navigation, footers, ads, etc.), then returns the text of the
+      * best article/main element found, or falls back to the full body text.
+      *
+      * The text comes from a walk of the clone, not `innerText`: the clone is never rendered, so its `innerText` is its `textContent` and
+      * adjacent blocks run together. The walk ends a line at every block element, `br`, and table row, collapses whitespace within a
+      * line, drops empty lines, and keeps `pre` text verbatim, so the result depends on the markup alone, not on layout.
       */
     private[kyo] val readabilityScript: String = """(() => {
         const clone = document.cloneNode(true);
@@ -29,7 +33,38 @@ private[kyo] object ProbesJs:
             try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch(e) {}
         });
         const article = clone.querySelector('article,main,[role="main"]');
-        return (article || clone.body).innerText.trim();
+        const blocks = new Set([
+            'ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','BODY','CAPTION','DD','DETAILS','DIALOG','DIV','DL','DT',
+            'FIELDSET','FIGCAPTION','FIGURE','FOOTER','FORM','H1','H2','H3','H4','H5','H6','HEADER','HGROUP',
+            'HR','LI','MAIN','NAV','OL','P','SECTION','SUMMARY','TABLE','TBODY','TFOOT','THEAD','TR','UL'
+        ]);
+        const lines = [];
+        let line = '';
+        const flush = () => {
+            const text = line.replace(/\s+/g, ' ').trim();
+            if (text) lines.push(text);
+            line = '';
+        };
+        const walk = node => {
+            if (node.nodeType === 3) { line += node.data; return; }
+            if (node.nodeType !== 1) return;
+            const tag = node.tagName;
+            if (tag === 'BR') { flush(); return; }
+            if (tag === 'PRE') {
+                flush();
+                const text = node.textContent.replace(/^\n+|\s+$/g, '');
+                if (text) lines.push(text);
+                return;
+            }
+            const block = blocks.has(tag);
+            if (block) flush();
+            node.childNodes.forEach(walk);
+            if (block) flush();
+            else if (tag === 'TD' || tag === 'TH') line += ' ';
+        };
+        walk(article || clone.body);
+        flush();
+        return lines.join('\n');
     })()"""
 
     // --- Probe builders ---

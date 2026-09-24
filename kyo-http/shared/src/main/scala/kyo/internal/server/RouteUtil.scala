@@ -285,11 +285,11 @@ private[kyo] object RouteUtil:
             paramsResult.flatMap { _ =>
                 bodyField match
                     case Absent =>
-                        Result.succeed(buildRequest(route, headers, builder, path, methodOverride))
+                        Result.succeed(buildRequest(route, headers, builder, path, queryParam, methodOverride))
                     case Present(bf) =>
                         decodeBufferedBodyValue(bf.contentType, body, headers, ctxMethod, ctxUrl).map { value =>
                             discard(builder.add(bf.fieldName, value))
-                            buildRequest(route, headers, builder, path, methodOverride)
+                            buildRequest(route, headers, builder, path, queryParam, methodOverride)
                         }
             }
         }
@@ -320,7 +320,7 @@ private[kyo] object RouteUtil:
                     bodyField.foreach(bf =>
                         discard(builder.add(bf.fieldName, decodeStreamBodyValue(bf.contentType, stream, headers, ctxMethod, ctxUrl)))
                     )
-                    buildRequest(route, headers, builder, path, methodOverride)
+                    buildRequest(route, headers, builder, path, queryParam, methodOverride)
                 }
             }
         }
@@ -1323,12 +1323,11 @@ private[kyo] object RouteUtil:
         route: HttpRoute[In, Out, S],
         headers: HttpHeaders,
         builder: DictBuilder[String, Any],
-        path: String = "",
-        methodOverride: Maybe[HttpMethod] = Absent
+        path: String,
+        queryParam: Maybe[HttpUrl],
+        methodOverride: Maybe[HttpMethod]
     ): HttpRequest[In] =
-        val url =
-            if path.isEmpty then HttpUrl(Absent, "", 0, "", Absent)
-            else HttpUrl(Absent, "", 0, path, Absent)
+        val url    = HttpUrl(Absent, "", 0, path, queryParam.flatMap(_.rawQuery))
         val method = methodOverride match
             case Present(m) => m
             case Absent     => route.method
