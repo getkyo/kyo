@@ -274,6 +274,7 @@ object HttpServer:
             // the same mechanism HttpClientBackend uses for the connections it creates.
             val registry                                = new kyo.internal.ConnectionRegistry[Served]
             val draining                                = AtomicBoolean.Unsafe.init(false)
+            val inflight                                = new kyo.internal.server.InflightHandlers
             def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
@@ -294,7 +295,8 @@ object HttpServer:
                         Present(conn.onClosing),
                         Present(() => conn.close()),
                         clock,
-                        Present(served.drain)
+                        Present(served.drain),
+                        Present(inflight)
                     )
                 else
                     (
@@ -316,7 +318,7 @@ object HttpServer:
                     )(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, clock))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, inflight, clock))
         end listen
     end Unsafe
 
@@ -325,7 +327,8 @@ object HttpServer:
     /** An accepted connection and its part in a graceful close. Compared by identity, as the registry's set requires. */
     final private class Served(val connection: kyo.net.Connection, val drain: UnsafeServerDispatch.Drain)
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns and the count of
+      * handler fibers its close waits on.
       *
       * The server does NOT own its transport: one transport is shared by every client and server in the process, so closing the server closes
       * its listener, which releases the bound port, and its accepted connections, and leaves the transport alone. Closing it would take every
@@ -336,6 +339,7 @@ object HttpServer:
         transport: kyo.net.Transport,
         registry: kyo.internal.ConnectionRegistry[Served],
         draining: AtomicBoolean.Unsafe,
+        inflight: kyo.internal.server.InflightHandlers,
         clock: Clock
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
@@ -355,12 +359,17 @@ object HttpServer:
             listener.close()       // stop accepting new connections first
             registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
-            // The close completes once the connections are settled AND the listen descriptor is released: the listener's close returns
-            // while the port may still accept, and a caller that rebinds the port or expects a refusal right after close must not see it.
-            // `released` is awaited after the connections, since on Node it completes only once every accepted connection has ended.
+            // The close completes once the connections are settled, their handler fibers have completed AND the listen descriptor is
+            // released: the listener's close returns while the port may still accept, and a caller that rebinds the port or expects a
+            // refusal right after close must not see it. Closing a connection only starts the interrupt of its handler, whose finalizers
+            // then run on the handler's own fiber, so the handlers are awaited after the connections; counting stops only then, since a
+            // draining connection still dispatches the requests it has received. `released` is awaited last, since on Node it completes
+            // only once every accepted connection has ended.
             val connectionsSettled = Promise.Unsafe.init[Unit, Any]()
             connectionsSettled.onComplete(_ =>
-                listener.released.onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+                inflight.close().onComplete(_ =>
+                    listener.released.onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+                )
             )
 
             def forceCloseAndComplete(): Unit =
