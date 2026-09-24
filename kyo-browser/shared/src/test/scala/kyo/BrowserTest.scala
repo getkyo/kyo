@@ -15,9 +15,9 @@ import kyo.internal.SharedChrome
 //       Universal entry. Boots Chrome (shared) and runs `body` inside a fresh
 //       tab. The default for any test that needs a working `Browser` effect.
 //   - withBrowserOnLocalhost(body)
-//       Same as withBrowser, but first navigates to `http://localhost:$port/json/version`.
-//       Cookie / storage tests need a real http://localhost origin; data: URLs
-//       won't carry cookies. Use this when the test reads or writes cookies.
+//       Same as withBrowser, but first navigates to `http://127.0.0.1:$port/json/version`.
+//       Cookie / storage tests need a real http origin; data: URLs won't carry
+//       cookies. Use this when the test reads or writes cookies.
 //   - withBrowserOnLocalhostIframe(outerHtml, innerHtml)(body)
 //       Boots a localhost HTTP server hosting `outerHtml` at `/parent` and
 //       `innerHtml` at `/child` (with `{iframe-src}` substituted in the parent),
@@ -116,14 +116,19 @@ abstract class BrowserTest extends BaseChromeTest:
             SharedChrome.withUrl(url => Browser.run(url)(warmupGate(f)))
         }
 
-    /** Boots a tab on the localhost DevTools JSON page (cookies / localStorage tests need a real http://localhost origin). */
+    /** Boots a tab on the DevTools JSON page (cookies / localStorage tests need a real http origin).
+      *
+      * The origin is 127.0.0.1 rather than localhost because the DevTools server listens on IPv4 only and Chrome resolves localhost to
+      * ::1 first, so every request would open with a refused connect. On windows-x64 runners the connect around that refusal
+      * intermittently fails with WSAENOBUFS (10055), which fails the navigation.
+      */
     def withBrowserOnLocalhost[A, S](f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         cancelOnUnsupportedPlatform {
             SharedChrome.withUrl { url =>
                 val port    = url.split(":")(2).split("/")(0)
-                val httpUrl = s"http://localhost:$port/json/version"
+                val httpUrl = s"http://127.0.0.1:$port/json/version"
                 Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
             }
         }
@@ -240,7 +245,7 @@ abstract class BrowserTest extends BaseChromeTest:
     def srcdocPage(outer: String, srcdoc: String): String =
         page(outer.replace("{srcdoc}", BrowserTest.htmlAttributeEscape(srcdoc)))
 
-    /** Boots a localhost HTTP server serving `parent.html` at `/parent` (with `{iframe-src}` substituted to `http://localhost:$port/child`)
+    /** Boots a localhost HTTP server serving `parent.html` at `/parent` (with `{iframe-src}` substituted to `http://127.0.0.1:$port/child`)
       * and `child.html` at `/child`, opens a browser tab on the parent page, then runs `f`. The two-page setup is what the spec §7.2
       * fixture sketch describes; useful for tests that need a real same-origin iframe (e.g. lifecycle scenarios where srcdoc would not
       * trigger the same `Page.frameAttached` events).
@@ -249,7 +254,7 @@ abstract class BrowserTest extends BaseChromeTest:
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException | HttpException] & S) =
         val parentBytes = (port: Int) =>
-            Span.fromUnsafe(outerHtml.replace("{iframe-src}", s"http://localhost:$port/child").getBytes("UTF-8"))
+            Span.fromUnsafe(outerHtml.replace("{iframe-src}", s"http://127.0.0.1:$port/child").getBytes("UTF-8"))
         val childBytes = Span.fromUnsafe(innerHtml.getBytes("UTF-8"))
         Promise.init[Int, Any].map { portRef =>
             val parentHandler = HttpRoute.getRaw("/parent").response(_.bodyBinary).handler { _ =>
@@ -258,10 +263,10 @@ abstract class BrowserTest extends BaseChromeTest:
             val childHandler = HttpRoute.getRaw("/child").response(_.bodyBinary).handler { _ =>
                 HttpResponse.ok(childBytes).addHeader("Content-Type", "text/html; charset=utf-8")
             }
-            HttpServer.init(0, "localhost")(parentHandler, childHandler).map { server =>
+            HttpServer.init(0, "127.0.0.1")(parentHandler, childHandler).map { server =>
                 portRef.completeDiscard(Result.succeed(server.port)).andThen {
                     withBrowser {
-                        Browser.goto(s"http://localhost:${server.port}/parent").andThen(f)
+                        Browser.goto(s"http://127.0.0.1:${server.port}/parent").andThen(f)
                     }
                 }
             }

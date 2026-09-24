@@ -410,6 +410,24 @@ final class Scheduler(
         sum.toDouble / currentWorkers
     }
 
+    /** The allocated workers holding work, queued or executing.
+      *
+      * Unlike [[loadAvg]], this reads past the regulator's current window: a worker the window shrank away from keeps running the task it
+      * holds until that task yields, so a probe for work that never ends has to see it.
+      */
+    def busyWorkers(): Int = {
+        val allocated = this.allocatedWorkers
+        var position  = 0
+        var busy      = 0
+        while (position < allocated) {
+            val w = workers(position)
+            if ((w ne null) && w.load() > 0)
+                busy += 1
+            position += 1
+        }
+        busy
+    }
+
     /** Shuts down the scheduler and releases resources.
       *
       * Stops all internal threads, cancels pending tasks, and cleans up monitoring systems. The scheduler cannot be restarted after

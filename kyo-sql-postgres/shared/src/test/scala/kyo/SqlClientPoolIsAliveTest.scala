@@ -272,18 +272,13 @@ class SqlClientPoolIsAliveTest extends SqlContainerTest:
                     fail(s"no slot channel exists for ${client.url.address}, so no lease ever reached the pool")
         }
 
-    /** How many connections the pool has closed instead of pooling. */
+    /** How many connections the pool has closed instead of pooling, since the last time this was asked.
+      *
+      * `Counter.get` is `sumThenReset`, so the count moves to the caller and the counter restarts at zero. One read
+      * per assertion: reading again to report what an earlier read already checked reports nothing.
+      */
     private def discarded(client: SqlClient)(using Frame): Long < Sync =
         client.runtime.pool.metrics.connectionsDiscarded.get
-
-    /** Reads the discard counter until it reaches `target` or 2 seconds pass, so an edge resolved off the calling fiber is not read early. */
-    private def untilDiscarded(client: SqlClient, target: Long)(using Frame): Long < Async =
-        Loop(0) { attempt =>
-            discarded(client).flatMap { count =>
-                if count >= target || attempt >= 200 then Loop.done(count)
-                else Async.sleep(10.millis).andThen(Loop.continue(attempt + 1))
-            }
-        }
 
     /** Takes a streaming lease against `client`'s own endpoint, exactly as `SqlClient.streamQuery` does. */
     private def leaseScoped(client: SqlClient)(using Frame): kyo.db.Connection < (Async & Abort[SqlException] & Scope) =
@@ -516,16 +511,23 @@ class SqlClientPoolIsAliveTest extends SqlContainerTest:
                             probeSeen.await.andThen {
                                 probing.interrupt.flatMap { interrupted =>
                                     assert(interrupted, "the probing fiber must actually be interrupted")
-                                    untilDiscarded(client, 1L).flatMap { count =>
-                                        permits(client).map { case (available, capacity) =>
-                                            assert(
-                                                count == 1L,
-                                                s"an interrupt during the probe must destroy the connection, counter read $count"
-                                            )
-                                            assert(
-                                                available == capacity,
-                                                s"an interrupt during the probe must not strand a permit, had $available of $capacity"
-                                            )
+                                    // Both edges resolve off this fiber, since an interrupt spawns the scope's drain
+                                    // rather than waiting for it, but they are ordered rather than independent: the
+                                    // slot's give-back is registered on a scope that encloses the one owning the
+                                    // destroy, and a close runs its children before its own. So the permit returning
+                                    // implies the destroy already counted, which makes it the edge to wait on.
+                                    assertEventually(permits(client).map((available, capacity) => available == capacity)).andThen {
+                                        discarded(client).flatMap { count =>
+                                            permits(client).map { case (available, capacity) =>
+                                                assert(
+                                                    count == 1L,
+                                                    s"an interrupt during the probe must destroy the connection, counter read $count"
+                                                )
+                                                assert(
+                                                    available == capacity,
+                                                    s"an interrupt during the probe must not strand a permit, had $available of $capacity"
+                                                )
+                                            }
                                         }
                                     }
                                 }

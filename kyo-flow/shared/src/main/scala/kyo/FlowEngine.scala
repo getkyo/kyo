@@ -687,13 +687,20 @@ final class FlowEngine private (
         lease: Duration,
         renewEvery: Duration
     )(using Frame): Unit < Sync =
-        Fiber.initUnscoped(supervise(claimed, defn, lease, renewEvery)).map { fiber =>
-            supervisions.updateAndGet {
-                case Present(live) => Present(live + fiber)
-                case _             => Absent
-            }.map {
-                case Present(_) => fiber.onComplete(_ => supervisions.updateAndGet(_.map(_ - fiber)).unit)
-                case _          => fiber.interrupt.unit
+        // The supervision is live once the spawn returns and only the registry can stop it, so it is recorded with no
+        // suspension in between: `ensureMap` applies as the fiber arrives and the recording is one unsafe block. A `map`
+        // or a step inside the recording is where the engine's close, which interrupts this loop, would park and leave
+        // the supervision renewing a claim nobody tracks. The spawn stays `initUnscoped` because the supervision has to
+        // inherit the engine's context, its `Clock` included.
+        Fiber.initUnscoped(supervise(claimed, defn, lease, renewEvery)).ensureMap { fiber =>
+            // Unsafe: the registry update and the completion callback have to share one step.
+            Sync.Unsafe.defer {
+                val tracked = supervisions.unsafe.updateAndGet {
+                    case Present(live) => Present(live + fiber)
+                    case _             => Absent
+                }
+                if tracked.isDefined then fiber.unsafe.onComplete(_ => discard(supervisions.unsafe.updateAndGet(_.map(_ - fiber))))
+                else discard(fiber.unsafe.interrupt())
             }
         }
 

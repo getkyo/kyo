@@ -2,19 +2,19 @@ package kyo.kernel.internal
 
 import kyo.*
 
-class CanLiftTest extends kyo.test.Test[Any]:
+class CanLiftTest extends Test:
 
     "compile for non-Kyo types" in {
         implicitly[CanLift[Int]]
         implicitly[CanLift[String]]
         implicitly[CanLift[List[Int]]]
-        succeed("compile-time check: CanLift instances exist for non-Kyo types")
+        succeed
     }
 
     "compile for Kyo types in generic contexts" in {
         def genericContext[A]: CanLift[A] = implicitly[CanLift[A]]
         genericContext[Int < Any]
-        succeed("compile-time check: CanLift works in generic contexts")
+        succeed
     }
 
     "not compile for known Kyo types" in {
@@ -26,7 +26,7 @@ class CanLiftTest extends kyo.test.Test[Any]:
     "compile for Unit and Nothing" in {
         implicitly[CanLift[Unit]]
         implicitly[CanLift[Nothing]]
-        succeed("compile-time check: CanLift exists for Unit and Nothing")
+        succeed
     }
 
     "work with type aliases" in {
@@ -40,13 +40,13 @@ class CanLiftTest extends kyo.test.Test[Any]:
         trait HigherKinded[F[_]]
         implicitly[CanLift[HigherKinded[List]]]
         implicitly[CanLift[HigherKinded[λ[A => A < Any]]]]
-        succeed("compile-time check: CanLift works with higher-kinded types")
+        succeed
     }
 
     "work in complex type scenarios" in {
         trait Complex[A, B, C[_]]
         implicitly[CanLift[Complex[Int, String, List]]]
-        succeed("compile-time check: CanLift works with complex type scenarios")
+        succeed
     }
 
     "be usable in extension methods" in {
@@ -65,14 +65,14 @@ class CanLiftTest extends kyo.test.Test[Any]:
             "Bounded method called"
         boundedMethod(42)
         boundedMethod("hello")
-        succeed("compile-time check: CanLift works with type bounds")
+        succeed
     }
 
     "work with union types" in {
         type Union = Int | String
         implicitly[CanLift[Union]]
         implicitly[CanLift[Int | (String < Any)]]
-        succeed("compile-time check: CanLift works with union types")
+        succeed
     }
 
     "work with intersection types" in {
@@ -82,5 +82,16 @@ class CanLiftTest extends kyo.test.Test[Any]:
         implicitly[CanLift[Intersection]]
         typeCheckFailure("implicitly[CanLift[A & (B < Any)]]")("may contain a nested effect computation.")
         // typeCheckFailure already counts as an assertion
+    }
+
+    "case objects lift without reaching the macro" in {
+        implicitly[CanLift[Maybe.Absent.type]]
+        succeed
+    }
+
+    "a kyo module object does not lift" in {
+        typeCheckFailure("implicitly[CanLift[kyo.kernel.ArrowEffect.type]]")(
+            "Cannot lift 'kyo.kernel.ArrowEffect$' to a 'ArrowEffect$ < S"
+        )
     }
 end CanLiftTest

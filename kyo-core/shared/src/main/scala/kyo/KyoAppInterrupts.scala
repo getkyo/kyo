@@ -39,7 +39,7 @@ private[kyo] trait KyoAppInterrupts:
             OsSignal.handle("TERM", interrupt("TERM", 143))
         end if
 
-        promise.mask().safe
+        promise.uninterruptible().safe
     end awaitInterrupt
 
     protected def handleWithInterrupts[A](v: A < (Async & Abort[Throwable]))(using Frame): A < (Async & Abort[Throwable]) =

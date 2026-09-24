@@ -561,4 +561,56 @@ class HubTest extends kyo.test.Test[Any]:
             }
         }
     }
+    "a listener closing during a publish" - {
+
+        "a listener closed while the publisher is parked on its full buffer does not stop delivery to the others" in {
+            Hub.initWith[Int](8) { hub =>
+                for
+                    a    <- hub.listen(1)
+                    live <- hub.listen(8)
+                    _    <- hub.put(1)
+                    x    <- live.take
+                    _    <- hub.put(2)
+                    _    <- assertEventually(a.child.pendingPuts.map(_ == 1))
+                    _    <- a.close
+                    y    <- live.take
+                yield assert((x, y) == (1, 2))
+            }
+        }
+
+        "a listener closed between the snapshot and its put does not stop delivery to the others".times(200) in {
+            Hub.initWith[Int](8) { hub =>
+                for
+                    a    <- hub.listen(1)
+                    live <- hub.listen(8)
+                    _    <- Async.zip(hub.put(1), a.close)
+                    _    <- hub.put(2)
+                    x    <- live.take
+                    y    <- live.take
+                yield assert((x, y) == (1, 2))
+            }
+        }
+    }
+
+    "listen under interruption" - {
+        // A listener left in the set with nobody to close it holds the first value in its one-slot buffer and parks the
+        // publisher on the second, so no later value reaches the listeners that are alive.
+        "a listener whose fiber is interrupted is not left in the set".times(500) in {
+            Hub.initWith[Int](8) { hub =>
+                for
+                    listening <- Latch.init(1)
+                    fiber     <- Fiber.initUnscoped(Scope.run(hub.listen(1).andThen(listening.release).andThen(Async.never)))
+                    _         <- listening.await
+                    _         <- fiber.interrupt
+                    _         <- fiber.getResult
+                    live      <- hub.listen(8)
+                    _         <- hub.put(1)
+                    _         <- hub.put(2)
+                    a         <- live.take
+                    b         <- live.take
+                yield assert((a, b) == (1, 2))
+            }
+        }
+    }
+
 end HubTest

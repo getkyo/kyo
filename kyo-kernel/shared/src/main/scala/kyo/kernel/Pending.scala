@@ -1,13 +1,11 @@
 package kyo.kernel
 
 import kyo.*
+import kyo.kernel.Arrow
 import kyo.kernel.internal.*
 import scala.annotation.nowarn
-import scala.annotation.tailrec
+import scala.annotation.publicInBinary
 import scala.language.implicitConversions
-import scala.quoted.Expr
-import scala.quoted.Quotes
-import scala.quoted.Type
 
 /** Represents a computation that may perform effects before producing a value.
   *
@@ -22,9 +20,9 @@ import scala.quoted.Type
   *
   * This type allows Kyo to track effects at compile time and ensure they are properly handled. The effects are accumulated in the type
   * parameter `S` as an intersection type (`&`). Because intersection types are unordered, `Abort[String] & Emit[Log]` is equivalent to
-  * `Emit[Log] & Abort[String]` - the order in which effects appear in the type does not determine the order in which they execute.
+  * `Emit[Log] & Abort[String]`: the order in which effects appear in the type does not determine the order in which they execute.
   *
-  * The pending type has a single fundamental operation - the monadic bind, which is exposed as both `map` and `flatMap` (for
+  * The pending type has a single fundamental operation, the monadic bind, exposed as both `map` and `flatMap` (the latter for
   * for-comprehension support). Plain values are automatically lifted into the effect context, which means `map` can serve as both `map` and
   * `flatMap`. This allows writing effectful code typically without having to distinguish map from flatMap or manually lifting values.
   *
@@ -37,52 +35,67 @@ import scala.quoted.Type
   *
   * Beyond effect handlers, `handle` can be used with any function that takes a computation as input. For example,
   * `computation.handle(Abort.run, _.map(_ + 1))` handles `Abort` and then applies a transformation. While `handle` supports arbitrary
-  * functions, it is primarily designed for effect handling .
+  * functions, it is primarily designed for effect handling.
+  *
+  * #### Representation
+  *
+  * The type is opaque over a three-arm union, and each arm is load-bearing:
+  *   - a raw `A`, which is why a plain value is already a computation and why a settled one costs no wrapper;
+  *   - a `Pending` node, the family in `PendingInternal` reifying one combinator;
+  *   - a `Nested` wrapper, which is what the lift puts around a computation used as a value. Without an arm of its own, `Nothing < S`
+  *     erases to `Pending` and a position holding a nested computation could not carry it.
   */
-opaque type <[+A, -S] = A | Kyo[A, S]
+opaque type <[+A, -S] = A | Pending[A, S] | Nested[A]
 
-object `<`:
+object `<` extends Implicits:
 
     extension [A, S](inline v: A < S)
 
         /** Maps the value produced by this computation to a new computation and flattens the result. This is the monadic bind operation for
           * the pending type.
           *
-          * Note: Both `map` and `flatMap` have identical behavior in this API - they both act as the monadic bind. While `map` is the
-          * recommended method to use, `flatMap` exists to support for-comprehension syntax in Scala.
+          * Note: `map` and `flatMap` have identical behavior in this API, both acting as the monadic bind. `map` is the recommended one;
+          * `flatMap` exists to support for-comprehension syntax in Scala.
           *
           * @param f
           *   The transformation function to apply to the result
           * @return
           *   A new computation producing the transformed value
           */
-        inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
-            using
-            inline _frame: Frame,
-            inline safepoint: Safepoint
-        ): B < (S & S2) =
-            @nowarn("msg=anonymous") def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                mapLoop(kyo(v, context))
-                    case v =>
-                        val value     = v.unsafeGet
-                        val safepoint = summon[Safepoint]
-                        // Hand-inlined Safepoint.handle (2-arg overload); see
-                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
-                        // protocol this reproduces. A future protocol change updates that method
-                        // AND this site.
-                        if !safepoint.enter(_frame, value) then
-                            Effect.defer(mapLoop(v))
-                        else
-                            try f(value): B < S2
-                            finally safepoint.exit()
-                        end if
-            mapLoop(v)
+        inline def map[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    new Pending.DeferWith[A, C, S2 & S3]:
+                        override def frame                                              = _frame
+                        def value                                                       = v
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
+                else
+                    val out = cont.head(f(Nested.unnest(v)), cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
+            // States the receiver's own type, so it holds by construction. Needed because under -Xcheck-macros the
+            // inline body sees `<` through a proxy the compiler does not substitute into the union, leaving a
+            // pending value type nothing to conform to. Erased.
+            run(v.asInstanceOf[A < S], Arrow.id)
         end map
+
+        /** Maps the value this computation produces, with no preemption point between the value arriving and `f` running.
+          *
+          * `map` polls the safepoint before applying its function, so an interrupt pending when the value arrives parks the
+          * computation and `f` is never reached. That is wrong where `f` records an obligation the value has already created,
+          * a resource that is open and whose finalizer is not yet registered: the park drops the registration and the value
+          * leaks. This variant applies `f` as the value arrives, so an interrupt lands on either side of the pair.
+          */
+        inline def ensureMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            // Through `Arrow.ensure` rather than `new Arrow.Ensure` here: `Ensure` is `private[kyo]`, so naming it
+            // in this expansion made the method uncallable from outside the package.
+            Arrow.ensure[A](f)(v.asInstanceOf[A < S])
+        end ensureMap
 
         /** Maps the value produced by this computation to a new computation and flattens the result.
           *
@@ -94,30 +107,23 @@ object `<`:
           * @return
           *   A computation producing the final result
           */
-        inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
-            using inline _frame: Frame
-        ): B < (S & S2) =
-            @nowarn("msg=anonymous") def flatMapLoop(v: A < S)(using Safepoint): B < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                flatMapLoop(kyo(v, context))
-                    case v =>
-                        val value     = v.unsafeGet
-                        val safepoint = summon[Safepoint]
-                        // Hand-inlined Safepoint.handle (2-arg overload); see
-                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
-                        // protocol this reproduces. A future protocol change updates that method
-                        // AND this site.
-                        if !safepoint.enter(_frame, value) then
-                            Effect.defer(flatMapLoop(v))
-                        else
-                            try f(value): B < S2
-                            finally safepoint.exit()
-                        end if
-            flatMapLoop(v)
+        inline def flatMap[B, S2](inline f: A => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    new Pending.DeferWith[A, C, S2 & S3]:
+                        override def frame                                              = _frame
+                        def value                                                       = v
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
+                else
+                    val out = cont.head(f(Nested.unnest(v)), cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
+            run(v.asInstanceOf[A < S], Arrow.id)
         end flatMap
 
         /** Executes this computation, discards its result, and then executes another computation.
@@ -127,30 +133,23 @@ object `<`:
           * @return
           *   A computation producing the second result
           */
-        inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(
-            using inline _frame: Frame
-        ): B < (S & S2) =
-            @nowarn("msg=anonymous") def andThenLoop(v: A < S)(using Safepoint): B < (S & S2) =
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                andThenLoop(kyo(v, context))
-                    case v =>
-                        val value     = v.unsafeGet
-                        val safepoint = summon[Safepoint]
-                        // Hand-inlined Safepoint.handle (2-arg overload); see
-                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
-                        // protocol this reproduces. A future protocol change updates that method
-                        // AND this site.
-                        if !safepoint.enter(_frame, value) then
-                            Effect.defer(andThenLoop(v))
-                        else
-                            try f: B < S2
-                            finally safepoint.exit()
-                        end if
-            andThenLoop(v)
+        inline def andThen[B, S2](inline f: => B < S2)(using inline _frame: Frame): B < (S & S2) =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[B, C, S3]): C < (S2 & S3) =
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    new Pending.DeferWith[A, C, S2 & S3]:
+                        override def frame                                              = _frame
+                        def value                                                       = v
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
+                else
+                    val out = cont.head(f, cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
+            run(v.asInstanceOf[A < S], Arrow.id)
         end andThen
 
         /** Executes this computation and discards its result.
@@ -158,21 +157,25 @@ object `<`:
           * @return
           *   A computation that produces Unit
           */
-        inline def unit(
-            using
-            inline _frame: Frame,
-            inline safepoint: Safepoint
-        ): Unit < S =
-            @nowarn("msg=anonymous") def unitLoop(v: A < S)(using Safepoint): Unit < S =
-                v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                unitLoop(kyo(v, context))
-                    case v =>
-                        ()
-            unitLoop(v)
+        inline def unit(using inline _frame: Frame): Unit < S =
+            @nowarn("msg=anonymous") def run[C, S3](v: A < S3, cont: Arrow[Unit, C, S3]): C < S3 =
+                var slot: Safepoint.Slot = -1
+                val shouldDefer          = v.isInstanceOf[Pending[?, ?]] || { slot = Safepoint.get(); !Safepoint.enter(slot) }
+                if shouldDefer then
+                    new Pending.DeferWith[A, C, S3]:
+                        override def frame                                              = _frame
+                        def value                                                       = v
+                        override def apply[C2, S4](v2: A < S4, cont2: Arrow[C, C2, S4]) =
+                            run(v2, cont.chain(cont2))
+                else
+                    // `Unit` is the union's first arm, so this holds by construction; same -Xcheck-macros reason
+                    // as `map`'s cast above. Erased.
+                    val out = cont.head(().asInstanceOf[Unit < S3], cont.tail)
+                    Safepoint.exit(slot)
+                    out
+                end if
+            end run
+            run(v.asInstanceOf[A < S], Arrow.id)
         end unit
 
         /** Applies a transformation to this computation.
@@ -207,6 +210,8 @@ object `<`:
             f(handle1)
         end handle
 
+        // Every stage takes its computation by name, so a stage such as `Abort.run` sees an exception thrown
+        // while the receiver is built.
         /** Applies two transformations to this computation in sequence.
           *
           * Enables chaining multiple effect handlers or transformations in a readable sequential style.
@@ -215,7 +220,7 @@ object `<`:
           *   The result after applying both transformations
           */
         inline def handle[B, C](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C
         ): C =
             def handle2 = v.handle(f1)
@@ -230,7 +235,7 @@ object `<`:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
         ): D =
@@ -246,7 +251,7 @@ object `<`:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
@@ -263,7 +268,7 @@ object `<`:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -281,7 +286,7 @@ object `<`:
           *   The result after applying all transformations in sequence
           */
         inline def handle[B, C, D, E, F, G](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -295,7 +300,7 @@ object `<`:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -310,7 +315,7 @@ object `<`:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -326,7 +331,7 @@ object `<`:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -343,7 +348,7 @@ object `<`:
         /** Applies a sequence of transformations to this computation.
           */
         inline def handle[B, C, D, E, F, G, H, I, J, K](
-            inline f1: A < S => B,
+            inline f1: (=> A < S) => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
@@ -360,16 +365,9 @@ object `<`:
 
         private[kyo] inline def evalNow: Maybe[A] =
             v match
-                case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] => Maybe.empty
-                case v                                 => Maybe(v.unsafeGet)
+                case _: Pending[?, ?] => Maybe.empty
+                case v                => Maybe(Nested.unnest(v))
 
-    end extension
-
-    extension [A, S](v: A < S)
-        private[kyo] def unsafeGet: A =
-            v match
-                case Nested(v) => v.asInstanceOf[A]
-                case _         => v.asInstanceOf[A]
     end extension
 
     extension [A, S, S2](v: A < S < S2)
@@ -378,17 +376,27 @@ object `<`:
           * @return
           *   A flattened computation of type `A` with combined effects `S & S2`
           */
+        @nowarn("msg=anonymous")
         def flatten(using _frame: Frame): A < (S & S2) =
-            def flattenLoop(v: A < S < S2)(using Safepoint): A < (S & S2) =
+            def arrow: Arrow[A < S, A, S] =
+                new Arrow.Step[A < S, A, S]:
+                    def frame                                                = _frame
+                    def apply[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]) = run(v, cont)
+            def run[C, S3](v: (A < S) < S3, cont: Arrow[A, C, S3]): C < (S & S3) =
                 v match
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A < S, S2] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
-                            def frame                                                = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                flattenLoop(kyo(v, context))
-                    case v =>
-                        v.unsafeGet
-            flattenLoop(v)
+                    case kyo: Pending[A < S, S3] @unchecked =>
+                        Effect.defer(kyo, arrow, cont)
+                    case _ =>
+                        val slot = Safepoint.get()
+                        if !Safepoint.enter(slot) then
+                            Effect.defer(v, arrow, cont)
+                        else
+                            val out = cont.head(Nested.unnest[A < S](v), cont.tail)
+                            Safepoint.exit(slot)
+                            out
+                        end if
+            run(v, Arrow.id)
+        end flatten
     end extension
 
     extension [A](inline v: A < Any)
@@ -404,104 +412,21 @@ object `<`:
           *   if unhandled effects remain in the computation
           */
         inline def eval(using inline frame: Frame): A =
-            @tailrec def evalLoop(kyo: A < Any)(using Safepoint): A =
-                kyo match
-                    case kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked
-                        if kyo.tag =:= Tag[Defer] =>
-                        evalLoop(kyo((), Context.empty))
-                    case kyo: KyoSuspend[?, ?, ?, ?, A, Any] @unchecked =>
-                        // A KyoSuspend is a member of the union `<` expands to, so the cast states a
-                        // conformance that holds by construction. It is needed because this body is
-                        // inline: expanded into user code and re-checked under -Xcheck-macros, `<` is
-                        // seen through an inline proxy the compiler does not substitute into the union,
-                        // leaving the un-proxied KyoSuspend nothing to conform to. Erased.
-                        bug.failTag(kyo.asInstanceOf[A < Any], Tag[Any])
-                    case v =>
-                        v.unsafeGet
-                end match
-            end evalLoop
-            Safepoint.eval(evalLoop(v))
+            v match
+                case kyo: Pending[?, ?] => Nested.unnest[A](Eval(kyo.asInstanceOf[A < Any]))
+                case v                  => Nested.unnest(v)
         end eval
     end extension
 
-    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S = v
-
-    /** Implicitly converts a plain value to an effectful computation.
-      *
-      * This conversion is a critical part of the effect system's ergonomics. It handles two key cases:
-      *
-      *   1. When the input is already a Kyo effect instance, it wraps it in a Nested container to prevent unsound flattening and maintain
-      *      proper effect composition.
-      *   2. When the input is a regular value, it lifts it directly into the effect context through type casting.
-      *
-      * The CanLift constraint avoids unexpected lifting when the pending effect set of computations don't match.
-      *
-      * @param v
-      *   The value to lift into the effect context
-      * @return
-      *   A computation in the effect context
-      */
-    implicit inline def lift[A: CanLift, S](v: A): A < S = ${ LiftMacro.liftMacro[A, S]('v) }
-
-    implicit inline def liftAnyVal[A <: AnyVal, S](inline v: A): A < S = v.asInstanceOf[A < S]
-
-    implicit inline def liftUnit[S](inline v: Unit): Unit < S = v.asInstanceOf[Unit < S]
-
-    // ---------
-
-    implicit inline def abortCastUnit[S1, S2](inline v: Unit < S1): Unit < S2 = ${ abortCastUnitImpl[S1, S2]('v) }
-
-    private def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
-        import quotes.reflect.*
-        val source = TypeRepr.of[S1].show
-        report.errorAndAbort(
-            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
-               |This may be due to an effect type mismatch.
-               |Consider removing or adjusting the type constraint on the left-hand side.
-               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
-        )
-    end abortCastUnitImpl
-
-    /** Converts a pure single-argument function to an effectful computation. */
-    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
-        using inline flat: CanLift[B]
-    ): A1 => B < Any =
-        a1 => lift(f(a1))
-
-    /** Converts a pure two-argument function to an effectful computation. */
-    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2) => B < Any =
-        (a1, a2) => lift(f(a1, a2))
-
-    /** Converts a pure three-argument function to an effectful computation. */
-    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3) => B < Any =
-        (a1, a2, a3) => lift(f(a1, a2, a3))
-
-    /** Converts a pure four-argument function to an effectful computation. */
-    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4) => B < Any =
-        (a1, a2, a3, a4) => lift(f(a1, a2, a3, a4))
-
-    /** Converts a pure five-argument function to an effectful computation. */
-    implicit inline def liftPureFunction5[A1, A2, A3, A4, A5, B](inline f: (A1, A2, A3, A4, A5) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5) => B < Any =
-        (a1, a2, a3, a4, a5) => lift(f(a1, a2, a3, a4, a5))
-
-    /** Converts a pure six-argument function to an effectful computation. */
-    implicit inline def liftPureFunction6[A1, A2, A3, A4, A5, A6, B](inline f: (A1, A2, A3, A4, A5, A6) => B)(
-        using inline flat: CanLift[B]
-    ): (A1, A2, A3, A4, A5, A6) => B < Any =
-        (a1, a2, a3, a4, a5, a6) => lift(f(a1, a2, a3, a4, a5, a6))
+    // Public in binary rather than inline: an inline conversion binds a prefix proxy at every expansion site, a
+    // private one goes through an inline accessor, and both grow every suspension.
+    @publicInBinary implicit private[kernel] def fromKyo[A, S](v: Pending[A, S]): A < S = v
 
     given [A, S, APendingS <: A < S](using ra: Render[A]): Render[APendingS] with
         def asString(value: APendingS): String = value match
-            case sus: Kyo[?, ?]  => sus.toString
-            case a: A @unchecked => s"Kyo(${ra.asString(a)})"
+            case sus: Pending[?, ?] => sus.toString
+            case nested: Nested[?]  => s"Kyo(${nested.value})"
+            case a: A @unchecked    => s"Kyo(${ra.asString(a)})"
     end given
 
 end `<`

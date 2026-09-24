@@ -45,7 +45,7 @@ class PostgresBackendFactory extends Backend:
 
     val dialect: Idiom = PostgresDialect
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
-        PostgresClient.openUnscoped(url, config)
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
+        PostgresClient.opened(url, config)
 
 end PostgresBackendFactory

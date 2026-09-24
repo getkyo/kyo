@@ -73,16 +73,6 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
     )(using Frame): A < (S & Sync) =
         internal.server.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
 
-    /** Encode a response from Any -- used by UnsafeServerDispatch where path-dependent types are erased through Abort.run. The response is
-      * always HttpResponse[Out] at runtime; the Any parameter avoids type mismatch errors from existential type loss.
-      */
-    final private[kyo] def encodeResponseUnchecked[A, S](response: Any)(
-        onEmpty: (HttpStatus, HttpHeaders) => A < S,
-        onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A < S
-    )(using Frame): A < (S & Sync) =
-        encodeResponse(response.asInstanceOf[HttpResponse[Out]])(onEmpty, onBuffered, onStreaming)
-
     /** Try to encode a typed error via the route's error mappings. */
     final private[kyo] def encodeError(error: Any)(using Frame): Maybe[(HttpStatus, HttpHeaders, Span[Byte])] =
         internal.server.RouteUtil.encodeError(route, error)

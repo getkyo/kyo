@@ -170,6 +170,32 @@ class MeterTest extends kyo.test.Test[Any]:
                     .unit
             }
 
+            "sustained contention never resumes a parked slice twice".notJs.notWasm in {
+                // The window is open only while a fiber unwinds into a park and another completes what it waits on in
+                // that instant, so the loop counts here are what make contention reach it.
+                val permits    = 2
+                val callers    = 20
+                val iterations = 1000
+                for
+                    meter   <- Meter.initSemaphore(permits)
+                    counter <- AtomicInt.init(0)
+                    outcome <- Abort.run[Throwable](
+                        Async.foreach(1 to callers, callers)(_ =>
+                            Loop.indexed(idx =>
+                                if idx == iterations then Loop.done
+                                else meter.run(counter.incrementAndGet).map(_ => Loop.continue)
+                            )
+                        )
+                    )
+                    count   <- counter.get
+                    permits <- meter.availablePermits
+                yield
+                    assert(outcome.isSuccess, s"failed after $count of ${callers * iterations} acquisitions: $outcome")
+                    assert(count == callers * iterations)
+                    assert(permits == 2)
+                end for
+            }
+
             "close" in {
                 (for
                     size     <- Choice.eval(1, 2, 3, 50, 100)
@@ -587,10 +613,13 @@ class MeterTest extends kyo.test.Test[Any]:
             // of firings pushes availablePermits past it: it refills to exactly `rate`. Excluded on JS: manual-time periodic loops need interleaving the single thread lacks.
             Clock.withTimeControl { control =>
                 for
-                    meter     <- Meter.initRateLimiter(5, 5.millis)
-                    _         <- Loop.repeat(5)(meter.run(()))
-                    drained   <- meter.availablePermits
-                    _         <- Loop.repeat(20)(control.advance(5.millis))
+                    meter   <- Meter.initRateLimiter(5, 5.millis)
+                    _       <- Loop.repeat(5)(meter.run(()))
+                    drained <- meter.availablePermits
+                    // The timer fiber re-arms its next sleep only after its replenish ran. Fencing on the re-arm makes each advance
+                    // fire exactly one replenish, whatever the runner's load; the default wall-clock allowance alone is not a fence.
+                    _         <- control.awaitPendingSleepers(1)
+                    _         <- Loop.repeat(20)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
                     available <- meter.availablePermits
                 yield assert(drained == 0 && available == 5)
             }
@@ -798,6 +827,67 @@ class MeterTest extends kyo.test.Test[Any]:
                     }
                 yield assert(blocked.isFailure && result.isPanic)
             }
+        }
+    }
+
+    "typed abort (#1846)" - {
+        "a semaphore body that aborts with a typed error returns its permit" in {
+            for
+                meter  <- Meter.initSemaphore(1)
+                result <- Abort.run[String](meter.run(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.run(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the permit was not returned after a typed abort: free=$free")
+                assert(again == 42)
+            end for
+        }
+
+        "a mutex body that aborts with a typed error releases the mutex" in {
+            for
+                meter  <- Meter.initMutex
+                result <- Abort.run[String](meter.run(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.run(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the mutex was not released after a typed abort: free=$free")
+                assert(again == 42)
+            end for
+        }
+
+        "a tryRun body that aborts with a typed error returns its permit" in {
+            for
+                meter  <- Meter.initSemaphore(1)
+                result <- Abort.run[String](meter.tryRun(Abort.fail("boom")))
+                free   <- meter.availablePermits
+                again  <- meter.tryRun(42)
+            yield
+                assert(result.failure.contains("boom"))
+                assert(free == 1, s"the permit was not returned after a typed abort: free=$free")
+                assert(again == Maybe(42))
+            end for
+        }
+
+        "a waiter behind a body that aborts with a typed error is admitted" in {
+            for
+                meter   <- Meter.initSemaphore(1)
+                entered <- Latch.init(1)
+                gate    <- Latch.init(1)
+                holder  <- Fiber.initUnscoped(Abort.run[String](meter.run(entered.release.andThen(gate.await).andThen(Abort.fail("boom")))))
+                _       <- entered.await
+                waiter  <- Fiber.initUnscoped(meter.run(42))
+                _       <- assertEventually(meter.pendingWaiters.map(_ == 1))
+                _       <- gate.release
+                held    <- holder.get
+                got     <- waiter.get
+                free    <- meter.availablePermits
+            yield
+                assert(held.failure.contains("boom"))
+                assert(got == 42)
+                assert(free == 1, s"permits after both bodies ended: free=$free")
+            end for
         }
     }
 

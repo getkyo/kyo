@@ -1113,13 +1113,13 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- setFiles ----
 
-    // Navigate to a real http://localhost page (file input attaches reliably and CDP
+    // Navigate to a real http page (file input attaches reliably and CDP
     // setFileInputFiles is accepted), inject a `<input type="file" multiple>` into the DOM, write two
     // small temp files, call `setFiles`, then assert via a single multi-field `Browser.eval` that
     // `input.files.length == paths.length` and the basenames round-trip.
     "setFiles attaches the requested files to a multi-file input" in {
         withBrowserOnLocalhost {
-            // Replace document body with a multi-file input. The page is on a real http://localhost origin
+            // Replace document body with a multi-file input. The page is on a real http origin
             // so CDP's setFileInputFiles is accepted (data: URLs reject it).
             Browser.eval(
                 "(() => { document.body.innerHTML = '<input type=\"file\" id=\"fileInput\" multiple>'; return 'ok'; })()"

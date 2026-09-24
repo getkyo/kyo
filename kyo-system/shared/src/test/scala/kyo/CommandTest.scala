@@ -281,6 +281,52 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The spawner is
+    // stopped once the operating system shows the process, by a unique argv, and the process must then be gone.
+    "a process whose spawner is interrupted does not outlive it".times(80) in {
+        assumeUnix() // sleep / pgrep / kill have no Windows equivalent
+        val seconds                                                  = 300 + scala.util.Random.nextInt(100000)
+        val cmd                                                      = Command("sleep", seconds.toString)
+        def alive: Chunk[String] < (Async & Abort[CommandException]) =
+            Command("pgrep", "-f", s"^sleep $seconds$$").textWithExitCode.map((out, _) =>
+                Chunk.from(out.linesIterator.map(_.trim).filter(_.nonEmpty).toSeq)
+            )
+        // A process this leaf orphans would otherwise sit on the host for the lifetime of its `sleep`.
+        def killLeftovers: Unit < Async =
+            Abort.run[CommandException](alive.map(left => Kyo.foreachDiscard(left)(pid => Command("kill", "-9", pid).waitFor))).unit
+        Scope.run {
+            for
+                _      <- Scope.ensure(killLeftovers)
+                fiber  <- Fiber.initUnscoped(Scope.run(cmd.spawn.andThen(Async.never)))
+                _      <- assertEventually(alive.map(_.nonEmpty))
+                _      <- fiber.interrupt
+                result <- fiber.getResult
+                _      <- assertEventually(alive.map(_.isEmpty))
+            yield assert(result.isPanic)
+        }
+    }
+
+    // A spawn must not hand its pipes to a child another spawn forks at the same time: a long-lived child holding a short command's
+    // stdout keeps that command's read from ever reaching EOF. Each round forks a long-lived child while a short command's output is
+    // read; every read must complete, and one that does not is counted within its bound rather than left to hang the leaf.
+    "commands spawned concurrently do not hold each other's pipes" in {
+        assumeUnix() // sleep has no Windows equivalent
+        val rounds = 80
+        Loop.indexed { i =>
+            if i >= rounds then Loop.done(succeed)
+            else
+                for
+                    holder <- Fiber.initUnscoped(Scope.run(Command("sleep", "300").spawn.andThen(Async.never)))
+                    read   <- Abort.run[Timeout](Async.timeout(5.seconds)(Command("echo", "x").text))
+                    _      <- holder.interrupt
+                    _      <- holder.getResult
+                yield
+                    assert(read.isSuccess, s"round $i: the short command's output never reached EOF while another spawn was in flight")
+                    Loop.continue
+                end for
+        }
+    }
+
     "spawnUnscoped returns a live process the caller owns and must close" in {
         for
             proc <- trueCmd.spawnUnscoped

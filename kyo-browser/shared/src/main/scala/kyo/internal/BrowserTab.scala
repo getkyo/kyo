@@ -241,10 +241,7 @@ private[kyo] object BrowserTabSetup:
         for
             // Create an isolated browser context. Disposing the context on scope exit cleans up service workers,
             // downloads, storage, and renderer state that plain Target.closeTarget leaves behind.
-            ctx <- CdpBackend.createBrowserContext(backend)
-            _   <- Scope.ensure(
-                CdpBackend.disposeBrowserContext(backend, DisposeBrowserContextParams(ctx.browserContextId))
-            )
+            ctx      <- CdpBackend.acquireBrowserContext(backend)
             created  <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
             attached <- CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true))
             tab      <- mkBrowserTab(
@@ -289,10 +286,7 @@ private[kyo] object BrowserTabSetup:
       */
     private[kyo] def createChildTab(parent: BrowserTab)(using Frame): BrowserTab < (Async & Scope & Abort[BrowserReadException]) =
         for
-            ctx <- CdpBackend.createBrowserContext(parent.backend)
-            _   <- Scope.ensure(
-                CdpBackend.disposeBrowserContext(parent.backend, DisposeBrowserContextParams(ctx.browserContextId))
-            )
+            ctx      <- CdpBackend.acquireBrowserContext(parent.backend)
             created  <- CdpBackend.createTarget(parent.backend, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
             attached <- CdpBackend.attachToTarget(parent.backend, AttachParams(created.targetId, flatten = true))
             tab      <- mkBrowserTab(

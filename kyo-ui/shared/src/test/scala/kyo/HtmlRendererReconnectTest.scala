@@ -31,7 +31,7 @@ class HtmlRendererReconnectTest extends UITest:
                     case false => Kyo.unit
                 }
             }
-            server <- HttpServer.init(0, "localhost")(routes.head, gated)
+            server <- HttpServer.init(0, "127.0.0.1")(routes.head, gated)
         yield server
 
     private val recovery = Present(Schedule.fixed(100.millis).maxDuration(30.seconds))
@@ -49,7 +49,7 @@ class HtmlRendererReconnectTest extends UITest:
                     server <- gatedServer(app, serving)
                     result <- Browser.runShared() {
                         for
-                            _ <- Browser.goto(s"http://localhost:${server.port}/")
+                            _ <- Browser.goto(s"http://127.0.0.1:${server.port}/")
                             _ <- Browser.assertText(Selector.id("v"), "before")
                             // Posted with no session reading the socket, so the client buffers it. Nothing reaches the server yet.
                             _ <- Browser.click(Selector.id("b"))
@@ -75,7 +75,7 @@ class HtmlRendererReconnectTest extends UITest:
                     server <- gatedServer(app, serving)
                     result <- Browser.runShared() {
                         for
-                            _ <- Browser.goto(s"http://localhost:${server.port}/")
+                            _ <- Browser.goto(s"http://127.0.0.1:${server.port}/")
                             _ <- Browser.assertText(Selector.id("v"), "before")
                             // No session is observing this, so nothing is queued anywhere: the client can only learn it from the full region
                             // the next session sends.

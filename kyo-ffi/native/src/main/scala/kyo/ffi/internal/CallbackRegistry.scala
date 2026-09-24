@@ -22,7 +22,8 @@ private[ffi] case class PoolStats(used: Int, total: Int, utilizationPercent: Dou
   * This registry works around both limitations:
   *
   *   - **Transient path**: the generated method body pushes the user `FunctionN` onto a per-thread stack before the FFI call and pops it
-  *     after. The top-level trampoline reads `peekTransient()` to recover it. A stack (not a slot) is used so re-entrant FFI calls,  *     callback A fires back into another FFI call whose comparator is callback B, nest cleanly.
+  *     after. The top-level trampoline reads `peekTransient()` to recover it. A stack (not a slot) is used so re-entrant FFI calls,
+  *     callback A fires back into another FFI call whose comparator is callback B, nest cleanly.
   *   - **Retained path**: a fixed-size slot pool holds the user `FunctionN` for the lifetime of the `Ffi.Guard`. The generated method body
   *     calls `claimRetainedSlot_XXX` to obtain `(slotIdx, ptr)`, the `ptr` is a `CFuncPtr` pre-built at class-init time whose trampoline
   *     reads from that specific slot index. Because each trampoline is a per-slot top-level `def`, `fromScalaFunction` always sees a

@@ -155,7 +155,9 @@ object Topic:
       *   the computation result within `Async`, aborting [[TopicTransportFailedException]] on a failed connect
       */
     def run[A, S](aeronDir: Path)(v: A < (Topic & S))(using Frame): A < (Async & Abort[TopicTransportFailedException] & S) =
-        AeronPlatform.external(aeronDir.unsafe.show).map { runtime =>
+        // `ensureMap`, not `map`: the connect completes by producing a connected client, and its close must be owed in
+        // the step it arrives. A `map` polls for a stop first, which would drop the client with nothing to close it.
+        AeronPlatform.external(aeronDir.unsafe.show).ensureMap { runtime =>
             Sync.ensure(Sync.Unsafe.defer(runtime.close())) {
                 runWith(runtime.transport)(v)
             }
@@ -250,7 +252,10 @@ object Topic:
         ): Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async) =
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                // `ensureMap`, not `map`: the add completes by producing the publication, and its closer must be
+                // registered in that same step. `map` polls first, so an interrupt taken as the publication arrives
+                // parks before the `Sync.ensure` installs, leaving the publication open with nothing to close it.
+                addPublicationDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         Abort.fail(TopicPublicationClosedException(aeronUri, resolvedStreamId))
                     case Present(publication) =>
@@ -333,7 +338,7 @@ object Topic:
         Stream {
             Env.use[AeronTransport] { transport =>
                 val resolvedStreamId = streamId.getOrElse(tag.hash.abs)
-                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).map {
+                addSubscriptionDeadline(transport, aeronUri, resolvedStreamId, defaultAddTimeout).ensureMap {
                     case Absent =>
                         // Closed client: reported as backpressure so the retry schedule absorbs it. A driver
                         // rejection already aborted terminally inside addSubscriptionDeadline.
@@ -413,14 +418,36 @@ object Topic:
                         // Token free-ownership: on Done, pollAddPublication's _get frees the token; on
                         // Failed the C layer does not, so each Failed arm frees it and clears tokOwned
                         // to keep the finalizer from double-freeing. The var is confined to one fiber.
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncPub(tok) else ())) {
+                        var tokOwned           = true
+                        var opened: Maybe[Pub] = Absent
+                        // Before Done the guard owns the token (frees it on any exit that did not hand it to the
+                        // driver); on Done the driver takes the token and returns the publication, which the guard
+                        // then owns until the use's own finalizer takes over. A clean end is that hand-off, so the
+                        // guard closes nothing; an abnormal end after Done (the publication produced but the hand-off
+                        // not reached, as an interrupt taken in the Done step is) closes it here rather than leaking it.
+                        Sync.ensure { outcome =>
+                            Sync.Unsafe.defer {
+                                if tokOwned then transport.freeAsyncPub(tok)
+                                else if outcome.isDefined then opened.foreach(transport.closePublication)
+                            }
+                        } {
                             Loop.foreach[Maybe[Pub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddPublication(tok)).map {
+                                Sync.Unsafe.defer {
+                                    val poll = transport.pollAddPublication(tok)
+                                    // The transport's `_get` takes the token on a Done poll, so ownership passes to the
+                                    // publication in the same step as the poll: an interrupt landing between the poll
+                                    // and the clear would otherwise let the finalizer free a token the driver already took.
+                                    poll match
+                                        case AeronTransport.AddPoll.Done(publication) =>
+                                            tokOwned = false
+                                            opened = Present(publication)
+                                        case _ => ()
+                                    end match
+                                    poll
+                                }.map {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Pub]) match
                                             case AeronTransport.AddPoll.Done(pub) =>
-                                                tokOwned = false
                                                 Loop.done[Unit, Maybe[Pub]](Maybe(pub))
                                             case AeronTransport.AddPoll.Failed(code, detail)
                                                 if code != 0 || detail.nonEmpty =>
@@ -490,14 +517,28 @@ object Topic:
                     case Absent =>
                         (Absent: Maybe[Sub])
                     case Present(tok) =>
-                        var tokOwned = true
-                        Sync.ensure(Sync.Unsafe.defer(if tokOwned then transport.freeAsyncSub(tok) else ())) {
+                        var tokOwned           = true
+                        var opened: Maybe[Sub] = Absent
+                        Sync.ensure { outcome =>
+                            Sync.Unsafe.defer {
+                                if tokOwned then transport.freeAsyncSub(tok)
+                                else if outcome.isDefined then opened.foreach(transport.closeSubscription)
+                            }
+                        } {
                             Loop.foreach[Maybe[Sub], Async & Abort[TopicTransportException]] {
-                                Sync.Unsafe.defer(transport.pollAddSubscription(tok)).map {
+                                Sync.Unsafe.defer {
+                                    val poll = transport.pollAddSubscription(tok)
+                                    poll match
+                                        case AeronTransport.AddPoll.Done(subscription) =>
+                                            tokOwned = false
+                                            opened = Present(subscription)
+                                        case _ => ()
+                                    end match
+                                    poll
+                                }.map {
                                     poll =>
                                         (poll: AeronTransport.AddPoll[Sub]) match
                                             case AeronTransport.AddPoll.Done(sub) =>
-                                                tokOwned = false
                                                 Loop.done[Unit, Maybe[Sub]](Maybe(sub))
                                             case AeronTransport.AddPoll.Failed(code, detail)
                                                 if code != 0 || detail.nonEmpty =>

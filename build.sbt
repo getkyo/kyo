@@ -811,17 +811,37 @@ lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
-        .withKyoTest
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
+            // The kernel tests on ScalaTest, not kyo-test: kyo-test runs its leaves as fibers on
+            // the scheduler the kernel powers, and the scheduler's preemption writes into the
+            // stop channel and safepoint state the kernel suites assert on.
+            libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
-        .jvmSettings(mimaCheck(false))
-        .jvmConfigure(_.settings(
-            doctestFreshDriver := true
-        ))
+        .jvmSettings(
+            mimaCheck(false),
+            // The kernel's lift is a same-module splice macro, and a resident doctest driver
+            // reusing one compiler across blocks trips dotty's denotation validation on the
+            // suspended-unit retries. A fresh driver per block sidesteps it.
+            doctestFreshDriver                    := true,
+            libraryDependencies += "org.javassist" % "javassist" % "3.33.0-GA" % Test,
+            // Benchmarks run on default JVM flags: Jmh extends Test, which carries
+            // UseCompactObjectHeaders from kyo-settings, and a collector-dependent layout
+            // flag must not be baked into the canonical numbers.
+            Jmh / javaOptions := (Test / javaOptions).value.filterNot(_ == "-XX:+UseCompactObjectHeaders"),
+            libraryDependencies ++= Seq(
+                "dev.zio"        %% "zio"             % zioVersion,
+                "org.typelevel"  %% "cats-effect"     % catsVersion,
+                "org.scala-lang" %% "scala3-compiler" % scalaVersion.value
+            ).map(_ % "jmh"),
+            // The Safepoint overflow suite fills the global slot table; a suite running
+            // concurrently in the same classloader would see its threads degraded to the
+            // overflow slot for the duration.
+            Test / parallelExecution := false
+        )
+        .jvmConfigure(_.enablePlugins(JmhPlugin))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
@@ -3744,7 +3764,17 @@ lazy val `kyo-bench` =
             `kyo-settings`,
             publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
-            Test / testForkedParallel               := true,
+            // The Jmh fork runs on the background-job service's re-materialized classpath, where an
+            // internal dependency travels as its packageBin jar, and kyo-net's main jar carries no
+            // natives (they ship in per-platform classifier jars). Without them the transport
+            // silently floors to NIO and the benches measure the floor instead of the primary posix
+            // backend.
+            Jmh / unmanagedJars += {
+                val artifacts = (`kyo-net`.jvm / kyoNetClassifierArtifacts).value
+                val jar       = artifacts.collectFirst { case (a, f) if a.classifier.contains("all-natives") => f }
+                Attributed.blank(jar.getOrElse(sys.error("[kyo-bench] kyo-net all-natives classifier jar was not produced")))
+            },
+            Test / testForkedParallel := true,
             // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector

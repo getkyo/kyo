@@ -76,6 +76,11 @@ private[runner] object LeakCheck:
     /** Average scheduler load across active workers: queued plus executing tasks per worker. `0.0` when fully idle. */
     def loadAvg(): Double = Scheduler.get.loadAvg()
 
+    /** The allocated workers holding work, the regulator's window included or not: what the idle probe reads, since a worker past the
+      * window keeps running a task that never yields and [[loadAvg]] no longer counts it.
+      */
+    def busyWorkers(): Int = Scheduler.get.busyWorkers()
+
     /** Snapshot of currently-live non-daemon threads, by identity. Captured as a baseline at runner construction (so the JVM's own infra
       * threads ; `main`, the sbt ForkMain reader ; are excluded), then diffed at `done()`.
       */
@@ -192,7 +197,7 @@ private[runner] object LeakCheck:
 
     /** Polls until the scheduler holds no UNACCOUNTED work continuously for `settleNanos`, or until `budgetNanos` elapses.
       *
-      * Quiescence is `loadAvg() == 0` OR every busy worker allowlisted, because a process-lifetime carrier (kyo-net's shared transport, which
+      * Quiescence is no allocated worker holding work OR every busy worker allowlisted, because a process-lifetime carrier (kyo-net's shared transport, which
       * marks itself `processSharedTransport`) never lets load reach zero. Waiting on load alone made every fork holding one spend the whole
       * budget and then be excused by the allowlist anyway: the verdict was right, the wait was pure cost. [[awaitFdDrain]] already applies the
       * allowlist before it waits, for the same reason.
@@ -248,7 +253,23 @@ private[runner] object LeakCheck:
 
     /** Production binding of [[awaitSchedulerIdle]]: samples the live scheduler and treats `allowlist` as the accounted set. */
     def awaitSchedulerIdle(budgetNanos: Long, settleNanos: Long, pollNanos: Long, allowlist: Chunk[String]): IdleResult =
-        awaitSchedulerIdle(budgetNanos, settleNanos, pollNanos, () => loadAvg(), () => busyWorkAllAccounted(allowlist))
+        awaitSchedulerIdle(budgetNanos, settleNanos, pollNanos, () => busyWorkers().toDouble, () => busyWorkAllAccounted(allowlist))
+
+    /** The busy workers behind a `Busy` verdict, re-sampled until at least one is seen or `budgetNanos` elapses.
+      *
+      * The verdict comes from the load, which counts queued and running tasks; the dump reads each worker's current task, and a preempted
+      * task is off its worker between two slices. One sample can land in that gap on every worker (a starved host makes the gaps long)
+      * and render an empty dump for a real finding. A leak keeps a worker busy, so it is seen within a poll or two; an empty result after
+      * the budget means the load went away, and the finding still carries the frame the probe saw.
+      */
+    private def busyWorkersWithin(budgetNanos: Long, pollNanos: Long): Seq[kyo.scheduler.top.BusyWorker] =
+        val deadline = System.nanoTime() + budgetNanos
+        var busy     = Scheduler.get.busyFiberTraces()
+        while busy.isEmpty && System.nanoTime() < deadline do
+            LockSupport.parkNanos(pollNanos)
+            busy = Scheduler.get.busyFiberTraces()
+        busy
+    end busyWorkersWithin
 
     /** Re-samples the leaked-descriptor set until it drains to empty or `budgetNanos` elapses, parking `settleNanos` between samples, and
       * returns the descriptors that persisted through EVERY sample. A descriptor still mid-teardown at `done()` (an async deferred close
@@ -429,7 +450,7 @@ private[runner] object LeakCheck:
             case IdleResult.Idle | IdleResult.Accounted(_) => ()
             case IdleResult.Busy(la, frame)                =>
                 if checkFibers then
-                    val busy      = Scheduler.get.busyFiberTraces()
+                    val busy      = busyWorkersWithin(idleBudgetNanos, pollNanos)
                     val perWorker =
                         busy.map { w =>
                             val header     = s"  worker thread ${w.mount}:"
@@ -445,7 +466,7 @@ private[runner] object LeakCheck:
                     }
                     if !allowlisted then
                         findings +=
-                            s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
+                            s"fiber leak: scheduler still busy (busy workers=${la.toInt}) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
                                 s"\n  per-busy-worker fiber dump:\n$perWorker" +
                                 s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
                     end if

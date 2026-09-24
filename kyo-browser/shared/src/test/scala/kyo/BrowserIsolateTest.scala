@@ -747,7 +747,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     "isolate.clone preserves cookies across forks" in {
         withBrowserOnLocalhost {
-            Browser.setCookie("ck", "cv", "localhost").andThen {
+            Browser.setCookie("ck", "cv", "127.0.0.1").andThen {
                 Browser.isolate.clone.use {
                     Async.zip(
                         Browser.cookies.map(cs => cs.exists(c => c.name == "ck" && c.value == "cv")),
@@ -1112,7 +1112,7 @@ class BrowserIsolateTest extends BrowserTest:
 
     "withFork preserves cookies set in the parent tab" in {
         withBrowserOnLocalhost {
-            Browser.setCookie("forkCookie", "forkVal", "localhost").andThen {
+            Browser.setCookie("forkCookie", "forkVal", "127.0.0.1").andThen {
                 Browser.withFork {
                     Browser.cookies.map { cs =>
                         val found = cs.exists(c => c.name == "forkCookie" && c.value == "forkVal")

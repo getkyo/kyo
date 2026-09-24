@@ -44,7 +44,7 @@ class MysqlBackendFactory extends Backend:
 
     val dialect: Idiom = MysqlDialect
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
-        MysqlClient.openUnscoped(url, config)
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
+        MysqlClient.opened(url, config)
 
 end MysqlBackendFactory

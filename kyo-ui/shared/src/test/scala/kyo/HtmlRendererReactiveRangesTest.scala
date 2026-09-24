@@ -354,6 +354,8 @@ class HtmlRendererReactiveRangesTest extends UITest:
                         "table.querySelectorAll(':scope > tbody > tbody').length].join(':');})()"
                 )
             for
+                // the first read waits for the pushed row, as the later ones do, rather than reading the table as the page lands
+                _        <- Browser.assertText(Selector.id("server-mixed-A"), "A")
                 initial  <- topology
                 _        <- Browser.click(Selector.id("server-mixed-add"))
                 _        <- Browser.assertText(Selector.id("server-mixed-B"), "B")

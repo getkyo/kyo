@@ -30,6 +30,26 @@ class StatsRegistryWeakReferenceTest extends AnyFreeSpec {
         assert(store.map.size() == 1)
     }
 
+    // The javalib's ThreadLocal keys its entries
+    // with WeakReference and migrates them through a `Reference` type test when the table grows (at ten entries).
+    "every ThreadLocal keeps its entry while the thread's table grows" in {
+        val n      = 24
+        val locals = Array.tabulate(n)(_ => new ThreadLocal[AnyRef] { override def initialValue(): AnyRef = new Object })
+        val first  = new Array[AnyRef](n)
+        var lost   = List.empty[String]
+        var i      = 0
+        while (i < n) {
+            first(i) = locals(i).get()
+            var j = 0
+            while (j <= i) {
+                if (locals(j).get() ne first(j)) lost = s"entry #${j + 1} after inserting entry #${i + 1}" :: lost
+                j += 1
+            }
+            i += 1
+        }
+        assert(lost.isEmpty, s"ThreadLocal entries lost: ${lost.reverse.take(5).mkString(", ")}")
+    }
+
     "inherited thread-local values are copied when a child thread is constructed" in {
         val copies = new AtomicInteger
         val local  = new InheritableThreadLocal[AtomicInteger] {

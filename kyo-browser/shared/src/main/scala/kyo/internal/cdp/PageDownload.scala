@@ -68,15 +68,30 @@ private[kyo] object PageDownload:
         behavior: Behavior,
         downloadPath: Maybe[String]
     )(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        downloadBehaviorParams(behavior, downloadPath).map(client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", _))
+
+    /** [[setDownloadBehavior]] for a policy that is owed `restore` on the enclosing scope. The policy is on the browser before its
+      * reply arrives, so the restore is owed from the reply on: see [[CdpBackend.acquire]].
+      */
+    def acquireDownloadBehavior(
+        client: CdpBackend,
+        behavior: Behavior,
+        downloadPath: Maybe[String]
+    )(restore: => Unit < (Async & Abort[BrowserReadException]))(using Frame): Unit < (Async & Scope & Abort[BrowserReadException]) =
+        downloadBehaviorParams(behavior, downloadPath).map(
+            client.acquire[SetDownloadBehaviorParams, Unit]("Page.setDownloadBehavior", _)(_ => restore)
+        )
+
+    private def downloadBehaviorParams(behavior: Behavior, downloadPath: Maybe[String])(using
+        Frame
+    ): SetDownloadBehaviorParams < Sync =
         System.operatingSystem.map { os =>
-            val params = SetDownloadBehaviorParams(
+            SetDownloadBehaviorParams(
                 behavior = behavior,
                 downloadPath = downloadPath.map(nativeDownloadPath(os, _)),
                 eventsEnabled = Present(true)
             )
-            client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", params)
         }
-    end setDownloadBehavior
 
     /** CDP wire shape for `Page.downloadWillBegin`. Decoded once by the notification handler and carried as the event's typed `params`;
       * `Browser.parseDownloadEvent` projects it into a typed `Browser.DownloadEvent.WillBegin`.

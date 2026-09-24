@@ -376,8 +376,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letErased(fileSystem) {
-            ArrowEffect.handle[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)([C] =>
-                (op, cont) => dispatch(fileSystem, op).map(cont)
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathWrite, A, S, FS & Abort[FileSystemException]](Tag[PathWrite], program)([C] =>
+                (op, cont) => cont(dispatch(fileSystem, op))
             )
         }
 
@@ -391,8 +391,8 @@ object Path extends PathPlatformSpecific:
         Frame
     ): A < (FS & Abort[FileSystemException] & S) =
         FileSystem.letReadErased(fileSystem) {
-            ArrowEffect.handle[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)([C] =>
-                (op, cont) => dispatchRead(fileSystem, op).map(cont)
+            ArrowEffect.handleCont[[A] =>> Op[A], Id, PathRead, A, S, FS & Abort[FileSystemException]](Tag[PathRead], program)([C] =>
+                (op, cont) => cont(dispatchRead(fileSystem, op))
             )
         }
 
@@ -400,13 +400,13 @@ object Path extends PathPlatformSpecific:
     def runWatchWith[A, S](fileSystem: FileSystem.Watch)(program: A < (PathWatch & S))(using
         Frame
     ): A < (Async & Scope & Abort[FileWatchException] & S) =
-        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
+        ArrowEffect.handleCont[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
             Tag[PathWatch],
             program
         )([C] =>
             (op, cont) =>
                 op match
-                    case WatchOp.Open(path, options) => fileSystem.openWatcher(path, options).map(cont)
+                    case WatchOp.Open(path, options) => cont(fileSystem.openWatcher(path, options))
                     case WatchOp.Raise(error)        => Abort.error(error)
         )
 
@@ -414,14 +414,14 @@ object Path extends PathPlatformSpecific:
     def runWatch[A, S](program: A < (PathWatch & S))(using
         Frame
     ): A < (Async & Scope & Abort[FileWatchException] & S) =
-        ArrowEffect.handle[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
+        ArrowEffect.handleCont[[A] =>> WatchOp[A], Id, PathWatch, A, S, Async & Scope & Abort[FileWatchException]](
             Tag[PathWatch],
             program
         )([C] =>
             (op, cont) =>
                 op match
                     case WatchOp.Open(path, options) =>
-                        FileSystem.useWatchErased(_.openWatcher(path, options)).map(cont)
+                        cont(FileSystem.useWatchErased(_.openWatcher(path, options)))
                     case WatchOp.Raise(error) => Abort.error(error)
         )
 
@@ -432,7 +432,7 @@ object Path extends PathPlatformSpecific:
         type State        = FileSystem.Read[Any]
         type Transform[A] = Result[FileSystemException, A]
 
-        def capture[A, S](f: State => A < S)(using Frame): A < (PathRead & Async & S) =
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathRead & S) =
             FileSystem.useReadErased(f)
 
         def isolate[A, S](state: State, value: A < (S & PathRead))(using Frame): Result[FileSystemException, A] < (Async & S) =
@@ -453,7 +453,7 @@ object Path extends PathPlatformSpecific:
         type State        = FileSystem.Write[Any]
         type Transform[A] = Result[FileSystemException, A]
 
-        def capture[A, S](f: State => A < S)(using Frame): A < (PathWrite & Sync & S) =
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWrite & S) =
             FileSystem.useErased(f)
 
         def isolate[A, S](state: State, value: A < (S & PathWrite))(using Frame): Result[FileSystemException, A] < (Sync & S) =
@@ -474,7 +474,7 @@ object Path extends PathPlatformSpecific:
         type State        = FileSystem.Watch
         type Transform[A] = Result[FileWatchException, A]
 
-        def capture[A, S](f: State => A < S)(using Frame): A < (PathWatch & Async & S) =
+        def capture[A, S](f: State => A < S)(using Frame): A < (PathWatch & S) =
             FileSystem.useWatchErased(f)
 
         def isolate[A, S](state: State, value: A < (S & PathWatch))(using Frame): Result[FileWatchException, A] < (Async & S) =

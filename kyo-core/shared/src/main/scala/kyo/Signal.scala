@@ -646,11 +646,12 @@ object Signal:
           *   - An `AtomicRef[Promise]` managing change notifications
           *
           * Methods like `set`, `getAndSet`, and `compareAndSet` update the current value atomically and check if it has actually changed
-          * using `CanEqual`. When values differ, `onUpdate` is triggered: the current promise is atomically replaced with a new masked
-          * promise, then completed with the new value. This ensures the next promise is always ready before notifying of changes.
+          * using `CanEqual`. When values differ, `onUpdate` is triggered: the current promise is atomically replaced with a new
+          * uninterruptible promise, then completed with the new value. This ensures the next promise is always ready before notifying of
+          * changes.
           *
-          * Promises are masked to prevent interrupt propagation between observers - if one observer is interrupted, the interruption won't
-          * affect other observers waiting on the same signal. This ensures notification chains remain independent.
+          * Promises are uninterruptible to prevent interrupt propagation between observers: if one observer is interrupted, the
+          * interruption won't affect other observers waiting on the same signal.
           */
         final class Unsafe[A] private (
             currentRef: AtomicRef.Unsafe[A],
@@ -712,7 +713,7 @@ object Signal:
                 nextPromise.get()
 
             private def onUpdate(value: A)(using AllowUnsafe): Unit =
-                nextPromise.getAndSet(Promise.Unsafe.initMasked())
+                nextPromise.getAndSet(Promise.Unsafe.initUninterruptible())
                     .completeDiscard(Result.succeed(value))
 
             def waiters()(using AllowUnsafe): Int = nextPromise.get().waiters()
@@ -728,11 +729,7 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    // Use initMasked so that interrupting one subscriber cannot propagate through the
-                    // signal's next-promise and accidentally interrupt other subscribers waiting on the
-                    // same signal. All subsequent promises (created in onUpdate) are already masked for
-                    // the same reason; the initial promise must be consistent.
-                    AtomicRef.Unsafe.init(Promise.Unsafe.initMasked())
+                    AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible())
                 )
         end Unsafe
 

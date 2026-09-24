@@ -1,7 +1,6 @@
 package kyo
 
 import kernel.Loop
-import kyo.kernel.internal.Safepoint
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps
@@ -34,7 +33,7 @@ object Kyo:
 
     /** Returns a pure effect that produces Unit.
       *
-      * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context without introducing any effect
+      * This is exactly equivalent to `lift(())`, as both lift the Unit value into the effect context without introducing any effect
       * suspension.
       *
       * @tparam S
@@ -198,9 +197,8 @@ object Kyo:
       * @return
       *   A new effect that produces a collection of results
       */
-    def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> A => B < S)(using
-        Frame,
-        Safepoint
+    def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => B < S)(using
+        Frame
     ): CC[B] < S =
         Kyo.foreach(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -215,10 +213,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Chunk of all results
       */
-    def foreachConcat[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(
-        using
-        Frame,
-        Safepoint
+    def foreachConcat[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => IterableOnce[B] < S)(
+        using Frame
     ): CC[B] < S =
         Kyo.foreachConcat(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -233,9 +229,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreachIndexed[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> (Int, A) => B < S)(using
-        Frame,
-        Safepoint
+    def foreachIndexed[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: (Int, A) => B < S)(using
+        Frame
     ): CC[B] < S =
         Kyo.foreachIndexed(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -250,9 +245,8 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> A => Any < S)(using
-        Frame,
-        Safepoint
+    def foreachDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Any < S)(using
+        Frame
     ): Unit < S =
         Kyo.foreachDiscard(Chunk.from(source))(f)
     end foreachDiscard
@@ -266,9 +260,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def filter[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+        Frame
     ): CC[A] < S =
         Kyo.filter(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -285,9 +278,8 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    def foldLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(acc: B)(f: (B, A) => B < S)(using
+        Frame
     ): B < S =
         Kyo.foldLeft(Chunk.from(source))(acc)(f)
     end foldLeft
@@ -304,9 +296,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
-    def collect[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> A => Maybe[B] < S)(using
-        Frame,
-        Safepoint
+    def collect[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
+        Frame
     ): CC[B] < S =
         val chunk = Chunk.from(source)
         collect[A, B, S](chunk)(f).map: resultChunk =>
@@ -320,7 +311,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame, Safepoint): CC[A] < S =
+    def collectAll[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): CC[A] < S =
         Kyo.collectAll(Chunk.from(source)).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end collectAll
@@ -332,7 +323,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A < S])(using Frame): Unit < S =
         Kyo.collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
@@ -345,9 +336,8 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: Safepoint ?=> A => Maybe[B] < S)(using
-        Frame,
-        Safepoint
+    def findFirst[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(f: A => Maybe[B] < S)(using
+        Frame
     ): Maybe[B] < S =
         Kyo.findFirst(Chunk.from(source))(f)
     end findFirst
@@ -361,9 +351,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def takeWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+        Frame
     ): CC[A] < S =
         Kyo.takeWhile(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
@@ -380,9 +369,8 @@ object Kyo:
       * @note
       *   Optimized for both linear and indexed sequences
       */
-    def span[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def span[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+        Frame
     ): (CC[A], CC[A]) < S =
         Kyo.span(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
@@ -397,22 +385,32 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of remaining elements
       */
-    def dropWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def dropWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+        Frame
     ): CC[A] < S =
         Kyo.dropWhile(Chunk.from(source))(f).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end dropWhile
 
-    def partition[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    /** Splits the collection into two, depending on the result of the predicate, keeping the source's own collection type.
+      *
+      * @return
+      *   A tuple `(lefts, rights)` where:
+      *   - `lefts`: All elements that satisfy the predicate
+      *   - `rights`: All elements that do not satisfy the predicate
+      */
+    def partition[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S](source: CC[A])(f: A => Boolean < S)(using
+        Frame
     ): (CC[A], CC[A]) < S =
         Kyo.partition(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end partition
 
+    /** Applies `f` to every element and splits the results by which side of the `Either` they landed on, keeping the source's collection type.
+      *
+      * @return
+      *   A tuple `(lefts, rights)` of the `Left` and `Right` results, each in order
+      */
     def partitionMap[
         CC[+X] <: Iterable[X] &
             IterableOps[
@@ -424,7 +422,7 @@ object Kyo:
         A1,
         A2,
         S
-    ](source: CC[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using Frame, Safepoint): (CC[A1], CC[A2]) < S =
+    ](source: CC[A])(f: A => Either[A1, A2] < S)(using Frame): (CC[A1], CC[A2]) < S =
         Kyo.partitionMap(Chunk.from(source))(f).map: (leftChunk, rightChunk) =>
             (source.iterableFactory.from(leftChunk), source.iterableFactory.from(rightChunk))
     end partitionMap
@@ -438,22 +436,30 @@ object Kyo:
       * @return
       *   Chunk containing all intermediate accumulator states
       */
-    def scanLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    def scanLeft[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](source: CC[A])(z: B)(op: (B, A) => B < S)(using
+        Frame
     ): CC[B] < S =
         Kyo.scanLeft(Chunk.from(source))(z)(op).map: resultChunk =>
             source.iterableFactory.from(resultChunk)
     end scanLeft
 
-    def groupBy[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, S](source: CC[A])(f: Safepoint ?=> A => K < S)(using
-        Frame,
-        Safepoint
+    /** Groups the elements by the key `f` computes for each, keeping the source's own collection type for the groups.
+      *
+      * @return
+      *   A `Map` from key to the elements that produced it, each group keeping the source's relative order
+      */
+    def groupBy[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, K, S](source: CC[A])(f: A => K < S)(using
+        Frame
     ): Map[K, CC[A]] < S =
         Kyo.groupBy(Chunk.from(source))(f).map: resultChunk =>
             Map.from(resultChunk.view.mapValues(source.iterableFactory.from(_)))
     end groupBy
 
+    /** Groups the elements by `key` and maps each through `f` in the same pass, keeping the source's own collection type for the groups.
+      *
+      * @return
+      *   A `Map` from key to the transformed elements that produced it, each group keeping the source's relative order
+      */
     def groupMap[
         CC[+X] <: Iterable[X] &
             IterableOps[
@@ -465,7 +471,7 @@ object Kyo:
         K,
         B,
         S
-    ](source: CC[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Map[K, CC[B]] < S =
+    ](source: CC[A])(key: A => K < S)(f: A => B < S)(using Frame): Map[K, CC[B]] < S =
         Kyo.groupMap(Chunk.from(source))(key)(f).map: resultChunk =>
             Map.from(resultChunk.view.mapValues(source.iterableFactory.from(_)))
     end groupMap
@@ -479,7 +485,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of repeated values
       */
-    def fill[A, S](n: Int)(v: Safepoint ?=> A < S)(using Frame, Safepoint): Chunk[A] < S =
+    def fill[A, S](n: Int)(v: A < S)(using Frame): Chunk[A] < S =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)
             else v.map(t => Loop.continue(acc.append(t)))
@@ -488,10 +494,10 @@ object Kyo:
     // for kyo-direct
     private[kyo] def shiftedWhile[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, S, B, C](source: CC[A])(
         prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
+        f: A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         Kyo.shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
     end shiftedWhile
 
@@ -508,7 +514,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List of results
       */
-    def foreach[A, B, S](source: List[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): List[B] < S =
+    def foreach[A, B, S](source: List[A])(f: A => B < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
             case head :: Nil => f(head).map(_ :: Nil)
@@ -531,9 +537,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened List of all results
       */
-    def foreachConcat[A, B, S](source: List[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
-        Frame,
-        Safepoint
+    def foreachConcat[A, B, S](source: List[A])(f: A => IterableOnce[B] < S)(using
+        Frame
     ): List[B] < S =
         source match
             case Nil         => Nil
@@ -555,7 +560,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List of results
       */
-    def foreachIndexed[A, B, S](source: List[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): List[B] < S =
+    def foreachIndexed[A, B, S](source: List[A])(f: (Int, A) => B < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
             case head :: Nil => f(0, head).map(_ :: Nil)
@@ -575,7 +580,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](source: List[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+    def foreachDiscard[A, B, S](source: List[A])(f: A => Any < S)(using Frame): Unit < S =
         source match
             case Nil         => ()
             case head :: Nil => f(head).unit
@@ -596,7 +601,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List of filtered elements
       */
-    def filter[A, S](source: List[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): List[A] < S =
+    def filter[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil         => Nil
             case head :: Nil =>
@@ -623,7 +628,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[A, B, S](source: List[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+    def foldLeft[A, B, S](source: List[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         source match
             case Nil         => acc
             case head :: Nil => f(acc, head)
@@ -646,7 +651,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List containing only the Present values after transformation
       */
-    def collect[A, B, S](source: List[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): List[B] < S =
+    def collect[A, B, S](source: List[A])(f: A => Maybe[B] < S)(using Frame): List[B] < S =
         source match
             case Nil         => Nil
             case head :: Nil =>
@@ -669,7 +674,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[A, S](source: List[A < S])(using Frame, Safepoint): List[A] < S =
+    def collectAll[A, S](source: List[A < S])(using Frame): List[A] < S =
         source match
             case Nil         => Nil
             case head :: Nil => head.map(_ :: Nil)
@@ -688,7 +693,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[A, S](source: List[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[A, S](source: List[A < S])(using Frame): Unit < S =
         source match
             case Nil         => ()
             case head :: Nil => head.unit
@@ -708,7 +713,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[A, B, S](source: List[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+    def findFirst[A, B, S](source: List[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         source match
             case Nil         => Absent
             case head :: Nil => f(head)
@@ -731,7 +736,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List of taken elements
       */
-    def takeWhile[A, S](source: List[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): List[A] < S =
+    def takeWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil  => Nil
             case list =>
@@ -753,7 +758,7 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    def span[A, S](source: List[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (List[A], List[A]) < S =
+    def span[A, S](source: List[A])(f: A => Boolean < S)(using Frame): (List[A], List[A]) < S =
         source match
             case Nil         => (Nil, Nil)
             case head :: Nil =>
@@ -779,7 +784,7 @@ object Kyo:
       * @return
       *   A new effect that produces a List of remaining elements
       */
-    def dropWhile[A, S](source: List[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): List[A] < S =
+    def dropWhile[A, S](source: List[A])(f: A => Boolean < S)(using Frame): List[A] < S =
         source match
             case Nil  => Nil
             case list =>
@@ -803,9 +808,8 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[S, A](source: List[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def partition[S, A](source: List[A])(f: A => Boolean < S)(using
+        Frame
     ): (List[A], List[A]) < S =
         source match
             case Nil         => (Nil, Nil)
@@ -834,9 +838,8 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    def partitionMap[S, A, A1, A2](source: List[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
-        Frame,
-        Safepoint
+    def partitionMap[S, A, A1, A2](source: List[A])(f: A => Either[A1, A2] < S)(using
+        Frame
     ): (List[A1], List[A2]) < S =
         source match
             case Nil         => (Nil, Nil)
@@ -863,9 +866,8 @@ object Kyo:
       * @return
       *   List containing all intermediate accumulator states
       */
-    def scanLeft[S, A, B](source: List[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    def scanLeft[S, A, B](source: List[A])(z: B)(op: (B, A) => B < S)(using
+        Frame
     ): List[B] < S =
         source match
             case Nil         => z :: Nil
@@ -889,9 +891,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are lists of elements
       */
-    def groupBy[S, A, K](source: List[A])(f: Safepoint ?=> A => K < S)(using
-        Frame,
-        Safepoint
+    def groupBy[S, A, K](source: List[A])(f: A => K < S)(using
+        Frame
     ): Map[K, List[A]] < S =
         source match
             case Nil         => Map.empty[K, List[A]]
@@ -922,9 +923,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are lists of transformed elements
       */
-    def groupMap[S, A, K, B](source: List[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
-        Frame,
-        Safepoint
+    def groupMap[S, A, K, B](source: List[A])(key: A => K < S)(f: A => B < S)(using
+        Frame
     ): Map[K, List[B]] < S =
         source match
             case Nil         => Map.empty[K, List[B]]
@@ -972,10 +972,10 @@ object Kyo:
       */
     private[kyo] def shiftedWhile[A, S, B, C](source: List[A])(
         prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
+        f: A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         source match
             case Nil         => epilog(prolog)
             case head :: Nil => f(head).map: b =>
@@ -1003,7 +1003,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Seq of results
       */
-    inline def foreach[A, B, S](source: Seq[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Seq[B] < S =
+    inline def foreach[A, B, S](source: Seq[A])(f: A => B < S)(using Frame): Seq[B] < S =
         foreach(Chunk.from(source))(f)
     end foreach
 
@@ -1016,9 +1016,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Seq of all results
       */
-    inline def foreachConcat[A, B, S](source: Seq[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
-        Frame,
-        Safepoint
+    inline def foreachConcat[A, B, S](source: Seq[A])(f: A => IterableOnce[B] < S)(using
+        Frame
     ): Seq[B] < S =
         foreachConcat(Chunk.from(source))(f)
     end foreachConcat
@@ -1032,7 +1031,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Seq of results
       */
-    inline def foreachIndexed[A, B, S](source: Seq[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Seq[B] < S =
+    inline def foreachIndexed[A, B, S](source: Seq[A])(f: (Int, A) => B < S)(using Frame): Seq[B] < S =
         foreachIndexed(Chunk.from(source))(f)
     end foreachIndexed
 
@@ -1045,7 +1044,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    inline def foreachDiscard[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+    inline def foreachDiscard[A, B, S](source: Seq[A])(f: A => Any < S)(using Frame): Unit < S =
         foreachDiscard(Chunk.from(source))(f)
     end foreachDiscard
 
@@ -1058,7 +1057,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Vector of filtered elements
       */
-    inline def filter[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+    inline def filter[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         filter(Chunk.from(source))(f)
     end filter
 
@@ -1073,7 +1072,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    inline def foldLeft[A, B, S](source: Seq[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+    inline def foldLeft[A, B, S](source: Seq[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         foldLeft(Chunk.from(source))(acc)(f)
     end foldLeft
 
@@ -1089,7 +1088,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Vector containing only the Present values after transformation
       */
-    inline def collect[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Seq[B] < S =
+    inline def collect[A, B, S](source: Seq[A])(f: A => Maybe[B] < S)(using Frame): Seq[B] < S =
         collect(Chunk.from(source))(f)
     end collect
 
@@ -1100,7 +1099,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Seq of results
       */
-    inline def collectAll[A, S](source: Seq[A < S])(using Frame, Safepoint): Seq[A] < S =
+    inline def collectAll[A, S](source: Seq[A < S])(using Frame): Seq[A] < S =
         collectAll(Chunk.from(source))
     end collectAll
 
@@ -1111,7 +1110,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    inline def collectAllDiscard[A, S](source: Seq[A < S])(using Frame, Safepoint): Unit < S =
+    inline def collectAllDiscard[A, S](source: Seq[A < S])(using Frame): Unit < S =
         collectAllDiscard(Chunk.from(source))
     end collectAllDiscard
 
@@ -1124,7 +1123,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    inline def findFirst[A, B, S](source: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+    inline def findFirst[A, B, S](source: Seq[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         findFirst(Chunk.from(source))(f)
     end findFirst
 
@@ -1137,7 +1136,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Vector of taken elements
       */
-    inline def takeWhile[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+    inline def takeWhile[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         takeWhile(Chunk.from(source))(f)
     end takeWhile
 
@@ -1150,7 +1149,7 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    inline def span[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Seq[A], Seq[A]) < S =
+    inline def span[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): (Seq[A], Seq[A]) < S =
         span(Chunk.from(source))(f)
     end span
 
@@ -1163,7 +1162,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Seq of remaining elements
       */
-    inline def dropWhile[A, S](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Seq[A] < S =
+    inline def dropWhile[A, S](source: Seq[A])(f: A => Boolean < S)(using Frame): Seq[A] < S =
         dropWhile(Chunk.from(source))(f)
     end dropWhile
 
@@ -1178,9 +1177,8 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    inline def partition[S, A](source: Seq[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    inline def partition[S, A](source: Seq[A])(f: A => Boolean < S)(using
+        Frame
     ): (Seq[A], Seq[A]) < S =
         partition(Chunk.from(source))(f)
     end partition
@@ -1196,9 +1194,8 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    inline def partitionMap[S, A, A1, A2](source: Seq[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
-        Frame,
-        Safepoint
+    inline def partitionMap[S, A, A1, A2](source: Seq[A])(f: A => Either[A1, A2] < S)(using
+        Frame
     ): (Seq[A1], Seq[A2]) < S =
         partitionMap(Chunk.from(source))(f)
     end partitionMap
@@ -1212,9 +1209,8 @@ object Kyo:
       * @return
       *   Seq containing all intermediate accumulator states
       */
-    inline def scanLeft[S, A, B](source: Seq[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    inline def scanLeft[S, A, B](source: Seq[A])(z: B)(op: (B, A) => B < S)(using
+        Frame
     ): Seq[B] < S =
         scanLeft(Chunk.from(source))(z)(op)
     end scanLeft
@@ -1228,9 +1224,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are vectors of elements
       */
-    inline def groupBy[S, A, K](source: Seq[A])(f: Safepoint ?=> A => K < S)(using
-        Frame,
-        Safepoint
+    inline def groupBy[S, A, K](source: Seq[A])(f: A => K < S)(using
+        Frame
     ): Map[K, Seq[A]] < S =
         groupBy(Chunk.from(source))(f)
     end groupBy
@@ -1246,9 +1241,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are vectors of transformed elements
       */
-    inline def groupMap[S, A, K, B](source: Seq[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
-        Frame,
-        Safepoint
+    inline def groupMap[S, A, K, B](source: Seq[A])(key: A => K < S)(f: A => B < S)(using
+        Frame
     ): Map[K, Seq[B]] < S =
         groupMap(Chunk.from(source))(key)(f)
     end groupMap
@@ -1274,10 +1268,10 @@ object Kyo:
       */
     private[kyo] inline def shiftedWhile[A, S, B, C](source: Seq[A])(
         prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
+        f: A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         shiftedWhile(Chunk.from(source))(prolog, f, acc, epilog)
     end shiftedWhile
 
@@ -1294,7 +1288,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreach[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Chunk[B] < S =
+    def foreach[A, B, S](source: Chunk[A])(f: A => B < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1319,9 +1313,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Chunk of all results
       */
-    def foreachConcat[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
-        Frame,
-        Safepoint
+    def foreachConcat[A, B, S](source: Chunk[A])(f: A => IterableOnce[B] < S)(using
+        Frame
     ): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1343,7 +1336,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def foreachIndexed[A, B, S](source: Chunk[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Chunk[B] < S =
+    def foreachIndexed[A, B, S](source: Chunk[A])(f: (Int, A) => B < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1368,7 +1361,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+    def foreachDiscard[A, B, S](source: Chunk[A])(f: A => Any < S)(using Frame): Unit < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1390,7 +1383,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of filtered elements
       */
-    def filter[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def filter[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1421,7 +1414,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[A, B, S](source: Chunk[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+    def foldLeft[A, B, S](source: Chunk[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1446,7 +1439,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
-    def collect[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Chunk[B] < S =
+    def collect[A, B, S](source: Chunk[A])(f: A => Maybe[B] < S)(using Frame): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1473,7 +1466,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of results
       */
-    def collectAll[A, S](source: Chunk[A < S])(using Frame, Safepoint): Chunk[A] < S =
+    def collectAll[A, S](source: Chunk[A < S])(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1495,7 +1488,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[A, S](source: Chunk[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[A, S](source: Chunk[A < S])(using Frame): Unit < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1517,7 +1510,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[A, B, S](source: Chunk[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+    def findFirst[A, B, S](source: Chunk[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1542,7 +1535,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def takeWhile[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1571,7 +1564,7 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    def span[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Chunk[A], Chunk[A]) < S =
+    def span[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): (Chunk[A], Chunk[A]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1600,7 +1593,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of remaining elements
       */
-    def dropWhile[A, S](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Chunk[A] < S =
+    def dropWhile[A, S](source: Chunk[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1630,9 +1623,8 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[S, A](source: Chunk[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def partition[S, A](source: Chunk[A])(f: A => Boolean < S)(using
+        Frame
     ): (Chunk[A], Chunk[A]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1664,9 +1656,8 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    def partitionMap[S, A, A1, A2](source: Chunk[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
-        Frame,
-        Safepoint
+    def partitionMap[S, A, A1, A2](source: Chunk[A])(f: A => Either[A1, A2] < S)(using
+        Frame
     ): (Chunk[A1], Chunk[A2]) < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1696,9 +1687,8 @@ object Kyo:
       * @return
       *   Chunk containing all intermediate accumulator states
       */
-    def scanLeft[S, A, B](source: Chunk[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    def scanLeft[S, A, B](source: Chunk[A])(z: B)(op: (B, A) => B < S)(using
+        Frame
     ): Chunk[B] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1722,9 +1712,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are chunks of elements
       */
-    def groupBy[S, A, K](source: Chunk[A])(f: Safepoint ?=> A => K < S)(using
-        Frame,
-        Safepoint
+    def groupBy[S, A, K](source: Chunk[A])(f: A => K < S)(using
+        Frame
     ): Map[K, Chunk[A]] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1757,9 +1746,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are chunks of transformed elements
       */
-    def groupMap[S, A, K, B](source: Chunk[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
-        Frame,
-        Safepoint
+    def groupMap[S, A, K, B](source: Chunk[A])(key: A => K < S)(f: A => B < S)(using
+        Frame
     ): Map[K, Chunk[B]] < S =
         val chunk = source.toIndexed
         val len   = chunk.length
@@ -1807,10 +1795,10 @@ object Kyo:
       */
     private[kyo] def shiftedWhile[A, S, B, C](source: Chunk[A])(
         prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
+        f: A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         val chunk = source.toIndexed
         val len   = chunk.length
         len match
@@ -1840,7 +1828,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set of results
       */
-    def foreach[A, B, S](source: Set[A])(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): Set[B] < S =
+    def foreach[A, B, S](source: Set[A])(f: A => B < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source, Set.empty[B]): (curSet, acc) =>
@@ -1861,9 +1849,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Set of all results
       */
-    def foreachConcat[A, B, S](source: Set[A])(f: Safepoint ?=> A => IterableOnce[B] < S)(using
-        Frame,
-        Safepoint
+    def foreachConcat[A, B, S](source: Set[A])(f: A => IterableOnce[B] < S)(using
+        Frame
     ): Set[B] < S =
         if source.isEmpty then Set.empty
         else
@@ -1885,7 +1872,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set of results
       */
-    def foreachIndexed[A, B, S](source: Set[A])(f: Safepoint ?=> (Int, A) => B < S)(using Frame, Safepoint): Set[B] < S =
+    def foreachIndexed[A, B, S](source: Set[A])(f: (Int, A) => B < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
             Loop.indexed(source, Set.empty[B]): (idx, curSet, acc) =>
@@ -1906,7 +1893,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[A, B, S](source: Set[A])(f: Safepoint ?=> A => Any < S)(using Frame, Safepoint): Unit < S =
+    def foreachDiscard[A, B, S](source: Set[A])(f: A => Any < S)(using Frame): Unit < S =
         if source.isEmpty then ()
         else
             Loop(source): curSet =>
@@ -1925,7 +1912,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set of filtered elements
       */
-    def filter[A, S](source: Set[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Set[A] < S =
+    def filter[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source, Set.empty[A]): (curSet, acc) =>
@@ -1949,7 +1936,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[A, B, S](source: Set[A])(acc: B)(f: Safepoint ?=> (B, A) => B < S)(using Frame, Safepoint): B < S =
+    def foldLeft[A, B, S](source: Set[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         if source.isEmpty then acc
         else
             Loop(source, acc): (curSet, acc) =>
@@ -1972,7 +1959,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set containing only the Present values after transformation
       */
-    def collect[A, B, S](source: Set[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Set[B] < S =
+    def collect[A, B, S](source: Set[A])(f: A => Maybe[B] < S)(using Frame): Set[B] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source, Set.empty[B]): (curSet, acc) =>
@@ -1992,7 +1979,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set of results
       */
-    def collectAll[A, S](source: Set[A < S])(using Frame, Safepoint): Set[A] < S =
+    def collectAll[A, S](source: Set[A < S])(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source, Set.empty[A]): (curSet, acc) =>
@@ -2011,7 +1998,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[A, S](source: Set[A < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[A, S](source: Set[A < S])(using Frame): Unit < S =
         if source.isEmpty then ()
         else
             Loop(source): curSet =>
@@ -2031,7 +2018,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[A, B, S](source: Set[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+    def findFirst[A, B, S](source: Set[A])(f: A => Maybe[B] < S)(using Frame): Maybe[B] < S =
         if source.isEmpty then Absent
         else
             Loop(source): curSet =>
@@ -2053,7 +2040,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[A, S](source: Set[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Set[A] < S =
+    def takeWhile[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source, Set.empty[A]): (curSet, acc) =>
@@ -2075,7 +2062,7 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    def span[A, S](source: Set[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): (Set[A], Set[A]) < S =
+    def span[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): (Set[A], Set[A]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
             Loop(source, Set.empty[A]): (curSet, acc) =>
@@ -2097,7 +2084,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Set of remaining elements
       */
-    def dropWhile[A, S](source: Set[A])(f: Safepoint ?=> A => Boolean < S)(using Frame, Safepoint): Set[A] < S =
+    def dropWhile[A, S](source: Set[A])(f: A => Boolean < S)(using Frame): Set[A] < S =
         if source.isEmpty then Set.empty
         else
             Loop(source): curSet =>
@@ -2121,9 +2108,8 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[S, A](source: Set[A])(f: Safepoint ?=> A => Boolean < S)(using
-        Frame,
-        Safepoint
+    def partition[S, A](source: Set[A])(f: A => Boolean < S)(using
+        Frame
     ): (Set[A], Set[A]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
@@ -2148,9 +2134,8 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    def partitionMap[S, A, A1, A2](source: Set[A])(f: Safepoint ?=> A => Either[A1, A2] < S)(using
-        Frame,
-        Safepoint
+    def partitionMap[S, A, A1, A2](source: Set[A])(f: A => Either[A1, A2] < S)(using
+        Frame
     ): (Set[A1], Set[A2]) < S =
         if source.isEmpty then (Set.empty, Set.empty)
         else
@@ -2173,9 +2158,8 @@ object Kyo:
       * @return
       *   Set containing all intermediate accumulator states
       */
-    def scanLeft[S, A, B](source: Set[A])(z: B)(op: Safepoint ?=> (B, A) => B < S)(using
-        Frame,
-        Safepoint
+    def scanLeft[S, A, B](source: Set[A])(z: B)(op: (B, A) => B < S)(using
+        Frame
     ): Set[B] < S =
         if source.isEmpty then Set(z)
         else
@@ -2197,9 +2181,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are sets of elements
       */
-    def groupBy[S, A, K](source: Set[A])(f: Safepoint ?=> A => K < S)(using
-        Frame,
-        Safepoint
+    def groupBy[S, A, K](source: Set[A])(f: A => K < S)(using
+        Frame
     ): Map[K, Set[A]] < S =
         if source.isEmpty then Map.empty[K, Set[A]]
         else
@@ -2229,9 +2212,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are chunks of transformed elements
       */
-    def groupMap[S, A, K, B](source: Set[A])(key: Safepoint ?=> A => K < S)(f: Safepoint ?=> A => B < S)(using
-        Frame,
-        Safepoint
+    def groupMap[S, A, K, B](source: Set[A])(key: A => K < S)(f: A => B < S)(using
+        Frame
     ): Map[K, Set[B]] < S =
         if source.isEmpty then Map.empty[K, Set[B]]
         else
@@ -2272,10 +2254,10 @@ object Kyo:
       */
     private[kyo] def shiftedWhile[A, S, B, C](source: Set[A])(
         prolog: B,
-        f: Safepoint ?=> A => Boolean < S,
+        f: A => Boolean < S,
         acc: (B, Boolean, A) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         if source.isEmpty then epilog(prolog)
         else
             Loop(source, prolog): (curSet, b) =>
@@ -2301,9 +2283,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Map of results
       */
-    def foreach[K1, V1, K2, V2, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => (K2, V2) < S)(using
-        Frame,
-        Safepoint
+    def foreach[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => (K2, V2) < S)(using
+        Frame
     ): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2326,9 +2307,8 @@ object Kyo:
       *   A new effect that produces a Chunk of results
       */
     @targetName("foreachToChunk")
-    def foreach[K1, V1, B, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => B < S)(using
-        Frame,
-        Safepoint
+    def foreach[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => B < S)(using
+        Frame
     ): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
         else
@@ -2350,9 +2330,8 @@ object Kyo:
       * @return
       *   A new effect that produces a flattened Map of all results
       */
-    def foreachConcat[K1, V1, K2, V2, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => IterableOnce[(K2, V2)] < S)(using
-        Frame,
-        Safepoint
+    def foreachConcat[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[(K2, V2)] < S)(using
+        Frame
     ): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2375,9 +2354,8 @@ object Kyo:
       *   A new effect that produces a flattened Chunk of all results
       */
     @targetName("foreachConcatToChunk")
-    def foreachConcat[K1, V1, B, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => IterableOnce[B] < S)(using
-        Frame,
-        Safepoint
+    def foreachConcat[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => IterableOnce[B] < S)(using
+        Frame
     ): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
         else
@@ -2399,7 +2377,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def foreachDiscard[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Any < S)(using Frame, Safepoint): Unit < S =
+    def foreachDiscard[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Any < S)(using Frame): Unit < S =
         if source.isEmpty then ()
         else
             Loop(source): curMap =>
@@ -2418,7 +2396,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Map of filtered elements
       */
-    def filter[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Boolean < S)(using Frame, Safepoint): Map[K1, V1] < S =
+    def filter[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
             Loop(source, Map.empty[K1, V1]): (curMap, acc) =>
@@ -2440,7 +2418,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Map of filtered elements
       */
-    def filterKeys[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> K1 => Boolean < S)(using Frame, Safepoint): Map[K1, V1] < S =
+    def filterKeys[K1, V1, S](source: Map[K1, V1])(f: K1 => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
             Loop(source, Map.empty[K1, V1]): (curMap, acc) =>
@@ -2464,7 +2442,7 @@ object Kyo:
       * @return
       *   A new effect that produces the final accumulated value
       */
-    def foldLeft[K1, V1, B, S](source: Map[K1, V1])(acc: B)(f: Safepoint ?=> (B, (K1, V1)) => B < S)(using Frame, Safepoint): B < S =
+    def foldLeft[K1, V1, B, S](source: Map[K1, V1])(acc: B)(f: (B, (K1, V1)) => B < S)(using Frame): B < S =
         if source.isEmpty then acc
         else
             Loop(source, acc): (curMap, acc) =>
@@ -2487,9 +2465,8 @@ object Kyo:
       * @return
       *   A new effect that produces a Map containing only the Present values after transformation
       */
-    def collect[K1, V1, K2, V2, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Maybe[(K2, V2)] < S)(using
-        Frame,
-        Safepoint
+    def collect[K1, V1, K2, V2, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[(K2, V2)] < S)(using
+        Frame
     ): Map[K2, V2] < S =
         if source.isEmpty then Map.empty
         else
@@ -2516,9 +2493,8 @@ object Kyo:
       *   A new effect that produces a Chunk containing only the Present values after transformation
       */
     @targetName("collectToChunk")
-    def collect[K1, V1, B, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Maybe[B] < S)(using
-        Frame,
-        Safepoint
+    def collect[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using
+        Frame
     ): Chunk[B] < S =
         if source.isEmpty then Chunk.empty
         else
@@ -2539,7 +2515,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Map of results
       */
-    def collectAll[K1, V1, S](source: Map[K1, V1 < S])(using Frame, Safepoint): Map[K1, V1] < S =
+    def collectAll[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
             Loop(source, Map.empty[K1, V1]): (curMap, acc) =>
@@ -2558,7 +2534,7 @@ object Kyo:
       * @return
       *   A new effect that produces Unit
       */
-    def collectAllDiscard[K1, V1, S](source: Map[K1, V1 < S])(using Frame, Safepoint): Unit < S =
+    def collectAllDiscard[K1, V1, S](source: Map[K1, V1 < S])(using Frame): Unit < S =
         if source.isEmpty then ()
         else
             Loop(source): curMap =>
@@ -2578,7 +2554,7 @@ object Kyo:
       * @return
       *   A new effect that produces Maybe of the first matching element
       */
-    def findFirst[K1, V1, B, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+    def findFirst[K1, V1, B, S](source: Map[K1, V1])(f: ((K1, V1)) => Maybe[B] < S)(using Frame): Maybe[B] < S =
         if source.isEmpty then Absent
         else
             Loop(source): curMap =>
@@ -2600,7 +2576,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Chunk of taken elements
       */
-    def takeWhile[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Boolean < S)(using Frame, Safepoint): Map[K1, V1] < S =
+    def takeWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
             Loop(source, Map.empty[K1, V1]): (curMap, acc) =>
@@ -2622,9 +2598,8 @@ object Kyo:
       *   - `prefix`: All elements before first failure of `f`
       *   - `suffix`: First failing element and all remaining elements
       */
-    def span[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Boolean < S)(using
-        Frame,
-        Safepoint
+    def span[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using
+        Frame
     ): (Map[K1, V1], Map[K1, V1]) < S =
         if source.isEmpty then (Map.empty, Map.empty)
         else
@@ -2647,7 +2622,7 @@ object Kyo:
       * @return
       *   A new effect that produces a Map of remaining elements
       */
-    def dropWhile[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Boolean < S)(using Frame, Safepoint): Map[K1, V1] < S =
+    def dropWhile[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using Frame): Map[K1, V1] < S =
         if source.isEmpty then Map.empty
         else
             Loop(source): curMap =>
@@ -2671,9 +2646,8 @@ object Kyo:
       *   - `lefts`: All elements that satisfy the predicate
       *   - `rights`: All elements that do not satisfy the predicate
       */
-    def partition[K1, V1, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Boolean < S)(using
-        Frame,
-        Safepoint
+    def partition[K1, V1, S](source: Map[K1, V1])(f: ((K1, V1)) => Boolean < S)(using
+        Frame
     ): (Map[K1, V1], Map[K1, V1]) < S =
         if source.isEmpty then (Map.empty, Map.empty)
         else
@@ -2698,9 +2672,8 @@ object Kyo:
       *   - `lefts`: All elements that are Left
       *   - `rights`: All elements that are Right
       */
-    def partitionMap[K1, V1, K2, V2, K3, V3, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => Either[(K2, V2), (K3, V3)] < S)(using
-        Frame,
-        Safepoint
+    def partitionMap[K1, V1, K2, V2, K3, V3, S](source: Map[K1, V1])(f: ((K1, V1)) => Either[(K2, V2), (K3, V3)] < S)(using
+        Frame
     ): (Map[K2, V2], Map[K3, V3]) < S =
         if source.isEmpty then (Map.empty, Map.empty)
         else
@@ -2723,9 +2696,8 @@ object Kyo:
       * @return
       *   Chunk containing all intermediate accumulator states
       */
-    def scanLeft[K1, V1, B, S](source: Map[K1, V1])(z: B)(op: Safepoint ?=> (B, (K1, V1)) => B < S)(using
-        Frame,
-        Safepoint
+    def scanLeft[K1, V1, B, S](source: Map[K1, V1])(z: B)(op: (B, (K1, V1)) => B < S)(using
+        Frame
     ): Chunk[B] < S =
         if source.isEmpty then Chunk(z)
         else
@@ -2747,9 +2719,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are sets of elements
       */
-    def groupBy[K1, V1, K2, S](source: Map[K1, V1])(f: Safepoint ?=> ((K1, V1)) => K2 < S)(using
-        Frame,
-        Safepoint
+    def groupBy[K1, V1, K2, S](source: Map[K1, V1])(f: ((K1, V1)) => K2 < S)(using
+        Frame
     ): Map[K2, Map[K1, V1]] < S =
         if source.isEmpty then Map.empty[K2, Map[K1, V1]]
         else
@@ -2779,10 +2750,8 @@ object Kyo:
       * @return
       *   A Map where keys are the results of the function and values are chunks of transformed elements
       */
-    def groupMap[K1, V1, K2, V2, S](source: Map[K1, V1])(key: Safepoint ?=> ((K1, V1)) => K2 < S)(f: Safepoint ?=> ((K1, V1)) => V2 < S)(
-        using
-        Frame,
-        Safepoint
+    def groupMap[K1, V1, K2, V2, S](source: Map[K1, V1])(key: ((K1, V1)) => K2 < S)(f: ((K1, V1)) => V2 < S)(
+        using Frame
     ): Map[K2, Chunk[V2]] < S =
         if source.isEmpty then Map.empty[K2, Chunk[V2]]
         else
@@ -2823,10 +2792,10 @@ object Kyo:
       */
     private[kyo] def shiftedWhile[K1, V1, S, B, C](source: Map[K1, V1])(
         prolog: B,
-        f: Safepoint ?=> ((K1, V1)) => Boolean < S,
+        f: ((K1, V1)) => Boolean < S,
         acc: (B, Boolean, (K1, V1)) => B,
         epilog: B => C
-    )(using Frame, Safepoint): C < S =
+    )(using Frame): C < S =
         if source.isEmpty then epilog(prolog)
         else
             Loop(source, prolog): (curMap, b) =>

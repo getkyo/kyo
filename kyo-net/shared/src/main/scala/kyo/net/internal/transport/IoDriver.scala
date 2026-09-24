@@ -119,10 +119,13 @@ abstract private[kyo] class IoDriver[Handle]:
       * the listener's socket, the prepped SQEs are flushed, and only then does `closeFd` release the fd number for reuse. Without that
       * sequencing, a queued arm outlives the fd close, preps an accept against whatever socket RECYCLED the number (typically the next
       * listener), and each such ghost accept steals one incoming connection for the closed listener's handler.
+      *
+      * `closeFd` runs whatever the cancel does: cancelling fails promises, whose callbacks run inline, and a throw from one of them must
+      * not leave the listen fd open with its release never reported.
       */
     def closeListener(handle: Handle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
-        cancel(handle)
-        closeFd()
+        try cancel(handle)
+        finally closeFd()
     end closeListener
 
     /** Whether a read for `handle` is still in flight at the OS layer (a kernel-owned recv that cannot be cancelled). True only on the io_uring

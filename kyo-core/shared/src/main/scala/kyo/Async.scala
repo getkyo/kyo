@@ -116,25 +116,23 @@ object Async extends AsyncPlatformSpecific:
     inline def defer[A, S](inline v: => A < S)(using inline frame: Frame): A < (Async & S) =
         Sync.defer(v)
 
-    /** Runs an asynchronous computation with interrupt masking.
+    /** Runs an asynchronous computation that interrupts cannot reach.
       *
       * This method executes the given computation in a context where interrupts are not propagated to previous "steps" of the computation.
-      * The returned computation can still be interrupted, but the interruption won't affect the masked portion. This is useful for ensuring
-      * that cleanup operations or critical sections complete even if an interrupt occurs.
+      * The returned computation can still be interrupted, but the interruption won't affect the protected portion. This is useful for
+      * ensuring that cleanup operations or critical sections complete even if an interrupt occurs.
       *
       * @param v
-      *   The computation to run with interrupt masking
+      *   The computation to protect from interrupts
       * @return
       *   The result of the computation, which can still be interrupted
       */
-    def mask[E, A, S](
+    def uninterruptible[E, A, S](
         using isolate: Isolate[S, Abort[E] & Async, S]
     )(v: => A < (Abort[E] & Async & S))(
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
-        isolate.capture { state =>
-            Fiber.initUnscoped(isolate.isolate(state, v)).map(_.mask.map(fiber => isolate.restore(fiber.get)))
-        }
+        Fiber.internal.initUnscoped(v).map(_.uninterruptible.map(_.get))
 
     /** Creates a computation that never completes.
       *
@@ -199,20 +197,20 @@ object Async extends AsyncPlatformSpecific:
     )(after: Duration, inline error: => Result.Error[E])(v: => A < (Abort[E] & Async & S))(using frame: Frame): A < (Abort[E] & Async & S) =
         if !after.isFinite then v
         else
-            isolate.capture { state =>
-                Clock.use { clock =>
-                    Sync.Unsafe.defer {
-                        // Arm the timeout before forking the guarded computation, so the timer is registered before the
-                        // body starts. If the body forked first it could begin (and, under a controlled clock, be
-                        // advanced past the deadline) before the sleep is enqueued, leaving a deadline in the elapsed
-                        // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
-                        // completed promise, so a sleep completing before the wiring below still interrupts at registration.
-                        val sleepFiber = clock.unsafe.sleep(after)
-                        Fiber.initUnscoped(isolate.isolate(state, v)).map { task =>
-                            sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
-                            task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
-                            isolate.restore(task.get)
-                        }
+            Clock.use { clock =>
+                Sync.Unsafe.defer {
+                    // Arm the timeout before forking the guarded computation, so the timer is registered before the
+                    // body starts. If the body forked first it could begin (and, under a controlled clock, be
+                    // advanced past the deadline) before the sleep is enqueued, leaving a deadline in the elapsed
+                    // past that never fires. This rests on IOPromise.onComplete firing immediately on an already
+                    // completed promise, so a sleep completing before the wiring below still interrupts at registration.
+                    val sleepFiber = clock.unsafe.sleep(after)
+                    // Not `Fiber.use`: that needs a `Sync` isolate, and here it is `Abort[E] & Async`;
+                    // `internal.initUnscoped` keeps `Abort[E]` in the child so `task.get` resurfaces the body's failure.
+                    Sync.acquireReleaseWith(Fiber.internal.initUnscoped(v))(_.interrupt)[A, Nothing, Abort[E] & Async & S] { task =>
+                        sleepFiber.onComplete(_ => discard(task.unsafe.interrupt(error)))
+                        task.unsafe.onComplete(_ => discard(sleepFiber.interrupt()))
+                        task.get
                     }
                 }
             }
@@ -239,9 +237,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
-        isolate.capture { state =>
-            Fiber.internal.race(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
-        }
+        Fiber.internal.race(iterable).map(_.get)
     end race
 
     /** Races two or more computations and returns the result of the first successful computation to complete.
@@ -287,9 +283,7 @@ object Async extends AsyncPlatformSpecific:
         using frame: Frame
     ): A < (Abort[E] & Async & S) =
         require(iterable.nonEmpty, "Can't race an empty collection.")
-        isolate.capture { state =>
-            Fiber.internal.raceFirst(iterable.map(isolate.isolate(state, _))).map(fiber => isolate.restore(fiber.get))
-        }
+        Fiber.internal.raceFirst(iterable).map(_.get)
     end raceFirst
 
     /** Races two or more computations and returns the result of the first to complete. When one computation completes, all other
@@ -397,10 +391,7 @@ object Async extends AsyncPlatformSpecific:
     )(max: Int)(iterable: Iterable[A < (Abort[E] & Async & S)])(
         using frame: Frame
     ): Chunk[A] < (Abort[E] & Async & S) =
-        isolate.capture { state =>
-            Fiber.internal.gather(max)(iterable.map(isolate.isolate(state, _)))
-                .map(_.use(chunk => Kyo.collectAll(chunk.map(isolate.restore))))
-        }
+        Fiber.internal.gather(max)(iterable).map(_.get)
 
     /** Executes a sequence of computations with indexed access, using bounded concurrency.
       *
@@ -425,12 +416,8 @@ object Async extends AsyncPlatformSpecific:
                 case 0    => Chunk.empty
                 case 1    => f(0, iterable.head).map(Chunk(_))
                 case size =>
-                    isolate.capture { state =>
-                        val items = Chunk.Indexed.from(iterable)
-                        Fiber.internal.foreachIndexed(items, concurrency) { (idx, v) =>
-                            isolate.isolate(state, f(idx, v))
-                        }.map(_.use(r => Kyo.foreach(r)(isolate.restore)))
-                    }
+                    val items = Chunk.Indexed.from(iterable)
+                    Fiber.internal.foreachIndexed(items, concurrency)(f).map(_.get)
 
     /** Executes a sequence of computations using bounded concurrency.
       *
@@ -825,17 +812,25 @@ object Async extends AsyncPlatformSpecific:
 
     abstract class JoinInput[A]:
         def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
+
+        /** The scheduler raises this operation again when the promise is not ready, and
+          * a clause is never handed the frame of what it answers, so without this the raise would carry the
+          * scheduler's internal frame instead of the join site.
+          */
+        def frame: Frame
+    end JoinInput
     sealed trait Join extends ArrowEffect[JoinInput, Result[Nothing, *]]
 
     private[kyo] inline def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
         useResult(v)(r => r)
 
     @scala.annotation.nowarn("msg=anonymous")
-    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+    private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using _frame: Frame): B < (S & Async) =
         val input = new JoinInput[A]:
             def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
                 task.interrupts(v)
                 v
+            def frame = _frame
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)
     end useResult
 

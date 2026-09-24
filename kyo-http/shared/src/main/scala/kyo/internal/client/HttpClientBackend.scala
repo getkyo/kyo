@@ -92,12 +92,17 @@ final private[kyo] class HttpClientBackend private (
                         val isDefaultPort   = if url.ssl then port == 443 else port == 80
                         val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
                         val conn            = new HttpConnection(transportConn, http1, host, port, url.ssl, hostHeaderValue)
+                        // Tracked in the step that creates it, not by the caller after the handoff: a caller stopped
+                        // after the handoff never tracks anything, and an untracked connection stays established.
+                        trackConn(conn)
                         // The handoff is at-most-once, so a caller that already settled (a request timeout or any other
                         // interrupt of `resultPromise`) leaves this connection undelivered. Nobody will ever use it and
                         // nobody else holds it, so dropping the outcome would strand its socket for the life of the
                         // process. Closing on a lost handoff is the same posture the transport takes when its own
                         // connect completes after the caller has gone.
-                        if !resultPromise.complete(Result.succeed(conn)) then transportConn.close()
+                        if !resultPromise.complete(Result.succeed(conn)) then
+                            registry.remove(conn)
+                            transportConn.close()
                     catch
                         case t: Throwable =>
                             // The connection was established; only the wrapping failed. It is owned by nothing at this
@@ -395,8 +400,6 @@ final private[kyo] class HttpClientBackend private (
 
     /** Stream request body in chunked transfer encoding format. Launched as a background IOTask. */
     private def streamRequestBody(conn: HttpConnection, bodyStream: Stream[Span[Byte], Async])(using AllowUnsafe, Frame): Unit =
-        import kyo.kernel.internal.Context
-        import kyo.kernel.internal.Trace
         import kyo.scheduler.IOTask
         val computation: Unit < Async =
             // The whole write is wrapped in a single Abort.run[Closed]: the first Closed (connection torn
@@ -419,7 +422,7 @@ final private[kyo] class HttpClientBackend private (
                     conn.transport.outbound.safe.put(TerminalChunk)
                 }
             }.unit
-        discard(IOTask(computation, Trace.init, Context.empty))
+        discard(IOTask.detached(computation))
     end streamRequestBody
 
     // -- Buffered response body reading --
@@ -614,7 +617,7 @@ final private[kyo] class HttpClientBackend private (
             val decodedCh = Channel.Unsafe.init[Span[Byte]](4)
             // Fresh DecoderState (a streaming decode outlives the request scope, so it must not share connection-scoped state);
             // its terminal result is the reuse decision (Done => reuse, fault => discard), completed before closeAwaitEmpty so reuse does not wait on the consumer.
-            discard(kyo.scheduler.IOTask(
+            discard(kyo.scheduler.IOTask.detached(
                 Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](ChunkedBodyDecoder.readStreaming(
                     conn.http1.bodyChannel,
                     lastBodySpan,
@@ -623,9 +626,7 @@ final private[kyo] class HttpClientBackend private (
                 )).map {
                     case Result.Success(_) => bodyOutcome.foreach(_.completeDiscard(Result.succeed(true)))
                     case _                 => bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
-                }.andThen(decodedCh.safe.closeAwaitEmpty),
-                kyo.kernel.internal.Trace.init,
-                kyo.kernel.internal.Context.empty
+                }.andThen(decodedCh.safe.closeAwaitEmpty)
             ))
             // If the consumer abandons (drop/abort/interrupt) before the body drains, close the per-request decoded channel
             // so the decode's next put fails Closed -> discard. Never touches the connection (safe); a no-op after a full drain already closed it.
@@ -1208,7 +1209,6 @@ final private[kyo] class HttpClientBackend private (
                             Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
                                 val connectFiber = connect(url, config.connectTimeout, config.tls)
                                 connectFiber.safe.use { conn =>
-                                    trackConn(conn)
                                     val (responseFiber, bodyOutcome) =
                                         sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
                                     releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))

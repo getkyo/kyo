@@ -22,6 +22,16 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
     var peerCloseGrace: Duration = Duration.Infinity
 
+    // Never reset:
+    // the upgraded connection wraps a fresh JsHandle over the TLSSocket, so this handle is discarded whether the upgrade succeeds or fails.
+    var upgrading: Boolean = false
+
+    // The permanent "data" listener registered in JsHandle.init, kept so a STARTTLS upgrade can remove exactly it via
+    // socket.removeListener("data", _). That is the only removal that clears Node's internal kDataListening flag; a blanket
+    // removeAllListeners() leaves the flag stale, and Node's updateReadableListening then re-resumes the raw socket on the next
+    // tick, flowing the unshifted handshake flight to no listener and discarding it before the TLSSocket can read it.
+    var dataListener: js.Function1[js.Dynamic, Unit] = null
+
     // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
     // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
     // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
@@ -60,25 +70,21 @@ private[kyo] object JsHandle:
         // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
         val handle = new JsHandle(socket, HandleId.next(0), createdAt)
 
-        // Permanent "data" listener
-        discard(socket.on(
-            "data",
-            { (chunk: js.Dynamic) =>
-                discard(socket.pause())
-                // Safe: a Node socket with no encoding set always emits its "data" chunks as Buffers, which are Uint8Arrays.
-                val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
-                val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
+        val dataFn: js.Function1[js.Dynamic, Unit] = (chunk: js.Dynamic) =>
+            discard(socket.pause())
+            // Safe: a Node socket with no encoding set always emits its "data" chunks as Buffers, which are Uint8Arrays.
+            val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
+            val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
 
-                handle.pendingRead match
-                    case Present(pending) =>
-                        handle.clearPendingRead()
-                        pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-                    case Absent =>
-                        // No pending read: enqueue as leftover (the pump is parked, or the peer-close grace probe's resume() drained this chunk).
-                        handle.enqueueLeftover(arr, 0, arr.length)
-                end match
-            }: js.Function1[js.Dynamic, Unit]
-        ))
+            handle.pendingRead match
+                case Present(pending) =>
+                    handle.clearPendingRead()
+                    pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
+                case Absent =>
+                    handle.enqueueLeftover(arr, 0, arr.length)
+            end match
+        handle.dataListener = dataFn
+        discard(socket.on("data", dataFn))
 
         // EOF/close/error listeners
         val signalEof: js.Function0[Unit] = () =>

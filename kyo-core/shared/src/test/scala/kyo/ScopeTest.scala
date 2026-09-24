@@ -165,6 +165,19 @@ class ScopeTest extends kyo.test.Test[Any]:
                 }
         }
 
+        "acquire aborts" in {
+            for
+                released <- AtomicInt.init(0)
+                result   <- Abort.run[String] {
+                    Scope.run(Scope.acquireRelease(Abort.fail("acquisition failure"))(_ => released.incrementAndGet.unit))
+                }
+                count <- released.get
+            yield
+                assert(result.failure.contains("acquisition failure"))
+                assert(count == 0, s"a release was registered for an acquisition that failed: $count")
+            end for
+        }
+
         "release fails" in {
             var acquired = false
             var released = false
@@ -205,9 +218,8 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "a resource acquired after the scope closed is released rather than leaked".pendingUntilFixed(
-            "acquisition and registration are two steps, so a scope that closes between them refuses the registration and the acquired resource is never released"
-        ) in {
+        "a resource acquired after the scope closed is released rather than leaked" in {
+            val scopeFrame = summon[Frame]
             for
                 acquired <- AtomicInt.init(0)
                 released <- AtomicInt.init(0)
@@ -218,34 +230,73 @@ class ScopeTest extends kyo.test.Test[Any]:
                             Scope.acquireRelease(acquired.incrementAndGet)(_ => released.incrementAndGet.unit)
                         )
                     )
-                }
+                }(using scopeFrame)
                 // The gate opens only once Scope.run has returned, so the acquisition below is guaranteed to find the scope closed.
                 _      <- gate.release
                 result <- fiber.getResult
-                a      <- acquired.get
-                r      <- released.get
+                // A refused registration releases detached, after the acquiring fiber has finished, so the
+                // counters are polled rather than read once.
+                _ <- assertEventually {
+                    for
+                        a <- acquired.get
+                        r <- released.get
+                    yield a == 1 && r == 1
+                }
             yield
-                // Only the leak invariant is pinned, deliberately. Asserting that the resource was acquired first would pin the shape of
-                // the current defect, so a fix that refuses before acquiring would leave this leaf failing forever instead of turning red.
-                // Either outcome is correct as long as nothing acquired goes unreleased.
+                assert(result.panic.exists(_.isInstanceOf[Closed]), s"registering on a closed scope must panic Closed: $result")
                 assert(
-                    result.isSuccess || result.panic.exists(_.isInstanceOf[Closed]),
-                    s"registering on a closed scope must either succeed or panic Closed: $result"
+                    result.panic.exists(_.getMessage.contains(s"Finalizer created at ${scopeFrame.position.show} is closed.")),
+                    s"the Closed must name the scope's creation frame: ${result.panic.map(_.getMessage)}"
                 )
-                assert(r == a, s"every acquired resource must be released: acquired=$a released=$r")
             end for
         }
 
-        "fibers registering finalizers while their scope closes: each accepted registration runs exactly once" in {
-            // A scope closes by draining its finalizer queue, and the fibers below stay free to register for the whole drain, so
-            // registration and close overlap by construction. The scope is preloaded first so the drain is long enough for the two to
-            // meet. Every registration the scope accepted has to run, and none of them twice.
+        "a rejected release that suspends and fails still runs once, and the caller still sees Closed" in {
+            val failure = new RuntimeException("release failure")
+            for
+                start    <- Latch.init(1)
+                gate     <- Latch.init(1)
+                entered  <- Latch.init(1)
+                finished <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                fiber    <- Scope.run {
+                    Fiber.initUnscoped {
+                        start.await.andThen {
+                            Scope.acquireRelease("token") { _ =>
+                                Sync.ensure(finished.release) {
+                                    entered.release.andThen(gate.await).andThen {
+                                        released.incrementAndGet.andThen(Abort.fail(failure))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _      <- start.release
+                result <- fiber.getResult
+                _      <- entered.await
+                before <- released.get
+                _      <- gate.release
+                _      <- finished.await
+                after  <- released.get
+            yield
+                assert(result.panic.exists(_.isInstanceOf[Closed]), s"the caller must see the refusal, got $result")
+                assert(before == 0, "the release ran to its end before the gate opened")
+                assert(after == 1, s"the refused release ran $after times")
+            end for
+        }
+
+        "fibers registering finalizers while their scope closes: each registration runs exactly once" in {
+            // The fibers register for the whole of the drain, so registration and close overlap; the scope is preloaded
+            // first so the drain lasts long enough for the two to meet. A refused registration still runs its finalizer,
+            // off the scope, so the count to match is what was attempted and not what was accepted.
             (for
-                accepted <- AtomicInt.init(0)
-                ran      <- AtomicInt.init(0)
-                fibers   <- Scope.run {
+                attempted <- AtomicInt.init(0)
+                accepted  <- AtomicInt.init(0)
+                ran       <- AtomicInt.init(0)
+                fibers    <- Scope.run {
                     val register =
-                        Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit)).map {
+                        attempted.incrementAndGet.andThen(Abort.run[Nothing](Scope.ensure(ran.incrementAndGet.unit))).map {
                             case Result.Success(_) => accepted.incrementAndGet.andThen(true)
                             case _                 => false
                         }
@@ -266,10 +317,12 @@ class ScopeTest extends kyo.test.Test[Any]:
                     yield fibers
                     end for
                 }
-                _ <- Kyo.foreachDiscard(fibers)(_.get)
-                a <- accepted.get
-                r <- ran.get
-            yield assert(r == a, s"each accepted registration must run exactly once: ran=$r accepted=$a"))
+                _   <- Kyo.foreachDiscard(fibers)(_.get)
+                _   <- assertEventually(Kyo.zip(attempted.get, ran.get).map((att, r) => r == att))
+                att <- attempted.get
+                acc <- accepted.get
+                r   <- ran.get
+            yield assert(r == att, s"each registration must run exactly once: ran=$r attempted=$att accepted=$acc"))
                 .handle(Loop.repeat(20))
         }
 
@@ -548,6 +601,24 @@ class ScopeTest extends kyo.test.Test[Any]:
             }.map(_ => assert(innerDone))
         }
 
+        "a nested Scope.run does not run the enclosing scope's finalizers" in {
+            def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
+                Scope.run(v)
+
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    Scope.ensure(counter.incrementAndGet.unit).andThen {
+                        handleScoped(Sync.defer(42))
+                    }
+                }.map { r =>
+                    counter.get.map { c =>
+                        assert(r == 42)
+                        assert(c == 1)
+                    }
+                }
+            }
+        }
+
         "many resources all released" in {
             AtomicInt.init(0).map { counter =>
                 Scope.run {
@@ -563,6 +634,45 @@ class ScopeTest extends kyo.test.Test[Any]:
 
     "acquireRelease safety (#1224)" - {
         case object TestAcquireException extends scala.util.control.NoStackTrace
+
+        "a self-interrupt inside the acquire still releases what the acquire produced" in {
+            val rounds = 500
+            Kyo.foreach(1 to rounds) { _ =>
+                for
+                    handoff  <- Promise.init[Fiber[Unit, Any], Any]
+                    claimed  <- AtomicBoolean.init(false)
+                    released <- AtomicBoolean.init(false)
+                    fiber    <- Fiber.initUnscoped {
+                        handoff.get.map { self =>
+                            Scope.run {
+                                Scope.acquireRelease {
+                                    // Unsafe: the interrupt and the claim must be one indivisible step, which rules
+                                    // out suspending between them to reach the effectful tier.
+                                    import AllowUnsafe.embrace.danger
+                                    Sync.Unsafe.defer {
+                                        discard(self.unsafe.interrupt())
+                                        claimed.unsafe.set(true)
+                                        "resource"
+                                    }
+                                } { _ =>
+                                    import AllowUnsafe.embrace.danger
+                                    Sync.Unsafe.defer(released.unsafe.set(true))
+                                }.unit
+                            }
+                        }
+                    }
+                    _ <- handoff.complete(Result.succeed(fiber))
+                    _ <- fiber.getResult
+                    a <- claimed.get
+                    _ <- assertEventually(Kyo.zip(claimed.get, released.get).map((acquired, freed) => !acquired || freed))
+                    r <- released.get
+                yield (a, r)
+                end for
+            }.map { outcomes =>
+                val leaked = outcomes.count((acquired, freed) => acquired && !freed)
+                assert(leaked == 0, s"$leaked of $rounds rounds acquired a resource that was never released")
+            }
+        }
 
         "finalizer runs after normal acquire" in {
             var released = false
@@ -639,6 +749,22 @@ class ScopeTest extends kyo.test.Test[Any]:
             end for
         }
 
+        "an interrupted parked fiber runs its brackets" in {
+            for
+                ran     <- AtomicInt.init(0)
+                started <- Latch.init(1)
+                p       <- Promise.init[Int, Any]
+                fiber   <- Fiber.initUnscoped(
+                    Sync.ensure(ran.incrementAndGet.unit)(started.release.andThen(p.get))
+                )
+                _ <- started.await
+                _ <- fiber.interrupt
+                _ <- assertEventually(ran.get.map(_ == 1))
+                n <- ran.get
+            yield assert(n == 1, s"bracket ran $n times")
+            end for
+        }
+
         "multiple fibers in scope all interrupted" in {
             for
                 counter  <- AtomicInt.init(0)
@@ -653,6 +779,26 @@ class ScopeTest extends kyo.test.Test[Any]:
                 c <- counter.get
             yield assert(c == 5)
             end for
+        }
+
+        // A single scope passes even when the linkage is broken: the defect is losing the race between a
+        // fiber's first slice and the interrupt, so it only shows in bulk.
+        "interrupting scoped fibers reaches the promises they are parked on" in {
+            Async.foreachDiscard(1 to 20, 20) { _ =>
+                for
+                    counter  <- AtomicInt.init(0)
+                    promises <- Kyo.fill(5)(Promise.init[Int, Any])
+                    _        <- Scope.run {
+                        for
+                            _ <- Kyo.foreach(promises)(p => p.onInterrupt(_ => counter.incrementAndGet.unit))
+                            _ <- Kyo.foreach(promises)(p => Fiber.init(p.get))
+                        yield ()
+                    }
+                    _ <- assertEventually(counter.get.map(_ == 5))
+                    c <- counter.get
+                yield assert(c == 5, s"only $c of 5 onInterrupt callbacks fired")
+                end for
+            }.andThen(assert(true))
         }
 
         "Sync.ensure inside forked fiber runs" in {
@@ -724,9 +870,19 @@ class ScopeTest extends kyo.test.Test[Any]:
             }
         }
 
-        "multiple finalizers one fails others still run".ignore(
-            "when one Scope finalizer fails the remaining finalizers are not yet guaranteed to still run"
-        ) in { () }
+        "multiple finalizers one fails others still run" in {
+            AtomicInt.init(0).map { counter =>
+                Scope.run {
+                    for
+                        _ <- Scope.ensure(counter.incrementAndGet.unit)
+                        _ <- Scope.ensure { counter.incrementAndGet.unit.andThen(throw TestException) }
+                        _ <- Scope.ensure(counter.incrementAndGet.unit)
+                    yield ()
+                }.handle(Abort.run).map { _ =>
+                    counter.get.map(c => assert(c == 3))
+                }
+            }
+        }
 
         "all finalizers fail" in {
             AtomicInt.init(0).map { counter =>
@@ -808,28 +964,747 @@ class ScopeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "drain completeness" - {
+
+        "a finalizer that aborts does not stop the ones registered before it" in {
+            for
+                ran <- AtomicRef.init(Chunk.empty[String])
+                _   <- Scope.run {
+                    Scope.ensure(ran.updateAndGet(_.append("first")).unit)
+                        .andThen(Scope.ensure(Abort.fail(new RuntimeException("boom"))))
+                        .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
+                }
+                seq <- ran.get
+            yield assert(seq == Chunk("third", "first"), s"order was $seq")
+            end for
+        }
+
+        "a finalizer that throws does not stop the ones registered before it" in {
+            for
+                ran <- AtomicRef.init(Chunk.empty[String])
+                _   <- Scope.run {
+                    Scope.ensure(ran.updateAndGet(_.append("first")).unit)
+                        .andThen(Scope.ensure(Sync.defer[Unit, Any](throw new RuntimeException("boom"))))
+                        .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
+                }
+                seq <- ran.get
+            yield assert(seq == Chunk("third", "first"), s"order was $seq")
+            end for
+        }
+
+        // Counted rather than ordered, since parallelism leaves order undefined.
+        "every finalizer runs when the close is parallel and one of them fails" in {
+            for
+                ran <- AtomicInt.init(0)
+                _   <- Scope.run(3) {
+                    Kyo.foreachDiscard(1 to 6) { i =>
+                        if i == 4 then Scope.ensure(Abort.fail(new RuntimeException("boom")))
+                        else Scope.ensure(ran.incrementAndGet.unit)
+                    }
+                }
+                count <- ran.get
+            yield assert(count == 5, s"5 of the 6 finalizers should have run and $count did")
+            end for
+        }
+
+        // The interrupt waits for the finalizer to report it is running, since not-done holds from the first instant.
+        "a finalizer that suspends still completes when the closing computation is interrupted" in {
+            for
+                entered  <- Promise.init[Unit, Any]
+                gate     <- Latch.init(1)
+                released <- AtomicInt.init(0)
+                closer   <- Fiber.initUnscoped {
+                    Scope.run {
+                        Scope.ensure(
+                            entered.complete(Result.succeed(()))
+                                .andThen(gate.await)
+                                .andThen(released.incrementAndGet.unit)
+                        )
+                    }
+                }
+                _ <- entered.get
+                _ <- closer.interrupt
+                _ <- gate.release
+                _ <- assertEventually(released.get.map(_ == 1))
+                r <- released.get
+            yield assert(r == 1, s"the suspended finalizer ran $r times")
+            end for
+        }
+
+        "a finalizer that opens a scope of its own releases what it acquires" in {
+            for
+                outer <- AtomicInt.init(0)
+                inner <- AtomicInt.init(0)
+                _     <- Scope.run {
+                    Scope.ensure {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("nested"))(_ => inner.incrementAndGet.unit)
+                        }.andThen(outer.incrementAndGet.unit)
+                    }
+                }
+                _ <- assertEventually(Kyo.zip(outer.get, inner.get).map((o, i) => o == 1 && i == 1))
+                o <- outer.get
+                i <- inner.get
+            yield assert(o == 1 && i == 1, s"the finalizer ran $o times and its own resource was released $i times")
+            end for
+        }
+
+        // A fatal error leaves a finalizer by a different path than an ordinary failure; the releases registered
+        // before it are owed either way. It needs worker-thread semantics single-threaded JS and Wasm do not provide.
+        "a finalizer that throws a fatal error does not stop the ones registered before it".notJs.notWasm in {
+            for
+                ran <- AtomicRef.init(Chunk.empty[String])
+                _   <- Abort.run[Any] {
+                    Scope.run {
+                        Scope.ensure(ran.updateAndGet(_.append("first")).unit)
+                            .andThen(Scope.ensure(Sync.defer[Unit, Any](throw new LinkageError("fatal"))))
+                            .andThen(Scope.ensure(ran.updateAndGet(_.append("third")).unit))
+                    }
+                }
+                _   <- assertEventually(ran.get.map(_.size == 2))
+                seq <- ran.get
+            yield assert(seq == Chunk("third", "first"), s"order was $seq")
+            end for
+        }
+
+        "a finalizer runs exactly once when the body aborts" in {
+            for
+                ran <- AtomicInt.init(0)
+                _   <- Abort.run[String] {
+                    Scope.run {
+                        Scope.ensure(ran.incrementAndGet.unit).andThen(Abort.fail("boom"))
+                    }
+                }
+                count <- ran.get
+            yield assert(count == 1, s"the finalizer ran $count times")
+            end for
+        }
+    }
+
+    "finalizers lost under interrupt (#1928)" - {
+
+        // The interrupt races the scope's own close rather than landing in the body: `close` `become`s the
+        // finalizer's promise with the drain's fiber, so an interrupt on `await` can travel through the promise
+        // into the drain and stop the finalizers halfway. Rounds rather than one shot: the window is narrow. Kept modest, since each
+        // round leaves a detached drain and thousands make the fan-out super-linear, timing out under emulated platforms (qemu, JS).
+        "an interrupt racing the close does not stop the drain" in {
+            val rounds = 200
+            for
+                registered <- AtomicInt.init(0)
+                released   <- AtomicInt.init(0)
+                _          <- Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        Promise.init[Unit, Any].map { ready =>
+                            Fiber.initUnscoped {
+                                Scope.run {
+                                    Scope.ensure(released.incrementAndGet.unit)
+                                        .andThen(registered.incrementAndGet)
+                                        .andThen(ready.complete(Result.succeed(())))
+                                        .unit
+                                }
+                            }.map(fiber => ready.get.andThen(fiber.interrupt)).andThen(Loop.continue)
+                        }
+                }
+                _   <- assertEventually(Kyo.zip(registered.get, released.get).map((reg, rel) => reg == rounds && rel == rounds))
+                reg <- registered.get
+                rel <- released.get
+            yield assert(reg == rounds && rel == rounds, s"registered $reg finalizers and ran $rel of them")
+            end for
+        }
+    }
+
+    "acquire-time registration (#1820)" - {
+
+        // The acquire interrupts its own fiber and then produces its value, so delivery lands at the next
+        // safepoint, after the acquire and at or before the registration. Rounds, since the window is narrow.
+        "an interrupt requested inside the acquire still releases what it produced" in {
+            val rounds = 1000
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                _        <- Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                            Fiber.initUnscoped {
+                                handoff.get.map { self =>
+                                    Scope.run {
+                                        Scope.acquireRelease {
+                                            Sync.defer {
+                                                // Unsafe: the interrupt must be requested from inside the
+                                                // acquire, with the count taken in the same node so it
+                                                // reports the acquire producing a value.
+                                                import AllowUnsafe.embrace.danger
+                                                discard(self.unsafe.interrupt())
+                                                discard(acquired.unsafe.incrementAndGet())
+                                                "token"
+                                            }
+                                        }(_ => released.incrementAndGet.unit).andThen(Sync.defer(()))
+                                    }
+                                }
+                            }.map { fiber =>
+                                handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult)
+                            }.andThen(Loop.continue)
+                        }
+                }
+                _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r && a == rounds))
+                acq <- acquired.get
+                rel <- released.get
+            yield assert(acq == rel && acq > 0, s"$acq acquires produced a value and $rel of them were released")
+            end for
+        }
+
+        // The same window with one more suspension in the acquire after the interrupt: the acquire runs to its
+        // end, so a real one would have opened its handle, but the interrupt parks before `ensureMap` applies.
+        // A single-node acquire always releases, so only this shape leaves the value registered nowhere.
+        "an acquire whose last step follows the interrupt is still released" in {
+            val rounds = 200
+            for
+                acquired <- AtomicInt.init(0)
+                released <- AtomicInt.init(0)
+                _        <- Loop.indexed { i =>
+                    if i >= rounds then Loop.done
+                    else
+                        Promise.init[Fiber[Unit, Any], Any].map { handoff =>
+                            Fiber.initUnscoped {
+                                handoff.get.map { self =>
+                                    Scope.run {
+                                        Scope.acquireRelease {
+                                            Sync.defer {
+                                                // Unsafe: the interrupt is requested from inside the acquire.
+                                                import AllowUnsafe.embrace.danger
+                                                discard(self.unsafe.interrupt())
+                                            }.andThen(acquired.incrementAndGet)
+                                        }(_ => released.incrementAndGet.unit).andThen(Sync.defer(()))
+                                    }
+                                }
+                            }.map { fiber =>
+                                handoff.complete(Result.succeed(fiber)).andThen(fiber.getResult)
+                            }.andThen(Loop.continue)
+                        }
+                }
+                _   <- assertEventually(Kyo.zip(acquired.get, released.get).map((a, r) => a == r))
+                acq <- acquired.get
+                rel <- released.get
+            yield assert(acq == rel, s"$acq acquires ran to their end and $rel of them were released")
+            end for
+        }
+
+        "a single interrupt requested inside the acquire releases what it produced" in {
+            for
+                released <- AtomicInt.init(0)
+                handoff  <- Promise.init[Fiber[Unit, Any], Any]
+                fiber    <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Scope.run {
+                            Scope.acquireRelease {
+                                Sync.defer {
+                                    // Unsafe: the interrupt must be requested from inside the acquire, before
+                                    // it returns, which is not an effectful position.
+                                    import AllowUnsafe.embrace.danger
+                                    discard(self.unsafe.interrupt())
+                                    "token"
+                                }
+                            }(_ => released.incrementAndGet.unit).andThen(Sync.defer(()))
+                        }
+                    }
+                }
+                _   <- handoff.complete(Result.succeed(fiber))
+                res <- fiber.getResult
+                _   <- assertEventually(released.get.map(_ == 1))
+                r   <- released.get
+            yield
+                assert(res.isPanic, s"expected the interrupt to abort the body but got $res")
+                assert(r == 1, s"the value the acquire produced was released $r times")
+            end for
+        }
+    }
+
     "scope isolation (#1381)" - {
 
-        "Scope.run on generic effect type with Scope should not run caller's finalizers" in {
-            def handleScoped[A, S](v: A < (Scope & S)): A < (Async & S) =
-                Scope.run(v)
+        // Scope is a ContextEffect, so the innermost Scope.run answers every Scope suspension in its dynamic
+        // extent, a caller's `ensure` handed to a generic function included. The caller opts out by masking
+        // `Scope` around the call, which leaves the callee's run nothing of the caller's to answer.
+        "a Scope.run inside a generic function does not run the caller's finalizers" in {
+            import kyo.kernel.ArrowEffect.Mask
 
-            AtomicInt.init(0).map { counter =>
-                Scope.run {
-                    // Register a finalizer in the OUTER scope
-                    Scope.ensure(counter.incrementAndGet.unit).andThen {
-                        // handleScoped calls Scope.run again — this inner Scope.run
-                        // should NOT trigger the outer scope's finalizer
-                        handleScoped(Sync.defer(42))
+            def generic[A, S](effect: A < S): A < (Async & S) =
+                Scope.run(Sync.defer(()).andThen(effect))
+
+            for
+                caller <- AtomicInt.init(0)
+                inner  <- AtomicInt.init(0)
+                seen   <- Scope.run {
+                    Scope.ensure(caller.incrementAndGet.unit).andThen {
+                        Mask.run[Scope](generic(Mask[Scope](Scope.ensure(inner.incrementAndGet.unit).andThen(42)))).map { r =>
+                            Kyo.zip(caller.get, inner.get).map((c, i) => (r, c, i))
+                        }
                     }
-                }.map { r =>
-                    counter.get.map { c =>
-                        assert(r == 42)
-                        // Outer finalizer should run exactly once (when outer Scope.run closes)
-                        assert(c == 1)
+                }
+                (r, c, i) = seen
+                afterCaller   <- caller.get
+                afterSupplied <- inner.get
+            yield
+                assert(r == 42)
+                assert(c == 0, s"the caller's own finalizer ran inside the callee's scope: caller=$c")
+                assert(i == 0, s"the callee's scope claimed a finalizer the caller supplied: supplied=$i")
+                assert(afterCaller == 1, s"the caller's own finalizer must run once, at the outer exit: caller=$afterCaller")
+                assert(afterSupplied == 1, s"the caller-supplied finalizer must run once, at the outer exit: supplied=$afterSupplied")
+            end for
+        }
+
+        "a resource the caller acquires stays open across a masked generic call and closes at the outer exit" in {
+            import kyo.kernel.ArrowEffect.Mask
+
+            def generic[A, S](effect: A < S): A < (Async & S) =
+                Scope.run(Sync.defer(()).andThen(effect))
+
+            val r = TestResource(1)
+            for
+                seen <- Scope.run {
+                    Mask.run[Scope](generic(Mask[Scope](Scope.acquire(r)))).map { res =>
+                        Sync.defer((res.id, res.closes))
+                    }
+                }
+                (id, closesInside) = seen
+            yield
+                assert(id == 1)
+                assert(closesInside == 0, s"the callee's scope closed the caller's resource: closes=$closesInside")
+                assert(r.closes == 1, s"the outer exit must close the resource once: closes=${r.closes}")
+            end for
+        }
+
+        "a generic function isolates the caller's Scope itself via Mask" in {
+            import kyo.kernel.ArrowEffect.Mask
+
+            def generic[A, S](effect: A < (Scope & S)): A < (Async & Mask[Scope] & S) =
+                Scope.run(Sync.defer(()).andThen(Mask[Scope](effect)))
+
+            for
+                supplied <- AtomicInt.init(0)
+                seen     <- Scope.run {
+                    Mask.run[Scope](generic(Scope.ensure(supplied.incrementAndGet.unit).andThen(42))).map { r =>
+                        supplied.get.map(s => (r, s))
+                    }
+                }
+                (r, insideCount) = seen
+                afterSupplied <- supplied.get
+            yield
+                assert(r == 42)
+                assert(insideCount == 0, s"the callee's scope ran the caller's finalizer: inside=$insideCount")
+                assert(afterSupplied == 1, s"the caller's finalizer must run once, at the outer exit: after=$afterSupplied")
+            end for
+        }
+    }
+
+    "forks" - {
+
+        "a resource acquired outside a fork is live inside it" in {
+            val r        = TestResource(1)
+            var seenOpen = -1
+            Scope.acquire(r).map { res =>
+                Fiber.initUnscoped(Sync.defer { seenOpen = res.closes; res.id }).map(_.get)
+            }.handle(Scope.run).map { id =>
+                assert(id == 1)
+                assert(seenOpen == 0)
+                assert(r.closes == 1)
+            }
+        }
+
+        "a resource outlives a fork that joins inside its extent" in {
+            val r = TestResource(1)
+            Scope.acquire(r).map { res =>
+                Fiber.initUnscoped(Sync.defer(res.id)).map(_.get).map { id =>
+                    assert(res.closes == 0)
+                    id
+                }
+            }.handle(Scope.run).map { id =>
+                assert(id == 1)
+                assert(r.closes == 1)
+            }
+        }
+
+        "a resource is released once when several forks used it" in {
+            val r = TestResource(1)
+            Scope.acquire(r).map { res =>
+                Kyo.foreach(Seq(1, 2, 3))(_ => Fiber.initUnscoped(Sync.defer(res.id)).map(_.get))
+            }.handle(Scope.run).map { ids =>
+                assert(ids == Seq(1, 1, 1))
+                assert(r.closes == 1)
+            }
+        }
+
+        "a resource acquired inside a fork is released with the enclosing extent" in {
+            val r = TestResource(1)
+            Fiber.initUnscoped(Scope.acquire(r).map(_.id)).map(_.get)
+                .handle(Scope.run).map { id =>
+                    assert(id == 1)
+                    assert(r.closes == 1)
+                }
+        }
+    }
+
+    "release ordering under an outer handler (#1723)" - {
+
+        // The async finalizer suspends on a fiber join before its final step, so a drain that is
+        // kicked off but not awaited leaves `released` false when the next effect observes it; the loop makes a
+        // round that races the drain fail rather than pass, so the pending marker is stable.
+        "a scope short-circuited by an outer handler awaits its async release before the next effect".pendingUntilFixed(
+            "by decision there is no backpressure on abnormal exit: the scope's synchronous releases run, but the detached drain that runs its async finalizers is not awaited before the next effect"
+        ) in {
+            val rounds = 50
+            Loop.indexed { i =>
+                if i >= rounds then Loop.done
+                else
+                    for
+                        released <- AtomicBoolean.init(false)
+                        _        <- Abort.run {
+                            Check.runAbort {
+                                Scope.run {
+                                    Scope.ensure(Fiber.initUnscoped(Kyo.unit).map(_.getResult).andThen(released.set(true)))
+                                        .andThen(Check.require(false, "boom"))
+                                }
+                            }
+                        }
+                        r <- released.get
+                    yield
+                        assert(r, s"round $i: the async finalizer had not completed before the next effect ran")
+                        Loop.continue
+            }
+        }
+
+        "a scope short-circuited by an outer handler releases before the enclosing scope's own finalizers" in {
+            for
+                order <- AtomicRef.init(Chunk.empty[String])
+                _     <- Scope.run {
+                    Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
+                        Abort.run {
+                            Check.runAbort {
+                                Scope.run {
+                                    Scope.ensure(order.updateAndGet(_.append("inner")).unit)
+                                        .andThen(Check.require(false, "boom"))
+                                }
+                            }
+                        }
+                    }
+                }
+                _   <- assertEventually(order.get.map(_.size == 2))
+                seq <- order.get
+            yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
+            end for
+        }
+    }
+
+    "hierarchical scopes (#1131)" - {
+
+        "a scoped fiber's nested run releases when the scope it was spawned in closes" in {
+            for
+                released <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                _        <- Scope.run {
+                    Fiber.init {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit)
+                                .andThen(started.release)
+                                .andThen(Async.never)
+                        }
+                    }.map(fiber => started.await.andThen(fiber))
+                }
+                _ <- assertEventually(released.get.map(_ == 1))
+                r <- released.get
+            yield assert(r == 1, s"the child's resource was released $r times")
+            end for
+        }
+
+        "a scoped fiber's nested run releases before the enclosing scope's own finalizers" in {
+            for
+                order <- AtomicRef.init(Chunk.empty[String])
+                ready <- Promise.init[Unit, Any]
+                _     <- Scope.run {
+                    Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
+                        Fiber.init {
+                            Scope.run {
+                                Scope.ensure(order.updateAndGet(_.append("inner")).unit)
+                                    .andThen(ready.complete(Result.succeed(())))
+                                    .andThen(Async.never)
+                            }
+                        }.map(fiber => ready.get.andThen(fiber))
+                    }
+                }
+                _   <- assertEventually(order.get.map(_.size == 2))
+                seq <- order.get
+            yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
+            end for
+        }
+
+        // A run opened inside a fork is a root: the enclosing scope does not end the fiber carrying it, so closing
+        // it from there takes a resource from an owner still using it, such as a service started lazily under
+        // `Fiber.initUnscoped`.
+        "a run opened inside an unscoped fiber outlives the scope the fiber was spawned in" in {
+            for
+                released <- AtomicInt.init(0)
+                started  <- Latch.init(1)
+                gate     <- Latch.init(1)
+                service  <- Scope.run {
+                    Fiber.initUnscoped {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("service"))(_ => released.incrementAndGet.unit)
+                                .andThen(started.release)
+                                .andThen(gate.await)
+                        }
+                    }.map(fiber => started.await.andThen(fiber))
+                }
+                onParentExit <- released.get
+                _            <- gate.release
+                _            <- service.getResult
+                onOwnExit    <- released.get
+            yield
+                assert(onParentExit == 0, s"the enclosing scope released the unscoped fiber's resource: released=$onParentExit")
+                assert(onOwnExit == 1, s"the fiber's own exit did not release its resource: released=$onOwnExit")
+            end for
+        }
+
+        "a nested run releases before the enclosing scope's own finalizers when the enclosing run is aborted" in {
+            for
+                order <- AtomicRef.init(Chunk.empty[String])
+                _     <- Abort.run[String] {
+                    Scope.run {
+                        Scope.ensure(order.updateAndGet(_.append("outer")).unit).andThen {
+                            Scope.run {
+                                Scope.ensure(order.updateAndGet(_.append("inner")).unit)
+                                    .andThen(Abort.fail("boom"))
+                            }
+                        }
+                    }
+                }
+                seq <- order.get
+            yield assert(seq == Chunk("inner", "outer"), s"order was $seq")
+            end for
+        }
+
+        "a scoped fiber's nested run releases at its own exit while the enclosing scope is still open" in {
+            for
+                released <- AtomicInt.init(0)
+                seen     <- Scope.run {
+                    Fiber.init {
+                        Scope.run {
+                            Scope.acquireRelease(Sync.defer("child"))(_ => released.incrementAndGet.unit).unit
+                        }
+                    }.map(_.get).andThen(released.get)
+                }
+                after <- released.get
+            yield
+                assert(seen == 1, s"the child's resource was not released at the child's own exit: released=$seen")
+                assert(after == 1, s"the enclosing scope's close released it again: released=$after")
+            end for
+        }
+    }
+
+    "finalizer context" - {
+
+        "a finalizer reads the Local the run was opened under" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init("")
+                _    <- local.let("bound")(Scope.run(Scope.ensure(local.use(v => seen.set(v)))))
+                v    <- seen.get
+            yield assert(v == "bound", s"the finalizer read $v")
+            end for
+        }
+
+        "a finalizer reads the Local the run was opened under when a handler replays" in {
+            val local = Local.init("default")
+            for
+                seen <- AtomicRef.init(Chunk.empty[String])
+                res  <- local.let("bound") {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.ensure(local.use(v => seen.updateAndGet(_.append(v)).unit)).andThen(n)
+                            }
+                        }
+                    }
+                }
+                _ <- assertEventually(seen.get.map(_.size == 2))
+                s <- seen.get
+            yield
+                assert(res == Chunk(1, 2))
+                assert(s == Chunk("bound", "bound"), s"the finalizers read $s")
+            end for
+        }
+    }
+
+    "under a handler that replays" - {
+
+        // The bracket contract under a replaying handler
+        // is that every branch runs against the live region and the release runs
+        // once after all of them; a scope's registrations are the counterpart, each running once.
+        "every branch of a replaying handler registers its finalizer and each runs once" in {
+            for
+                log <- AtomicRef.init(Chunk.empty[String])
+                res <- Abort.run[Closed] {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.ensure(log.updateAndGet(_.append(s"release $n")).unit).andThen(n)
+                            }
+                        }
+                    }
+                }
+                _       <- assertEventually(log.get.map(_.size == 2))
+                entries <- log.get
+            yield
+                assert(res == Result.succeed(Chunk(1, 2)), s"a branch was refused: $res")
+                assert(entries.sorted == Chunk("release 1", "release 2"), s"releases were $entries")
+            end for
+        }
+
+        "every branch of a replaying handler acquires its own resource and each is released once" in {
+            for
+                released <- AtomicRef.init(Chunk.empty[Int])
+                seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                res      <- Abort.run[Closed] {
+                    Choice.run {
+                        Scope.run {
+                            Choice.eval(1, 2).map { n =>
+                                Scope.acquireRelease(Sync.defer(n))(r => released.updateAndGet(_.append(r)).unit).map { r =>
+                                    released.get.map(rs => seen.updateAndGet(_.append((n, rs.size))).andThen(r))
+                                }
+                            }
+                        }
+                    }
+                }
+                _  <- assertEventually(released.get.map(_.size == 2))
+                rs <- released.get
+                s  <- seen.get
+            yield
+                assert(res == Result.succeed(Chunk(1, 2)), s"a branch was refused: $res")
+                assert(rs.sorted == Chunk(1, 2), s"released $rs")
+                assert(s.forall((_, r) => r == 0), s"a branch observed a release before its use ended: $s")
+            end for
+        }
+    }
+
+    "racing scopes (#1735)" - {
+
+        "the reporter's program leaves every item in the channel" in {
+            val expected = (1 to 4).map(_.toString).toSet
+            Scope.run {
+                Channel.init[String](capacity = 16, access = Access.MultiProducerMultiConsumer).map { chan =>
+                    Kyo.foreachDiscard(expected.toSeq)(chan.put).andThen {
+                        val acqRel = Scope.acquireRelease(chan.take)(chan.put)
+                        Async.foreachDiscard(1 to 4)(_ => Scope.run(acqRel.unit)).andThen {
+                            assertEventually(chan.size.map(_ == expected.size)).andThen {
+                                Kyo.foreach(1 to expected.size)(_ => chan.take).map { drained =>
+                                    assert(drained.toSet == expected, s"expected $expected but the channel held ${drained.toSet}")
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        // More racers than items on purpose, so some are interrupted
+        // while parked on `take` and the rest after taking. Counted rather than latched per racer, because which
+        // racers get an item is exactly what the interleaving decides, and the counts are compared to each other
+        // rather than to four: between the latch opening and a racer's interrupt landing, a racer still parked can
+        // take an item a release has just put back.
+        "every racer that took an item from the channel puts it back".ignore(
+            "loses an item only in the rounds where a racer's interrupt lands between the delivery and its resumption; that loss is pinned by ChannelTest's stranded-value leaves"
+        ) in {
+            // The loss this pins (a put delivered into a parked racer's promise as the racer's interrupt lands, then the racer
+            // abandoned without consuming it) is a scheduling race, so one round loses an item only some of the time. Repeated
+            // until a regression is a reliable failure.
+            val rounds = 25
+            val round  = Scope.run {
+                for
+                    chan     <- Channel.init[String](16, Access.MultiProducerMultiConsumer)
+                    taken    <- AtomicInt.init(0)
+                    returned <- AtomicInt.init(0)
+                    // Opened by the fourth take, so the racers are interrupted only once every item is held by one:
+                    // four racers holding an item is then the scenario every round exercises. Without it the counts
+                    // hold trivially at nothing taken and nothing returned.
+                    allTaken <- Latch.init(4)
+                    _        <- Kyo.foreachDiscard(Seq("1", "2", "3", "4"))(chan.put)
+                    // The acquire is the bare take, as the reporter's program has it: `acquireRelease` registers the release in
+                    // the step the value arrives in, and a step composed after the take inside the acquire would be a point where
+                    // an interrupt lands with the item taken and nothing registered to put it back. The counting follows the
+                    // registration, so an interrupt landing before it leaves a registered release and an uncounted take.
+                    racers <- Kyo.foreach(1 to 8) { _ =>
+                        Fiber.initUnscoped {
+                            Scope.run {
+                                Scope.acquireRelease(chan.take) { v =>
+                                    chan.put(v).andThen(returned.incrementAndGet.unit)
+                                }.andThen(taken.incrementAndGet).andThen(allTaken.release).andThen(Async.never)
+                            }
+                        }
+                    }
+                    _       <- allTaken.await
+                    _       <- Kyo.foreachDiscard(racers)(_.interrupt.unit)
+                    _       <- Kyo.foreachDiscard(racers)(_.getResult.unit)
+                    _       <- assertEventually(Kyo.zip(taken.get, returned.get).map((t, r) => t <= r))
+                    t       <- taken.get
+                    r       <- returned.get
+                    size    <- chan.size
+                    drained <- chan.drain
+                yield
+                    assert(t <= r && r >= 4, s"racers counted $t takes and $r releases came back")
+                    assert(size == 4 && drained.toSet == Set("1", "2", "3", "4"), s"items lost: $drained")
+                end for
+            }
+            Loop.repeat(rounds)(round).andThen(succeed)
+        }
+    }
+
+    "runUnowned" - {
+        "does not release when the body reaches its end" in {
+            for
+                closes <- AtomicInt.init(0)
+                value  <- Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen("handle"))
+                n      <- closes.get
+            yield assert(value == "handle" && n == 0, s"the handle was released on its way out: closes=$n")
+        }
+
+        "releases when the body fails" in {
+            for
+                closes <- AtomicInt.init(0)
+                result <- Abort.run[String](
+                    Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen(Abort.fail("no")))
+                )
+                n <- closes.get
+            yield assert(result.isFailure && n == 1, s"a failed acquisition kept its resource: closes=$n")
+        }
+
+        // `started` is what makes this an abandonment of a PARKED body. The body is built under
+        // `Sync.Unsafe.defer`, and the abandonment walk walks a deferral without running it, so a fiber
+        // interrupted before its first step has no finalizer allocated and nothing registered: it reads zero
+        // for a reason that says nothing about this backstop. The release has to have run, and the body has to
+        // be parked, before the interrupt is worth anything.
+        "releases when the body is abandoned" in {
+            for
+                closes  <- AtomicInt.init(0)
+                started <- Latch.init(1)
+                gate    <- Latch.init(1)
+                fiber   <- Fiber.initUnscoped(
+                    Scope.runUnowned(
+                        Scope.ensure(closes.incrementAndGet.unit).andThen(started.release).andThen(gate.await)
+                    )
+                )
+                _ <- started.await
+                _ <- fiber.interrupt
+                _ <- assertEventually(closes.get.map(_ == 1))
+                n <- closes.get
+            yield assert(n == 1, s"an abandoned acquisition kept its resource: closes=$n")
+        }
+
+        "is a root, so an enclosing scope ending does not release it" in {
+            for
+                closes <- AtomicInt.init(0)
+                value  <- Scope.run(Scope.runUnowned(Scope.ensure(closes.incrementAndGet.unit).andThen("handle")))
+                n      <- closes.get
+            yield assert(value == "handle" && n == 0, s"the enclosing scope released a handle it does not own: closes=$n")
         }
     }
 end ScopeTest

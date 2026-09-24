@@ -4,6 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.SqlConfig.TlsMode
 import kyo.db.Connection
+import kyo.kernel.ContextEffect
 import kyo.net.NetAddress
 import kyo.net.NetTlsConfig
 import kyo.net.internal.ConnectionPool
@@ -132,25 +133,26 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             // Unsafe: getOrCreateSlotChan and every pool operation require AllowUnsafe.
             // Unsafe: bridging to kyo-net ConnectionPool.
             Sync.Unsafe.defer(getOrCreateSlotChan(address, config.maxConnections)).flatMap { slotCh =>
-                // Take the slot and register its release in Scope.ensure BEFORE attempting to connect. If the
-                // connect fails, the surrounding Scope still closes and still returns the slot, which is what
-                // prevents a slot leak: without it, a connect failure after a server restart would strand the slot
-                // and eventually deadlock the pool.
-                Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
-                    case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
-                        Log.warn(
-                            s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
-                        ).andThen(Abort.fail(e))
-                    case Result.Failure(e)  => Abort.fail(e)
-                    case Result.Panic(t)    => Abort.error(Result.Panic(t))
-                    case Result.Success(()) =>
-                        leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
-                                }
-                            }.andThen(acquireScoped(address, password, netKey, config, leaseClock))
+                // The slot's give-back is registered on the enclosing Scope BEFORE the take, which claims the slot in
+                // the step it completes in.
+                Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
+                    Scope.ensure {
+                        Sync.Unsafe.defer {
+                            if held.get() then discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
                         }
+                    }.andThen {
+                        Abort.run[SqlException](takeSlot(slotCh, config, held)).flatMap {
+                            case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
+                                Log.warn(
+                                    s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
+                                ).andThen(Abort.fail(e))
+                            case Result.Failure(e)  => Abort.fail(e)
+                            case Result.Panic(t)    => Abort.error(Result.Panic(t))
+                            case Result.Success(()) =>
+                                leaseClock.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis))
+                                    .andThen(acquireScoped(address, password, netKey, config, leaseClock))
+                        }
+                    }
                 }
             }
         }
@@ -204,38 +206,45 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * interrupt landing mid-drain cannot leave a connection open.
       */
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
-        // Unsafe: pool.close() is a lock-free drain and requires AllowUnsafe.
-        // The pool is marked closed first so tryReserve stops handing out slots and no new connection opens.
-        // The slot channels stay open through the grace period so in-flight callers can hand their slots back.
+        // Marked closed first so tryReserve opens no new connection; slot channels stay open through the grace period
+        // for in-flight callers.
         Log.use { logger =>
-            Sync.Unsafe.defer(pool.close()).flatMap { idleConns =>
-                // The force-close runs as a Sync.ensure finalizer, not a plain andThen, so a fiber interrupt during
-                // the grace poll still closes the idle connections pool.close() already extracted. Without it the
-                // interrupt abandons the continuation and leaks them, and the pool is already closed so no retry
-                // reclaims them. Sync.ensure covers the interrupt and panic edges; drain carries no typed abort (it
-                // swallows its own Timeout), so those are the only edges. The force-close stays one Sync.Unsafe.defer,
-                // so it is atomic once reached.
-                Sync.ensure {
-                    // Unsafe: channel.close and the final connection closes require AllowUnsafe.
-                    Sync.Unsafe.defer {
-                        slotChans.forEach { (_, ch) =>
-                            discard(Sync.Unsafe.evalOrThrow(ch.closeDiscard))
-                        }
-                        slotChans.clear()
-                        idleConns.foreach(_.closeNow)
-                        // Destroy any connection a reclaim left quarantined at grace expiry (its detached carrier is the only other
-                        // owner). `remove` is the atomic claim, so a reclaim resolving at the same instant sees Absent, not a double-close.
-                        quarantined.forEach { conn =>
-                            if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
-                        }
-                        // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
-                        // counters were still worth reporting, and a pool that outlived its registration would report another pool's
-                        // state under this one's name.
-                        diagRegistration.close()
-                    }
-                }(drain(gracePeriod))
-            }
+            Sync.Unsafe.defer(closeExtract()).ensureMap(idleConns => closeDrain(idleConns, logger, gracePeriod))
         }
+
+    /** Marks the ring closed and extracts its idle connections, in one unsafe step.
+      *
+      * Separate from [[closeDrain]] so [[kyo.db.Runtime.close]] can flip its own closed flag and extract the ring with
+      * no poll between: a stop there would mark the carrier closed while the ring it never extracted stays open, and the
+      * idempotent flag then makes the pool unclosable.
+      */
+    def closeExtract()(using AllowUnsafe): Chunk[C] =
+        pool.close()
+
+    /** Force-closes the connections [[closeExtract]] pulled from the ring, under a grace-period drain.
+      *
+      * `logger` is captured by the caller before the extract, so the `Sync.ensure` finalizer installs with no poll after
+      * `closeExtract` removed the connections from the ring: a poll there would strand them, out of the ring and never
+      * closed. The finalizer, not a plain `andThen`, closes them even on an interrupt during the grace poll.
+      */
+    def closeDrain(idleConns: Chunk[C], logger: Log, gracePeriod: Duration)(using Frame): Unit < Async =
+        Sync.ensure {
+            // Unsafe: channel.close and the final connection closes require AllowUnsafe.
+            Sync.Unsafe.defer {
+                slotChans.forEach { (_, ch) =>
+                    discard(Sync.Unsafe.evalOrThrow(ch.closeDiscard))
+                }
+                slotChans.clear()
+                idleConns.foreach(_.closeNow)
+                // `remove` is the atomic claim, so a reclaim resolving at the same instant sees false, not a double-close.
+                quarantined.forEach { conn =>
+                    if quarantined.remove(conn) then destroyAndFreeSlot(conn, logger)
+                }
+                // Dropped last, after the sweep above has resolved every quarantined connection: while any remained the
+                // counters were still worth reporting.
+                diagRegistration.close()
+            }
+        }(drain(gracePeriod))
 
     /** How many reclaim chains are running right now. Zero once every interrupted lease has been resolved. */
     // Unsafe: read-only view of an already-Unsafe atomic, no suspension needed.
@@ -365,9 +374,23 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 ch
         )
 
-    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
+    /** Takes a permit, claiming it into `held` in the step the take completes in.
+      *
+      * Under a finite `acquireTimeout` the take runs in the child fiber `timeoutWithError` forks, and the caller parks on its join. A
+      * caller interrupted there is abandoned without resuming (see `IOTask.abandon`): nothing is delivered to the join, so a permit the
+      * child took would be owned by its result and by nobody else. The claim is a plain flag write inside the take itself, so no park can
+      * separate the two: the take either completes claimed, or is refused by the channel's own interrupt handoff and leaves the permit in
+      * the channel.
+      */
+    private def takeSlot(slotCh: Channel[Unit], config: SqlConfig, held: AtomicBoolean.Unsafe)(using
+        Frame
+    ): Unit < (Async & Abort[SqlException]) =
         val take: Unit < (Async & Abort[SqlException]) =
-            Abort.run[Closed](slotCh.take).flatMap {
+            Abort.run[Closed](slotCh.takeWith { _ =>
+                // Unsafe: the flag is written in the step the take delivers in, so the claim and the take are one step.
+                import AllowUnsafe.embrace.danger
+                held.set(true)
+            }).flatMap {
                 case Result.Success(()) => ()
                 case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t)    => Abort.error(Result.Panic(t))
@@ -386,43 +409,39 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // The stopwatch times the wait for a permit, which is the time spent blocked on a saturated pool.
         Clock.stopwatch.flatMap { sw =>
-            Abort.run[SqlException](takeSlot(slotCh, config)).flatMap {
-                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
-                    Log.warn(
-                        s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
-                    ).andThen(Abort.fail(e))
-                case Result.Failure(e)  => Abort.fail(e)
-                case Result.Panic(t)    => Abort.error(Result.Panic(t))
-                case Result.Success(()) =>
-                    sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
-                        // The permit is returned by a Scope finalizer, not a `Sync.ensure` one. `Sync.ensure` covers
-                        // the interrupt and panic edges but NOT a typed `Abort` handled outside its region: that
-                        // finalizer parks until the calling FIBER ends, so an ordinary statement failure would strand
-                        // the permit until the caller's whole program finished. `Scope.run` closes its scope as part
-                        // of evaluating the body, so the finalizer fires on that edge too.
-                        Scope.run {
-                            Scope.ensure {
-                                Sync.Unsafe.defer {
-                                    discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+            // The permit is owned by a finalizer before it is taken: the give-back is registered first, on a scope
+            // opened around the take, and `takeSlot` claims the permit into `held` in the step the take completes in,
+            // so there is no moment at which a taken permit has no owner.
+            Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { held =>
+                Scope.run {
+                    Scope.ensure {
+                        Sync.Unsafe.defer {
+                            if held.get() then discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
+                        }
+                    }.andThen {
+                        Abort.run[SqlException](takeSlot(slotCh, config, held)).flatMap {
+                            case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
+                                Log.warn(
+                                    s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
+                                ).andThen(Abort.fail(e))
+                            case Result.Failure(e)  => Abort.fail(e)
+                            case Result.Panic(t)    => Abort.error(Result.Panic(t))
+                            case Result.Success(()) =>
+                                sw.elapsed.flatMap(dur => metrics.recordPoolAcquireWait(dur.toMillis)).andThen {
+                                    Abort.run[SqlException](body).flatMap {
+                                        case Result.Success(a)                     => a
+                                        case Result.Failure(e: SqlServerException) =>
+                                            // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
+                                            // decides what it is.
+                                            Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
+                                                .andThen(Abort.fail[SqlException](e))
+                                        case Result.Failure(e) => Abort.fail[SqlException](e)
+                                        case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                                    }
                                 }
-                            }.andThen {
-                                Abort.run[SqlException](body).flatMap {
-                                    case Result.Success(a)                     => a
-                                    case Result.Failure(e: SqlServerException) =>
-                                        // DEBUG, not ERROR. The caller is handed the same failure as a typed value and
-                                        // decides what it is: a tool running user-written SQL gets a syntax error back
-                                        // from the server as its ordinary answer. Writing it at ERROR filled an
-                                        // operator's dashboard with entries for a program behaving correctly, and on a
-                                        // stdio transport anything the library writes on its own initiative is a
-                                        // candidate for corrupting the channel. The typed Abort is the report.
-                                        Log.debug(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
-                                            .andThen(Abort.fail[SqlException](e))
-                                    case Result.Failure(e) => Abort.fail[SqlException](e)
-                                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                                }
-                            }
                         }
                     }
+                }
             }
         }
     end withSlot
@@ -454,25 +473,36 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         val netKey = SqlConnectionPool.Endpoint(address, config)
         Scope.run {
             withCustody { custody =>
-                acquireOrReserve(netKey, config).map {
-                    case Present(conn) =>
-                        onLease(netKey, conn, config) {
-                            Sync.Unsafe.defer(custody.take())
-                                .andThen(metrics.recordAcquire)
-                                .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
-                                .andThen(op(conn))
-                        }
-                    case Absent =>
-                        // Release the reservation per attempt: under Retry the body re-runs but an outer finalizer fires once, so without this
-                        // the in-flight count reaches maxConnections and acquireOrReserve spins poll-Absent/tryReserve-false forever.
-                        // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
-                        resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
+                // Released per attempt: under Retry the body re-runs but an outer finalizer fires once, so without this the
+                // in-flight count reaches maxConnections and acquireOrReserve spins poll-Absent/tryReserve-false forever.
+                reserving(netKey) { reserved =>
+                    acquireOrReserve(netKey, config, reserved).map {
+                        case Present(conn) =>
+                            onLease(netKey, conn, config, custody) {
+                                metrics.recordAcquire
+                                    .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
+                                    .andThen(op(conn))
+                            }
+                        case Absent =>
                             connectAndRun(address, password, netKey, config, leaseClock, custody)(op)
-                        )
+                    }
                 }
             }
         }
     end acquireAndRun
+
+    /** Owns a reservation the body may take from the ring, registered before it is taken.
+      *
+      * The finalizer is registered before `acquireOrReserve` and the flag set in the reserving step, so no poll leaves
+      * a taken reservation unowned; registering once it is in hand would strand the in-flight count on a stop.
+      */
+    private def reserving[A, S](netKey: SqlConnectionPool.Endpoint)(
+        body: AtomicBoolean.Unsafe => A < (S & Async & Abort[SqlException])
+    )(using Frame): A < (S & Async & Abort[SqlException]) =
+        // Unsafe: the flag is written in the reserving step and read by the finalizer; pool.unreserve CASes the ring's in-flight count.
+        Sync.Unsafe.defer(AtomicBoolean.Unsafe.init(false)).flatMap { reserved =>
+            resolvingOnce(_ => Sync.Unsafe.defer(if reserved.get() then pool.unreserve(netKey)))(body(reserved))
+        }
 
     private def connectAndRun[A, S](
         address: SqlConfig.Address,
@@ -483,13 +513,12 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
         custody: Connection.Custody
     )(op: C => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // Custody is owned by [[acquireAndRun]] and the factory has already claimed the connection into it; onLease's
-        // `take` hands ownership to decideExit on the success edge.
+        // `take` hands ownership to decideExit as the exit registers.
         connect(address, password, config).flatMap { conn =>
-            onLease(netKey, conn, config) {
-                Sync.Unsafe.defer(custody.take())
-                    .andThen(Log.debug(
-                        s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
-                    ))
+            onLease(netKey, conn, config, custody) {
+                Log.debug(
+                    s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
+                )
                     .andThen(metrics.recordAcquire)
                     .andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
                     .andThen(op(conn))
@@ -527,7 +556,7 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * probe re-enters the loop under the same `acquireTimeout` budget the in-transit path uses, which is what
       * [[withinAcquireBudget]] exists to share.
       */
-    private def acquireOrReserve(netKey: SqlConnectionPool.Endpoint, config: SqlConfig)(using
+    private def acquireOrReserve(netKey: SqlConnectionPool.Endpoint, config: SqlConfig, reserved: AtomicBoolean.Unsafe)(using
         Frame
     ): Maybe[C] < (Async & Abort[SqlException]) =
         // Claim a polled connection into the lease's custody in the SAME unsafe block that polls it: the poll vacated the ring
@@ -553,7 +582,11 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                                         case Absent => ()
                                     end match
                                     RingAttempt.Took(conn)
-                                case Absent => if pool.tryReserve(netKey) then RingAttempt.Reserved else RingAttempt.InTransit
+                                case Absent =>
+                                    if pool.tryReserve(netKey) then
+                                        reserved.set(true)
+                                        RingAttempt.Reserved
+                                    else RingAttempt.InTransit
                     }.flatMap {
                         case RingAttempt.Took(conn) =>
                             healthy(conn, config).flatMap {
@@ -716,7 +749,10 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
       * than by how the finalizers happen to be arranged, which is the property the rest of this file relies on: no double-release into the ring,
       * and no double-destroy.
       */
-    private def resolvingOnce[A, S](finish: Maybe[Result.Error[Any]] => Unit < Sync)(
+    private def resolvingOnce[A, S](
+        finish: Maybe[Result.Error[Any]] => Unit < Sync,
+        claim: AllowUnsafe ?=> Unit = SqlConnectionPool.claimNothing
+    )(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // Unsafe: a plain flag, read and written only by the resolution path below.
@@ -726,21 +762,38 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                     case true  => finish(error)
                     case false => ()
                 }
-            Scope.run(Scope.ensure(error => once(error)).andThen(body))
+            Scope.run(registeringExit(error => once(error), claim).andThen(body))
         }
 
-    /** Registers the exit decision for one lease.
+    /** Registers a lease's exit on the innermost scope and runs `claim` in the same step.
+      *
+      * One step on purpose: a poll between would let a stop register the exit against a custody the claim never took,
+      * so the orphan finalizer and the exit would both own the connection.
+      */
+    private def registeringExit(exit: Maybe[Result.Error[Any]] => Unit < Sync, claim: AllowUnsafe ?=> Unit)(using
+        Frame
+    ): Unit < (Scope & Sync) =
+        ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+            // Unsafe: registering as an effect would put the registration in a step of its own. `claim` is an
+            // `AllowUnsafe ?=> Unit` so the custody take it carries runs under the AllowUnsafe this block supplies.
+            Sync.Unsafe.defer {
+                finalizer.ensureUnsafe(exit)
+                claim
+            }
+        }
+
+    /** Registers the exit decision for one lease and takes the connection into it.
       *
       * The permit is returned by the enclosing [[withSlot]], which fires unconditionally; this owns only the connection's fate. Do not offer
       * the permit back here as well or the slot channel over-fills past `maxConnections`.
       */
-    private def onLease[A, S](netKey: SqlConnectionPool.Endpoint, conn: C, config: SqlConfig)(
+    private def onLease[A, S](netKey: SqlConnectionPool.Endpoint, conn: C, config: SqlConfig, custody: Connection.Custody)(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         // The logger is captured now, inside whatever Log.let scope is in force, because the resolution runs after
         // the Local context has unwound and would otherwise log to a different sink.
         Log.use { logger =>
-            resolvingOnce(error => decideExit(netKey, conn, config, logger, error))(body)
+            resolvingOnce(error => decideExit(netKey, conn, config, logger, error), custody.take())(body)
         }
 
     /** Decides what happens to `conn` now that its lease has ended, and is shared by the [[onLease]] and [[acquireScoped]] paths so a
@@ -890,25 +943,22 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
             def held(using Frame): Unit < Async =
                 metrics.recordAcquire.andThen(leaseClock.elapsed.flatMap(d => metrics.recordLeaseAcquired(d.toMillis)))
             withCustody { custody =>
-                acquireOrReserve(netKey, config).map {
-                    case Present(conn) =>
-                        Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
-                            .andThen(Sync.Unsafe.defer(custody.take()))
-                            .andThen(held).andThen(conn)
-                    case Absent =>
-                        // Two lifetimes: `resolvingOnce` releases the reservation on every exit, while the connection's exit
-                        // registers on the caller's scope (outside it), so it does not fire the moment the connection is produced.
-                        // Unsafe: pool.unreserve CASes the ring's in-flight count, an AllowUnsafe pool operation.
-                        resolvingOnce(_ => Sync.Unsafe.defer(pool.unreserve(netKey)))(
-                            connect(address, password, config)
-                        ).map { conn =>
-                            Scope.ensure(error => decideExit(netKey, conn, config, logger, error))
-                                .andThen(Sync.Unsafe.defer(custody.take()))
-                                .andThen(Log.debug(
+                // Two lifetimes: `reserving` releases the reservation when the connection is in hand, while the connection's
+                // exit registers on the caller's scope (outside it), so it does not fire the moment the connection is produced.
+                // The custody covers the connection between the two.
+                reserving(netKey) { reserved =>
+                    acquireOrReserve(netKey, config, reserved).map {
+                        case Present(conn) => conn
+                        case Absent        =>
+                            connect(address, password, config).map { conn =>
+                                Log.debug(
                                     s"kyo.sql: opened connection id=${conn.id} address=${Render.asString(address)} tls=${config.tls.isDefined}"
-                                ))
-                                .andThen(held).andThen(conn)
-                        }
+                                ).andThen(conn)
+                            }
+                    }
+                }.map { conn =>
+                    registeringExit(error => decideExit(netKey, conn, config, logger, error), custody.take())
+                        .andThen(held).andThen(conn)
                 }
             }
         }
@@ -917,6 +967,9 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
 end SqlConnectionPool
 
 private[kyo] object SqlConnectionPool:
+
+    /** The claim of a resolution that takes nothing into its exit, shared so the default allocates nothing per lease. */
+    private val claimNothing: AllowUnsafe ?=> Unit = ()
 
     /** What makes two idle connections interchangeable: the same wire, opened under the same transport security.
       *

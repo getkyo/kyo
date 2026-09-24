@@ -61,28 +61,25 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                         // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
                         // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
                         //
-                        // The inspect is retried rather than asked once. Removal is asynchronous: the scope's `remove` returns when the
-                        // daemon has accepted it, not when the container is gone, so a single immediate inspect can still find a container
-                        // whose removal already succeeded (observed as a leaf failing on a container reported Running with no teardown
-                        // warning logged for it). Retrying does not weaken the check, which still demands the container be gone; it only
-                        // stops the demand being made before the daemon could have met it. A container that really leaked is still there
-                        // after the whole window, since nothing else is going to remove it.
-                        def goneWithin(s: Container.Summary, attemptsLeft: Int): Maybe[Container.Summary] < (Async & Abort[Any]) =
-                            Abort.run[ContainerException](backend.state(s.id)).map {
-                                case Result.Failure(_: ContainerMissingException) => Maybe.empty[Container.Summary]
-                                case _                                            =>
-                                    if attemptsLeft <= 0 then Maybe(s)
-                                    else Clock.sleep(100.millis).andThen(goneWithin(s, attemptsLeft - 1))
-                            }
-                        Kyo.foreach(candidates)(s => goneWithin(s, attemptsLeft = 20)).map { results =>
-                            val leaked = results.flatMap(m => Chunk.from(m.toList))
-                            if leaked.isEmpty then Kyo.unit
-                            else
-                                fail(
+                        // Removal is asynchronous: the scope's `remove` returns when the daemon has accepted it, not when the
+                        // container is gone, and under load the daemon takes seconds over it.
+                        // The check waits on the daemon through the leaf's barrier
+                        // rather than a fixed window, and still demands every candidate be gone: a container that really leaked
+                        // never goes, since nothing else is going to remove it.
+                        def stillHere: Chunk[Container.Summary] < (Async & Abort[Any]) =
+                            Kyo.foreach(candidates) { s =>
+                                Abort.run[ContainerException](backend.state(s.id)).map {
+                                    case Result.Failure(_: ContainerMissingException) => Chunk.empty[Container.Summary]
+                                    case _                                            => Chunk(s)
+                                }
+                            }.map(_.flattenChunk)
+                        assertEventually {
+                            stillHere.map { leaked =>
+                                leaked.isEmpty || fail(
                                     s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
                                         leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
                                 )
-                            end if
+                            }
                         }
                     }
                 }
