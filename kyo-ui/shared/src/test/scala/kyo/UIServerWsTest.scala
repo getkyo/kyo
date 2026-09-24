@@ -866,7 +866,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     private def frameAfterClick(app: UI)(using Frame): Maybe[String] < (Async & Abort[Throwable]) =
         for
             captured <- AtomicRef.init(Absent: Maybe[String])
-            _ <- Scope.run {
+            _        <- Scope.run {
                 HttpWebSocket.connect(
                     (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
                     (clientWs: HttpWebSocket) =>
@@ -875,7 +875,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
                             clickEvent = UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent))
                             _     <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](clickEvent)))
                             frame <- clientWs.take()
-                            _ <- captured.set(frame match
+                            _     <- captured.set(frame match
                                 case HttpWebSocket.Payload.Text(data) => Present(data)
                                 case _                                => Absent)
                         yield ()
@@ -887,7 +887,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
     // notNative: WS-behavior leaf; see class scaladoc for RI-001 rationale.
     "navigate: a click handler's command reaches the client as a Navigate op".notNative in {
         for
-            ref <- Signal.initRef("static")
+            ref  <- Signal.initRef("static")
             data <- frameAfterClick(UI.div(
                 UI.button("Go").id("btn").onClick(UI.navigate("/docs/next?tab=2#top")),
                 ref.map(v => UI.span(v))
@@ -901,7 +901,7 @@ class UIServerWsTest extends kyo.test.Test[Any]:
         // path before it put nothing on the socket.
         val refused = Chunk("//evil.example", "https://x", "/\\evil.example", "/\t/evil.example", "relative/path", "")
         for
-            ref <- Signal.initRef("static")
+            ref  <- Signal.initRef("static")
             data <- frameAfterClick(UI.div(
                 UI.button("Go").id("btn").onClick(Kyo.foreachDiscard(refused)(UI.navigate(_)).andThen(UI.navigate("/ok"))),
                 ref.map(v => UI.span(v))

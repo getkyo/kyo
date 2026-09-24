@@ -2032,7 +2032,7 @@ object UI:
             def sandbox(tokens: String*): Iframe = copy(sandbox = Present(tokens.mkString(" ")))
 
             /** Shows `html` as the frame's document instead of loading `src`. */
-            def srcdoc(html: String): Iframe = copy(srcdoc = Present(html))
+            def srcdoc(html: String): Iframe                 = copy(srcdoc = Present(html))
             def srcdoc(html: Signal[String]): Reactive[Self] =
                 given Frame = frame
                 Reactive[Self](html.map(s => this.srcdoc(s): UI))
