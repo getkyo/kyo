@@ -9,7 +9,7 @@ class BrowserSessionTest extends BrowserTest:
 
     "cookies set in one Browser.run do not leak into the next run on the same shared Chrome" in {
         withBrowserOnLocalhost {
-            Browser.setCookie("session-cookie", "v1", "localhost")
+            Browser.setCookie("session-cookie", "v1", "127.0.0.1")
         }.andThen {
             withBrowserOnLocalhost {
                 Browser.cookies.map { cs =>

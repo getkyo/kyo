@@ -1,6 +1,5 @@
 package kyo
 
-import scala.annotation.publicInBinary
 import scala.quoted.*
 
 /** Resolves a flag at compile time and inlines the result as a constant.
@@ -14,7 +13,7 @@ import scala.quoted.*
   * Stricter than `Flag.Reader.boolean`, which reads anything other than "true" as false: a flag resolved at compile time does not show up
   * in `Flag.dump()`, so `enabled=yes` fails the build rather than becoming a feature that is quietly off.
   */
-@publicInBinary private[kyo] object CompileTimeFlag:
+private[kyo] object CompileTimeFlag:
 
     inline def boolean(inline name: String, inline default: Boolean): Boolean = ${ booleanImpl('name, 'default) }
 
