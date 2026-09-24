@@ -3327,8 +3327,9 @@ lazy val `kyo-compat-tests` =
             ClassNameCheck.classNameGroup := Some("kyo-compat"),
             release17,
             libraryDependencies += "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
-            scalaVersion                           := scala33Version,
-            crossScalaVersions                     := List(scala33Version),
+            // No version pin: this anchor does not publish, and kyo-compat-future, the binding it
+            // compiles against, follows the build default. Pinning it to 3.3 read that binding's 3.9
+            // TASTy with a 3.3 compiler, which does not compile.
             scalacOptions += "-Xmax-inlines:1024",
             publish / skip := true,
             mimaCheck(false),
