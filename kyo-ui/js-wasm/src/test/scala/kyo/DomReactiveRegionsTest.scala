@@ -180,6 +180,22 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
         }
     }
 
+    "replacing a select's options keeps its value when an option still carries it" in {
+        val root = host(
+            s"<select><!--kyo-rs:$One--><option value='a'>A</option><option value='b'>B</option><!--kyo-re:$One--></select>"
+        )
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                _       <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value = "b")
+                _       <- regions.replace(One, "<option value='a'>A</option><option value='b'>B</option><option value='c'>C</option>")
+                kept    <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+                _       <- regions.replace(One, "<option value='x'>X</option><option value='y'>Y</option>")
+                dropped <- Sync.defer(root.querySelector("select").asInstanceOf[dom.html.Select].value)
+            yield assert((kept, dropped) == ("b", "x"))
+        }
+    }
+
     "outer replacement unregisters removed nested ranges and registers new nested ranges" in {
         val root = host(
             s"<!--kyo-rs:$Outer--><div><!--kyo-rs:$Old-->old<!--kyo-re:$Old--></div><!--kyo-re:$Outer-->"
