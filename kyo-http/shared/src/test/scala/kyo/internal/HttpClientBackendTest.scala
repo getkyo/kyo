@@ -843,6 +843,55 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     end withRawPeer
 
+    // A peer that reads the first bytes of the request and closes without answering: the close reaches the client while it
+    // waits for the response headers.
+    private def withClosingPeer[A](test: Int => A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        Sync.Unsafe.defer {
+            kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
+                conn.inbound.takeFiber().onComplete(_ => conn.close())
+            }
+        }.map { fiber =>
+            fiber.safe.use { listener =>
+                Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen(test(listener.port))
+            }
+        }
+    end withClosingPeer
+
+    private val closedBufferedRoute  = HttpRoute.getRaw("closed").response(_.bodyText)
+    private val closedStreamingRoute = HttpRoute.getRaw("closed").response(_.bodyStream)
+
+    "a peer that closes before the response headers fails a buffered request with HttpConnectionClosedException" in {
+        Scope.run {
+            withClosingPeer { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/closed", Absent))
+                        Abort.run[HttpException](hc.sendWith(closedBufferedRoute, request)(identity)).map {
+                            case Result.Failure(_: HttpConnectionClosedException) => succeed
+                            case other => fail(s"Expected a typed HttpConnectionClosedException, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a peer that closes before the response headers fails a streaming request with HttpConnectionClosedException" in {
+        Scope.run {
+            withClosingPeer { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/closed", Absent))
+                        Abort.run[HttpException](hc.sendWith(closedStreamingRoute, request)(identity)).map {
+                            case Result.Failure(_: HttpConnectionClosedException) => succeed
+                            case other => fail(s"Expected a typed HttpConnectionClosedException, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private val nonAsciiRoute = HttpRoute.getRaw("start").response(_.bodyText)
 
     // Catches a client that follows a redirect to a host it cannot encode: without the check it spends a name resolution
