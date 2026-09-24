@@ -26,6 +26,7 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-sql] `Sql.from`, `Sql.insert`, `Sql.update` and `Sql.delete`: a `schemaName` parameter beside `tableName`, rendering the two as separately quoted identifiers (`"app"."invoice"`). Both are literals, so a qualified statement still folds at compile time.
 - [kyo-sql-postgres] `PostgresConfig.searchPath`: the schemas an unqualified name resolves against, sent in the startup packet so every pooled connection agrees and `SqlClient.reset` restores it.
 - [kyo-sql-sqlite] `SqliteAttach`: databases attached to every connection the client opens, so a schema-qualified name resolves on all of them.
+- [kyo-browser] `Browser.heapUsage` and `Browser.collectGarbage`: read the page's JS heap (`Browser.HeapUsage(used, total)`) and force a collection first, so a test measures retained memory rather than collection lag
 
 ### Removed
 

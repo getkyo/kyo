@@ -1268,4 +1268,38 @@ class SignalTest extends kyo.test.Test[Any]:
         }
     }
 
+    "waiter registration" - {
+
+        "interrupting a parked waiter deregisters it" in {
+            val waiterCount = 20
+            for
+                ref    <- Signal.initRef(0)
+                fibers <- Kyo.foreach(1 to waiterCount)(_ => Fiber.initUnscoped(ref.next))
+                _      <- assertEventually(ref.waiters.map(_ == waiterCount))
+                _      <- Kyo.foreachDiscard(fibers)(f => f.interrupt.andThen(f.getResult))
+                after  <- ref.waiters
+            yield assert(after == 0, s"$after waiters remain registered after all were interrupted")
+            end for
+        }
+
+        "a parked observe does not accumulate waiters across repair ticks" in {
+            val repairInterval = 1.second
+            val ticks          = 20
+            Clock.withTimeControl { control =>
+                for
+                    ref   <- Signal.initRef(0)
+                    fiber <- Fiber.initUnscoped(ref.observe(repairInterval)(_ => Kyo.unit))
+                    // Fenced on the pending sleeper, not assertEventually: a retry's backoff is a virtual sleep that
+                    // nothing here advances.
+                    _ <- control.awaitPendingSleepers(1)
+                    _ <- Kyo.foreachDiscard(1 to ticks) { _ =>
+                        control.advance(repairInterval).andThen(control.awaitPendingSleepers(1))
+                    }
+                    parked <- ref.waiters
+                    _      <- fiber.interrupt
+                yield assert(parked == 1, s"observer holds $parked registrations after $ticks repair ticks")
+            }
+        }
+    }
+
 end SignalTest

@@ -61,9 +61,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     end casStatus
 
     /** `run` arms the wakeup but only the boundary holds the
-      * join's frame, so the boundary leaves it here. A plain var, not volatile: written and read by the same thread within one slice.
+      * one the join's link carries, so the boundary leaves it here. A plain var, not volatile: written and read by the same thread within one slice.
       */
-    private var joinFrame: Frame = Frame.internal
+    private var parkWakeup: Result[Any, Any] => Any = null
 
     /** The fiber boundary: one region answering everything the scheduler owns, in `IOTask` not `Fiber` since its
       * decisions are scheduling, not effect interpretation.
@@ -94,9 +94,19 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                             finish(error)
                             Loop.done(())
                         case joinInput: Async.JoinInput[C] @unchecked =>
+                            // The wakeup `run` registers if this join parks. Made here so the link carries it: an awaited
+                            // promise that refuses the interrupt has it taken back and fired by the link, where it would
+                            // otherwise stay registered for as long as the promise lives. It drops its own link by identity.
+                            val wakeup: Result[Any, Any] => Any =
+                                new (Result[Any, Any] => Any):
+                                    self =>
+                                    def apply(r: Result[Any, Any]): Any =
+                                        discard(IOTask.this.remove(self))
+                                        Scheduler.get.schedule(IOTask.this)
+                                    end apply
                             // invoking it registers the interrupt cascade on this task before the promise's state is
                             // read, so an interrupt landing between still reaches what is awaited
-                            val promise = joinInput(this)
+                            val promise = joinInput(this, Present(wakeup))
                             promise.poll() match
                                 case null =>
                                     // A promise completed with a `null` value polls as a bare `null`, since `Success` and
@@ -104,7 +114,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     Loop.continue(null.asInstanceOf[Any])
                                 case Present(r) =>
                                     // already complete when the thunk ran, so drop the link it pre-registered
-                                    removeInterrupt(promise)(using joinInput.frame)
+                                    discard(remove(promise))
                                     Loop.continue(r)
                                 case Absent =>
                                     // Waiting: the operation is raised again bare with a stop requested, so the evaluator
@@ -112,7 +122,7 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                                     // around the join keep its release and close at its own end where the fiber resumes. The
                                     // wakeup is armed by `run`, not here: the remainder does not exist until the eval unwinds,
                                     // and arming early would let a second worker restore the same park and re-enter a spent scope.
-                                    parkOn(promise, joinInput.frame)
+                                    parkOn(promise, wakeup)
                                     discard(Safepoint.stop(Thread.currentThread(), this))
                                     // Under the join's own frame, carried by the input: a clause is never handed the frame of what it
                                     // answers, and the scheduler's own would lose where it stopped.
@@ -138,11 +148,11 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
     /** A method, not two writes at the site: a field a
       * lambda touches is promoted and renamed, while the platform handle finds `status` by name.
       */
-    private def parkOn(promise: IOPromise[?, ?], frame: Frame): Unit =
+    private def parkOn(promise: IOPromise[?, ?], wakeup: Result[Any, Any] => Any): Unit =
         // A CAS, not a store: an interrupt that landed on this slice holds the word, and the park is then released
         // at the slice's end rather than armed.
         discard(casStatus(Status.running(Thread.currentThread()), Status.parked(promise)))
-        joinFrame = frame
+        parkWakeup = wakeup
     end parkOn
 
     private def stopSlice(): Unit =
@@ -298,16 +308,18 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
                     // `abandon` can find it. Order matters (store the remainder, then arm): arming publishes the task,
                     // so everything a resuming worker reads must already be written.
                     curr = next
-                    // Read out before the wakeup closes over it.
-                    val frame = joinFrame
+                    // Read out before `Idle` publishes the task: a resumed slice can park again and overwrite it.
+                    val wakeup = parkWakeup
                     if casStatus(Status.parked(promise), Status.Idle) then
-                        promise.onComplete { _ =>
-                            removeInterrupt(promise)(using frame)
-                            Scheduler.get.schedule(this)
-                        }
+                        // Erasure-forced: the wakeup ignores the value, and the promise's type parameters are erased.
+                        promise.asInstanceOf[IOPromise[Any, Any]].onComplete(wakeup)
                         // Completed while this slice unwound, without an interrupt: no run was scheduled on its behalf,
                         // and the wakeup may never come, so claim it here.
                         if !isPending() && casStatus(Status.Idle, Status.Done) then abandon(Absent)
+                        // A release that ran before the wakeup was registered found nothing on the promise to take back,
+                        // so it is taken back here. A no-op once it has fired.
+                        val after = status
+                        if after.isInterrupted || after.isDone then discard(promise.remove(wakeup))
                     else release()
                     end if
                     Task.Done
@@ -364,8 +376,9 @@ sealed abstract private[kyo] class IOTask[E, A, S2] extends IOPromise[E, A < S2]
         status = Status.Done
         if !isNull(remainder) then
             Eval.release(remainder, new KyoException("fiber abandoned")(using Frame.internal), Tag[Async.Join]) {
-                // Invoking the input registers the link.
-                [C] => input => discard(input(this))
+                // Invoking the input registers the link. It carries no wakeup: the one registered at the join already has
+                // a link that carries it.
+                [C] => input => discard(input(this, Absent))
             }
         end if
         interruption.foreach(error => discard(settleInterrupt(error)))
