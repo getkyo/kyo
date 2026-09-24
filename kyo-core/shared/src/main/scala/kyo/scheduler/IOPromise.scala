@@ -347,7 +347,9 @@ private[kyo] object IOPromise:
         def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
-        /** The rest of the chain if this node is a link to a completed promise, else this node. */
+        /** This node, or the nodes below it when this one is an interrupt link whose target has completed, since such a link
+          * has nothing left to interrupt. The promise holding the chain is still pending; only the target is done.
+          */
         def dropIfDead: Pending[E, A] = this
 
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
