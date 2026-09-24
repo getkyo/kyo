@@ -89,6 +89,10 @@ Browser.runShared() {
 }
 ```
 
+If the shared Chrome dies, `runShared` relaunches it, but it retries a call only when the Chrome was lost before the body started (during the launch, the connection, or the tab setup). A Chrome lost while the body runs fails that call with `BrowserConnectionLostException`, and the next call gets the relaunched Chrome. The body is not rerun because it may already have changed state outside the browser: a click that reached your server would otherwise be sent twice. A test harness that wants to ride out a lost Chrome retries at the level that rebuilds that state.
+
+Several processes on one machine can share Chrome this way at once, for example two test JVMs, or a JVM and a Node run. Each Chrome's user-data directory is named after the process that launched it (`kyo-browser-<pid>-<random>`). The sweep each run performs at startup only kills Chromes whose launching process has exited.
+
 `Browser.run(wsUrl)` attaches to a browser that is already running (an existing Chrome, a Playwright launcher, a Docker container) by its DevTools WebSocket URL, instead of launching a new process.
 
 ```scala
@@ -132,7 +136,7 @@ Browser.Selector.dialog("Confirm")
 
 // Locators by visible content or form-control attributes
 Browser.Selector.text("Sign in")      // visible text (case-insensitive substring; pass exact = true for strict)
-Browser.Selector.label("Email")       // labelled control whose associated <label> text is "Email"
+Browser.Selector.label("Email")       // labelled control whose <label>'s own text is "Email" (a wrapped control's content left out)
 Browser.Selector.placeholder("you@…") // [placeholder="you@…"]
 Browser.Selector.title("More info")   // [title="More info"]
 Browser.Selector.testId("login-form") // [data-testid="login-form"]
@@ -141,6 +145,17 @@ Browser.Selector.testId("login-form") // [data-testid="login-form"]
 Browser.Selector.id("submit-btn") // #submit-btn
 Browser.Selector.css("form button.primary")
 ```
+
+A role builder's name is the element's accessible name, computed in the order a screen reader uses:
+
+| Source | Example | Name |
+|---|---|---|
+| `aria-labelledby` (each named element's text, joined by spaces) | `<span id="a">Billing</span><span id="b">address</span><input aria-labelledby="a b">` | `Billing address` |
+| `aria-label` | `<input aria-label="Search">` | `Search` |
+| a `<label for>`, then a wrapping `<label>`, each by its own text | `<label>Color <select>…</select></label>` | `Color` (the options are not part of it) |
+| the content: text for a button, link or heading; the value of an input button; an image's `alt` | `<input type="submit" value="Send">` | `Send` |
+
+A `<select>`, a `<textarea>` and a text input take no name from their content. Every name is whitespace-collapsed and trimmed before it is compared.
 
 ### String is a Selector
 
@@ -288,7 +303,7 @@ The read surface:
 | `boundingBox(selector)` | `Maybe[BoundingBox]` | Page-relative geometry |
 | `role(selector)` / `accessibleName(selector)` | `Maybe[String]` | ARIA role / accessible name from the AX tree |
 | `url` / `title` | `String` | Page-level location and `<title>` |
-| `readableContent` | `String` | Mozilla Readability extraction of the page's main content |
+| `readableContent` | `String` | Text of the page's main content, one line per block element, after a Readability-style strip of navigation, ads and other chrome |
 | `accessibilityNodes` | `Chunk[Browser.AxNode]` | Flat AX tree of the current frame |
 | `consoleLogs` / `consoleLogs(level)` | `Chunk[Browser.ConsoleMessage]` | Console buffer captured since the tab attached. `ConsoleMessage` carries `level: Browser.ConsoleLevel`, `text: String`, and the source frame; the level-filtered overload returns only matching messages |
 

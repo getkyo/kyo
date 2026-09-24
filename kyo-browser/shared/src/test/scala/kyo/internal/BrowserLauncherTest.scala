@@ -230,20 +230,14 @@ class BrowserLauncherTest extends BaseChromeTest:
         }
     }
 
-    // killOrphans PID kill verification. Spawn a sentinel whose argv matches the
-    // injected pgrep regex `user-data-dir=.*<unique-tag>`, call killOrphans(pattern), then poll
-    // until the sentinel pid is no longer alive (bounded retry).
-    //
-    // The unique tag (16 hex chars from a 64-bit random Long) gives a 2^64 collision space and
-    // ensures the regex matches ONLY this test's sentinel; not SharedChrome (whose argv contains
-    // `kyo-browser-NNNN` but NOT `kyo-browser-orphans-test-...`).
+    // A user-data-dir that names no owner comes from a launcher older than owner-named directories. Such a
+    // Chrome is left behind only when the process that launched it has exited, which leaves it adopted by
+    // pid 1. The sentinel is started by a shell that exits at once, so it is adopted the same way.
     //
     // Sentinel form: `sh -c 'true; sleep 30 # --user-data-dir=$pattern'`. Multi-statement script
     // prevents sh from exec-optimizing into sleep (a single-stmt `sh -c 'sleep 30'` would replace
-    // sh's argv with sleep's, losing the tag). Verified empirically on macOS before writing the
-    // test: `pgrep -f "user-data-dir=.*<tag>"` matches the sh PID for this form, does NOT match
-    // for the single-stmt form.
-    "killOrphans kills processes matching the kyo-browser user-data-dir pattern" in {
+    // sh's argv with sleep's, losing the tag), so `pgrep -f "user-data-dir=.*<tag>"` matches the sh PID.
+    "killOrphans kills an ownerless process whose launcher has exited" in {
         Scope.run {
             System.operatingSystem.map {
                 case System.OS.Windows =>
@@ -257,29 +251,218 @@ class BrowserLauncherTest extends BaseChromeTest:
                 case _ =>
                     for
                         n <- Random.nextLong
-                        uniqueId = f"$n%016x"
-                        pattern  = s"kyo-browser-orphans-test-$uniqueId"
-                        script   = s"true; sleep 30 # --user-data-dir=$pattern"
-                        proc        <- Command("sh", "-c", script).spawn
-                        pid         <- proc.pid
-                        aliveBefore <- isPidAlive(pid)
-                        _           <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
-                        killed      <- Loop(0) { attempt =>
-                            isPidAlive(pid).map { alive =>
-                                if !alive then Loop.done(true)
-                                else if attempt >= 5 then Loop.done(false)
-                                else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
-                            }
-                        }
+                        pattern = f"kyo-browser-orphans-test-$n%016x"
+                        script  = s"sh -c 'true; sleep 30 # --user-data-dir=$pattern' >/dev/null 2>&1 & echo $$!"
+                        pid     <- Command("sh", "-c", script).text.map(_.trim.toLong)
+                        _       <- Scope.ensure(Abort.run[CommandException](Command("kill", "-9", pid.toString).waitFor).unit)
+                        adopted <- awaitParent(pid, 1L)
+                        _       <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed  <- awaitDeath(pid)
                     yield
-                        assert(aliveBefore, s"sentinel pid=$pid should be alive before killOrphans")
-                        assert(killed, s"sentinel pid=$pid should be killed by killOrphans within ~250ms")
+                        assert(adopted, s"sentinel pid=$pid should be adopted by pid 1 once its launcher exits")
+                        assert(killed, s"sentinel pid=$pid has no owner and no live launcher, so the sweep should kill it")
                     end for
             }
         }
     }
 
+    // The same ownerless sentinel, started directly by this process: its launcher is alive, as a Chrome launched
+    // by an older kyo-browser in a concurrent run would be, so the sweep leaves it running.
+    "killOrphans spares an ownerless process whose launcher is alive" in {
+        Scope.run {
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
+                    }
+                case _ =>
+                    for
+                        n <- Random.nextLong
+                        pattern = f"kyo-browser-orphans-test-$n%016x"
+                        proc   <- Command("sh", "-c", s"true; sleep 30 # --user-data-dir=/nonexistent/$pattern").spawn
+                        pid    <- proc.pid
+                        _      <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed <- awaitDeath(pid)
+                    yield assert(!killed, s"sentinel pid=$pid has a live launcher and must survive the sweep")
+                    end for
+            }
+        }
+    }
+
+    // A Chrome whose owning run is still alive is not an orphan, even when another process runs the sweep: two
+    // test JVMs (or a JVM and a Node run) on one machine must not kill each other's Chrome. The sentinel's
+    // user-data-dir names a live owner (a second process this leaf holds open), so the sweep leaves it running.
+    "killOrphans spares a process whose user-data-dir names a live owner" in {
+        Scope.run {
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
+                    }
+                case _ =>
+                    for
+                        n        <- Random.nextLong
+                        owner    <- Command("sh", "-c", "true; sleep 30").spawn
+                        ownerPid <- owner.pid
+                        pattern = f"kyo-browser-$ownerPid-orphans-test-$n%016x"
+                        proc   <- Command("sh", "-c", s"true; sleep 30 # --user-data-dir=/nonexistent/$pattern").spawn
+                        pid    <- proc.pid
+                        _      <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed <- awaitDeath(pid)
+                    yield assert(!killed, s"sentinel pid=$pid names live owner pid=$ownerPid and must survive the sweep")
+                    end for
+            }
+        }
+    }
+
+    // The owner named by the user-data-dir has exited, so its Chrome is an orphan and the sweep kills it.
+    "killOrphans kills a process whose user-data-dir names an owner that has exited" in {
+        Scope.run {
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
+                    }
+                case _ =>
+                    for
+                        n          <- Random.nextLong
+                        owner      <- Command("true").spawn
+                        ownerPid   <- owner.pid
+                        _          <- owner.waitFor
+                        ownerAlive <- isPidAlive(ownerPid)
+                        pattern = f"kyo-browser-$ownerPid-orphans-test-$n%016x"
+                        proc   <- Command("sh", "-c", s"true; sleep 30 # --user-data-dir=/nonexistent/$pattern").spawn
+                        pid    <- proc.pid
+                        _      <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed <- awaitDeath(pid)
+                    yield
+                        assert(!ownerAlive, s"owner pid=$ownerPid should have exited before the sweep")
+                        assert(killed, s"sentinel pid=$pid names exited owner pid=$ownerPid and should be killed by the sweep")
+                    end for
+            }
+        }
+    }
+
+    // End to end: the sweep every run performs at startup leaves a Chrome launched by a live run reachable.
+    "killOrphans leaves the Chrome of a live launch reachable" in {
+        Scope.run {
+            SharedChrome.chromeConfig.map { cfg =>
+                BrowserLauncher.launch(cfg).map { wsUrl =>
+                    BrowserLauncher.killOrphans(BrowserLauncher.userDataDirPrefix, command = "pgrep").andThen {
+                        // `init` probes the connection with Browser.getVersion and fails if Chrome is gone.
+                        Scope.run(CdpBackend.init(wsUrl, cfg)).andThen(succeed("the launched Chrome answered after the sweep"))
+                    }
+                }
+            }
+        }
+    }
+
+    // An adopted process whose argv only mentions the pattern (a script naming it, not a Chrome flag) matches pgrep but
+    // is no Chrome of this launcher's, so the sweep leaves it alone even though no live process launched it.
+    "killOrphans spares an adopted process whose argv mentions the pattern without a user-data-dir flag" in {
+        Scope.run {
+            System.operatingSystem.map {
+                case System.OS.Windows =>
+                    Abort.run[Throwable](BrowserLauncher.killOrphans("kyo-browser-orphans-test-none", command = "pgrep")).map { result =>
+                        assert(result.isSuccess, s"killOrphans must be a silent no-op without pgrep, got $result")
+                    }
+                case _ =>
+                    for
+                        n <- Random.nextLong
+                        pattern = f"kyo-browser-orphans-test-$n%016x"
+                        script  = s"sh -c 'true; sleep 30 # grep user-data-dir=$pattern' >/dev/null 2>&1 & echo $$!"
+                        pid     <- Command("sh", "-c", script).text.map(_.trim.toLong)
+                        _       <- Scope.ensure(Abort.run[CommandException](Command("kill", "-9", pid.toString).waitFor).unit)
+                        adopted <- awaitParent(pid, 1L)
+                        _       <- BrowserLauncher.killOrphans(pattern, command = "pgrep")
+                        killed  <- awaitDeath(pid)
+                    yield
+                        assert(adopted, s"sentinel pid=$pid should be adopted by pid 1 once its launcher exits")
+                        assert(!killed, s"sentinel pid=$pid carries no --user-data-dir flag and must survive the sweep")
+                    end for
+            }
+        }
+    }
+
+    "userDataDir reads the owner pid from a launcher-created directory" in {
+        val args =
+            "/opt/chrome-headless-shell --remote-debugging-port=0 --enable-bidi --user-data-dir=/var/folders/zk/T/kyo-browser-4242-8316029 --headless=new --no-sandbox"
+        assert(BrowserLauncher.userDataDir(args) == BrowserLauncher.UserDataDir.Owned(4242L))
+    }
+
+    "userDataDir reads a directory given as the last argument and one with a random suffix of letters" in {
+        assert(BrowserLauncher.userDataDir("chrome --type=renderer --user-data-dir=/tmp/kyo-browser-77-aB3xYz") ==
+            BrowserLauncher.UserDataDir.Owned(77L))
+    }
+
+    "userDataDir reads a Windows directory" in {
+        assert(BrowserLauncher.userDataDir(
+            """chrome.exe --user-data-dir=C:\Users\me\AppData\Local\Temp\kyo-browser-901-123 --no-first-run"""
+        ) ==
+            BrowserLauncher.UserDataDir.Owned(901L))
+    }
+
+    "userDataDir is Unowned for a launcher directory that names no owner" in {
+        assert(BrowserLauncher.userDataDir("chrome --user-data-dir=/tmp/kyo-browser-kwDSnG --headless=new") ==
+            BrowserLauncher.UserDataDir.Unowned)
+        assert(BrowserLauncher.userDataDir("chrome --user-data-dir=/tmp/kyo-browser-orphans-test-00ff --headless=new") ==
+            BrowserLauncher.UserDataDir.Unowned)
+    }
+
+    "userDataDir is NotLaunched without a user-data-dir flag or with a directory the launcher does not create" in {
+        assert(BrowserLauncher.userDataDir("chrome --headless=new --no-sandbox") == BrowserLauncher.UserDataDir.NotLaunched)
+        assert(BrowserLauncher.userDataDir("") == BrowserLauncher.UserDataDir.NotLaunched)
+        assert(BrowserLauncher.userDataDir("sh -c true; sleep 30 # grep user-data-dir=kyo-browser-7-1") ==
+            BrowserLauncher.UserDataDir.NotLaunched)
+        assert(BrowserLauncher.userDataDir("chrome --user-data-dir=/home/me/profile-kyo-browser-7-1 --headless=new") ==
+            BrowserLauncher.UserDataDir.NotLaunched)
+    }
+
+    "processLine splits the parent pid from the argv" in {
+        assert(BrowserLauncher.processLine("    1 /opt/chrome --user-data-dir=/tmp/kyo-browser-7-1 --headless=new") ==
+            Present((1L, "/opt/chrome --user-data-dir=/tmp/kyo-browser-7-1 --headless=new")))
+        assert(BrowserLauncher.processLine("4242 sh -c true; sleep 30\n") == Present((4242L, "sh -c true; sleep 30")))
+    }
+
+    "processLine is Absent for an empty or malformed line" in {
+        assert(BrowserLauncher.processLine("") == Absent)
+        assert(BrowserLauncher.processLine("   \n") == Absent)
+        assert(BrowserLauncher.processLine("chrome --headless=new") == Absent)
+    }
+
+    "createTempDir names the directory after this process" in {
+        Scope.run {
+            for
+                dir <- BrowserLauncher.createTempDir
+                pid <- BrowserProcessId.current
+                owner = BrowserLauncher.userDataDir(s"chrome --user-data-dir=$dir")
+            yield assert(owner == BrowserLauncher.UserDataDir.Owned(pid), s"expected $dir to name owner $pid, got $owner")
+        }
+    }
+
     // --- helpers ---
+
+    /** Polls for up to ~250ms until the parent of `pid` is `parent`. Returns whether it was in that window. */
+    private def awaitParent(pid: Long, parent: Long)(using Frame): Boolean < (Async & Abort[BrowserConnectionException]) =
+        Loop(0) { attempt =>
+            Abort.recover[CommandException]((_: CommandException) => "") {
+                Command("ps", "-o", "ppid=", "-p", pid.toString).text
+            }.map { output =>
+                if output.trim.toLongOption.contains(parent) then Loop.done(true)
+                else if attempt >= 5 then Loop.done(false)
+                else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+            }
+        }
+
+    /** Polls for up to ~250ms until `pid` is gone. Returns whether it died in that window. */
+    private def awaitDeath(pid: Long)(using Frame): Boolean < (Async & Abort[BrowserConnectionException]) =
+        Loop(0) { attempt =>
+            isPidAlive(pid).map { alive =>
+                if !alive then Loop.done(true)
+                else if attempt >= 5 then Loop.done(false)
+                else Async.delay(50.millis)(Kyo.unit).andThen(Loop.continue(attempt + 1))
+            }
+        }
 
     /** Cross-platform check: is the given OS PID still alive? Uses `kill -0 <pid>` which sends signal 0 (no-op) and exits 0 if the process
       * exists, non-zero otherwise. Available on POSIX systems.

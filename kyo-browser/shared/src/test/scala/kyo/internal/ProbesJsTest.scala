@@ -137,7 +137,8 @@ class ProbesJsTest extends kyo.BaseBrowserTest:
             assert(js.contains("'footer'"), s"missing 'footer' exclusion in: $js")
             assert(js.contains("article"), s"missing article preference in: $js")
             assert(js.contains("main"), s"missing main preference in: $js")
-            assert(js.contains(".innerText"), s"missing .innerText extraction in: $js")
+            assert(!js.contains(".innerText"), s"innerText of the unrendered clone merges blocks, yet the script reads it: $js")
+            assert(js.contains("walk(article || clone.body)"), s"missing the walk of the chosen root in: $js")
         }
 
         "visibilityExprJs escapes single quotes in selector value to prevent JS-string break" in {
