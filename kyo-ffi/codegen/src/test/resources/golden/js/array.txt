@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class ArrayBindingsImpl extends ArrayBindings:
     import ArrayBindingsImpl.*
+    ArrayBindingsImpl.loaded()
 
     def sum(xs: Array[Int], n: Int)(using kyo.AllowUnsafe): Int =
         val retVal = facade.sum(xs, n).asInstanceOf[Int]
@@ -20,6 +21,7 @@ end ArrayBindingsImpl
 
 object ArrayBindingsImpl:
     AbiCheck.verify(1, "kyo.example.ArrayBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_arr",
         Seq(

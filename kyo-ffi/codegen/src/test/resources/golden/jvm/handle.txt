@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class HandleBindingsImpl extends HandleBindings:
     import HandleBindingsImpl.*
+    HandleBindingsImpl.loaded()
 
     def open(path: String)(using kyo.AllowUnsafe): Ffi.Handle[kyo.example.golden.MyHandle] =
         val __kyoScratch = Scratch.currentFor("kyo.example.HandleBindings", Scratch.configuredSize)
@@ -35,6 +36,7 @@ end HandleBindingsImpl
 
 object HandleBindingsImpl:
     AbiCheck.verify(1, "kyo.example.HandleBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_handle")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

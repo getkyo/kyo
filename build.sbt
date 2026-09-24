@@ -1615,7 +1615,10 @@ lazy val `kyo-ffi-it` =
                     cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get,
                     cHeaders = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.h").get
                 )
-            )
+            ),
+            // Declared as a system library that no host installs, so `Ffi.load`'s failure path runs against a real
+            // generated binding.
+            ffiSystemLibraries += "kyo_it_absent"
         )
         .jvmSettings(
             mimaCheck(false),

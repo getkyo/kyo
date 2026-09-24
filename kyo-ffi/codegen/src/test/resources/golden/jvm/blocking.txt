@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class BlockingBindingsImpl extends BlockingBindings:
     import BlockingBindingsImpl.*
+    BlockingBindingsImpl.loaded()
 
     def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -29,6 +30,7 @@ end BlockingBindingsImpl
 
 object BlockingBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BlockingBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_blocking")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

@@ -25,7 +25,8 @@ class WritePumpTest extends Test:
     given Frame = Frame.internal
 
     private val transportConfig = kyo.net.NetConfig.default
-    private val sock            = Ffi.load[SocketBindings]
+    // Lazy: Ffi.load opens the library, which exists only where assumePoller lets a leaf run.
+    private lazy val sock = Ffi.load[SocketBindings]
 
     private def assumePoller(): Unit =
         PosixTestSockets.assumePoller()

@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class MultiValueBindingsImpl extends MultiValueBindings:
     import MultiValueBindingsImpl.*
+    MultiValueBindingsImpl.loaded()
 
     def readInto(fd: Int, buf: Buffer[Byte])(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[kyo.example.golden.ReadResult, Any] =
         val bufU8 = kyo.ffi.internal.FfiUnsafe.expect[JsRawSegment](buf.raw.asInstanceOf[AnyRef], classOf[JsRawSegment], "JsRawSegment on JS", "kyo.example.MultiValueBindings", "readInto").u8a
@@ -24,6 +25,7 @@ end MultiValueBindingsImpl
 
 object MultiValueBindingsImpl:
     AbiCheck.verify(1, "kyo.example.MultiValueBindings")
+    private def loaded(): Unit = ()
     private val readResultKoffiType: js.Dynamic = KoffiFacade.struct("ReadResult", js.Dynamic.literal("bytesRead" -> "int".asInstanceOf[js.Any], "eof" -> "int".asInstanceOf[js.Any]))
     private val facade = NativeFacade.load(
         "kyo_mv",

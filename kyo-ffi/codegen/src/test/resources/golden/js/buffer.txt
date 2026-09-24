@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class BufferBindingsImpl extends BufferBindings:
     import BufferBindingsImpl.*
+    BufferBindingsImpl.loaded()
 
     def process(buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Int, Any] =
         val bufU8 = kyo.ffi.internal.FfiUnsafe.expect[JsRawSegment](buf.raw.asInstanceOf[AnyRef], classOf[JsRawSegment], "JsRawSegment on JS", "kyo.example.BufferBindings", "process").u8a
@@ -23,6 +24,7 @@ end BufferBindingsImpl
 
 object BufferBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BufferBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_buf",
         Seq(

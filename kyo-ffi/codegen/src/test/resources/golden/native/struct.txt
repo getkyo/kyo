@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class StructBindingsImpl extends StructBindings:
     import `StructBindings_externs` as ext
+    StructBindingsImpl.loaded()
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
         Zone.acquire { implicit z =>
@@ -26,6 +27,7 @@ end StructBindingsImpl
 object StructBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.StructBindings")
+    private def loaded(): Unit = ()
     StructAbiCheck.verifyByteSize("kyo.example.StructBindings", "Point", 8L, sizeof[CStruct2[CInt, CInt]].toLong)
 end StructBindingsImpl
 

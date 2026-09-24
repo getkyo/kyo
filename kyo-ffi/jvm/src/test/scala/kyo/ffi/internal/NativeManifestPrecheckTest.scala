@@ -16,7 +16,7 @@ import kyo.ffi.Test
   *
   * The same holds for a library the manifest declares for OTHER platforms only, which is what `osTargets`
   * produces: it is not bundled here, so the load must fail here, catchably, rather than passing the pre-check
-  * and dying in the companion initializer at the first call. It must still succeed when the library is
+  * and dying in the companion initializer. It must still succeed when the library is
   * resolvable by another route, since a native absent from the jar can be supplied by
   * `-Dkyo.ffi.<id>.path` or installed on the system.
   *

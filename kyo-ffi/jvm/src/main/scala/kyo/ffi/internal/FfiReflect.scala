@@ -24,7 +24,10 @@ object FfiReflect:
                 try
                     val clazz = Class.forName(name)
                     val ctor  = clazz.getDeclaredConstructor()
-                    Some(() => ctor.newInstance().asInstanceOf[AnyRef])
+                    Some(() =>
+                        try ctor.newInstance().asInstanceOf[AnyRef]
+                        catch case e: java.lang.reflect.InvocationTargetException => throw e.getCause
+                    )
                 catch
                     case _: ClassNotFoundException => None
                     case _: NoSuchMethodException  =>

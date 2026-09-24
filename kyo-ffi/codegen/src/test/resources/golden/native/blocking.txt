@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BlockingBindingsImpl extends BlockingBindings:
     import `BlockingBindings_externs` as ext
+    BlockingBindingsImpl.loaded()
 
     def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -25,6 +26,7 @@ end BlockingBindingsImpl
 object BlockingBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.BlockingBindings")
+    private def loaded(): Unit = ()
 end BlockingBindingsImpl
 
 @extern

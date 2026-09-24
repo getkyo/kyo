@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
+    WithErrorBindingsImpl.loaded()
 
     def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =
         val __kyoScratch = Scratch.currentFor("kyo.example.WithErrorBindings", Scratch.configuredSize)
@@ -26,6 +27,7 @@ end WithErrorBindingsImpl
 
 object WithErrorBindingsImpl:
     AbiCheck.verify(1, "kyo.example.WithErrorBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_we")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

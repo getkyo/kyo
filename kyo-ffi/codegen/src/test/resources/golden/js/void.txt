@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class VoidBindingsImpl extends VoidBindings:
     import VoidBindingsImpl.*
+    VoidBindingsImpl.loaded()
 
     def noop()(using kyo.AllowUnsafe): Unit =
         val _ = facade.noop()
@@ -20,6 +21,7 @@ end VoidBindingsImpl
 
 object VoidBindingsImpl:
     AbiCheck.verify(1, "kyo.example.VoidBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_void",
         Seq(

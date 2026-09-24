@@ -287,6 +287,19 @@ private[emitters] object EmitterBase:
     def abiCheckLine(fqcn: String): String =
         s"""    AbiCheck.verify($AbiVersion, "$fqcn")"""
 
+    /** The impl class's constructor statement that initializes its companion, where the library load and the ABI checks live.
+      *
+      * A companion object initializes on first access on every platform, and no method runs on construction, so without this `Ffi.load`
+      * would return before loading anything: its `LibraryNotFound` and `AbiMismatch` would surface from the first binding call instead,
+      * and the load's cost would land inside whatever budget covers that call (a connection open's timeout, for one).
+      */
+    def companionInitLine(simpleName: String): String =
+        s"    ${simpleName}Impl.loaded()\n"
+
+    /** The companion member [[companionInitLine]] calls. Empty: the companion's initializer, which the call forces, is the work. */
+    val companionLoadedDef: String =
+        "    private def loaded(): Unit = ()\n"
+
     /** Indent a method body block by the given number of spaces, preserving blank lines as-is. */
     def indentBody(body: String, spaces: Int = 8): String =
         val prefix = " " * spaces
@@ -337,6 +350,12 @@ private[emitters] object EmitterBase:
 
         protected def abiCheckLine(fqcn: String): String =
             EmitterBase.abiCheckLine(fqcn)
+
+        protected def companionInitLine(simpleName: String): String =
+            EmitterBase.companionInitLine(simpleName)
+
+        protected def companionLoadedDef: String =
+            EmitterBase.companionLoadedDef
 
         protected def indentBody(body: String, spaces: Int = 8): String =
             EmitterBase.indentBody(body, spaces)

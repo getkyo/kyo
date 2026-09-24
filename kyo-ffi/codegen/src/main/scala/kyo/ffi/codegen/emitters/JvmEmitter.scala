@@ -55,6 +55,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         val sb = new StringBuilder
         sb ++= s"final class ${spec.simpleName}Impl extends ${spec.simpleName}:\n"
         sb ++= s"    import ${spec.simpleName}Impl.*\n"
+        sb ++= companionInitLine(spec.simpleName)
         spec.methods.foreach { m =>
             sb ++= "\n"
             sb ++= emitMethod(m, spec)
@@ -1060,6 +1061,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         sb ++= s"object ${spec.simpleName}Impl:\n"
         sb ++= abiCheckLine(spec.fqcn)
         sb ++= "\n"
+        sb ++= companionLoadedDef
         sb ++= s"""    private val lib      = NativeLoader.load("${spec.library}")\n"""
         sb ++= "    private val linker   = Linker.nativeLinker()\n"
         sb ++= """    private val capture  = Linker.Option.captureCallState("errno")""" + "\n"

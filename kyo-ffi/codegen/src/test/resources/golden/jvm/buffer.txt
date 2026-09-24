@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class BufferBindingsImpl extends BufferBindings:
     import BufferBindingsImpl.*
+    BufferBindingsImpl.loaded()
 
     def process(buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Int, Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -27,6 +28,7 @@ end BufferBindingsImpl
 
 object BufferBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BufferBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_buf")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

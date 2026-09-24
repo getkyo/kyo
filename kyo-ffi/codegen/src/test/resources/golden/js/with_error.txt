@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
+    WithErrorBindingsImpl.loaded()
 
     def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =
         val retVal = facade.failable(x).asInstanceOf[Int]
@@ -22,6 +23,7 @@ end WithErrorBindingsImpl
 
 object WithErrorBindingsImpl:
     AbiCheck.verify(1, "kyo.example.WithErrorBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_we",
         Seq(

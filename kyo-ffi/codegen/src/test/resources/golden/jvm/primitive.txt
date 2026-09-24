@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class PrimitiveBindingsImpl extends PrimitiveBindings:
     import PrimitiveBindingsImpl.*
+    PrimitiveBindingsImpl.loaded()
 
     def add(a: Int, b: Int)(using kyo.AllowUnsafe): Int =
         val __kyoScratch = Scratch.currentFor("kyo.example.PrimitiveBindings", Scratch.configuredSize)
@@ -24,6 +25,7 @@ end PrimitiveBindingsImpl
 
 object PrimitiveBindingsImpl:
     AbiCheck.verify(1, "kyo.example.PrimitiveBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_prim")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
