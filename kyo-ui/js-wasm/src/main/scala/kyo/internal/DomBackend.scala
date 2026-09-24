@@ -149,10 +149,9 @@ private[kyo] object DomBackend:
                     if el != null then
                         discard(el.asInstanceOf[js.Dynamic].scrollIntoView(js.Dynamic.literal(behavior = "smooth", block = "start")))
                 case UICommands.Command.Navigate(path) =>
-                    val location = js.Dynamic.global.location
-                    val url      = js.Dynamic.newInstance(js.Dynamic.global.URL)(path, location.href)
-                    if url.origin.asInstanceOf[String] == location.origin.asInstanceOf[String] then
-                        discard(location.assign(url.href))
+                    val location = dom.window.location
+                    val url      = new dom.URL(path, location.href)
+                    if url.origin == location.origin then location.assign(url.href)
         }
 
     /** Publishes a typed drag resolution for the local drag runtime without retaining listeners or
