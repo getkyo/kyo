@@ -328,6 +328,35 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "click whose handler navigates while settlement is waiting returns on the new page" in {
+        // A framework handler that navigates after a round trip (kyo-ui's UI.navigate over its WebSocket) replaces the
+        // document while mutation settlement is still evaluating on it. The button has no navigation intent the actionability
+        // gate could see, so the click takes the settlement path. The navigation starts from the post queue settlement awaits,
+        // so it always lands inside that evaluation.
+        withBrowserOnLocalhost {
+            Browser.eval("window.location.host").map { host =>
+                val target = s"http://$host/json"
+                val install =
+                    s"""(() => {
+                       |  const b = document.createElement('button');
+                       |  b.id = 'b';
+                       |  b.textContent = 'go';
+                       |  b.addEventListener('click', () => {
+                       |    window._kyoPostQ = { then() { window.location.assign('$target'); } };
+                       |  });
+                       |  document.body.appendChild(b);
+                       |  return 'ok';
+                       |})()""".stripMargin
+                for
+                    _   <- Browser.eval(install)
+                    _   <- Browser.click(Browser.Selector.id("b"))
+                    url <- Browser.url
+                yield assert(url == target, s"expected the click to return on '$target' but the page is '$url'")
+                end for
+            }
+        }
+    }
+
     // fill that triggers a debounced validation awaits the validation tick.
     // The oninput handler defers a DOM mutation by 50ms; the validation output div gets populated asynchronously after the
     // fill completes. With mutation settlement the first read of the validation text observes 'valid'.
