@@ -773,15 +773,22 @@ private[kyo] object HtmlRenderer:
                 ta.placeholder.foreach(p => w(sb, s""" placeholder="${esc(p)}""""))
             case sel: Select =>
                 boolAttr(sb, "disabled", sel.disabled)
-                // HTML has no `value` attribute on <select>: one is ignored and the first option shows. The value is set as the DOM
-                // property once the options are in place (applyJsProps runs on the whole inserted subtree), which also reaches options
-                // rendered from a signal. Without a value, an option's own `selected` attribute chooses.
+                // The browser ignores a `value` attribute on <select> and shows the first option, so the attribute only mirrors the
+                // value for readers of the markup. What selects is the DOM property, set once the options are in place (applyJsProps
+                // runs on the whole inserted subtree), which also reaches options rendered from a signal. Without a value, an option's
+                // own `selected` attribute chooses.
+                def selValue(s: String): Unit = w(sb, s""" value="${esc(s)}" data-kyo-prop-value="${esc(s)}"""")
                 sel.value match
-                    case Present(Bound.Const(s)) => w(sb, s""" data-kyo-prop-value="${esc(s)}"""")
-                    case Present(Bound.Ref(ref)) =>
-                        for s <- ref.get
-                        yield w(sb, s""" data-kyo-prop-value="${esc(s)}"""")
-                    case _ => ()
+                    case Present(Bound.Const(s)) => selValue(s)
+                    case Present(Bound.Ref(ref)) => ref.get.map(selValue)
+                    case _                       =>
+                        val selected = Maybe.fromOption(sel.children.toSeq.collectFirst {
+                            case opt: Opt if opt.selected == Present(true) =>
+                                opt.value.getOrElse("")
+                        })
+                        selected match
+                            case Present(v) if v.nonEmpty => w(sb, s""" value="${esc(v)}"""")
+                            case _                        => ()
                 end match
             case opt: Opt =>
                 opt.value.foreach(v => w(sb, s""" value="${esc(v)}""""))
