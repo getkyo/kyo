@@ -307,7 +307,7 @@ object Clock:
           * A periodic task re-arms its next sleep only after `advance` triggers the current one and its body runs on another fiber. Fencing on
           * the re-armed sleeper lets a test advance exactly one interval per tick, so the tick count is exact regardless of fiber interleaving.
           */
-        private[kyo] def awaitPendingSleepers(count: Int): Unit < Async
+        def awaitPendingSleepers(count: Int): Unit < Async
 
     end TimeControl
 
