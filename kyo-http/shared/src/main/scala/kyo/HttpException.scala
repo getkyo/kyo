@@ -104,6 +104,9 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
   * was complete, or, over TLS, without a `close_notify` on a close-framed body (RFC 9112 section 9.8): a bare TCP FIN, a reset or a
   * fatal record. `phase` says which. The bytes of a streamed body that did arrive are delivered before the failure.
   *
+  * A server may close an idle keep-alive connection at any time, so a close in `BeforeHead` is a candidate for retry on a fresh connection
+  * when the request is idempotent.
+  *
   * `TlsTruncated` is reported where the transport observes the close reason: the posix and NIO transports on JVM and Native. The Node
   * transport on JS and Wasm cannot observe it, so a close-framed TLS body is accepted as complete there.
   */
