@@ -1,4 +1,5 @@
 -Xss10M
+-XX:ActiveProcessorCount=2
 -XX:+UseG1GC
 -XX:+UseCompactObjectHeaders
 -XX:MaxMetaspaceSize=2G

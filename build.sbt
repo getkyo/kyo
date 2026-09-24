@@ -89,7 +89,10 @@ lazy val DocTag = Tags.Tag("doc")
 Global / concurrentRestrictions := {
     val taskLimit   = sys.env.getOrElse("SBT_TASK_LIMIT", "0")
     val updateLimit = sys.env.getOrElse("SBT_UPDATE_LIMIT", "0")
-    val cores       = java.lang.Runtime.getRuntime.availableProcessors()
+    // Fixed at 2 rather than the host's count: several sbt drivers share one machine (one per agent
+    // worktree), and a driver sized to every core starves the others. The forked test JVMs get the
+    // same bound through -XX:ActiveProcessorCount below.
+    val cores = 2
     val isCI        = sys.env.contains("CI")
     val testLimit   = 1 max (if (isCI) cores / 2 else math.ceil(cores * 0.8).toInt)
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
@@ -261,6 +264,9 @@ lazy val `kyo-settings` = Seq(
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
     // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
+    // Two cores per forked test JVM, the same bound as the driver's concurrentRestrictions: the kyo
+    // scheduler and the GC size their pools from availableProcessors, and several forks share the machine.
+    Test / javaOptions += "-XX:ActiveProcessorCount=2",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM: 4GB on the 16GB CI
     // runners, too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency), and 24GB on a 96GB workstation, where a few
