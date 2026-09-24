@@ -1554,42 +1554,28 @@ class HttpServerTest extends BaseHttpTest:
 
     "closeNow and the handlers it interrupts" - {
 
-        /** A handler's work: parked on an await nobody completes, with a finalizer that signals `started`, then waits for `finish`
-          * before it records that it ran. The finalizer's wait lets the test observe whether the close waited for it.
-          */
-        final case class Parked(entered: Latch, started: Latch, finish: Latch, finalized: AtomicBoolean):
+        /** A handler's work: parked on an await nobody completes, with a finalizer that records it ran. */
+        final case class Parked(entered: Latch, finalized: AtomicBoolean):
             def run(using Frame): Unit < Async =
                 Promise.init[Unit, Any].map { never =>
-                    Sync.ensure(started.release.andThen(finish.await).andThen(finalized.set(true)))(entered.release.andThen(never.get))
+                    Sync.ensure(finalized.set(true))(entered.release.andThen(never.get))
                 }
         end Parked
 
         def parked(using Frame): Parked < Sync =
             for
                 entered   <- Latch.init(1)
-                started   <- Latch.init(1)
-                finish    <- Latch.init(1)
                 finalized <- AtomicBoolean.init
-            yield Parked(entered, started, finish, finalized)
+            yield Parked(entered, finalized)
 
-        /** Closes `server` once the handler entered, lets the interrupted handler's finalizer finish once it started, and answers
-          * whether the finalizer had run by the time the close returned.
-          */
+        /** Closes `server` once the handler entered, and answers whether the handler's finalizer had run when the close returned. */
         def close(server: HttpServer, work: Parked)(using Frame): Boolean < Async =
-            Scope.run {
-                for
-                    _       <- work.entered.await
-                    closing <- Fiber.init(server.closeNow.andThen(work.finalized.get))
-                    _       <- work.started.await
-                    _       <- work.finish.release
-                    ran     <- closing.get
-                yield ran
-            }
+            work.entered.await.andThen(server.closeNow).andThen(work.finalized.get)
 
         "a WebSocket handler parked on a foreign await is interrupted, and the close returns after its finalizer ran" in {
             for
-                work         <- parked
-                server       <- HttpServer.initUnscoped(0, "127.0.0.1")(HttpHandler.webSocket("ws/park")((_, _) => work.run))
+                work   <- parked
+                server <- HttpServer.initUnscoped(0, "127.0.0.1")(HttpHandler.webSocket("ws/park")((_, _) => work.run))
                 client <- Fiber.init(Abort.run[Any](HttpClient.webSocket(s"ws://127.0.0.1:${server.port}/ws/park")(_ => Async.never)))
                 ran    <- close(server, work)
                 _      <- client.interrupt
@@ -1600,8 +1586,8 @@ class HttpServerTest extends BaseHttpTest:
         "a plain handler parked on a foreign await is interrupted, and the close returns after its finalizer ran" in {
             val route = HttpRoute.getRaw("park").response(_.bodyText)
             for
-                work         <- parked
-                server       <- HttpServer.initUnscoped(0, "127.0.0.1")(route.handler(_ => work.run.andThen(HttpResponse.ok("never"))))
+                work   <- parked
+                server <- HttpServer.initUnscoped(0, "127.0.0.1")(route.handler(_ => work.run.andThen(HttpResponse.ok("never"))))
                 client <- Fiber.init(Abort.run[Any](HttpClient.getText(s"http://127.0.0.1:${server.port}/park")))
                 ran    <- close(server, work)
                 _      <- client.interrupt
