@@ -285,11 +285,11 @@ private[kyo] object SelectorJs:
                         const _r = $rootExpr;
                         if (!_r) return null;
                         $ariaVisibleFn
+                        $accessibleNameFn
                         const els = _r.querySelectorAll('$css');
                         for (const el of els) {
                             if (!_kyoAriaVisible(el)) continue;
-                            const label = el.getAttribute('aria-label') || el.textContent.trim();
-                            if (label === '$escaped') return el;
+                            if (_kyoAccessibleName(el) === '$escaped') return el;
                         }
                         return null;
                     })()"""
@@ -325,9 +325,10 @@ private[kyo] object SelectorJs:
                 s"""(() => {
                     const _r = $rootExpr;
                     if (!_r) return null;
+                    $accessibleNameFn
                     const labels = _r.querySelectorAll('label');
                     for (const lbl of labels) {
-                        if (lbl.textContent.trim() !== '$escaped') continue;
+                        if (_kyoLabelText(lbl) !== '$escaped') continue;
                         const forId = lbl.getAttribute('for');
                         if (forId) {
                             const target = document.getElementById(forId);
@@ -419,12 +420,12 @@ private[kyo] object SelectorJs:
                         const _r = $rootExpr;
                         if (!_r) return [];
                         $ariaVisibleFn
+                        $accessibleNameFn
                         const result = [];
                         const els = _r.querySelectorAll('$css');
                         for (const el of els) {
                             if (!_kyoAriaVisible(el)) continue;
-                            const label = el.getAttribute('aria-label') || el.textContent.trim();
-                            if (label === '$escaped') result.push(el);
+                            if (_kyoAccessibleName(el) === '$escaped') result.push(el);
                         }
                         return result;
                     })()"""
@@ -461,10 +462,11 @@ private[kyo] object SelectorJs:
                 s"""(() => {
                     const _r = $rootExpr;
                     if (!_r) return [];
+                    $accessibleNameFn
                     const result = [];
                     const labels = _r.querySelectorAll('label');
                     for (const lbl of labels) {
-                        if (lbl.textContent.trim() !== '$escaped') continue;
+                        if (_kyoLabelText(lbl) !== '$escaped') continue;
                         const forId = lbl.getAttribute('for');
                         if (forId) {
                             const target = document.getElementById(forId);
@@ -562,6 +564,51 @@ private[kyo] object SelectorJs:
             return true;
         };"""
 
+    /** JS function literals for the accessible name a role selector's `name` is compared against, and for a label's own text.
+      *
+      * `_kyoAccessibleName(el)` follows the accessible-name computation in its order: the text of the elements `aria-labelledby` names,
+      * joined by spaces; else `aria-label`; else the element's labels (`el.labels`: a `<label for>` first, then a label wrapping it), each
+      * by its own text; else the content. A `<select>`, a `<textarea>` and a text-like `<input>` take no name from their content (a
+      * select's content is its options), an input button is named by its value, and an image by its `alt`. Every text is
+      * whitespace-collapsed and trimmed, as the name a screen reader announces is.
+      *
+      * `_kyoLabelText(lbl)` is a label's own text: a label wrapping its control would otherwise read the control's content too, which for
+      * a `<select>` is every option.
+      *
+      * Inlined into each resolver IIFE, like [[ariaVisibleFn]], so each JS template is self-contained.
+      */
+    private val accessibleNameFn: String =
+        """const _kyoNorm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+        const _kyoLabelText = (lbl) => {
+            const copy = lbl.cloneNode(true);
+            copy.querySelectorAll('input, select, textarea, button, meter, output, progress').forEach(c => c.remove());
+            return _kyoNorm(copy.textContent);
+        };
+        const _kyoAccessibleName = (el) => {
+            const ids = (el.getAttribute('aria-labelledby') || '').trim();
+            if (ids) {
+                const named = ids.split(/\s+/).map(id => document.getElementById(id)).filter(n => n)
+                    .map(n => _kyoNorm(n.textContent)).filter(t => t).join(' ');
+                if (named) return named;
+            }
+            const aria = _kyoNorm(el.getAttribute('aria-label'));
+            if (aria) return aria;
+            const labels = el.labels ? Array.from(el.labels) : [];
+            const ordered = labels.filter(l => l.htmlFor).concat(labels.filter(l => !l.htmlFor));
+            const labelled = ordered.map(_kyoLabelText).filter(t => t).join(' ');
+            if (labelled) return labelled;
+            const tag = el.tagName;
+            if (tag === 'INPUT') {
+                const type = (el.getAttribute('type') || '').toLowerCase();
+                if (type === 'button' || type === 'submit' || type === 'reset') return _kyoNorm(el.value);
+                if (type === 'image') return _kyoNorm(el.getAttribute('alt'));
+                return '';
+            }
+            if (tag === 'IMG') return _kyoNorm(el.getAttribute('alt'));
+            if (tag === 'SELECT' || tag === 'TEXTAREA') return '';
+            return _kyoNorm(el.textContent);
+        };"""
+
     /** Implicit-role mappings: ARIA role → list of CSS selectors that match HTML elements with that implicit role.
       *
       * Static lookup; populated once at class init. `implicitRoleCssCache` below memoises the full `[role="<role>"], <implicits>` union
@@ -626,11 +673,11 @@ private[kyo] object SelectorJs:
                 else
                     val escaped = JsStringUtil.escapeJsString(name)
                     s"""(() => {
+                        $accessibleNameFn
                         const els = document.querySelectorAll('$css');
                         let n = 0;
                         for (const el of els) {
-                            const label = el.getAttribute('aria-label') || el.textContent.trim();
-                            if (label === '$escaped') n++;
+                            if (_kyoAccessibleName(el) === '$escaped') n++;
                         }
                         return n;
                     })()"""

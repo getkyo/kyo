@@ -1109,6 +1109,40 @@ class BrowserReadTest extends BrowserTest:
         }
     }
 
+    "readableContent separates block elements with a line break" in {
+        withBrowser {
+            val html =
+                "<html><head><title>Plan</title></head><body><h1>Plan</h1><p>Merge the mirror.</p><p>Then run the tests.</p>" +
+                    "<ul><li>ren-tools</li><li>ren-db</li></ul></body></html>"
+            Browser.goto(Browser.dataUrl(html)).andThen(Browser.readableContent).map { content =>
+                assert(
+                    content == "Plan\nMerge the mirror.\nThen run the tests.\nren-tools\nren-db",
+                    s"Expected one line per block, got: $content"
+                )
+            }
+        }
+    }
+
+    "readableContent keeps inline elements on their line, breaks at br, list items and table rows, and keeps pre verbatim" in {
+        withBrowser {
+            val html =
+                """<body><main>
+                  |<p>Merge <b>the</b>   <a href="#m">mirror</a>.</p>
+                  |<p>first<br>second</p>
+                  |<ul><li>one</li><li>two</li></ul>
+                  |<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>
+                  |<pre>def f =
+                  |    1</pre>
+                  |</main></body>""".stripMargin
+            Browser.goto(Browser.dataUrl(html)).andThen(Browser.readableContent).map { content =>
+                assert(
+                    content == "Merge the mirror.\nfirst\nsecond\none\ntwo\na b\nc d\ndef f =\n    1",
+                    s"Unexpected lines: $content"
+                )
+            }
+        }
+    }
+
     // ---- textAll ----
 
     "textAll returns text of all matching elements" in {
