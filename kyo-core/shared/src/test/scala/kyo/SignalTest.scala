@@ -958,36 +958,35 @@ class SignalTest extends kyo.test.Test[Any]:
     private def recordValue[A](seen: AtomicRef[Chunk[A]], v: A)(using Frame): Unit < Async =
         seen.updateAndGet(_.append(v)).unit
 
-    private def awaitValue(ref: AtomicRef[String], target: String, maxTries: Int)(using Frame): Boolean < Async =
-        Loop.indexed { i =>
-            if i >= maxTries then Loop.done(false)
-            else ref.get.map(v => if v == target then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
-        }
-
     // Leaf and `map`-over-leaf `observe` use the repairing path (the exact register-before-read override was removed
     // because it miscompiled on Scala Native; see SignalRef in Signal.scala). The guarantee is that the final value is
     // never lost: a write that lands in the read/register window is reconciled within `repairInterval`. Drive
-    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and await the final value under a generous
-    // hang-guard (10000 x ~1ms polls): the poll returns the instant the value arrives, so the budget only bounds a
-    // genuinely lost value. A tighter budget could expire while a starved repair fiber was merely late, miscounting a
-    // delivered value as lost; only a returned count > 0 after the hang-guard means a value was actually lost.
+    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and take what the observer hands over
+    // until the final value arrives. The handoff is a channel rather than a polled reference because a poll's sleep
+    // costs a timer tick per iteration, and on a platform whose tick is 15ms that alone is over the leaf's budget at
+    // 5000 iterations; a take returns the instant the value is put. Each wait is bounded so a genuinely lost value
+    // ends the iteration as a miss instead of hanging the leaf, and the bound is wide enough that a starved repair
+    // fiber that is merely late is not miscounted as a loss.
     private def observeNeverLosesFinalValue(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
         for
             ref <- Signal.initRef("")
             sig = if useMap then ref.map(v => v) else ref
-            lastSeen <- AtomicRef.init("")
-            fiber    <- Fiber.initUnscoped(sig.observe(50.millis)(lastSeen.set(_)))
-            misses   <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
-                val a = s"a$i"
-                val b = s"b$i"
+            seen   <- Channel.initUnscoped[String](16)
+            fiber  <- Fiber.initUnscoped(sig.observe(50.millis)(v => Abort.run[Closed](seen.put(v)).unit))
+            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+                val a                                          = s"a$i"
+                val b                                          = s"b$i"
+                def untilFinal: Unit < (Async & Abort[Closed]) =
+                    seen.take.map(v => if v == b then () else untilFinal)
                 for
                     _   <- ref.set(a)
                     _   <- ref.set(b)
-                    got <- awaitValue(lastSeen, b, 10000)
-                yield if got then 0 else 1
+                    got <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(untilFinal))
+                yield if got.isSuccess then 0 else 1
                 end for
             }
             _ <- fiber.interrupt
+            _ <- seen.close
         yield misses.foldLeft(0)(_ + _)
 
     "observe" - {

@@ -6,6 +6,7 @@ import kyo.JsonRpcExtrasEncoder
 import kyo.JsonRpcIdStrategy
 import kyo.JsonRpcUnknownMethodPolicy
 import kyo.internal.cdp.PageDownload
+import kyo.kernel.ContextEffect
 
 /** Runtime CDP backend built atop a [[JsonRpcHandler]]. Owns the per-connection
   * dispatcher tables (frame-event / download-event / dialog handlers / dialog
@@ -82,6 +83,40 @@ final private[kyo] class CdpBackend private[kyo] (
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
         send[P, Unit](method, params)
+
+    /** A call whose reply stands for something the browser now holds (a context, an override), owed `release` on `finalizer`.
+      *
+      * The release registers as the reply arrives. The call is detached: a caller abandoned at the join has the call
+      * release what it created rather than dropping the late reply. `finalizer` is a parameter, not the innermost scope,
+      * so a caller can own the reply across a scope of its own that ends earlier.
+      */
+    private[kyo] def acquire[P: Schema, R: Schema](finalizer: Scope.Finalizer, method: String, params: P)(
+        release: R => Unit < (Async & Abort[BrowserReadException])
+    )(using Frame): R < (Async & Abort[BrowserReadException]) =
+        // Unsafe: the handoff promise and the detached call are unsafe-tier; the registration runs in the step the reply
+        // arrives.
+        Sync.Unsafe.defer {
+            val handoff = Promise.Unsafe.init[R, Abort[BrowserReadException]]()
+            Fiber.Unsafe.init(send[P, R](method, params)).onComplete { result =>
+                result.foldError(
+                    replyComp =>
+                        val reply = replyComp.eval
+                        if !handoff.complete(Result.succeed(reply)) then discard(Fiber.Unsafe.init(release(reply)))
+                    ,
+                    error => handoff.completeDiscard(error)
+                )
+            }
+            handoff.safe.get.ensureMap { reply =>
+                finalizer.ensureUnsafe(_ => release(reply))
+                reply
+            }
+        }
+    end acquire
+
+    private[kyo] def acquire[P: Schema, R: Schema](method: String, params: P)(
+        release: R => Unit < (Async & Abort[BrowserReadException])
+    )(using Frame): R < (Async & Scope & Abort[BrowserReadException]) =
+        ContextEffect.suspendWith(Tag[Scope])(finalizer => acquire[P, R](finalizer, method, params)(release))
 
     /** Session-scoped fork. All dispatcher tables and the endpoint are shared
       * with the parent; only the sessionId field differs. JsonRpcExtrasEncoder is
@@ -315,14 +350,25 @@ private[kyo] object CdpBackend:
     private[kyo] def runtimeEvaluate(backend: CdpBackend, params: EvalParams)(using
         Frame
     ): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params))
+
+    /** [[runtimeEvaluate]] for an expression that leaves something on the page, owed `release` on `finalizer` from the moment its
+      * reply arrives: see [[CdpBackend.acquire]].
+      */
+    private[kyo] def runtimeEvaluateAcquire(backend: CdpBackend, finalizer: Scope.Finalizer, params: EvalParams)(
+        release: EvalResult => Unit < (Async & Abort[BrowserReadException])
+    )(using Frame): EvalResult < (Async & Abort[BrowserReadException]) =
+        recoverEvaluate(backend.acquire[EvalParams, EvalResult](finalizer, RuntimeEvaluateMethod, params)(release))
+
+    private def recoverEvaluate(evaluate: => EvalResult < (Async & Abort[BrowserReadException]))(using
+        Frame
+    ): EvalResult < (Async & Abort[BrowserReadException]) =
         recoverContextDestroyed {
             Abort.recover[BrowserProtocolErrorException] { e =>
                 if e.error.contains(CdpErrorStrings.UnreturnableValueErrorMessage) then
                     EvalResult(RemoteObject.`undefined`(), Absent)
                 else Abort.fail(e)
-            } {
-                backend.send[EvalParams, EvalResult](RuntimeEvaluateMethod, params)
-            }
+            }(evaluate)
         }
 
     private[kyo] def setDeviceMetricsOverride(backend: CdpBackend, params: ViewportParams)(using
@@ -447,6 +493,13 @@ private[kyo] object CdpBackend:
     ): CreateBrowserContextResult < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, CreateBrowserContextResult]("Target.createBrowserContext", CdpNoParams())
 
+    private[kyo] def acquireBrowserContext(backend: CdpBackend)(using
+        Frame
+    ): CreateBrowserContextResult < (Async & Scope & Abort[BrowserReadException]) =
+        backend.acquire[CdpNoParams, CreateBrowserContextResult]("Target.createBrowserContext", CdpNoParams()) { ctx =>
+            disposeBrowserContext(backend, DisposeBrowserContextParams(ctx.browserContextId))
+        }
+
     private[kyo] def closeTarget(backend: CdpBackend, params: CloseTargetParams)(using
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
@@ -461,12 +514,19 @@ private[kyo] object CdpBackend:
       * instead of a WS URL. The [[Browser.getVersion]] probe still runs.
       * The Scope effect is preserved so the caller can control the endpoint lifecycle.
       */
-    private[kyo] def initUnscoped(transport: JsonRpcTransport, launchCfg: Browser.LaunchConfig)(using
+    private[kyo] def initUnscoped(
+        transport: JsonRpcTransport,
+        launchCfg: Browser.LaunchConfig,
+        // Test seam: handed the dialog queue during init, the only way to observe whether the dialog drainer is still
+        // parked on it when an init is abandoned before it yields the backend. A no-op in production.
+        dialogQueueProbe: Channel[(Boolean, String, Maybe[SessionId])] => Unit = _ => ()
+    )(using
         Frame
     ): CdpBackend < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
         for
-            dialogHandlers             <- AtomicRef.init[Dict[String, (Boolean, String)]](Dict.empty)
-            dialogQueue                <- Channel.initUnscoped[(Boolean, String, Maybe[SessionId])](16)
+            dialogHandlers <- AtomicRef.init[Dict[String, (Boolean, String)]](Dict.empty)
+            dialogQueue    <- Channel.initUnscoped[(Boolean, String, Maybe[SessionId])](16)
+            _ = dialogQueueProbe(dialogQueue)
             frameEventDispatchers      <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             downloadEventDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
             screencastEventDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
@@ -639,8 +699,18 @@ private[kyo] object CdpBackend:
       * dialogIdCounter (disjoint from JsonRpcIdStrategy.SequentialInt's positive
       * allocator, per INV-018), and writes Page.handleJavaScriptDialog
       * fire-and-forget via endpoint.sendUnmatched.
+      *
+      * The spawn is the bracket's acquire, so the drainer is owed its stop to the scope its endpoint lives in from the step it is
+      * live. The backend's close stops it too, but an init abandoned before it yields a backend has no close to run.
       */
     private def buildDialogDrainer(
+        endpoint: JsonRpcHandler,
+        dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
+        dialogIdCounter: AtomicInt
+    )(using Frame): Fiber[Unit, Any] < (Sync & Scope) =
+        Scope.acquireRelease(spawnDialogDrainer(endpoint, dialogQueue, dialogIdCounter))(_.interrupt.unit)
+
+    private def spawnDialogDrainer(
         endpoint: JsonRpcHandler,
         dialogQueue: Channel[(Boolean, String, Maybe[SessionId])],
         dialogIdCounter: AtomicInt

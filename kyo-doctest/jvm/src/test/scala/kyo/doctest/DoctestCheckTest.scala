@@ -5,10 +5,8 @@ import kyo.*
 /** Integration tests for Doctest.check covering Driver lifecycle and setup block visibility. */
 class DoctestCheckTest extends kyo.test.Test[Any]:
 
-    // The "Driver lifecycle" leaf counts `doctest-out*` dirs in the shared tmp dir before and after a run, so a
-    // sibling leaf's concurrent Doctest.check (which also creates a doctest-out dir) would pollute the count.
-    // ScalaTest's AsyncFreeSpec ran a suite's leaves sequentially; kyo-test runs them in parallel by default, so
-    // serialize this suite's leaves to keep the before/after window free of sibling-created dirs.
+    // The "Driver lifecycle" leaf diffs the `doctest-out*` dirs in the shared tmp dir around a run; the suite's
+    // leaves run one at a time so a sibling leaf's Doctest.check does not land inside that window.
     override def config = super.config.sequential
 
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
@@ -41,9 +39,8 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileSystemException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield res
 
-    // Doctest.check opens and closes the Driver via Scope.acquireRelease.
-    // Verified by confirming the Scope finalizers run (no leaked temp output dirs from doctest-out*).
-    // We count doctest-out directories before and after a run with Scope.run and assert cleanup.
+    // Doctest.check opens and closes the Driver via Scope.acquireRelease; the Driver's output dir is what its
+    // finalizer removes, so a doctest-out dir left behind is a finalizer that did not run.
     "Driver lifecycle: Scope.acquireRelease ensures cleanup" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
@@ -53,13 +50,16 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
                         |```
                         |""".stripMargin
             withTempFile("README.md", md) { kyoFile =>
-                // Count temp dirs named doctest-out* BEFORE the run using kyo.Path.list.
-                val tempDirBase                                                            = Path.basePaths.tmp
-                def countOutDirs()(using Frame): Int < (Sync & Abort[FileSystemException]) =
+                // Sibling suites
+                // create their own there concurrently, so the check is on the dirs that appeared during this run: each is
+                // gone once its run ended, ours the moment Scope.run returned, and a dir ours leaked never goes.
+                val tempDirBase                                                               = Path.basePaths.tmp
+                def outDirs()(using Frame): Set[String] < (Sync & Abort[FileSystemException]) =
                     Path.runReadOnly(tempDirBase.list).map { entries =>
-                        entries.count(p => p.name.getOrElse("").startsWith("doctest-out"))
+                        entries.map(_.name.getOrElse("")).filter(_.startsWith("doctest-out")).toSet
                     }
-                end countOutDirs
+                def outDirsOrNone()(using Frame): Set[String] < Sync =
+                    Abort.run[FileSystemException](outDirs()).map(_.getOrElse(Set.empty))
 
                 for
                     cp    <- testClasspath
@@ -71,21 +71,16 @@ class DoctestCheckTest extends kyo.test.Test[Any]:
                         cache = cacheDir,
                         parallel = nCpus
                     )
-                    beforeCount <- Abort.run[FileSystemException](countOutDirs()).map(_.getOrElse(0))
+                    before <- outDirsOrNone()
                     // Run with Scope.run, which triggers all finalizers.
-                    result     <- Abort.run(Scope.run(Doctest.check(config)))
-                    afterCount <- Abort.run[FileSystemException](countOutDirs()).map(_.getOrElse(0))
+                    result <- Abort.run(Scope.run(Doctest.check(config)))
+                    after  <- outDirsOrNone()
+                    appeared = after -- before
+                    _ <- assertEventually(outDirsOrNone().map(now => (now & appeared).isEmpty))
                 yield result match
-                    case Result.Success(_) =>
-                        // Scope.run must have cleaned up the temp output dir.
-                        assert(
-                            afterCount <= beforeCount,
-                            s"expected no new doctest-out dirs after Scope.run (before=$beforeCount, after=$afterCount)"
-                        )
-                    case Result.Failure(e) =>
-                        fail(s"unexpected failure: $e")
-                    case Result.Panic(t) =>
-                        fail(s"unexpected panic: ${t.getMessage}")
+                    case Result.Success(_) => succeed
+                    case Result.Failure(e) => fail(s"unexpected failure: $e")
+                    case Result.Panic(t)   => fail(s"unexpected panic: ${t.getMessage}")
                 end for
             }
         }

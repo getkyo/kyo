@@ -1,8 +1,14 @@
 package kyo.kernel
 
 import kyo.*
+import org.scalatest.freespec.AnyFreeSpec
 
-class LoopTest extends kyo.test.Test[Any]:
+class LoopTest extends AnyFreeSpec:
+
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
+
+    sealed trait Cfg extends ContextEffect[Int]
 
     "apply" - {
         "with a single iteration" in {
@@ -699,6 +705,304 @@ class LoopTest extends kyo.test.Test[Any]:
             }
             result.eval
             assert(counter == largeNumber)
+        }
+    }
+
+    "repeat with a settled body runs it exactly n times" in {
+        var count = 0
+
+        Loop.repeat(0)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 0)
+
+        count = 0
+        Loop.repeat(1)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 1)
+
+        count = 0
+        Loop.repeat(3)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 3)
+
+        count = 0
+        Loop.repeat(100)(({ count += 1 }: Unit < Any)).eval
+        assert(count == 100)
+    }
+
+    "repeat suspends a bare operation each time" in {
+        var answered      = 0
+        val r: Unit < Any = ArrowEffect.handleLoop(Tag[Ask], Loop.repeat(3)(ask))(
+            [C] =>
+                _ =>
+                    answered += 1
+                    Loop.continue(1)
+            ,
+            a => a
+        )
+        r.eval
+        assert(answered == 3)
+    }
+
+    "repeat enters a context region each time" in {
+        var entered           = 0
+        val region: Int < Any =
+            ContextEffect.handleInheritable(
+                Tag[Cfg],
+                (_: Maybe[Int]) =>
+                    entered += 1
+                    1
+            )(ContextEffect.suspend(Tag[Cfg]))
+        Loop.repeat(3)(region).eval
+        assert(entered == 3)
+    }
+
+    "repeat acquires a bracket each time" in {
+        var acquired        = 0
+        var released        = 0
+        val body: Int < Any =
+            Bracket(Effect.defer {
+                acquired += 1
+                acquired
+            })(a => (a: Int < Any))((_, _) => released += 1)
+        Loop.repeat(3)(body).eval
+        assert(acquired == 3)
+        assert(released == 3)
+    }
+
+    "indexed loops a bare operation whose answer is an outcome" in {
+        sealed trait Step extends ArrowEffect[Const[Int], Const[Loop.Outcome[Int, Int]]]
+        def step(i: Int): Loop.Outcome[Int, Int] < Step = ArrowEffect.suspend[Any](Tag[Step], i)
+        val looped: Int < Step                          = Loop.indexed(0)((_, i) => step(i))
+        val r: Int < Any                                = ArrowEffect.handleLoop(Tag[Step], looped)(
+            [C] => i => Loop.continue((if i < 3 then Loop.continue(i + 1) else Loop.done(i)): Loop.Outcome[Int, Int] < Any),
+            a => a
+        )
+        assert(r.eval == 3)
+    }
+
+    "constructors" - {
+        "take explicit type arguments at every arity" in {
+            val stated = Loop(1) { i =>
+                if i < 3 then Loop.continue[Int, Int, Any](i + 1)
+                else Loop.done[Int, Int](i * 10)
+            }
+            assert(stated.eval == 30)
+        }
+
+        "the no-state constructors take one type argument" in {
+            val indexed = Loop.indexed(idx => if idx < 3 then Loop.continue[Int] else Loop.done[Unit, Int](idx))
+            assert(indexed.eval == 3)
+        }
+
+        "a two-state outcome states its three type arguments" in {
+            val paired = Loop(1, 1) { (a, b) =>
+                if a < 4 then Loop.continue[Int, Int, Int](a + 1, b * 2)
+                else Loop.done[Int, Int, Int](b)
+            }
+            assert(paired.eval == 8)
+        }
+
+        "continue evaluates its state once, at construction" in {
+            var evaluated = 0
+            val outcome   =
+                Loop.continue[Int, Unit, Any] {
+                    evaluated += 1
+                    evaluated
+                }
+            val state = outcome.asInstanceOf[Loop.Continue[Int]]
+            assert(state._1 == 1)
+            assert(state._1 == 1)
+            assert(evaluated == 1)
+        }
+
+        "a done payload that is a computation held as a value stays data" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer {
+                evaluated += 1
+                2
+            }
+            val looped = Loop(0) { _ =>
+                Loop.done[Int, Int < Any](payload)
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+    }
+
+    "outcome payloads held as data" - {
+
+        def payloadOf(counter: () => Unit): Int < Any =
+            Effect.defer {
+                counter()
+                2
+            }
+
+        "stay data when the outcome computation suspends first" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop(0) { _ =>
+                Effect.defer(Loop.done[Int, Int < Any](payload))
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data when suspended iterations precede the done" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop(0) { i =>
+                if i < 3 then Effect.defer(Loop.continue(i + 1))
+                else Loop.done[Int, Int < Any](payload)
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data when a suspended iteration produces the done" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop(0) { i =>
+                Effect.defer {
+                    if i < 3 then Loop.continue(i + 1)
+                    else Loop.done[Int, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through indexed when the outcome computation suspends" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop.indexed { idx =>
+                Effect.defer {
+                    if idx == 0 then Loop.continue
+                    else Loop.done[Unit, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through the two-state loop when the outcome computation suspends" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop(0, 1) { (a, b) =>
+                Effect.defer(Loop.done[Int, Int, Int < Any](payload))
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "stay data through foreach when the outcome computation suspends" in {
+            var evaluated = 0
+            var rounds    = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            val looped    = Loop.foreach {
+                Effect.defer {
+                    if rounds < 2 then
+                        rounds += 1
+                        Loop.continue
+                    else Loop.done[Unit, Int < Any](payload)
+                }
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "a continue state that is a computation stays data across iterations" in {
+            var evaluated = 0
+            val payload   = payloadOf(() => evaluated += 1)
+            var first     = true
+            val looped    = Loop(payload: Int < Any) { state =>
+                if first then
+                    first = false
+                    Effect.defer(Loop.continue(state))
+                else Loop.done[Int < Any, Int < Any](state)
+            }
+            val data = looped.eval
+            assert(evaluated == 0)
+            assert(data.eval == 2)
+            assert(evaluated == 1)
+        }
+
+        "a doubly nested payload loses exactly one level per eval" in {
+            var evaluated                = 0
+            val inner: Int < Any         = payloadOf(() => evaluated += 1)
+            val outer: (Int < Any) < Any = Kyo.lift[Int < Any, Any](inner)
+            val looped                   = Loop(0) { _ =>
+                Loop.done[Int, (Int < Any) < Any](outer)
+            }
+            val once = looped.eval
+            assert(evaluated == 0)
+            val twice = once.eval
+            assert(evaluated == 0)
+            assert(twice.eval == 2)
+            assert(evaluated == 1)
+        }
+    }
+
+    "outcome payloads that are outcomes" - {
+        "a done payload that is itself a Continue stops the loop" in {
+            type Out = Loop.Outcome[Int, Int]
+            val hostile: Out = Loop.continue[Int, Int, Any](1).eval
+            var runs         = 0
+            val looped       = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Loop.done[Int, Out](hostile)
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a done payload of type Any holding a Continue stops the loop" in {
+            val hostile: Any = Loop.continue[Int, Int, Any](1).eval: Loop.Outcome[Int, Int]
+            var runs         = 0
+            val looped       = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Loop.done[Int, Any](hostile)
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "a suspended done payload that is itself a Continue stops the loop" in {
+            type Out = Loop.Outcome[Int, Int]
+            val hostile: Out = Loop.continue[Int, Int, Any](1).eval
+            var runs         = 0
+            val looped       = Loop(0) { _ =>
+                runs += 1
+                if runs > 2 then throw new IllegalStateException("done payload re-entered the loop as a continue")
+                Effect.defer(Loop.done[Int, Out](hostile))
+            }
+            val out = looped.eval
+            assert(runs == 1)
+            assert(out.asInstanceOf[AnyRef] eq hostile.asInstanceOf[AnyRef])
+        }
+
+        "an Any-typed done payload holding a computation stays data" in {
+            var evaluated          = 0
+            val payload: Int < Any = Effect.defer { evaluated += 1; 2 }
+            val r: Any < Any       = Loop(0)(_ => Loop.done[Int, Any](payload))
+            val out                = r.eval
+            assert(evaluated == 0)
+            assert(out.asInstanceOf[AnyRef] eq payload.asInstanceOf[AnyRef])
         }
     }
 end LoopTest

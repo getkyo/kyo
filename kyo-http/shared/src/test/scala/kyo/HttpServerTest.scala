@@ -3947,4 +3947,80 @@ class HttpServerTest extends BaseHttpTest:
         }
     }
 
+    "init under interruption" - {
+        // A listener nobody closes holds its port for good, so the re-bind never succeeds and the leaf ends as its timeout.
+        "a server whose owning fiber is interrupted releases its port".times(80) in {
+            val route                            = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler                          = route.handler(_ => HttpResponse.ok("hello"))
+            def bind(port: Int): Boolean < Async =
+                Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
+            for
+                bound <- Promise.init[Int, Any]
+                fiber <- Fiber.initUnscoped(Scope.run(
+                    HttpServer.init(0, "127.0.0.1")(handler).map(server => bound.completeDiscard(Result.succeed(server.port))).andThen(
+                        Async.never
+                    )
+                ))
+                port <- bound.get
+                _    <- fiber.interrupt
+                _    <- fiber.getResult
+                _    <- assertEventually(bind(port))
+            yield succeed
+            end for
+        }
+
+        // The request is stopped while its handler is parked, so its connection is established and in use. The leaf then
+        // closes the client's scope and reads the operating system's view of the sockets connected to the server's port:
+        // a connection the client tracks closes with it, an untracked one stays, which the leaf timeout reports.
+        "a request stopped in flight leaves no connection behind once its client closes".times(300) in {
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
+            // Linux exposes the socket table as /proc/net/tcp: one row per socket, the state in column 4 (01 is
+            // ESTABLISHED) and the remote address in column 3 as hex ip:port. Elsewhere lsof answers the same question.
+            val tables                                   = Chunk(Path("/proc/net/tcp"), Path("/proc/net/tcp6"))
+            def readTables: Chunk[Chunk[String]] < Async =
+                Abort.run[FileSystemException](Path.runReadOnly(Kyo.filter(tables)(_.exists).map(Kyo.foreach(_)(_.readLines))))
+                    .map(_.getOrElse(Chunk.empty))
+            def establishedTo(port: Int)(rows: Chunk[Chunk[String]]): Int =
+                rows.map(_.drop(1).count { line =>
+                    val cols = line.trim.split("\\s+")
+                    cols.length > 3 && cols(3) == "01" && Integer.parseInt(cols(2).split(":").last, 16) == port
+                }).sum
+            readTables.map { initial =>
+                val procNetTcp                          = initial.nonEmpty
+                def connectedTo(port: Int): Int < Async =
+                    if procNetTcp then readTables.map(establishedTo(port))
+                    else
+                        Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
+                            case Result.Success((out, _)) => out.linesIterator.count(_.contains(s"->127.0.0.1:$port"))
+                            case _                        => -1
+                        }
+                val probe: Result[CommandException, (String, ExitCode)] < Async =
+                    if procNetTcp then Result.succeed(("", ExitCode.Success))
+                    else Abort.run[CommandException](Command("lsof", "-v").textWithExitCode)
+                probe.map { probe =>
+                    if probe.isFailure then cancel("neither /proc/net/tcp nor lsof is available, so the socket table cannot be read")
+                    for
+                        entered <- Latch.init(1)
+                        gate    <- Latch.init(1)
+                        handler = route.handler(_ => entered.release.andThen(gate.await).andThen(HttpResponse.ok("hello")))
+                        server <- HttpServer.init(0, "127.0.0.1")(handler)
+                        port = server.port
+                        url  = s"http://127.0.0.1:$port/test"
+                        stopped <- Abort.run[Throwable](Scope.run {
+                            HttpClient.init(maxConnectionsPerHost = 2).map { client =>
+                                Fiber.initUnscoped(HttpClient.let(client)(Abort.run[HttpException](HttpClient.getText(url)))).map { fiber =>
+                                    entered.await.andThen(fiber.interrupt).andThen(fiber.getResult.map(_.isPanic))
+                                }
+                            }
+                        })
+                        _ <- gate.release
+                        _ = assert(stopped.contains(true), s"the stopped request or the client's scope did not end cleanly: $stopped")
+                        _ <- assertEventually(connectedTo(port).map(_ == 0))
+                    yield succeed
+                    end for
+                }
+            }
+        }
+    }
+
 end HttpServerTest

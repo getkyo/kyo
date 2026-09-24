@@ -112,45 +112,64 @@ class LocalTest extends kyo.test.Test[Any]:
     }
 
     "non-inheritable" - {
+        // These ask the isolate for the crossing rather than for isolation in place: what a local does at a
+        // boundary is a question about crossing one. `Isolate[Any, Any, Any]` manages nothing and leaves every
+        // local reading what it read.
         "context inheritance" in {
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val context =
-                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate.internal.runDetached { (trace, context) =>
-                    context
+            val forked =
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].crossing.run {
+                    for
+                        n <- noninheritableLocal.get
+                        i <- inheritableLocal.get
+                    yield (n, i)
                 })).eval
 
-            val inheritableContext = context.get(Tag[Local.internal.State])
-            assert(!inheritableContext.contains(noninheritableLocal))
-            assert(inheritableContext.contains(inheritableLocal))
-
-            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
+            assert(forked == (10, "modified"))
         }
 
         "nested boundaries" in {
             val noninheritableLocal = Local.initNoninheritable(10)
             val inheritableLocal    = Local.init("test")
 
-            val context =
+            val forked =
                 noninheritableLocal.let(20)(
                     inheritableLocal.let("outer")(
-                        Isolate.internal.runDetached { (outerTrace, outerContext) =>
+                        Isolate[Any, Any, Any].crossing.run {
                             noninheritableLocal.let(30)(
                                 inheritableLocal.let("inner")(
-                                    Isolate.internal.runDetached { (innerTrace, innerContext) => innerContext }
+                                    Isolate[Any, Any, Any].crossing.run {
+                                        for
+                                            n <- noninheritableLocal.get
+                                            i <- inheritableLocal.get
+                                        yield (n, i)
+                                    }
                                 )
                             )
                         }
                     )
                 ).eval
 
-            val inheritableContext = context.get(Tag[Local.internal.State])
-            assert(!inheritableContext.contains(noninheritableLocal))
-            assert(inheritableContext.contains(inheritableLocal))
-            assert(inheritableContext.get(inheritableLocal).contains("inner"))
+            // the inner fork starts the non-inheritable local at its default again despite the binding of 30
+            // around it, while the inheritable one carries the innermost binding across
+            assert(forked == (10, "inner"))
+        }
 
-            assert(!context.contains(Tag[Local.internal.NoninheritableState]))
+        "isolating state in place is not a boundary, and the binding stands" in {
+            val noninheritableLocal = Local.initNoninheritable(10)
+            val inheritableLocal    = Local.init("test")
+
+            val inPlace =
+                noninheritableLocal.let(20)(inheritableLocal.let("modified")(Isolate[Any, Any, Any].run {
+                    for
+                        n <- noninheritableLocal.get
+                        i <- inheritableLocal.get
+                    yield (n, i)
+                })).eval
+
+            assert(inPlace == (20, "modified"))
         }
 
     }

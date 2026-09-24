@@ -199,30 +199,34 @@ object Abort:
         reduce: Reducible[Abort[ER]]
     ): B < (S & reduce.SReduced & S2) =
         reduce {
-            ArrowEffect.handleCatching[
+            // Aborts never resume, so every abort under the erased tag completes the region with its error regardless of acceptance,
+            // which the done clause decides outside the region, re-raising an unaccepted error to the enclosing handler. The
+            // `Result.succeed` wrap boxes a nested error into the success lane, impossible once error completion shares the region's
+            // value type; explicit type arguments split the erased row into `Abort[E]` and the remainder, which inference will not.
+            ArrowEffect.handleCont[
                 Const[Error[E]],
                 Const[Unit],
                 Abort[E],
                 Result[E, A],
                 B,
                 Abort[ER] & S,
-                Abort[ER] & S,
                 S2
             ](
                 erasedTag[E],
                 v.map(Result.succeed[E, A](_))
             )(
-                accept = [C] =>
-                    input =>
-                        input.isPanic ||
-                            input.asInstanceOf[Error[Any]].failure.exists(ct.accepts),
-                handle = [C] => (input, _) => input,
-                recover =
-                    case ct(fail) if ct <:< ConcreteTag[Throwable] =>
-                        continue(Result.Failure(fail))
-                    case fail =>
-                        continue(Result.Panic(fail)),
-                done = continue(_)
+                [C] => (input, _) => input,
+                {
+                    case err: Error[Any] @unchecked if !(err.isPanic || err.failure.exists(ct.accepts)) =>
+                        Abort.error(err.asInstanceOf[Error[ER]])
+                    case r =>
+                        continue(r.asInstanceOf[Result[E, A]])
+                },
+                ex =>
+                    Maybe(
+                        if ct <:< ConcreteTag[Throwable] && ct.accepts(ex) then continue(Result.Failure(ex.asInstanceOf[E]))
+                        else continue(Result.Panic(ex))
+                    )
             )
         }
 
@@ -588,10 +592,14 @@ object Abort:
     def catching[E](
         using Frame
     )[A, S](v: => A < S)(using ct: ConcreteTag[E]): A < (Abort[E] & S) =
-        Effect.catching(v) {
-            case ct(ex) => Abort.fail(ex)
-            case ex     => Abort.panic(ex)
-        }
+        ArrowEffect.handleCont(Tag[Catching], v: A < (Catching & Abort[E] & S))(
+            [C] => (_, cont) => cont(()),
+            a => a,
+            {
+                case ct(ex) => Maybe(Abort.fail(ex))
+                case ex     => Maybe(Abort.panic(ex))
+            }
+        )
 
     /** Catches exceptions of type E, transforms and converts them to Abort failures.
       *
@@ -609,10 +617,17 @@ object Abort:
     )[A, S, E1](f: E => E1)(v: => A < S)(
         using ct: ConcreteTag[E]
     ): A < (Abort[E1] & S) =
-        Effect.catching(v) {
-            case ct(ex) => Abort.fail(f(ex))
-            case ex     => Abort.panic(ex)
-        }
+        ArrowEffect.handleCont(Tag[Catching], v: A < (Catching & Abort[E1] & S))(
+            [C] => (_, cont) => cont(()),
+            a => a,
+            {
+                case ct(ex) => Maybe(Abort.fail(f(ex)))
+                case ex     => Maybe(Abort.panic(ex))
+            }
+        )
+
+    // The region `catching` installs, so a throw while building or running v reaches its recover arm; never suspended.
+    sealed private[kyo] trait Catching extends ArrowEffect[Const[Unit], Const[Unit]]
 
     /** Provides methods for working with literal error values in Abort effects.
       *

@@ -93,6 +93,79 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    private def openServer(): ServerSocketChannel =
+        val ssc = ServerSocketChannel.open()
+        ssc.configureBlocking(false)
+        ssc.bind(new InetSocketAddress("127.0.0.1", 0))
+        ssc
+    end openServer
+
+    // `releaseListener` is armed for a channel that has been closed while registered: its SelectionKey is cancelled and its fd close deferred
+    // to the selector's next deregistration pass. `isRegistered` afterwards is
+    // the same observation the driver completes on.
+    "listener release" - {
+        "completes after the running loop's deregistration pass" in {
+            val driver  = NioIoDriver.init()
+            given Frame = Frame.internal
+            discard(driver.start())
+            val ssc = openServer()
+            assert(driver.registerServerChannel(ssc))
+            // No registration check here: the loop is running, so its next pass can deregister the cancelled key at any point after the
+            // close.
+            ssc.close()
+            val released = Promise.Unsafe.init[Unit, Any]()
+            driver.releaseListener(ssc, released)
+            released.safe.get.map { _ =>
+                assert(!ssc.isRegistered)
+                driver.close()
+                succeed
+            }
+        }
+        "armed before the loop starts, completes on its first pass" in {
+            val driver  = NioIoDriver.init()
+            given Frame = Frame.internal
+            val ssc     = openServer()
+            assert(driver.registerServerChannel(ssc))
+            ssc.close()
+            val released = Promise.Unsafe.init[Unit, Any]()
+            driver.releaseListener(ssc, released)
+            assert(!released.done(), "nothing runs the deregistration pass before the loop starts")
+            discard(driver.start())
+            released.safe.get.map { _ =>
+                assert(!ssc.isRegistered)
+                driver.close()
+                succeed
+            }
+        }
+        "armed on a driver that never starts, completes when the driver closes" in {
+            val driver  = NioIoDriver.init()
+            given Frame = Frame.internal
+            val ssc     = openServer()
+            assert(driver.registerServerChannel(ssc))
+            ssc.close()
+            val released = Promise.Unsafe.init[Unit, Any]()
+            driver.releaseListener(ssc, released)
+            assert(!released.done())
+            driver.close()
+            assert(released.done())
+            assert(!ssc.isRegistered)
+            succeed
+        }
+        "armed after the driver closed, completes at once" in {
+            val driver  = NioIoDriver.init()
+            given Frame = Frame.internal
+            val ssc     = openServer()
+            assert(driver.registerServerChannel(ssc))
+            ssc.close()
+            driver.close()
+            val released = Promise.Unsafe.init[Unit, Any]()
+            driver.releaseListener(ssc, released)
+            assert(released.done())
+            assert(!ssc.isRegistered)
+            succeed
+        }
+    }
+
     "label includes selector hashcode" in {
         val driver = NioIoDriver.init()
         try

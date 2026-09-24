@@ -156,6 +156,25 @@ sealed abstract class Chunk[+A]
     final override def appended[B >: A](b: B): Chunk[B] =
         append(b)
 
+    /** Returns a new Chunk with the element at the specified index replaced.
+      *
+      * Replacing the last element relinks its chain node in constant time; any other index copies once into a flat chunk.
+      *
+      * @throws IndexOutOfBoundsException
+      *   if the index is out of bounds
+      */
+    final override def updated[B >: A](index: Int, elem: B): Chunk[B] =
+        if index < 0 || index >= length then
+            throw new IndexOutOfBoundsException(s"$index is out of bounds (min 0, max ${length - 1})")
+        else if index == length - 1 then dropRight(1).append(elem)
+        else
+            val array = new Array[B](length)
+            copyTo(array, 0)
+            array(index) = elem
+            Compact(array)
+        end if
+    end updated
+
     /** Returns the first element of the Chunk wrapped in a Maybe.
       *
       * @return

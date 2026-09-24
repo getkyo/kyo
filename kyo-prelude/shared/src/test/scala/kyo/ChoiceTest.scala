@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.kernel.Bracket
 import scala.annotation.nowarn
 
 class ChoiceTest extends kyo.test.Test[Any]:
@@ -83,8 +84,8 @@ class ChoiceTest extends kyo.test.Test[Any]:
         end try
     }
 
-    "large number of suspensions".notNative.notWasm.pendingUntilFixed("deep Choice suspension is not yet stack-safe (issue #208)") in {
-        // https://github.com/getkyo/kyo/issues/208
+    "large number of suspensions" in {
+        // #208: suspensions run on the evaluator's loop, not the call stack, so this depth does not overflow.
         var v = Choice.eval(1)
         for _ <- 0 until 100000 do
             v = v.map(_ => Choice.eval(1))
@@ -332,6 +333,121 @@ class ChoiceTest extends kyo.test.Test[Any]:
                 assert(result._2 == Chunk(1, 2, 3))
             }
         }
+    }
+
+    "brackets" - {
+
+        "a bracket outside the region releases once, after every branch" in {
+            var log = Chunk.empty[String]
+            val v   =
+                Bracket("res") { _ =>
+                    Choice.run {
+                        Choice.eval(1, 2, 3).map { n =>
+                            log = log.append(s"branch$n")
+                            n
+                        }
+                    }
+                }((_, _) => log = log.append("release"))
+            assert(v.eval == Chunk(1, 2, 3))
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
+        }
+
+        "a bracket outside the region is live in every branch" in {
+            var released = false
+            val v        =
+                Bracket(1) { res =>
+                    Choice.run {
+                        Choice.eval(1, 2, 3).map(n => (n, released))
+                    }
+                }((_, _) => released = true)
+            assert(v.eval == Chunk((1, false), (2, false), (3, false)))
+            assert(released)
+        }
+
+        "a bracket inside the region around the choice point is live in every branch and releases once, after the handler ends" in {
+            var log = Chunk.empty[String]
+            val v   = Choice.run {
+                Bracket("res") { _ =>
+                    Choice.eval(1, 2).map { n =>
+                        log = log.append(s"branch$n")
+                        n
+                    }
+                }((_, _) => log = log.append("release")).map { n =>
+                    log = log.append(s"after$n")
+                    n
+                }
+            }
+            assert(v.eval == Chunk(1, 2))
+            assert(log == Chunk("branch1", "after1", "branch2", "after2", "release"))
+        }
+
+        "a bracket inside a branch releases once per branch" in {
+            var opens  = 0
+            var closes = 0
+            val v      = Choice.run {
+                for
+                    n <- Choice.eval(1, 2, 3)
+                    r <- Bracket({ opens += 1; n })(a => a * 10)((_, _) => closes += 1)
+                yield r
+            }
+            assert(v.eval == Chunk(10, 20, 30))
+            assert(opens == 3)
+            assert(closes == 3)
+        }
+
+        "a bracket acquired in a branch is released before the next branch acquires" in {
+            var log = Chunk.empty[String]
+            val v   = Choice.run {
+                for
+                    n <- Choice.eval(1, 2)
+                    r <- Bracket({ log = log.append(s"open$n"); n })(a => a)((_, _) => log = log.append(s"close$n"))
+                yield r
+            }
+            assert(v.eval == Chunk(1, 2))
+            assert(log == Chunk("open1", "close1", "open2", "close2"))
+        }
+
+        "a bracket inside the streamed choice is held across every branch and released once" in {
+            var log = Chunk.empty[String]
+            val v   =
+                Choice.runStream {
+                    Bracket("res")(_ =>
+                        Choice.eval(1, 2, 3).map { n =>
+                            log = log.append(s"branch$n"); n
+                        }
+                    )((_, _) => log = log.append("release"))
+                }.run
+            assert(v.eval == Chunk(1, 2, 3))
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
+        }
+
+        "a bracket around the streamed choice releases once after every branch" in {
+            var log = Chunk.empty[String]
+            val v   =
+                Stream {
+                    Bracket("res")(_ =>
+                        Choice.runStream(
+                            Choice.eval(1, 2, 3).map { n =>
+                                log = log.append(s"branch$n"); n
+                            }
+                        ).emit
+                    )((_, _) => log = log.append("release"))
+                }.run
+            assert(v.eval == Chunk(1, 2, 3))
+            assert(log == Chunk("branch1", "branch2", "branch3", "release"))
+        }
+
+        "nested choice points stream in the order run collects them".pendingUntilFixed(
+            "known gap: nested choice points stream in a different order than run collects them"
+        ) in {
+            val computation =
+                Choice.eval(1, 2).map { a =>
+                    if a == 1 then Choice.eval(10, 11) else a
+                }
+            assert(Choice.runStream(computation).run.eval == Choice.run(computation).eval)
+            assert(Choice.runStream(computation).run.eval == Chunk(10, 11, 2))
+        }
+
     }
 
 end ChoiceTest

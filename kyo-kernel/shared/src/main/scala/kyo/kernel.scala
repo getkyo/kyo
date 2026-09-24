@@ -4,7 +4,9 @@ type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop
 
+export kernel.Arrow
 export kernel.Isolate
+export kernel.Region
 
 /** Identity type constructor.
   *

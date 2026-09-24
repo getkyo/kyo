@@ -44,7 +44,7 @@ class SqlBackendDiscoveryTest extends Test:
         // client, since the suite never reaches it.
         def open(url: SqlConfig.Url, config: SqlConfig)(using
             Frame
-        ): SqlClient < (Async & Abort[SqlException]) =
+        ): SqlClient < (Async & Abort[SqlException] & Scope) =
             Abort.fail(SqlConnectionUnsupportedSchemeException(url.address.scheme, Chunk.empty))
     end SchemeProbeFactory
 

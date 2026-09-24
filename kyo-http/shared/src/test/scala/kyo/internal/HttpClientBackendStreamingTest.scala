@@ -123,9 +123,14 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
-        // Stream.take discards the continuation without unwinding, so no finalizer fires and the decode drains to Done, leaving the
-        // connection reusable (unlike the interrupted leaf above). If take ever finalizes eagerly, this flips and needs re-review.
-        "completes true when the consumer stops early but the body drains in the background" in {
+        // `Sync.ensure` is a bracket, and a bracket's release runs when the guarded extent ends, so stopping the stream
+        // early runs the finalizer and closes the decoded channel. The decode's next put then fails `Closed`, the body
+        // never reaches Done, and the connection is discarded rather than pooled.
+        //
+        // The cost is real: a consumer that reads a prefix and stops gives up connection reuse. Buying it back means
+        // draining the remainder under a deadline and a byte cap, a feature to add deliberately rather than a timing
+        // property to inherit.
+        "completes false when the consumer stops early, since ending the stream closes the body" in {
             val (clientConn, serverConn) = TransportConnection.inMemoryPair()
             val http1                    = Http1ClientConnection.init(clientConn.inbound, clientConn.outbound)
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
@@ -140,9 +145,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                         assert(chunks.size == 1 && spanToString(chunks(0)) == "chunk1")
                         discard(serverConn.outbound.offer(spanOf(chunk2AndEnd)))
                         bodyOutcome.safe.get.map { reusable =>
-                            assert(reusable, "a fully-drained body after an early consumer stop leaves the connection reusable")
-                            assert(clientConn.inbound.empty().getOrThrow, "inbound must be empty after the drain")
-                            assert(clientConn.inbound.pendingTakes().getOrThrow == 0, "no taker may remain after the drain")
+                            assert(!reusable, "a body cut short by its consumer leaves the connection non-reusable")
                         }
                     }
                 }

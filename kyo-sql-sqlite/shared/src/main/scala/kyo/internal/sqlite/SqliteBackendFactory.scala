@@ -24,7 +24,7 @@ class SqliteBackendFactory extends Backend:
     override def parseUrl(raw: String)(using Frame): Result[SqlConnectionException, SqlConfig.Url] =
         SqliteUrl.parse(raw)
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
-        SqliteClient.openUnscoped(url, config)
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
+        SqliteClient.opened(url, config)
 
 end SqliteBackendFactory

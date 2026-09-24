@@ -47,9 +47,11 @@ jobs:
     # pole is Native on the slower linux-arm64 runner: it links every module the plan selects
     # (~90s+ per link under the NATIVE_LINK_CPUS cap) and then runs every one of their test
     # binaries. The old "linux-x64 Native completes in ~200 min" figure came from runs that
-    # reported success after starting 10 of 58 modules, so it never measured a full pass. 360 min
-    # (the GitHub-hosted job ceiling) bounds a genuine hang while giving that pole real headroom.
-    timeout-minutes: 360
+    # reported success after starting 10 of 58 modules, so it never measured a full pass. The
+    # slowest full jobs measured at ~170 min (windows-x64 JVM 2h49m, linux-arm64 JVM 2h47m,
+    # linux-x64 Wasm 2h43m); 240 min keeps ~70 min of headroom over them while a hung job fails
+    # two hours before the 360 min GitHub-hosted ceiling.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       max-parallel: 4

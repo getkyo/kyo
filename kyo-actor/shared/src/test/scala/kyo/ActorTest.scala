@@ -6,6 +6,7 @@ import kyo.Actor.Subject
 class ActorTest extends kyo.test.Test[Any]:
 
     private case class Publish(value: Int, replyTo: Subject[Int])
+    private case class Sub(id: Int, replyTo: Subject[Unit])
 
     opaque type Amount = BigDecimal
     object Amount:
@@ -1145,6 +1146,34 @@ class ActorTest extends kyo.test.Test[Any]:
                     reply <- actor.ask(7)
                     _     <- actor.close
                 yield assert(reply == 7)
+            }
+        }
+    }
+
+    "resource safety under interruption" - {
+        // The reply-promise probe lands the stop deterministically: an `onComplete` registered after the caller parked
+        // fires LIFO before the caller's resume.
+        "a subscriber that registers its removal before the ask is not left in the set when stopped at the reply" in {
+            Scope.run {
+                for
+                    set   <- AtomicRef.init(Set.empty[Int])
+                    gate  <- Latch.init(1)
+                    actor <- Actor.run(Actor.receiveLoop[Sub] { msg =>
+                        gate.await.andThen(set.updateAndGet(_ + msg.id)).andThen(msg.replyTo.send(())).andThen(Loop.continue)
+                    })
+                    subscriber <- Fiber.initUnscoped(
+                        Scope.run(Scope.ensure(set.updateAndGet(_ - 1).unit).andThen(actor.ask(Sub(1, _))))
+                    )
+                    _ <- assertEventually(Sync.defer(actor.inFlightReplies.nonEmpty))
+                    reply = actor.inFlightReplies.head
+                    _ <- assertEventually(reply.waiters.map(_ >= 1))
+                    _ <- reply.onComplete(_ => subscriber.interrupt.unit)
+                    _ <- gate.release
+                    _ <- subscriber.getResult
+                    // Awaited, not read once: the interrupt spawns the scope's drain without waiting for it, so the
+                    // removal can land after `getResult` returns.
+                    _ <- assertEventually(set.get.map(_.isEmpty))
+                yield succeed
             }
         }
     }

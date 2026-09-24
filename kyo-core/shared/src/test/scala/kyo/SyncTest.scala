@@ -6,6 +6,8 @@ import scala.util.Try
 
 class SyncTest extends kyo.test.Test[Any]:
 
+    sealed private trait Replayed extends kyo.kernel.ArrowEffect[Const[Unit], Const[Int]]
+
     "lazyRun" - {
         "execution" in {
             var called = false
@@ -66,6 +68,18 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             loop(0).map { result =>
                 assert(result == frames)
+            }
+        }
+        // The map after the recursive defer makes each level
+        // leave a cont behind (#1739). The assertion is on the value, so a rescue that unwinds by
+        // dropping accumulated conts fails too.
+        "stack-safe when a map follows the recursive defer" in {
+            val depth                    = 1000000
+            def step(n: Int): Int < Sync =
+                if n <= 0 then 0
+                else Sync.defer(step(n - 1)).map(_ + 1)
+            step(depth).map { result =>
+                assert(result == depth)
             }
         }
     }
@@ -144,8 +158,12 @@ class SyncTest extends kyo.test.Test[Any]:
         }
 
         "resource safety" - {
-            "runs finalizer on Abort.fail".ignore("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
-                ()
+            "runs finalizer on Abort.fail" in {
+                var called = false
+                Abort.run[String](Sync.ensure { called = true }(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(called)
+                }
             }
 
             // The way to hold a resource across a computation that can abort, given the gap above: reify
@@ -204,9 +222,13 @@ class SyncTest extends kyo.test.Test[Any]:
                 }
             }
 
-            "error-aware ensure passes error on Abort.fail".ignore(
-                "an error-aware Sync.ensure finalizer is not yet passed the abort error on Abort.fail"
-            ) in { () }
+            "error-aware ensure passes error on Abort.fail" in {
+                var received: Maybe[Error[Any]] = Absent
+                Abort.run[String](Sync.ensure((e: Maybe[Error[Any]]) => received = e)(Abort.fail("boom"))).map { result =>
+                    assert(result == Result.fail("boom"))
+                    assert(received == Present(Result.Failure("boom")))
+                }
+            }
 
             "works without fiber context" in {
                 import AllowUnsafe.embrace.danger
@@ -225,6 +247,99 @@ class SyncTest extends kyo.test.Test[Any]:
                     assert(result == 42)
                 }
             }
+        }
+
+        "under a handler that replays" - {
+
+            "every branch of a replaying handler runs against the live resource, released once after all of them" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Sync.ensure(released.incrementAndGet.unit) {
+                        Choice.eval(1, 2).map(n => released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n)))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                    assert(r == 1, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 0)), s"a branch did not run against a live resource: $s")
+                end for
+            }
+
+            "a replaying handler holds the region, releasing once after every shot" in {
+                import kyo.kernel.ArrowEffect
+                for
+                    released <- AtomicInt.init(0)
+                    body = (Sync.ensure(released.incrementAndGet.unit) {
+                        ArrowEffect.suspend[Any](Tag[Replayed], ())
+                    }: Int < (Replayed & Sync))
+                    res <- Abort.run[Closed] {
+                        ArrowEffect.handleContRepeated[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                            [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
+                            a => a
+                        )
+                    }
+                    r <- released.get
+                yield
+                    assert(res == Result.succeed(3), s"$res")
+                    assert(r == 1, s"released $r")
+                end for
+            }
+
+            "a bracket acquired inside each branch gives every branch a live resource of its own" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Choice.eval(1, 2).map { n =>
+                        Sync.ensure(released.incrementAndGet.unit)(released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n)))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                    assert(r == 2, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 1)), s"a branch did not get its own resource: $s")
+                end for
+            }
+
+            "a bracket whose extent ends at the choice point still outlives every branch" in {
+                for
+                    released <- AtomicInt.init(0)
+                    seen     <- AtomicRef.init(Chunk.empty[(Int, Int)])
+                    body = Sync.ensure(released.incrementAndGet.unit)(Choice.eval(1, 2)).map { n =>
+                        released.get.map(r => seen.updateAndGet(_.append((n, r))).andThen(n))
+                    }
+                    res <- Abort.run[Closed](Choice.run(body))
+                    r   <- released.get
+                    s   <- seen.get
+                yield
+                    assert(r == 1, s"released $r")
+                    assert(s == Chunk((1, 0), (2, 0)), s"a branch observed its resource already released: $s")
+                    assert(res == Result.succeed(Chunk(1, 2)), s"$res")
+                end for
+            }
+        }
+
+        "whose use suspends on an async join releases at its own end" in {
+            for
+                released <- AtomicInt.init(0)
+                joined   <- Promise.init[Unit, Any]
+                // The join is answered only once the use is parked on it, so the use never runs straight through.
+                _ <- Fiber.initUnscoped(assertEventually(joined.waiters.map(_ >= 1)).andThen(joined.completeUnitDiscard))
+                // The bracket runs in a fiber of its own, so that fiber's end is the boundary a misplaced release would land
+                // on: the count is read once right after the use, inside the fiber, and again once the fiber has ended.
+                fiber <- Fiber.initUnscoped {
+                    Sync.ensure(released.incrementAndGet.unit)(joined.get.andThen(Sync.defer(()))).andThen(released.get)
+                }
+                afterUse <- fiber.get
+                total    <- released.get
+            yield
+                assert(afterUse == 1, s"released $afterUse right after the bracket's use completed")
+                assert(total == 1, s"released $total in all")
+            end for
         }
     }
 
@@ -247,6 +362,19 @@ class SyncTest extends kyo.test.Test[Any]:
             }.map { result =>
                 assert(result == 8)
                 assert(order == List("acquire", "use:resource", "release:resource"))
+            }
+        }
+
+        // #1846: the use aborting typed, with no Abort.run inside.
+        "releases when the use aborts with a typed error" in {
+            var released = 0
+            Abort.run[String] {
+                Sync.acquireReleaseWith(Sync.defer("resource"))(_ => Sync.defer { released += 1 }) { _ =>
+                    Abort.fail("boom")
+                }
+            }.map { result =>
+                assert(result == Result.fail("boom"))
+                assert(released == 1)
             }
         }
 
@@ -453,6 +581,145 @@ class SyncTest extends kyo.test.Test[Any]:
                 assert(result == 11)
             }
         }
+    }
+
+    "ensure under interruption" - {
+
+        // Holds only while nothing
+        // deferred sits above the region, since the abandonment walk stops at one.
+        "runs its finalizer for a fiber abandoned before its first slice" in {
+            Async.foreachDiscard(1 to 20, 20) { _ =>
+                for
+                    ran   <- AtomicInt.init(0)
+                    p     <- Promise.init[Int, Any]
+                    fiber <- Fiber.initUnscoped {
+                        import AllowUnsafe.embrace.danger
+                        Sync.ensure(Sync.Unsafe.defer(discard(ran.unsafe.incrementAndGet())))(p.get)
+                    }
+                    _ <- fiber.interrupt
+                    _ <- fiber.getResult
+                    _ <- assertEventually(ran.get.map(_ == 1))
+                    c <- ran.get
+                yield assert(c == 1, s"the finalizer ran $c times")
+                end for
+            }.andThen(assert(true))
+        }
+
+        // The finalizer runs as the region ends, and the step that raises the recorded abort applies as the value
+        // arrives, so a stop delivered while the finalizer runs, here requested by the finalizer itself, cannot
+        // separate the region's clean end from the caller's `ensureMap`.
+        "a caller's ensureMap after the region runs when the interrupt lands as the region ends" in {
+            for
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                ended   <- AtomicBoolean.init(false)
+                owned   <- AtomicBoolean.init(false)
+                fiber   <- Fiber.initUnscoped {
+                    (handoff.get.map { self =>
+                        Sync.ensure {
+                            // Unsafe: the interrupt is requested from inside the finalizer, so the stop lands on
+                            // the first poll after the region's end.
+                            Sync.Unsafe.defer {
+                                discard(self.unsafe.interrupt())
+                                ended.unsafe.set(true)
+                            }
+                        }(Sync.defer("token")).ensureMap { _ =>
+                            // Unsafe: the mark must land in the step that delivers the value, as a registration would; an
+                            // effectful write would be a step of its own, parked by the same stop.
+                            import AllowUnsafe.embrace.danger
+                            owned.unsafe.set(true)
+                            Async.never.andThen(Kyo.unit)
+                        }
+                    }): Unit < (Sync & Async)
+                }
+                _ <- handoff.complete(Result.succeed(fiber))
+                _ <- fiber.getResult
+                e <- ended.get
+                o <- owned.get
+            yield
+                assert(e, "the finalizer did not run")
+                assert(o, "the region ended cleanly and handed its value on, and the caller's ensureMap never owned it")
+            end for
+        }
+
+        // An interrupt landing as the body produces its outcome: the body interrupts its own fiber, so
+        // delivery lands at the next safepoint, after the body's step and before the region completes.
+        "still runs the finalizer" in {
+            for
+                ran     <- AtomicInt.init(0)
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                fiber   <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Sync.ensure(ran.incrementAndGet.unit) {
+                            Sync.defer {
+                                // Unsafe: the interrupt has to be requested from inside the body, before its
+                                // step ends, which is not an effectful position.
+                                import AllowUnsafe.embrace.danger
+                                discard(self.unsafe.interrupt())
+                            }
+                        }
+                    }
+                }
+                _   <- handoff.complete(Result.succeed(fiber))
+                res <- fiber.getResult
+                _   <- assertEventually(ran.get.map(_ == 1))
+                r   <- ran.get
+            yield
+                assert(res.isPanic, s"$res")
+                assert(r == 1, s"the finalizer ran $r times")
+            end for
+        }
+
+        "runs the finalizer exactly once when the body aborts" in {
+            for
+                ran     <- AtomicInt.init(0)
+                handoff <- Promise.init[Fiber[Unit, Any], Any]
+                fiber   <- Fiber.initUnscoped {
+                    handoff.get.map { self =>
+                        Abort.run[String] {
+                            Sync.ensure(ran.incrementAndGet.unit) {
+                                Sync.defer {
+                                    // Unsafe: the interrupt has to be requested from inside the body, before
+                                    // its step ends, which is not an effectful position.
+                                    import AllowUnsafe.embrace.danger
+                                    discard(self.unsafe.interrupt())
+                                }.andThen(Abort.fail("boom"))
+                            }
+                        }.unit
+                    }
+                }
+                _ <- handoff.complete(Result.succeed(fiber))
+                _ <- fiber.getResult
+                _ <- assertEventually(ran.get.map(_ == 1))
+                r <- ran.get
+            yield assert(r == 1, s"the finalizer ran $r times")
+            end for
+        }
+
+        "a repeated handler that resumes twice runs both shots against the live resource, released once" in {
+            import kyo.kernel.ArrowEffect
+            for
+                released <- AtomicInt.init(0)
+                seen     <- AtomicRef.init(Chunk.empty[Int])
+                body = (Sync.ensure(released.incrementAndGet.unit) {
+                    ArrowEffect.suspend[Any](Tag[Replayed], ()).map(n =>
+                        released.get.map(r => seen.updateAndGet(_.append(r)).andThen(n))
+                    )
+                }: Int < (Replayed & Sync))
+                res <- Abort.run[Closed] {
+                    ArrowEffect.handleContRepeated[Const[Unit], Const[Int], Replayed, Int, Int, Sync, Any](Tag[Replayed], body)(
+                        [C] => (_, cont) => cont(1).map(a => cont(2).map(b => a + b)),
+                        a => a
+                    )
+                }
+                r <- released.get
+                s <- seen.get
+            yield
+                assert(res == Result.succeed(3), s"$res")
+                assert(r == 1, s"released $r")
+                assert(s == Chunk(0, 0), s"a shot did not run against a live resource: $s")
+            end for
+        }
+
     }
 
 end SyncTest

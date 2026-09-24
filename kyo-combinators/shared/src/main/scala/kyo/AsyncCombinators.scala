@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.debug.Debug
 import kyo.internal.Reducible
 import kyo.internal.Zippable
 import kyo.kernel.ArrowEffect

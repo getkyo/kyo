@@ -7,6 +7,11 @@ import scala.util.NotGiven
 object StreamCoreExtensions:
     val defaultAsyncStreamBufferSize = 1024
 
+    /** Every caller must pair this with
+      * `Sync.ensure(producers.interrupt)`: the consumer can stop first (a downstream `take` is the ordinary way), and closing the channel
+      * does not reach a producer parked inside a source stream's own step, which then stays parked for the life of the program holding
+      * what it acquired.
+      */
     private def emitMaybeChunksFromChannel[V](channel: Channel[Maybe[Chunk[V]]])(using Tag[Emit[Chunk[V]]], Frame) =
         val emit = Loop.foreach:
             channel.take.map:
@@ -134,12 +139,12 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(Abort.run {
+                        producers <- Fiber.initUnscoped(Abort.run {
                             Async.foreachDiscard(streams)(
                                 _.foreachChunk(c => channel.put(Present(c)))
                             )
                         }.andThen(Abort.run(channel.put(Absent)).unit))
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
         /** Creates a stream from an iterator.
@@ -266,14 +271,14 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(Abort.run(
+                        producers <- Fiber.initUnscoped(Abort.run(
                             Async
                                 .foreachDiscard(streams)(
                                     _.foreachChunk(c => channel.put(Present(c)))
                                         .andThen(Abort.run(channel.put(Absent)))
                                 )
                         ))
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
     end extension
@@ -343,14 +348,14 @@ object StreamCoreExtensions:
             Stream:
                 Channel.use[Maybe[Chunk[V]]](bufferSize, Access.MultiProducerMultiConsumer): channel =>
                     for
-                        _ <- Fiber.initUnscoped(
+                        producers <- Fiber.initUnscoped(
                             Async.gather(
                                 stream.foreachChunk(c => channel.put(Present(c)))
                                     .andThen(channel.put(Absent)),
                                 other.foreachChunk(c => channel.put(Present(c)))
                             ).andThen(channel.put(Absent))
                         )
-                        _ <- emitMaybeChunksFromChannel(channel)
+                        _ <- Sync.ensure(producers.interrupt.unit)(emitMaybeChunksFromChannel(channel))
                     yield ()
 
         /** Merges with another stream. Stream stops when other stream has completed or when both streams have completed.
@@ -410,12 +415,12 @@ object StreamCoreExtensions:
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
-                                (input, cont) =>
+                                input =>
                                     // Fork async generation of chunks (with each transformation limited by semaphore)
                                     // and publish fiber to output channel. Wait for concurrency using semaphore first to
                                     // backpressure handler loop
                                     semaphore.run(Fiber.initUnscoped(Async.foreach(input)(v => semaphore.run(f(v))))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
+                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
                         )
 
                         // Run stream handler in background, propagating errors to foreground
@@ -448,7 +453,10 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.closeDiscard):
+                                // The consumer's exit is where the element fibers must be stopped: closing the channel
+                                // alone discards whatever is still in it and leaves those fibers running with everything
+                                // they hold, so the drain-and-interrupt runs here.
+                                Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -518,7 +526,7 @@ object StreamCoreExtensions:
                             // using semaphore as rate limiter
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
-                                    (input, cont) =>
+                                    input =>
                                         // For each element in input chunk, transform and publish each to channelOut
                                         // concurrently, limited by semaphore. Fork this collective process and publish
                                         // fiber to channelPar in order to ensure completion/interruption. Wait for
@@ -526,7 +534,7 @@ object StreamCoreExtensions:
                                         semaphore.run(Fiber.initUnscoped(
                                             Async.foreachDiscard(input)(v => semaphore.run(f(v).map(channelOut.put(_))))
                                         )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(cont(())))
+                                            channelPar.put(fiber).andThen(Loop.continue(()))
                             ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing.
@@ -630,14 +638,14 @@ object StreamCoreExtensions:
                         // via semaphore
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
-                                (input, cont) =>
+                                input =>
                                     // Transform chunk in background, publishing fiber to channelOut. The outer
                                     // `semaphore.run` backpressures the handler loop; the inner one bounds the actual
                                     // transformation work to `parallel`. Without the inner gate the permit would only
                                     // span the fork (which returns immediately), leaving every chunk to transform
                                     // concurrently regardless of `parallel`.
                                     semaphore.run(Fiber.initUnscoped(semaphore.run(f(input)))).map: chunkFiber =>
-                                        channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
+                                        channelOut.put(chunkFiber).andThen(Loop.continue(()))
                         )
 
                         // Run stream handler in background, propagating errors to foreground
@@ -670,7 +678,7 @@ object StreamCoreExtensions:
                                             case Result.Failure(e) =>
                                                 // Not Closed, must be E
                                                 fiberError.set(Present(Right(e)))
-                                Sync.ensure(channelOut.closeDiscard):
+                                Sync.ensure(cleanup.unit):
                                     Abort.run[Closed](emit).unit
                                 .andThen(fiberError)
                         end emitResults
@@ -746,7 +754,7 @@ object StreamCoreExtensions:
                             // using semaphore as rate limiter
                             val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                                 handle = [C] =>
-                                    (input, cont) =>
+                                    input =>
                                         // Transform chunks and publish to channelOut in background fiber, placing
                                         // fiber in channelPar to ensure completion/interruption. The outer
                                         // `semaphore.run` backpressures the handler loop; the inner one bounds the
@@ -756,7 +764,7 @@ object StreamCoreExtensions:
                                         semaphore.run(Fiber.initUnscoped(
                                             semaphore.run(f(input).map(chunk => channelOut.put(chunk).unit))
                                         )).map: fiber =>
-                                            channelPar.put(fiber).andThen(Loop.continue(cont(())))
+                                            channelPar.put(fiber).andThen(Loop.continue(()))
                             ).andThen(channelPar.closeAwaitEmpty.unit)
 
                             // Drain channelPar, waiting for each fiber to complete before finishing.
@@ -1106,9 +1114,9 @@ object StreamCoreExtensions:
                             Sync.ensure(Fiber.initUnscoped(using Isolate[Any, Any, Any])(channel.put(Flush))):
                                 ArrowEffect.handleLoop(t1, stream.emit)(
                                     handle = [C] =>
-                                        (chunk, cont) =>
+                                        chunk =>
                                             channel.put(Data(chunk)).andThen:
-                                                Loop.continue(cont(()))
+                                                Loop.continue(())
                                 )
 
                     // Single fiber emitting a tick at constant interval
@@ -1140,12 +1148,15 @@ object StreamCoreExtensions:
                                     else
                                         Loop.done
 
-                    (for
-                        _     <- tick
-                        fiber <- push
-                        _     <- Abort.run[Closed](pull)
-                        _     <- fiber.get
-                    yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
+                    // The push fork stays outside the internal scope: that Scope.run manages only the tick timer, and a
+                    // producer forked inside it would scope the source stream's resources to this combinator, not the
+                    // caller's ambient scope.
+                    push.map: fiber =>
+                        (for
+                            _ <- tick
+                            _ <- Abort.run[Closed](pull)
+                            _ <- fiber.get
+                        yield ()).handle(Scope.run, Abort.run[Closed], _.unit)
                 }
         end groupedWithin
 

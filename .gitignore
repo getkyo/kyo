@@ -34,3 +34,9 @@ analysis-*.md
 # Doctest content-hash cache. Lives outside target/ so a clean does not destroy it (CI
 # restores it before the build, and a clean would then wipe what was just restored).
 .doctest-cache/
+
+# Local development artifacts: design notes, review packages, benchmark output, agent tooling.
+.dev/
+
+# macOS Spotlight opt-out marker (local only)
+.metadata_never_index

@@ -251,6 +251,37 @@ class JsTransportTlsTest extends Test:
         end for
     }
 
+    // Node exposes no getter for TCP_NODELAY. net.Socket.setNoDelay records the applied value under its private `kSetNoDelay` symbol, and only
+    // after forwarding it to a handle that implements it, which for a TLSSocket is the TCP handle under the TLS layer. Reading that symbol is
+    // the one deterministic observation of the option; its absence fails the leaf rather than passing it.
+    private def noDelayOf(conn: Connection): Maybe[Boolean] =
+        val socket = conn.asInstanceOf[kyo.net.internal.transport.Connection[kyo.net.internal.JsHandle]].handle.socket
+        val syms   = sjs.Dynamic.global.Object.getOwnPropertySymbols(socket).asInstanceOf[sjs.Array[sjs.Dynamic]]
+        Maybe.fromOption(syms.find(sym => sjs.special.strictEquals(sym.description, "kSetNoDelay")))
+            .map(sym => sjs.Dynamic.global.Reflect.get(socket, sym).asInstanceOf[Boolean])
+    end noDelayOf
+
+    "TLS connections disable Nagle on both the connecting and the accepted socket" in {
+        import AllowUnsafe.embrace.danger
+        val transport = JsTransport.init(poolSize = 1)
+        for
+            accepted <- Promise.init[Connection, Any]
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial) { serverConn =>
+                accepted.unsafe.completeDiscard(Result.succeed(serverConn))
+            }.safe.get
+            client <- transport.connectTls("127.0.0.1", listener.port, NetTlsConfig(trustAll = true)).safe.get
+            server <- accepted.get
+        yield
+            val clientNoDelay = noDelayOf(client)
+            val serverNoDelay = noDelayOf(server)
+            client.close()
+            server.close()
+            listener.close()
+            assert(clientNoDelay == Present(true), s"connecting TLS socket TCP_NODELAY: $clientNoDelay")
+            assert(serverNoDelay == Present(true), s"accepted TLS socket TCP_NODELAY: $serverNoDelay")
+        end for
+    }
+
     private val serverTlsMaterial = NetTlsConfig(
         certChainPath = Present(localhostCertPath),
         privateKeyPath = Present(localhostKeyPath)

@@ -2,6 +2,7 @@ package kyo.internal.mysql
 
 import kyo.Chunk
 import kyo.Span
+import kyo.discard
 
 // --- AccumulatedBuffer ---
 
@@ -39,8 +40,9 @@ final class AccumulatedBuffer:
         while written < n do
             val head    = chunks.head
             val canRead = math.min(n - written, head.size - offset)
-            val src     = head.toArray
-            java.lang.System.arraycopy(src, offset, result, written, canRead)
+            // Copies only the bytes read. `toArray` copies the whole received chunk, and a chunk holds thousands of small row packets,
+            // so a per-packet whole-chunk copy made draining a stream on JS 8x slower (22k against 185k rows/s).
+            discard(head.slice(offset, offset + canRead).copyToArray(result, written))
             written += canRead
             if offset + canRead >= head.size then
                 chunks = chunks.tail

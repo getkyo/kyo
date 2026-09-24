@@ -17,7 +17,7 @@ class StubBackend extends Backend:
     val aliases: Set[String] = Set.empty
     val dialect: Idiom       = StubDialect
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
         Runtime.init(url, config, StubConnection.factory(url.options)).map(rt => new StubClient(rt))
 
 end StubBackend

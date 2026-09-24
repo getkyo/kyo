@@ -1500,6 +1500,9 @@ object SqlClient:
     private[kyo] def openScoped(rawUrl: String, config: SqlConfig, registry: Backend.Registry)(using
         Frame
     ): SqlClient < (Async & Scope & Abort[SqlException]) =
+        // Two releases land on this scope: this one, and the unconditional release `Runtime.init` registers as the pool is
+        // allocated. Both route through `Runtime.closeOnce`, whose compare-and-set elects a single closer, so the ring is
+        // drained once however the scope ends rather than twice.
         factoryFor(rawUrl, registry).flatMap((url, backend) =>
             backend.open(url, config).flatMap(client => Scope.ensure(client.close).andThen(client))
         )
@@ -1510,7 +1513,11 @@ object SqlClient:
     private[kyo] def openUnscoped(rawUrl: String, config: SqlConfig, registry: Backend.Registry)(using
         Frame
     ): SqlClient < (Async & Abort[SqlException]) =
-        factoryFor(rawUrl, registry).flatMap((url, backend) => backend.open(url, config))
+        // `runUnowned`, not `run`: the release `Runtime.init` records has to be armed while the pool is being warmed, and
+        // it must not fire when the assembly reaches its end, because the client that leaves here is the caller's to
+        // close. An assembly abandoned partway does fire it, which is the one thing a caller holding no client could not
+        // have done for itself.
+        factoryFor(rawUrl, registry).flatMap((url, backend) => Scope.runUnowned(backend.open(url, config)))
 
     /** Parses `rawUrl` and pairs it with the factory claiming its scheme, or fails naming the schemes that are available. */
     private[kyo] def factoryFor(rawUrl: String, registry: Backend.Registry)(using

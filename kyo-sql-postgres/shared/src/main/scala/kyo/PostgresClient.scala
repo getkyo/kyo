@@ -305,7 +305,7 @@ object PostgresClient:
     private[kyo] def openUnscoped(url: SqlConfig.Url, config: SqlConfig)(using
         Frame
     ): PostgresClient < (Async & Abort[SqlException]) =
-        opened(url, config)
+        Scope.runUnowned(opened(url, config))
 
     /** Validates the PostgreSQL settings, then assembles the carrier through [[kyo.db.Runtime.init]] and wraps it in a client.
       *
@@ -315,7 +315,7 @@ object PostgresClient:
       * The search path is rendered here purely to reach its refusal. A pool that opens nothing at warm-up would otherwise carry a malformed
       * value until the first statement asked for a connection, reporting a config mistake as a failure to connect.
       */
-    private def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException]) =
+    private[kyo] def opened(url: SqlConfig.Url, config: SqlConfig)(using Frame): PostgresClient < (Async & Abort[SqlException] & Scope) =
         val settings = PostgresConfig.of(config)
         sanitizeTypeNames(settings.typeNames).andThen(settings.searchPathValue).andThen {
             Runtime.init(url, config, PostgresSqlConnection.factory(url.options)).map(rt => new PostgresClient(rt))

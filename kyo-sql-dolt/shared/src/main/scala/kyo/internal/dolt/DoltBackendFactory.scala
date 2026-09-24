@@ -24,7 +24,7 @@ class DoltBackendFactory extends Backend:
 
     val dialect: Idiom = DoltDialect
 
-    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException]) =
-        DoltServer.openUnscoped(url, config)
+    def open(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlClient < (Async & Abort[SqlException] & Scope) =
+        DoltServer.opened(url, config)
 
 end DoltBackendFactory

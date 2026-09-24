@@ -145,31 +145,30 @@ object Poll:
         frame: Frame
     ): A < (reduce.SReduced & S) =
         reduce:
-            ArrowEffect.handleLoop(tag, inputs, v)([C] =>
-                (unit, state, cont) => Loop.continue(state.drop(1), cont(state.headMaybe))
+            ArrowEffect.handleLoopState(tag, inputs, v)([C] =>
+                (state, unit) => Loop.continue(state.drop(1), state.headMaybe)
             )
 
     /** Runs a Poll effect with a single input value, stopping after the first poll operation.
       *
-      * This method provides a single input value to the Poll effect and stops after the first poll. It returns a continuation function that
-      * can process the Maybe[V] result of the poll
+      * It returns the continuation that
+      * consumes the Maybe[V] result of the poll
       *
       * @param v
       *   The computation requiring Poll values
       * @return
-      *   A tuple containing the acknowledgement and a continuation function that processes the poll result
+      *   Either the computation's result, or the continuation that consumes the poll result
       */
-    def runFirst[V](
+    private[kyo] def runFirst[V](
         using Frame
     )[A, VR, S](v: A < (Poll[V] & Poll[VR] & S))(using
         tag: Tag[Poll[V]],
         reduce: Reducible[Poll[VR]]
-    ): Either[A, Maybe[V] => A < (Poll[V & VR] & S)] < (reduce.SReduced & S) =
+    ): Either[A, Arrow[Maybe[V], A, Poll[V & VR] & S]] < (reduce.SReduced & S) =
         reduce:
             ArrowEffect.handleFirst(tag, v)(
                 handle = [C] =>
                     (input, cont) =>
-                        // Effect found, return the input an continuation
                         Right(cont),
                 done = r =>
                     // Effect not found, return empty input and a placeholder continuation
@@ -205,7 +204,7 @@ object Poll:
         reduceEmit: Reducible[Emit[VRE]],
         reducePoll: Reducible[Poll[VRP]],
         frame: Frame
-    ): (A, B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
+    ): (Maybe[A], B) < (reduceEmit.SReduced & reducePoll.SReduced & S & S2) =
         reduceEmit:
             reducePoll:
                 // Start by handling the first emission
@@ -225,14 +224,14 @@ object Poll:
                                             Loop.continue(emitCont(()), pollCont(Maybe(emitted))),
                                     // Poll.run(emitCont(ack))(pollCont(Maybe(emitted))),
                                     done = b =>
-                                        // Poller completed early (e.g., received all needed values)
-                                        // Discard remaining emit operations
-                                        Emit.runDiscard[V](emitCont(())).map(a => Loop.done((a, b)))
+                                        // Poller completed: the emitter's cont is dropped rather than run, so an unbounded emitter ends
+                                        // here having produced no value, which Absent reports.
+                                        Loop.done((Maybe.empty[A], b))
                                 ),
                         done = a =>
                             // Emitter completed (no more values to emit)
                             // Run remaining poll operations with empty chunk to signal completion
-                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((a, b)))
+                            Poll.run[V](Chunk.empty)(poll).map(b => Loop.done((Present(a), b)))
                     )
                 }
     end runEmit

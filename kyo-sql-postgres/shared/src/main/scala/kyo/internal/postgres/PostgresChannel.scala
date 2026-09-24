@@ -205,11 +205,11 @@ final class PostgresChannel(
                 pending.claim.flatMap {
                     case true  => pending.abort.andThen(checkCorrupted())
                     case false =>
-                        // Another party is running the cleanup. Async.mask makes this wait uninterruptible
+                        // Another party is running the cleanup. Async.uninterruptible protects this wait
                         // so the caller cannot skip it and race the cleanup's bytes on the wire. The gauge
                         // bracket is a read-only signal that a writer has parked here so a test can observe the
                         // block deterministically; it changes no behavior and the wait is unchanged.
-                        Async.mask {
+                        Async.uninterruptible {
                             _pendingCleanupWaiters.incrementAndGet.andThen {
                                 pending.latch.await.andThen(_pendingCleanupWaiters.decrementAndGet.unit)
                             }

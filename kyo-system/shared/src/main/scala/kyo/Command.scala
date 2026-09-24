@@ -65,16 +65,14 @@ object Command:
           * If the scope closes before `waitFor` completes, the process is forcibly killed.
           */
         def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
-            Sync.Unsafe.defer {
-                Abort.get(self.unsafe.spawn()).map { proc =>
-                    Scope.acquireRelease(proc.safe) { p =>
-                        Sync.Unsafe.defer {
-                            // Feeds are stopped unconditionally: the process may have exited
-                            // while a feed is still parked reading its own source.
-                            p.unsafe.stopInputFeeds()
-                            if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                        }
-                    }
+            // `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
+            // `.map` a stop could park on between the fork and `acquireRelease`'s `ensureMap`.
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
+                Sync.Unsafe.defer {
+                    // Feeds are stopped unconditionally: the process may have exited
+                    // while a feed is still parked reading its own source.
+                    p.unsafe.stopInputFeeds()
+                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
                 }
             }
 
@@ -84,8 +82,10 @@ object Command:
           * backend owns and closes explicitly.
           */
         def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
+            // `.safe` is a pure `Result.map` inside the unsafe block, so the process arrives from `Abort.get` with no
+            // trailing kernel `.map` a stop could park on before a bracketing caller registers its release.
             Sync.Unsafe.defer {
-                Abort.get(self.unsafe.spawn()).map(_.safe)
+                Abort.get(self.unsafe.spawn().map(_.safe))
             }
 
         /** Spawns the process, waits for it to complete, and returns its combined stdout as a UTF-8 string. */
@@ -95,20 +95,13 @@ object Command:
         /** Spawns the process and returns its stdout as a byte stream (scope-managed). */
         def stream(using Frame): Stream[Byte, Async & Scope & Abort[CommandException]] =
             Stream {
-                Sync.Unsafe.defer {
-                    Abort.get(self.unsafe.spawn()).map { proc =>
-                        val safeProc = proc.safe
-                        Scope.acquireRelease(safeProc) { p =>
-                            Sync.Unsafe.defer {
-                                // Feeds are stopped unconditionally: the process may have exited
-                                // while a feed is still parked reading its own source.
-                                p.unsafe.stopInputFeeds()
-                                if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                            }
-                        }.map { p =>
-                            p.stdout.emit
-                        }
+                Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
+                    Sync.Unsafe.defer {
+                        p.unsafe.stopInputFeeds()
+                        if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
                     }
+                }.map { p =>
+                    p.stdout.emit
                 }
             }
 

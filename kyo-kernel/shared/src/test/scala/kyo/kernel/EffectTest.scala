@@ -2,61 +2,23 @@ package kyo.kernel
 
 import kyo.*
 import kyo.kernel.*
+import org.scalatest.freespec.AnyFreeSpec
 
-class EffectTest extends kyo.test.Test[Any]:
+class EffectTest extends AnyFreeSpec:
 
-    sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
+    sealed trait Ask extends ArrowEffect[Const[Unit], Const[Int]]
+    def ask: Int < Ask = ArrowEffect.suspend[Any](Tag[Ask], ())
 
-    def testEffect1(i: Int): String < TestEffect1 =
-        ArrowEffect.suspend[Any](Tag[TestEffect1], i)
+    def answerAsk[A](value: Int)(v: A < Ask): A < Any =
+        ArrowEffect.handleLoop(Tag[Ask], v)([C] => _ => Loop.continue(value), a => a)
 
-    "catching" - {
-        "match" in {
-            val effect = Effect.catching {
-                throw new RuntimeException("Test exception")
-            } {
-                case _: RuntimeException => 42
-            }
+    sealed trait Wrap extends ArrowEffect[Const[Unit], Const[Unit]]
 
-            assert(effect.eval == 42)
-        }
+    def recovering[A](v: A < Wrap)(f: Throwable => A): A < Any =
+        ArrowEffect.handleCont(Tag[Wrap], v)([C] => (_, cont) => cont(()), a => a, ex => Maybe(f(ex)))
 
-        "no match" in {
-            interceptThrown[Exception] {
-                Effect.catching {
-                    throw new Exception("Test exception")
-                } {
-                    case _: RuntimeException => 42
-                }.eval
-            }
-        }
-
-        "failure in map" in {
-            val effect = Effect.catching {
-                testEffect1(42).map(_ => (throw new RuntimeException("Test exception")): String)
-            } {
-                case _: RuntimeException => "caught"
-            }
-
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)([C] => (input, cont) => cont(input.toString))
-
-            assert(result.eval == "caught")
-        }
-
-        "multiple exception types" in {
-            def testCatching(ex: Throwable) = Effect.catching {
-                throw ex
-            } {
-                case _: IllegalArgumentException => "Illegal Argument"
-                case _: RuntimeException         => "Runtime"
-                case _                           => "Other"
-            }
-
-            assert(testCatching(new RuntimeException()).eval == "Runtime")
-            assert(testCatching(new IllegalArgumentException()).eval == "Illegal Argument")
-            assert(testCatching(new Exception()).eval == "Other")
-        }
-    }
+    def inc: Arrow[Int, Int, Any]    = Arrow[Int](i => i + 1)
+    def double: Arrow[Int, Int, Any] = Arrow[Int](i => i * 2)
 
     "defer" - {
 
@@ -86,16 +48,54 @@ class EffectTest extends kyo.test.Test[Any]:
             assert(effect.eval == 42)
             assert(order == List(3, 2, 1))
         }
+
+        "defer composes with maps without running early" in {
+            var ran          = false
+            val d: Int < Any = Effect.defer {
+                ran = true
+                1
+            }
+            val r = d.map(_ + 1)
+            assert(!ran)
+            assert(r.eval == 2)
+            assert(ran)
+        }
+
+        "defer suspends effects performed by its body" in {
+            var ran          = false
+            val d: Int < Ask = Effect.defer {
+                ran = true
+                ask.map(_ + 1)
+            }
+            assert(!ran)
+            assert(answerAsk(41)(d).eval == 42)
+            assert(ran)
+        }
+
+        "deferInline delays evaluation until the eval" in {
+            var ran          = false
+            val d: Int < Any = Effect.deferInline {
+                ran = true
+                7
+            }
+            assert(!ran)
+            assert(d.map(_ * 6).eval == 42)
+            assert(ran)
+        }
+
+        "defer evaluates once per eval of a fresh value" in {
+            var runs         = 0
+            def d: Int < Any = Effect.defer {
+                runs += 1
+                runs
+            }
+            assert(d.eval == 1)
+            assert(d.eval == 2)
+        }
     }
 
-    "defer with catching" in {
-        val effect = Effect.defer {
-            Effect.catching {
-                throw new RuntimeException("Test exception")
-            } {
-                case _: RuntimeException => 42
-            }
-        }
+    "defer with a recovery inside" in {
+        val effect = Effect.defer(recovering(Effect.defer((throw new RuntimeException("Test exception")): Int))(_ => 42))
         assert(effect.eval == 42)
     }
 
@@ -103,11 +103,35 @@ class EffectTest extends kyo.test.Test[Any]:
         val effect =
             for
                 a <- Effect.defer(1)
-                b <- Effect.catching(2 / 0) { case _: ArithmeticException => 2 }
+                b <- recovering(Effect.defer(2 / 0))(_ => 2)
                 c <- Effect.defer(3)
             yield a + b + c
 
         assert(effect.eval == 6)
+    }
+
+    "the deferral node" - {
+        "runs the value into its continuation" in {
+            assert(Effect.defer(1: Int < Any, inc).eval == 2)
+        }
+
+        "defers a pending value" in {
+            assert(answerAsk(41)(Effect.defer(ask, inc)).eval == 42)
+        }
+
+        "runs both continuations in order" in {
+            assert(Effect.defer(1: Int < Any, inc, double).eval == 4)
+            assert(Effect.defer(1: Int < Any, double, inc).eval == 3)
+        }
+
+        "an identity second continuation leaves the result unchanged" in {
+            assert(Effect.defer(1: Int < Any, inc, Arrow.id[Int]).eval == 2)
+        }
+
+        "the four-argument form runs its three continuations in order" in {
+            assert(Effect.defer(1: Int < Any, inc, double, inc).eval == 5)
+            assert(Effect.defer(1: Int < Any, double, inc, double).eval == 6)
+        }
     }
 
 end EffectTest

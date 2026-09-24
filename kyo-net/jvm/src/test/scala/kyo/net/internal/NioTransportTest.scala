@@ -603,8 +603,8 @@ class NioTransportTest extends Test:
         }
     }
 
-    // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so it is invisible to the registry
-    // transport close sweeps. Before this was tracked, nothing reclaimed it: a listener close tore down only the accept and the server channel,
+    // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so nothing else knows it exists.
+    // Before this was tracked, nothing reclaimed it: a listener close tore down only the accept and the server channel,
     // and the process-shared transport is never closed at all, so a peer that completed the TCP accept and then stalled held its channel and
     // handle until the process exited.
     //
@@ -649,7 +649,7 @@ class NioTransportTest extends Test:
     // The companion to the leaf above, for the window it cannot reach. The registration runs on the selector carrier while
     // dischargeListenerHandshakes runs on the closing carrier, so a listener can close AFTER the accept loop's `!listener.isClosed` guard and
     // BEFORE the handshake is tracked. That entry would then survive every reclaim path: the sweep has passed, a second close is a CAS no-op,
-    // and the transport-wide sweep never runs on the process-shared transport. Driven through the production function directly, since the
+    // and the process-shared transport is never closed, so no later sweep exists. Driven through the production function directly, since the
     // interleaving cannot be forced through the public surface.
     "a handshake tracked after its listener already closed is reclaimed at registration" in {
         val transport = NioTransport.init()

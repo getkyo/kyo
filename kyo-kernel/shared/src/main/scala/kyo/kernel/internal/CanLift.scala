@@ -5,12 +5,13 @@ import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
 
-/** CanLift is a "soft" constraint that indicates a type should not contain nested effect computations (A < S), or A is not a module from
-  * kyo (like Abort.type).
+/** The constraint the implicit lift carries, rejecting what should not be lifted into a computation.
   *
-  * This constraint helps:
-  *   - prevent accidental nesting of effects that would require flattening, but cannot be strictly enforced in all generic contexts,
-  *   - prevent calling combinators from (A < S) on modules, like Abort.foldAbort.
+  * Two things are refused: a computation (lifting one into another nests it; fix with `.flatten` or by splitting the expression) and a kyo
+  * module object (`Abort` where `Abort(...)` was meant would otherwise become `Abort.type < S`, hiding the missing argument list).
+  *
+  * It is a soft constraint: it tests whether the type being lifted is a computation. At a concrete type it can answer; inside a generic
+  * function the type parameter is abstract and cannot be tested, so the lift fires and a nested computation results.
   *
   * @tparam A
   *   The type to check for nested effects
@@ -39,7 +40,7 @@ To fix this, you can:
 opaque type CanLift[A] = Null
 
 object CanLiftMacro:
-    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = ${ liftImpl[A] }
+    inline def checkSingleton[A]: CanLift[A] = ${ liftImpl[A] }
 
     private[internal] def liftImpl[A: Type](using Quotes): Expr[CanLift[A]] =
         import quotes.reflect.*
@@ -49,23 +50,38 @@ object CanLiftMacro:
         if sym.fullName.startsWith("kyo.") && sym.flags.is(Flags.Module) && !sym.flags.is(Flags.Case) then
             report.errorAndAbort(s"Cannot lift '${sym.fullName}' to a '${sym.name} < S'", Position.ofMacroExpansion)
 
-        '{ CanLift.unsafe.bypass.asInstanceOf[CanLift[A]] }
+        if tpe <:< TypeRepr.of[Any < Nothing] then
+            report.errorAndAbort(s"Type '${tpe.show}' may contain a nested effect computation.", Position.ofMacroExpansion)
+
+        '{ null.asInstanceOf[CanLift[A]] }
     end liftImpl
+
+    def abortCastUnitImpl[S1: Type, S2: Type](v: Expr[Unit < S1])(using quotes: Quotes): Expr[Unit < S2] =
+        import quotes.reflect.*
+        val source = TypeRepr.of[S1].show
+        report.errorAndAbort(
+            s"""Cannot lift `Unit < ${source}` to the expected type (`Unit < ?`).
+               |This may be due to an effect type mismatch.
+               |Consider removing or adjusting the type constraint on the left-hand side.
+               |More info : https://github.com/getkyo/kyo/issues/903""".stripMargin
+        )
+    end abortCastUnitImpl
 
 end CanLiftMacro
 
 object CanLift:
 
-    export CanLiftMacro.derived
+    // Three givens rather than one macro: only the third case needs the macro, and the first covers almost every
+    // lift in a program. Keeping the macro off that path matters twice: a type test rather than a compiler
+    // expansion at every lift site, and a file that summons a same-module macro is suspended to a retry run, a
+    // cascade this module sits close to.
 
-    inline given CanLift[Nothing] = CanLift.unsafe.bypass
+    inline given derived[A](using inline ng: NotGiven[A <:< (Any < Nothing)], inline ns: NotGiven[A <:< Singleton]): CanLift[A] = null
 
-    object unsafe:
-        /** Unconditionally provides CanLift evidence for any type.
-          *
-          * Warning: This bypasses normal type safety checks and should only be used when you can guarantee through other means that no
-          * problematic effect nesting will occur.
-          */
-        inline given bypass[A]: CanLift[A] = null
-    end unsafe
+    /** A case object is a singleton but never a kyo module, so it is admitted without asking the macro. */
+    inline given derivedCaseObject[A <: Singleton & Product](using inline ng: NotGiven[A <:< (Any < Nothing)]): CanLift[A] = null
+
+    inline given derivedSingleton[A <: Singleton]: CanLift[A] = CanLiftMacro.checkSingleton[A]
+
+    inline given CanLift[Nothing] = null
 end CanLift
