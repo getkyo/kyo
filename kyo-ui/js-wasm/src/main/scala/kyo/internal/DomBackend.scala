@@ -442,6 +442,8 @@ private[kyo] object DomBackend:
       * deeper entry belongs to a seed that closed while a newer one stayed open, so its return target is stale
       * and must not override the one just restored. Its entry is still dropped, so it cannot fire on a later
       * sweep either. Mirrors `sweepFocusAuto` in HtmlRenderer.clientJs.
+      *
+      * A restore only lands where the removal actually took the focus with it (see [[focusWasLost]]).
       */
     @tailrec
     private def sweepFocusAuto(restored: Boolean = false): Unit =
@@ -449,10 +451,23 @@ private[kyo] object DomBackend:
             case Present(seed)
                 if document.querySelector(s"""[data-kyo-path="${seed.path}"][data-kyo-focus-auto]""") == null =>
                 focusReturnStack = focusReturnStack.dropLeftAndRight(0, 1)
-                val landed = !restored && seed.restore && seed.returnTo.exists(retPath => focusIfPresent(retPath))
+                val landed =
+                    !restored && seed.restore && focusWasLost && seed.returnTo.exists(retPath => focusIfPresent(retPath))
                 sweepFocusAuto(restored || landed)
             case _ => ()
     end sweepFocusAuto
+
+    /** Whether the patch that removed the seeded element took the focus with it.
+      *
+      * Removing the focused element leaves `document.activeElement` on `body` (or null), which is the case a
+      * restore exists for: the reader was inside the panel and would otherwise be dropped at the top of the
+      * document. Any other element there means they moved focus themselves before the panel went, a Tab out of
+      * a combobox being the everyday case, and putting it back would undo the move they just made. Twin of the
+      * same check in HtmlRenderer.clientJs.
+      */
+    private def focusWasLost: Boolean =
+        val active = document.activeElement
+        active == null || (active eq document.body)
 
     /** Focus the element carrying `path`; `false` when it is no longer in the document (nothing focused). */
     private def focusIfPresent(path: String): Boolean =

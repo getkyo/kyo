@@ -1474,7 +1474,11 @@ private[kyo] object HtmlRenderer:
            |    __focusReturnStack.pop();
            |    // At most one restore per unwind: a deeper entry belongs to a seed that closed while a newer one stayed
            |    // open, so its return target is stale and must not override the one just restored.
-           |    if(!restored&&top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function'){re.focus({preventScroll:true});restored=true;}}
+           |    // And only where the removal took the focus with it: the browser leaves activeElement on body when the
+           |    // focused element goes, while any other element there means the reader moved focus themselves (a Tab out
+           |    // of a combobox) and putting it back would undo that. Twin of DomBackend.focusWasLost.
+           |    var lost=!document.activeElement||document.activeElement===document.body;
+           |    if(!restored&&top.restore&&top.ret&&lost){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function'){re.focus({preventScroll:true});restored=true;}}
            |  }
            |}
            |applyJsProps(document.body);ba(document.body);

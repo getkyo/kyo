@@ -713,6 +713,35 @@ class FocusableTest extends UITest:
         }
     }
 
+    "a panel that closes after the reader moved focus themselves leaves it where they put it" in {
+        // The everyday case is a Tab out of a combobox: the browser moves focus to the next control, THEN the
+        // panel closes, and a restore would pull the reader back to the trigger they just left. A restore is
+        // for the focus the removal took away, which is the one the browser drops on `body`.
+        val app: UI < Async =
+            for showPanel <- Signal.initRef(false)
+            yield UI.div(
+                UI.button("Open").id("trigger").onClick(showPanel.set(true)),
+                UI.button("Next").id("next"),
+                UI.when(showPanel)(
+                    UI.div(
+                        UI.button("Close").id("close").onClick(showPanel.set(false))
+                    ).id("panel").tabIndex(-1).focusAuto(true).focusRestore(true)
+                )
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("trigger"))
+                _ <- Browser.assertFocused(Selector.id("panel"))
+                // The reader moves focus out of the panel, and only then does the panel close.
+                _ <- Browser.evalDiscard("document.getElementById('next').focus()")
+                _ <- Browser.evalDiscard("document.getElementById('close').click()")
+                _ <- Browser.assertNotExists(Selector.id("panel"))
+                _ <- Browser.assertFocused(Selector.id("next"))
+                _ <- Browser.assertNotFocused(Selector.id("trigger"))
+            yield ()
+        }
+    }
+
     "preventScrollKeys suppresses the browser's native page scroll for a nav key, still firing onKeyDown" in {
         // A tall page so PageDown CAN scroll it natively; the focused button opts into preventScrollKeys.
         val app: UI < Async =
