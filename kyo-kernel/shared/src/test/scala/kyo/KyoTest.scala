@@ -423,6 +423,45 @@ class KyoTest extends Test:
             assert(Kyo.foreachIndexed(largeSeq)((idx, v) => idx == v).eval == Chunk.fill(100)(true))
         }
 
+        "foreachIndexedDiscard" in {
+            var acc                         = Seq.empty[(Int, Int)]
+            def run(source: Seq[Int]): Unit =
+                acc = Seq.empty
+                TestEffect1.run(Kyo.foreachIndexedDiscard(source)((idx, v) => TestEffect1(v).map(i => acc :+= ((idx, i))))).eval
+                ()
+            end run
+
+            run(Seq.empty[Int])
+            assert(acc == Seq.empty)
+            run(Seq(1))
+            assert(acc == Seq((0, 2)))
+            run(Seq(1, 2))
+            assert(acc == Seq((0, 2), (1, 3)))
+
+            // The List, Chunk and Set overloads have their own loops rather than delegating, so each is
+            // exercised through its own static type.
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachIndexedDiscard(List(1, 2, 3))((idx, v) => TestEffect1(v).map(i => acc :+= ((idx, i))))).eval
+            assert(acc == Seq((0, 2), (1, 3), (2, 4)))
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachIndexedDiscard(Chunk(1, 2, 3))((idx, v) => TestEffect1(v).map(i => acc :+= ((idx, i))))).eval
+            assert(acc == Seq((0, 2), (1, 3), (2, 4)))
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachIndexedDiscard(Vector(1, 2))((idx, v) => TestEffect1(v).map(i => acc :+= ((idx, i))))).eval
+            assert(acc == Seq((0, 2), (1, 3)))
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachIndexedDiscard(Set(1, 2, 3))((idx, v) => TestEffect1(v).map(i => acc :+= ((idx, i))))).eval
+            assert(acc.map(_._1) == Seq(0, 1, 2))
+            assert(acc.map(_._2).toSet == Set(2, 3, 4))
+
+            // Indices stay aligned over a long run, past the single-element special case.
+            acc = Seq.empty
+            TestEffect1.run(Kyo.foreachIndexedDiscard(Seq.tabulate(100)(identity))((idx, v) =>
+                TestEffect1(v).map(_ => acc :+= ((idx, v)))
+            )).eval
+            assert(acc == Seq.tabulate(100)(i => (i, i)))
+        }
+
         def collectionTests[Coll[X] <: Iterable[X] & IterableOps[X, Coll, Coll[X]]](
             name: String,
             builder: [X] => Seq[X] => Coll[X]
