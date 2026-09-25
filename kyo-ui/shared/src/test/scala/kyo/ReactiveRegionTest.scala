@@ -49,6 +49,8 @@ class ReactiveRegionTest extends kyo.test.Test[Any]:
         import ReactiveRegion.TableContent
         assert(ReactiveRegion.tableContent(UI.tr(UI.td("row"))) == TableContent.Rows)
         assert(ReactiveRegion.tableContent(UI.tbody(UI.tr())) == TableContent.AuthoredSections)
+        assert(ReactiveRegion.tableContent(UI.thead(UI.tr())) == TableContent.AuthoredSections)
+        assert(ReactiveRegion.tableContent(UI.tfoot(UI.tr())) == TableContent.AuthoredSections)
         assert(ReactiveRegion.tableContent(UI.fragment()) == TableContent.Other)
         assert(ReactiveRegion.tableContent(UI.div("not a row")) == TableContent.Other)
         val transparent = Signal.initConst(UI.tr()).render(identity)

@@ -43,7 +43,7 @@ private[kyo] object ReactiveRegion:
 
     def tableContent(ui: UI): TableContent =
         ui match
-            case _: Tbody                               => TableContent.AuthoredSections
+            case _: Thead | _: Tbody | _: Tfoot         => TableContent.AuthoredSections
             case _: Tr                                  => TableContent.Rows
             case _: Reactive[?]                         => TableContent.Transparent
             case _: Foreach[?, ?]                       => TableContent.Transparent
