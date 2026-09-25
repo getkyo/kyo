@@ -134,6 +134,8 @@ object UI:
     def radio(using Frame): Radio                 = Radio()
     def a(using Frame): Anchor                    = Anchor()
     def form(using Frame): Form                   = Form()
+    def fieldset(using Frame): Fieldset           = Fieldset()
+    def legend(using Frame): Legend               = Legend()
     def select(using Frame): Select               = Select()
     def option(using Frame): Opt                  = Opt()
     def input(using Frame): Input                 = Input()
@@ -1414,6 +1416,35 @@ object UI:
             /** Runs `f` on form submit, receiving the [[kyo.UI.MouseEvent]] payload. */
             def onSubmit(f: MouseEvent => Any < Async): Form = copy(onSubmitEvt = Present(f))
         end Form
+
+        /** `<fieldset>`: a named group of controls.
+          *
+          * The group's accessible name comes from a [[Legend]] as its first child. That is a structural relationship, so a legend whose
+          * text is a signal names the group as its text changes, which an `aria-label` on a `div` with `role="group"` cannot do. A
+          * `disabled` fieldset also disables the controls inside it.
+          */
+        final case class Fieldset(
+            attrs: Attrs = Attrs(),
+            children: Chunk[UI] = Chunk.empty,
+            disabled: Maybe[Boolean] = Absent
+        )(using val frame: Frame) extends Block with Interactive with HasDisabled:
+            type Self = Fieldset
+            def withAttrs(a: Attrs): Fieldset      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Fieldset = copy(children = children ++ Chunk.from(cs.map(_.value)))
+
+            /** Disables every control inside the group, however deeply nested, without the controls declaring anything themselves. */
+            def disabled(v: Boolean): Fieldset = copy(disabled = Present(v))
+        end Fieldset
+
+        /** `<legend>`: the caption of the [[Fieldset]] it is the first child of. An ordinary block element whose meaning comes from that
+          * position.
+          */
+        final case class Legend(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
+            with Interactive:
+            type Self = Legend
+            def withAttrs(a: Attrs): Legend      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Legend = copy(children = children ++ Chunk.from(cs.map(_.value)))
+        end Legend
 
         final case class Textarea(
             attrs: Attrs = Attrs(),
