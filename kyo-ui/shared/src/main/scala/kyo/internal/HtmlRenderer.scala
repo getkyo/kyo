@@ -1124,7 +1124,7 @@ private[kyo] object HtmlRenderer:
           |  for(var i=0;i<cand.length;i++){var fa=cand[i].getAttribute("data-kyo-path");if(fa!==null&&!oldSet[fa]){
           |    var ae=document.activeElement,ret=(ae&&ae!==document.body&&ae.getAttribute)?ae.getAttribute("data-kyo-path"):null;
           |    __focusReturnStack.push({fa:fa,ret:ret,restore:cand[i].hasAttribute("data-kyo-focus-restore")});
-          |    if(typeof cand[i].focus==="function")cand[i].focus();return;}}
+          |    if(typeof cand[i].focus==="function")cand[i].focus({preventScroll:true});return;}}
           |}
           |function kyoRangeMorph(active,oldRoots,newRoots,incoming){
           |  if(!active||oldRoots.length!==1||newRoots.length!==1||active!==oldRoots[0]||incoming.size!==0)return false;
@@ -1165,7 +1165,7 @@ private[kyo] object HtmlRenderer:
           |    newRoots[0].insertBefore(endpoints.start,newRoots[0].firstChild);newRoots[0].appendChild(endpoints.end);finalRoots=kyoRangeRoots(endpoints.start,endpoints.end);}}
           |  incoming.forEach(function(pair,key){__kyoRanges.set(key,pair);});
           |  for(var i=0;i<finalRoots.length;i++){applyJsProps(finalRoots[i]);ba(finalRoots[i]);}
-          |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus();if(ss!==null)kyoSetCaret(restored,ss,se);}
+          |  var restored=kyoRangeResolveFocus(finalRoots,activeLocator);if(restored){restored.focus({preventScroll:true});if(ss!==null)kyoSetCaret(restored,ss,se);}
           |  kyoSeedEnterRoots(finalRoots,oldEnter);kyoSeedFocusRoots(finalRoots,oldFocus);kyoSpawnGhosts(ghosts);sweepFocusAuto();
           |}
           |var __kyoRanges=kyoRangeScan(document.body);
@@ -1279,7 +1279,7 @@ private[kyo] object HtmlRenderer:
            |      var __fa=focusAutoPaths(el);
            |      el.outerHTML=op.Replace.html;
            |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
-           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf){rf.focus();if(ss!==null)kyoSetCaret(rf,ss,se);}}
+           |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf){rf.focus({preventScroll:true});if(ss!==null)kyoSetCaret(rf,ss,se);}}
            |      // Seed after focus/caret restore so a newly appeared focus-auto element wins restore-to-trigger.
            |      if(nel){kyoEnterSeed(nel,__en);seedFocusAuto(nel,__fa);}
            |      kyoSpawnGhosts(__gh);
@@ -1459,7 +1459,7 @@ private[kyo] object HtmlRenderer:
            |      var ae=document.activeElement;
            |      var ret=(ae&&ae!==document.body&&ae.getAttribute)?ae.getAttribute("data-kyo-path"):null;
            |      __focusReturnStack.push({fa:fa,ret:ret,restore:cand[j].hasAttribute("data-kyo-focus-restore")});
-           |      if(typeof cand[j].focus==='function')cand[j].focus();
+           |      if(typeof cand[j].focus==='function')cand[j].focus({preventScroll:true});
            |      return;
            |    }
            |  }
@@ -1474,7 +1474,7 @@ private[kyo] object HtmlRenderer:
            |    __focusReturnStack.pop();
            |    // At most one restore per unwind: a deeper entry belongs to a seed that closed while a newer one stayed
            |    // open, so its return target is stale and must not override the one just restored.
-           |    if(!restored&&top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function'){re.focus();restored=true;}}
+           |    if(!restored&&top.restore&&top.ret){var re=document.querySelector('[data-kyo-path="'+top.ret+'"]');if(re&&typeof re.focus==='function'){re.focus({preventScroll:true});restored=true;}}
            |  }
            |}
            |applyJsProps(document.body);ba(document.body);
