@@ -14,18 +14,24 @@ private[kyo] object DoltLiteStatements:
     private def text(value: String): Sql.BoundValue[String] =
         Sql.BoundValue(value, summon[SqlSchema.Column[String]], "TEXT")
 
-    private def query(client: SqlClient, sql: String, args: Chunk[String] = Chunk.empty)(using
-        Frame
-    ): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        client.routedWith(client.config)(_.extendedQuery(sql, args.map(text)))
+    private def query(
+        client: SqlClient,
+        sql: String,
+        args: Chunk[String] = Chunk.empty,
+        reported: SqlException => Boolean = _ => false
+    )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
+        client.routedReporting(reported)(_.extendedQuery(sql, args.map(text)))
 
     /** Calls a version-control function and answers its single scalar. Every operation here is a SQL function rather than
       * a procedure, so the call is a `SELECT` answering one row of one column.
       */
-    private def call(client: SqlClient, function: String, args: Chunk[String])(using
-        Frame
-    ): String < (Async & Abort[SqlException]) =
-        query(client, callSql(function, args.size), args).map { rows =>
+    private def call(
+        client: SqlClient,
+        function: String,
+        args: Chunk[String],
+        reported: SqlException => Boolean = _ => false
+    )(using Frame): String < (Async & Abort[SqlException]) =
+        query(client, callSql(function, args.size), args, reported).map { rows =>
             if rows.isEmpty then Abort.fail(DoltLiteFunctionAnsweredNothingException(function))
             else lifted(rows.head.decode[Maybe[String]](0)).map(_.getOrElse(""))
         }
@@ -271,19 +277,66 @@ private[kyo] object DoltLiteStatements:
     // --- Integration ---
 
     /** Merges and derives what happened, since `dolt_merge` answers only a human message. A conflict surfaces as the
-      * call's failure (see [[conflictAware]]); comparing HEAD before and after against the merged ref's hash separates an
+      * call's failure (see [[integrate]]); comparing HEAD before and after against the merged ref's hash separates an
       * up-to-date merge from a fast-forward from a merge commit.
       */
     def merge(client: SqlClient, from: Dolt.Ref)(using Frame): Dolt.Merge < (Async & Abort[SqlException]) =
-        hashOf(client, Dolt.Ref.Head.render).map { before =>
-            hashOf(client, from.render).map { incoming =>
-                conflictAware(client, "dolt_merge", Chunk(from.render)) { message =>
-                    hashOf(client, Dolt.Ref.Head.render).map { after =>
-                        if after == before then Dolt.Merge.UpToDate(message)
-                        else if after == incoming then commitAt(client, after).map(Dolt.Merge.FastForward(_, message))
-                        else commitAt(client, after).map(Dolt.Merge.Merged(_, message))
+        hashOf(client, from.render).map { incoming =>
+            integrate(client, "dolt_merge", Chunk(from.render), Present(incoming))
+        }
+
+    /** The report DoltLite raises when a merge stops on conflicts inside a transaction. The engine keeps the conflicts in
+      * that transaction and leaves it usable, so the report is the merge's outcome rather than a failure. Matched by text
+      * because the engine answers it with the generic SQLITE_ERROR code; the text is the one the pinned 0.50.10 emits.
+      */
+    private def conflictReport(e: SqlException): Boolean =
+        e.getMessage.contains("conflict(s). Resolve and then commit with dolt_commit.")
+
+    /** Runs `function` (a merge or a pull) and answers its outcome.
+      *
+      * DoltLite keeps conflicts only inside the transaction that made them: under autocommit it refuses a conflicting
+      * merge and rolls it back, and a SQL COMMIT with conflicts pending fails. So inside a transaction the merge runs
+      * there and leaves its conflicts to resolve, and outside one it runs in a transaction of its own, where a conflicted
+      * outcome aborts the merge after reading the conflicts, leaving the branch as it was.
+      */
+    private def integrate(client: SqlClient, function: String, args: Chunk[String], incoming: Maybe[Dolt.CommitHash])(using
+        Frame
+    ): Dolt.Merge < (Async & Abort[SqlException]) =
+        client.enclosingTransaction.map {
+            case Present(_) => integrateIn(client, function, args, incoming)
+            case Absent     =>
+                client.transaction {
+                    integrateIn(client, function, args, incoming).map { merge =>
+                        if merge.isConflicted then callUnit(client, "dolt_merge", Chunk("--abort")).andThen(merge)
+                        else merge
                     }
                 }
+        }
+
+    private def integrateIn(client: SqlClient, function: String, args: Chunk[String], incoming: Maybe[Dolt.CommitHash])(using
+        Frame
+    ): Dolt.Merge < (Async & Abort[SqlException]) =
+        hashOf(client, Dolt.Ref.Head.render).map { before =>
+            Abort.run[SqlException](call(client, function, args, conflictReport)).map {
+                case Result.Success(message) =>
+                    hashOf(client, Dolt.Ref.Head.render).map { after =>
+                        if after == before then Dolt.Merge.UpToDate(message)
+                        else if incoming.contains(after) then commitAt(client, after).map(Dolt.Merge.FastForward(_, message))
+                        else commitAt(client, after).map(Dolt.Merge.Merged(_, message))
+                    }
+                case Result.Failure(report) if conflictReport(report) =>
+                    val text = report match
+                        case e: SqlServerErrorException => e.serverMessage
+                        case other                      => other.getMessage
+                    conflicts(client).map { data =>
+                        schemaConflicts(client).map { schema =>
+                            // Inside a savepoint the engine restores it and discards the conflicts it reported.
+                            if data.isEmpty && schema.isEmpty then Abort.fail(DoltLiteNestedMergeConflictException(text))
+                            else Dolt.Merge.Conflicted(data, schema, text)
+                        }
+                    }
+                case Result.Failure(e) => Abort.fail(e)
+                case Result.Panic(t)   => Abort.error(Result.Panic(t))
             }
         }
 
@@ -473,13 +526,6 @@ private[kyo] object DoltLiteStatements:
         callUnit(client, "dolt_fetch", branch.fold(Chunk(remote))(b => Chunk(remote, b)))
 
     def pull(client: SqlClient, remote: String, branch: Maybe[String])(using Frame): Dolt.Merge < (Async & Abort[SqlException]) =
-        hashOf(client, Dolt.Ref.Head.render).map { before =>
-            conflictAware(client, "dolt_pull", branch.fold(Chunk(remote))(b => Chunk(remote, b))) { message =>
-                hashOf(client, Dolt.Ref.Head.render).map { after =>
-                    if after == before then Dolt.Merge.UpToDate(message)
-                    else commitAt(client, after).map(Dolt.Merge.Merged(_, message))
-                }
-            }
-        }
+        integrate(client, "dolt_pull", branch.fold(Chunk(remote))(b => Chunk(remote, b)), Absent)
 
 end DoltLiteStatements

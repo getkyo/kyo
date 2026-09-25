@@ -175,8 +175,9 @@ final private[kyo] class SqliteConnection(
         serialised {
             Abort.run[SqlException](exec("ROLLBACK")).map { result =>
                 // A ROLLBACK refused because no transaction is open still ends with none open, as when an interrupt lands while BEGIN
-                // waits for the write gate and BEGIN never runs. Asking the engine lowers the flag on that path too, which otherwise
-                // stays up and sends every later lease of the connection through a reclaim.
+                // waits for the write gate and BEGIN never runs, or when a DoltLite call that commits ended the transaction itself.
+                // Asking the engine lowers the flag on that path too, which otherwise stays up and sends every later lease of the
+                // connection through a reclaim.
                 Sync.Unsafe.defer(bindings.getAutocommit(db) != 0).map { ended =>
                     if ended then clearTransaction.andThen(exec("PRAGMA query_only = OFF")).andThen(Abort.get(result))
                     else Abort.get(result)

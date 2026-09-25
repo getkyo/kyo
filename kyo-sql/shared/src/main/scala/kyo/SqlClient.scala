@@ -558,11 +558,13 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
             }
         }
 
-    /** [[onSession]] for a transaction's session, with the statement's failure recorded against the transaction. */
-    private def onTransaction[A, S](ctx: TransactionContext)(op: Connection => A < (S & Async & Abort[SqlException]))(using
-        Frame
-    ): A < (S & Async & Abort[SqlException]) =
-        self.onSession(ctx.session)(conn => self.recordingFailure(ctx)(op(conn)))
+    /** [[onSession]] for a transaction's session, with the statement's failure recorded against the transaction unless `reported` accepts
+      * it (see [[routedReporting]]).
+      */
+    private def onTransaction[A, S](ctx: TransactionContext, reported: SqlException => Boolean = _ => false)(
+        op: Connection => A < (S & Async & Abort[SqlException])
+    )(using Frame): A < (S & Async & Abort[SqlException]) =
+        self.onSession(ctx.session)(conn => self.recordingFailure(ctx, reported)(op(conn)))
 
     /** Runs `control`, the statement that ends the scope pinned to `session`, recording the end under the mutex first.
       *
@@ -610,8 +612,21 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                 }
         }
 
+    /** [[routed]] for a statement whose engine reports an outcome through the statement's error while leaving the transaction usable, as
+      * DoltLite does for a merge that stopped on conflicts: it keeps them in the transaction and raises to say so. A failure `reported`
+      * accepts is raised like any other but is not recorded against the enclosing transaction, because recording it would roll back the
+      * very state the report describes.
+      */
+    private[kyo] def routedReporting[A](reported: SqlException => Boolean)(op: Connection => A < (Async & Abort[SqlException]))(using
+        Frame
+    ): A < (Async & Abort[SqlException]) =
+        self.enclosingTransaction.flatMap {
+            case Present(ctx) => self.onTransaction(ctx, reported)(op)
+            case Absent       => self.routedWith(self.config)(op)
+        }
+
     /** Runs one statement of a transaction, refusing to run it at all once the transaction is carrying a failure, and recording its own
-      * failure if it has one.
+      * failure if it has one, unless `reported` says the engine raised it to report an outcome (see [[routedReporting]]).
       *
       * The failure is re-raised untouched; what is added is the transaction remembering it, so a caller who handles it cannot reach the commit
       * as though nothing had. Left to the engines, one refuses every later statement and the other commits whatever survived.
@@ -619,16 +634,19 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * Polymorphic in the trailing effects so EVERY surface that puts a statement on a transaction's connection passes through it. A surface
       * that does not is a lane where a handled failure reaches the commit unrecorded.
       */
-    private[kyo] def recordingFailure[A, S](ctx: TransactionContext)(op: => A < (S & Async & Abort[SqlException]))(using
+    private[kyo] def recordingFailure[A, S](ctx: TransactionContext, reported: SqlException => Boolean = _ => false)(
+        op: => A < (S & Async & Abort[SqlException])
+    )(using
         Frame
     ): A < (S & Async & Abort[SqlException]) =
         ctx.failed.get.flatMap {
             case Present(detail) => Abort.fail(SqlRequestTransactionFailedStatementException(detail))
             case Absent          =>
                 Abort.run[SqlException](op).flatMap {
-                    case Result.Success(a) => a
-                    case Result.Failure(e) => ctx.failed.set(Present(e.getMessage)).andThen(Abort.fail(e))
-                    case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                    case Result.Success(a)                => a
+                    case Result.Failure(e) if reported(e) => Abort.fail(e)
+                    case Result.Failure(e)                => ctx.failed.set(Present(e.getMessage)).andThen(Abort.fail(e))
+                    case Result.Panic(t)                  => Abort.error(Result.Panic(t))
                 }
         }
 

@@ -2,8 +2,9 @@ package kyo
 
 import kyo.internal.doltlite.DoltLiteEngineProbe
 
-/** What is this engine's own rather than version control's: how a `doltlite://` URL opens, what the embedded statement API refuses, and
-  * how a platform without the engine answers. The version-control surface is [[DoltConformanceTest]]'s.
+/** What is this engine's own rather than version control's: how a `doltlite://` URL opens, what the embedded statement API refuses, how a
+  * merge's conflicts live only inside the transaction that made them, and how a platform without the engine answers. The version-control
+  * surface is [[DoltConformanceTest]]'s.
   */
 class DoltLiteClientTest extends Test:
 
@@ -37,6 +38,77 @@ class DoltLiteClientTest extends Test:
                     assert(dolt.dialect.id == kyo.db.Idiom.Id("doltlite"), s"got ${dolt.dialect.id}")
                 }
             }
+        }
+    }
+
+    private def withDolt[A](f: Dolt => A < (Async & Abort[SqlException] & Scope & DB))(using
+        Frame
+    ): A < (Async & Abort[SqlException]) =
+        withClient(_ => Dolt.use(f))
+
+    private def seeded(dolt: Dolt)(using Frame): Dolt.Commit < (Async & Abort[SqlException] & DB) =
+        for
+            _ <- dolt.executeRaw("CREATE TABLE person (id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL)")
+            _ <- dolt.executeRaw("INSERT INTO person VALUES (1, 'alice')")
+            c <- dolt.commit("seed")
+        yield c
+
+    /** `feature` renames person 1 to bob and main renames it to carol, both committed, so merging `feature` into main conflicts. */
+    private def diverged(dolt: Dolt)(using Frame): Dolt.Commit < (Async & Abort[SqlException] & DB) =
+        for
+            _ <- seeded(dolt)
+            _ <- dolt.createBranch("feature")
+            _ <- dolt.onBranch("feature") {
+                dolt.executeRaw("UPDATE person SET name = 'bob' WHERE id = 1").andThen(dolt.commit("bob"))
+            }
+            _    <- dolt.executeRaw("UPDATE person SET name = 'carol' WHERE id = 1")
+            head <- dolt.commit("carol")
+        yield head
+
+    private def nameOfOne(dolt: Dolt)(using Frame): String < (Async & Abort[SqlException] & DB) =
+        dolt.query("SELECT name FROM person WHERE id = 1").map(rows => rows(0).decode[String](0))
+
+    "a conflicting merge inside a transaction answers Conflicted, and resolving a side lets it commit there" in {
+        withDolt { dolt =>
+            for
+                _                                    <- diverged(dolt)
+                (merged, pending, cleared, resolved) <- dolt.transaction {
+                    for
+                        merged   <- dolt.merge(Dolt.Ref.Branch("feature"))
+                        pending  <- dolt.conflicts
+                        cleared  <- dolt.resolveConflicts("person", Dolt.Resolution.Theirs)
+                        resolved <- dolt.commit("take feature")
+                    yield (merged, pending, cleared, resolved)
+                }
+                name <- nameOfOne(dolt)
+                log  <- dolt.log(limit = Present(1))
+            yield
+                assert(merged.isConflicted && merged.conflictCount == 1L, s"expected one conflicted row, got $merged")
+                assert(pending == Chunk(Dolt.ConflictSummary("person", 1L)), s"got $pending")
+                assert(cleared == 1L, s"resolving must clear the one conflict, got $cleared")
+                assert(resolved.parents.size == 2, s"the resolved merge commits with both parents, got ${resolved.parents}")
+                assert(log.head.hash == resolved.hash, s"the resolution outlives the transaction, got ${log.head}")
+                assert(name == "bob", s"keeping theirs takes the feature's row, got '$name'")
+            end for
+        }
+    }
+
+    "a conflicting merge in a nested transaction fails typed, and the outer transaction still commits" in {
+        withDolt { dolt =>
+            for
+                _      <- diverged(dolt)
+                nested <- dolt.transaction {
+                    Abort.run[SqlException](dolt.transaction(dolt.merge(Dolt.Ref.Branch("feature")))).map { nested =>
+                        dolt.executeRaw("INSERT INTO person VALUES (3, 'dan')").andThen(nested)
+                    }
+                }
+                count <- dolt.query("SELECT COUNT(*) FROM person").map(rows => rows(0).decode[Long](0))
+                name  <- nameOfOne(dolt)
+            yield
+                assert(nested.failure.exists(_.isInstanceOf[DoltLiteNestedMergeConflictException]), s"got $nested")
+                assert(count == 2L, s"the outer transaction's own write commits, got $count rows")
+                assert(name == "carol", s"the discarded merge changed nothing, got '$name'")
+            end for
         }
     }
 

@@ -70,8 +70,9 @@ abstract class Dolt private[kyo] (runtime: Runtime[?]) extends SqlClient(runtime
     /** Merges `from` into the current branch and answers what happened. A [[Dolt.Merge.Conflicted]] result leaves the conflicts in the
       * branch's working set: resolve them with [[resolveConflicts]] and [[commit]], or discard them with a hard [[reset]].
       *
-      * Note: the embedded engine never keeps a conflict past a transaction, so there a conflicted merge is rolled back after its conflicts
-      * are read: the answer is the same [[Dolt.Merge.Conflicted]], and the branch is left as it was before the merge.
+      * Note: the embedded engine keeps conflicts only inside the transaction that made them. There, a merge inside `transaction` leaves
+      * them to resolve and commit in that same transaction, and a merge outside one is rolled back after its conflicts are read: the answer
+      * is the same [[Dolt.Merge.Conflicted]], and the branch is left as it was before the merge.
       */
     def merge(from: Dolt.Ref)(using Frame): Dolt.Merge < (Async & Abort[SqlException])
 
