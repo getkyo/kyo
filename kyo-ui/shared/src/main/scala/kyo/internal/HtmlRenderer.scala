@@ -792,6 +792,7 @@ private[kyo] object HtmlRenderer:
                         case Href.External(scheme, v) => s"$scheme:$v"
                     w(sb, s""" href="${esc(value)}"""")
                 }
+                a.download.foreach(name => w(sb, s""" download="${esc(name)}""""))
                 a.target.foreach { t =>
                     val tv = t match
                         case Target.Self   => "_self"
@@ -1518,9 +1519,9 @@ private[kyo] object HtmlRenderer:
            |      return;
            |    }
            |    // An anchor the UI handles stays on the page; one it does not handle is a link, and the browser follows it.
-           |    // A modified click asks the browser for a new tab or window, so its default stays; the handler runs either way.
+           |    // A modified click (a new tab or window) and a download anchor keep their default; the handler runs either way.
            |    var kmod=e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||e.button!==0;
-           |    var mid=e.target&&e.target.id?e.target.id:null;if(!kmod&&el.tagName&&el.tagName.toLowerCase()==='a'&&he(el,"click"))e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
+           |    var mid=e.target&&e.target.id?e.target.id:null;if(!kmod&&el.tagName&&el.tagName.toLowerCase()==='a'&&!el.hasAttribute("download")&&he(el,"click"))e.preventDefault();post({Click:{path:p,mouse:mkMouse({ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,meta:e.metaKey},mid)}});window._kyoClickSubmit=true;setTimeout(function(){window._kyoClickSubmit=false},0);
            |  }
            |  else if(t==="input"&&he(el,"input"))post({Input:{path:p,value:e.target.value}});
            |  else if(t==="change"&&he(el,"change")){
