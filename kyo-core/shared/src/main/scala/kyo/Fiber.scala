@@ -462,7 +462,22 @@ object Fiber:
 
             def map[B](f: A => B)(using AllowUnsafe, Frame): Unsafe[B, S] =
                 val p = new IOPromise[Any, B < S](interrupts = self.lower) with (Result[Any, A < S] => Unit):
-                    def apply(v: Result[Any, A < S]) = completeDiscard(v.map(_.map(f)))
+                    def apply(v: Result[Any, A < S]) =
+                        completeDiscard(v.map { comp =>
+                            // A settled result applies `f` here, inside `Result.map`, which turns its throw into this
+                            // promise's panic. Handing it to `comp.map` instead polls the safepoint first and, when
+                            // denied, defers `f` into the delivered value, where its throw reaches the consumer raw and
+                            // an `Abort.run` accepting its type reports a failure. A result that still has effects to
+                            // run defers `f` either way, so the throw is caught where `f` runs and raised as a panic,
+                            // which every Abort region and the task boundary accept whatever row the value names.
+                            comp.evalNow match
+                                case Present(a) => f(a)
+                                case Absent     =>
+                                    comp.map { a =>
+                                        try f(a)
+                                        catch case ex if NonFatal(ex) => Abort.panic[Nothing](ex).asInstanceOf[B < S]
+                                    }
+                        })
                 self.lower.onComplete(p)
                 p
             end map
