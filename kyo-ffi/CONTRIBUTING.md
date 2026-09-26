@@ -145,13 +145,12 @@ leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
   facade; the no-op `GuardDrainSupport` (single-threaded, nothing to park). Shared
   by the JS and Wasm backends, both linked as `ModuleKind.ESModule` (the wasm
   backend forces it; the js backend selects it to match, so `require` is absent on
-  both and the browser gate behaves identically). The koffi and node-builtin facades
-  are `@JSImport` module ids (`koffi`, `node:fs`) rather than a
-  `js.Dynamic.global.require`, which has no `require` global under ESM. koffi is
-  imported as a DEFAULT import, not a namespace import: a namespace import of the
-  CommonJS koffi addon yields an empty binding under Node's ESM interop. The same
-  facades also link under a CommonJS consumer (kyo-stats-machine's js axis), where
-  a default import of a CommonJS module likewise binds `module.exports`.
+  both and the browser gate behaves identically). No facade is a static `@JSImport`:
+  koffi is required on first use (`KoffiFacade`, through `NodeRequire`) and `node:fs`
+  is reached through `process.getBuiltinModule` (`NodeFs.module`). A static import is
+  resolved when the bundle loads and forces every program that links kyo-ffi to
+  declare a module kind, and a browser page that links it to fail before any code
+  runs.
 - `jvm-native/`: JVM and Native SHARE, JS/Wasm diverge. `GuardDrainSupport`/
   `BlockingBridge` use `LockSupport.parkNanos` / carrier-thread parking, present on
   JVM and Native but absent on JS/Wasm. This is established kyo precedent (kyo-core,
