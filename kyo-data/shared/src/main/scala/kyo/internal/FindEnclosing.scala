@@ -8,15 +8,19 @@ private[kyo] object FindEnclosing:
 
     private val testFileSuffixes = Set("Test.scala", "Spec.scala")
 
+    // A published `-tests` module carries its conformance suite in main sources, so another project can extend it. Anchored to the
+    // module's own `<platform>/src/main/` so a checkout that happens to sit under a `-tests` directory exempts nothing.
+    private val conformanceSuiteSources = """-tests/[^/]+/src/main/""".r
+
     def isInternal(using Quotes): Boolean =
         val pos      = quotes.reflect.Position.ofMacroExpansion
         val fileName = pos.sourceFile.name
         if fileName.isEmpty || fileName.startsWith("<") then false // synthetic file, like scala-cli/repl
         else
-            val path = pos.sourceFile.path.replace('\\', '/')
-            // A `-testkit` module publishes suites for other projects to extend, so its suites are test code in main sources.
+            val path     = pos.sourceFile.path.replace('\\', '/')
             val excluded =
-                ((path.contains("src/test/") || path.contains("src_managed/test/") || path.contains("-testkit/")) &&
+                ((path.contains("src/test/") || path.contains("src_managed/test/") ||
+                    conformanceSuiteSources.findFirstIn(path).isDefined) &&
                     testFileSuffixes.exists(
                         fileName.endsWith
                     )) || fileName.endsWith("Bench.scala")

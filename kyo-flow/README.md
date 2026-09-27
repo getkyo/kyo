@@ -838,11 +838,11 @@ The rows themselves are `FlowStore.ExecutionState`, carrying the lifecycle, the 
 
 ### The conformance suite
 
-`FlowStoreTest` is an abstract kyo-test suite published as its own artifact, `kyo-flow-testkit`, for every platform kyo-flow supports. An implementation adds it to its test scope, wires kyo-test's runner as the kyo-test README's "Build wiring" section describes, extends the suite, and supplies `makeStore`; the suite then exercises the SPI contract against the real backend.
+`FlowStoreTest` is an abstract kyo-test suite published as its own artifact, `kyo-flow-tests`, for every platform kyo-flow supports. An implementation adds it to its test scope, wires kyo-test's runner as the kyo-test README's "Build wiring" section describes, extends the suite, and supplies `makeStore`; the suite then exercises the SPI contract against the real backend.
 
 ```scala doctest:expect=skipped
 // build.sbt
-libraryDependencies += "io.getkyo" %%% "kyo-flow-testkit" % "<version>" % Test
+libraryDependencies += "io.getkyo" %%% "kyo-flow-tests" % "<version>" % Test
 
 // src/test/scala
 class PostgresFlowStoreTest extends FlowStoreTest:
