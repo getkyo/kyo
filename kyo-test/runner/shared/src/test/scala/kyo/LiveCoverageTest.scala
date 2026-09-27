@@ -149,6 +149,12 @@ private object LiveCoverageFixtures:
         }
     end EventuallyHeldClockSuite
 
+    // ── 9d. thrown failure ────────────────────────────────────────────────────────────────────
+
+    class ThrownFailureSuite extends TestBase[Any]:
+        "thrown" in Sync.defer(throw new IllegalStateException("outer", new java.io.IOException("inner")))
+    end ThrownFailureSuite
+
     // ── 10. ignore ────────────────────────────────────────────────────────────────────────────
 
     val ignoreCounter: AtomicInteger = new AtomicInteger(0)
@@ -404,6 +410,24 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
         LiveCoverageFixtures.evHeldCounter.set(0)
         discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyHeldClockSuite])).map { report =>
             assert(report.passed == 1, s"expected passed==1 but got $report")
+        }
+    }
+
+    // ── 9d. thrown failure: the report carries the cause chain and the throw site ─────────────
+
+    "a thrown failure reports each cause beneath it and where the innermost one was thrown" in {
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.ThrownFailureSuite])).map { report =>
+            assert(report.failed == 1, s"expected failed==1 but got $report")
+            val (_, result) = report.suiteReports.head.leafResults.head
+            result match
+                case TestResult.Failed(diagram, _, _, _) =>
+                    assert(diagram.contains("java.lang.IllegalStateException: outer"), diagram)
+                    assert(diagram.contains("Caused by: java.io.IOException: inner"), diagram)
+                    if Platform.isJVM then assert(diagram.contains("LiveCoverageTest.scala"), diagram)
+                    else succeed
+                case other =>
+                    assert(false, s"expected Failed but got $other")
+            end match
         }
     }
 

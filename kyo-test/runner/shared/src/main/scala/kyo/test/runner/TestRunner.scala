@@ -15,6 +15,7 @@ import kyo.Retry
 import kyo.Scope
 import kyo.Sync
 import kyo.Timeout
+import kyo.discard
 import kyo.kernel.<
 import kyo.test.AssertionFailed
 import kyo.test.AssertScope
@@ -522,7 +523,7 @@ object TestRunner:
             case Result.Failure(af: AssertionFailed) =>
                 TestResult.Failed(af.diagram, Maybe(af.getCause), elapsed)
             case Result.Failure(tc: TestCancelled) => TestResult.Cancelled(tc.reason, elapsed)
-            case Result.Failure(t)                 => TestResult.Failed(t.toString, Maybe(t), elapsed)
+            case Result.Failure(t)                 => TestResult.Failed(describe(t), Maybe(t), elapsed)
             case panic: Result.Panic               =>
                 panic.exception match
                     case af: AssertionFailed => TestResult.Failed(af.diagram, Maybe(af.getCause), elapsed)
@@ -530,8 +531,31 @@ object TestRunner:
                     case _: Timeout          => TestResult.TimedOut(elapsed)
                     case t                   =>
                         java.lang.System.err.println(s"[kyo-test] unexpected panic in leaf: $t")
-                        TestResult.Failed(t.toString, Maybe(t), elapsed)
+                        TestResult.Failed(describe(t), Maybe(t), elapsed)
     end resultToTestResult
+
+    private val maxCauses = 8
+    private val maxFrames = 16
+
+    /** The text a thrown failure reports: the throwable, each cause beneath it, and the frames where the innermost one was thrown.
+      *
+      * The first line alone hides what made the failure. For a class-loading or linkage error that is the only useful part: a
+      * `NoClassDefFoundError` names the class, and only its cause says whether the file was missing, unreadable, or its loader closed.
+      */
+    private def describe(t: Throwable): String =
+        val text = new StringBuilder(t.toString)
+        @scala.annotation.tailrec
+        def innermost(current: Throwable, depth: Int): Throwable =
+            val cause = current.getCause
+            if cause == null || (cause eq current) || depth == maxCauses then current
+            else
+                discard(text.append("\nCaused by: ").append(cause.toString))
+                innermost(cause, depth + 1)
+            end if
+        end innermost
+        innermost(t, 0).getStackTrace.take(maxFrames).foreach(frame => discard(text.append("\n    at ").append(frame.toString)))
+        text.toString
+    end describe
 
     // ── Filtering ─────────────────────────────────────────────────────────────────────────────
 
@@ -556,7 +580,7 @@ object TestRunner:
     private def constructorFailureReport(suiteInfo: SuiteInfo, reporter: TestReporter, config: RunConfig, t: Throwable): TestReport =
         val sr = SuiteReport(
             suiteInfo.name,
-            Chunk((Chunk("<constructor>"), TestResult.Failed(t.toString, Maybe(t), Duration.Zero))),
+            Chunk((Chunk("<constructor>"), TestResult.Failed(describe(t), Maybe(t), Duration.Zero))),
             Duration.Zero,
             leakCheck = config.leakCheck,
             leakCheckSockets = config.leakCheckSockets,
