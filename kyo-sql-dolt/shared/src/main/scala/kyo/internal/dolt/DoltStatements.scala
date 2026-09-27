@@ -225,6 +225,31 @@ private[kyo] object DoltStatements:
             call(client, "DOLT_MERGE", Chunk(from.render)).map(rows => interpretMerge(client, rows, "DOLT_MERGE"))
         }
 
+    def stageMerge(client: SqlClient, from: Dolt.Ref)(using Frame): Dolt.StagedMerge < (Async & Abort[SqlException]) =
+        // In a transaction for the reason merge is. The procedure answers an empty hash both when it staged a merge and when there was
+        // nothing to merge (2.3.4, measured), so `dolt_merge_status` read in the same transaction is what tells the two apart.
+        client.transaction {
+            call(client, "DOLT_MERGE", Chunk("--no-ff", "--no-commit", from.render)).map { rows =>
+                one(rows, "DOLT_MERGE") { row =>
+                    for
+                        conflicts <- row.decode[Long]("conflicts")
+                        message   <- row.decode[Maybe[String]]("message")
+                    yield (conflicts, message.getOrElse(""))
+                }.map { (conflictCount, message) =>
+                    if conflictCount > 0 then
+                        conflicts(client).map { data =>
+                            schemaConflicts(client).map(schema => Dolt.Merge.Conflicted(data, schema, message))
+                        }
+                    else
+                        query(client, "SELECT is_merging FROM dolt_merge_status").map { status =>
+                            one(status, "dolt_merge_status")(_.decode[Boolean]("is_merging")).map { merging =>
+                                if merging then Dolt.Merge.Staged(message) else Dolt.Merge.UpToDate(message)
+                            }
+                        }
+                }
+            }
+        }
+
     /** Reads the one row a merge or a pull answers with, and fills in whichever side of the outcome it implies. */
     private def interpretMerge(client: SqlClient, rows: Chunk[SqlRow], what: String)(using
         Frame

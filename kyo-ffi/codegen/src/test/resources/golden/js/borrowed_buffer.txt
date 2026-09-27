@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class BorrowedBufferBindingsImpl extends BorrowedBufferBindings:
     import BorrowedBufferBindingsImpl.*
+    BorrowedBufferBindingsImpl.loaded()
 
     def mallocChunk(n: Long)(using kyo.AllowUnsafe): Ffi.Borrowed[Buffer[Byte]] =
         val retValRaw = facade.mallocChunk(js.BigInt(n.toString))
@@ -23,6 +24,7 @@ end BorrowedBufferBindingsImpl
 
 object BorrowedBufferBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BorrowedBufferBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_borrowed_buf",
         Seq(

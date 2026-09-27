@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class MultiValueBindingsImpl extends MultiValueBindings:
     import `MultiValueBindings_externs` as ext
+    MultiValueBindingsImpl.loaded()
 
     def readInto(fd: Int, buf: Buffer[Byte])(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[kyo.example.golden.ReadResult, Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -26,6 +27,7 @@ end MultiValueBindingsImpl
 object MultiValueBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.MultiValueBindings")
+    private def loaded(): Unit = ()
 end MultiValueBindingsImpl
 
 @extern

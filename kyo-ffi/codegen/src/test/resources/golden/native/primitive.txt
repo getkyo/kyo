@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class PrimitiveBindingsImpl extends PrimitiveBindings:
     import `PrimitiveBindings_externs` as ext
+    PrimitiveBindingsImpl.loaded()
 
     def add(a: Int, b: Int)(using kyo.AllowUnsafe): Int =
         val retVal = ext.add(a, b)
@@ -20,6 +21,7 @@ end PrimitiveBindingsImpl
 object PrimitiveBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.PrimitiveBindings")
+    private def loaded(): Unit = ()
 end PrimitiveBindingsImpl
 
 @extern

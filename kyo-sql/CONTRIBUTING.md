@@ -48,6 +48,16 @@ So the discriminator is the type in the caller's hand:
 | a neutral type (`SqlClient`, `SqlRow`, `decode[A]`, `SqlRow.text`) | must conform; a difference is a bug |
 | an engine type (`PostgresClient`, `MysqlClient`) | engine-specific is the contract; tested in that module |
 
+### `Dolt` is neutral across its two engines
+
+`Dolt` is engine-specific next to `SqlClient` and neutral between `kyo-sql-dolt` and `kyo-sql-doltlite`: a caller holding it cannot tell which engine answers, so the two must answer every version-control operation alike, and a difference an engine forces is declared on the operation and asserted from both sides. A new operation lands in `kyo-sql-dolt-api`, in both engines' statements, and as the same leaves in both suites (`SqlDoltOnlyTest` against a real server, `DoltLiteClientTest` against the embedded engine).
+
+**Each operation's answer holds exactly the outcomes it can produce.** `merge` and `pull` answer `Dolt.Merge`; `stageMerge`, a merge that commits nothing, answers `Dolt.StagedMerge`. The two are sealed traits whose shared outcomes are single leaves mixing in both, `Merge.UpToDate` and `Merge.Conflicted`, the arrangement the root guide's [Failure Tracking](../CONTRIBUTING.md#failure-tracking) uses for error rows. A staged merge is its own method rather than a flag on `merge` or another `Merge` case, because either of those would put a `Staged` case on every `merge` caller's match that `merge` never produces, and a `FastForward` case on every staged caller's that a staged merge never produces.
+
+**A conflict is the same value on both engines, and only its aftermath diverges.** A Dolt server keeps a conflict in the working set for the caller to resolve, once `@@dolt_allow_commit_conflicts` lets the merge's transaction commit. DoltLite never lets a conflict outlive a transaction: under autocommit a conflicting merge raises and rolls back, and inside a transaction the COMMIT refuses it. So every merging call on DoltLite runs in a transaction, reads a conflict into `Merge.Conflicted` there, and rolls back, leaving the branch as it was. That divergence is declared on `Dolt.merge` and asserted from each side: the server suite reads the conflicts back after the merge, the DoltLite suite finds none.
+
+**A staged merge is read from `dolt_merge_status`.** Both engines answer a `--no-ff --no-commit` merge that staged a result exactly as they answer one with nothing to merge (an empty hash on the server, an unmoved head on DoltLite), so `is_merging`, read right after the call, is what separates `Staged` from `UpToDate`.
+
 ## Mechanism may diverge; observables may not
 
 The two rules above look contradictory until the line is drawn in the right place, and drawing it wrongly is how a design goes astray.

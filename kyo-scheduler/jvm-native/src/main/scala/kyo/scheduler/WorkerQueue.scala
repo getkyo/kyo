@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.LongAdder
 import scala.annotation.tailrec
 
 /** Worker run queue: a zero-allocation 4-ary array-backed min-heap of `Task`, keyed on a snapshot of `Task.runtime()` taken at insertion.
@@ -157,6 +158,9 @@ final private class WorkerQueue extends AtomicBoolean {
       * Locks queue, swaps in a fresh backing array, then applies function to each removed element after lock release. Used for queue shutdown
       * and rebalancing. The replacement array is allocated outside the lock so the critical section is only the reference swap and the count
       * reset; `f` runs after unlock because it re-enters the scheduler and must not run under the spin-lock.
+      *
+      * When `f` throws, fatal errors included, the elements it never received are added back before the failure propagates: the snapshot is
+      * the only place they exist. The element `f` was handling is `f`'s own, since it may already have placed it elsewhere.
       */
     def drain(f: Task => Unit): Unit =
         if (!isEmpty()) {
@@ -169,14 +173,28 @@ final private class WorkerQueue extends AtomicBoolean {
             keys = freshKeys
             count = 0
             unlock()
-            @tailrec def loop(idx: Int): Unit =
-                if (idx < n) {
-                    f(snapshot(idx))
+            var idx = 0
+            try
+                while (idx < n) {
+                    val task = snapshot(idx)
                     snapshot(idx) = null
-                    loop(idx + 1)
+                    idx += 1
+                    f(task)
                 }
-            loop(0)
+            catch {
+                case ex: Throwable =>
+                    drainPutBacks.add(n - idx)
+                    while (idx < n) {
+                        add(snapshot(idx))
+                        snapshot(idx) = null
+                        idx += 1
+                    }
+                    throw ex
+            }
         }
+
+    /** Elements a `drain` put back because the hand-off threw before receiving them. */
+    val drainPutBacks = new LongAdder
 
     /** Re-establishes the heap invariant from the current keys in place.
       *

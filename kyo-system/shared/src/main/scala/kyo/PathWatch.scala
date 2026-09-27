@@ -270,7 +270,11 @@ private[kyo] object PathWatch:
                                             case Result.Failure(checkError) => fail(watchFailure(root, checkError))
                                             case Result.Panic(checkError)   => Abort.panic(checkError)
                                         }
-                                    def poll(previous: Map[Path, Snapshot], deferredRemoval: Boolean): Unit < (S & Async) =
+                                    def poll(
+                                        previous: Map[Path, Snapshot],
+                                        deferredRemoval: Boolean,
+                                        deferredDenial: Boolean
+                                    ): Unit < (S & Async) =
                                         scan(service, root, options).map {
                                             case Result.Success(current) =>
                                                 val detected    = changes(previous, current)
@@ -278,16 +282,25 @@ private[kyo] object PathWatch:
                                                     case PathChange.Removed(_) => true
                                                     case _                     => false
                                                 }
-                                                if removalOnly && !deferredRemoval then loop(previous, true)
-                                                else publish(detected).andThen(loop(current, false))
-                                            case Result.Failure(_: RootInvalid)            => invalidate
+                                                if removalOnly && !deferredRemoval then loop(previous, true, false)
+                                                else publish(detected).andThen(loop(current, false, false))
+                                            case Result.Failure(_: RootInvalid) => invalidate
+                                            // Windows reads a path that is being deleted as access denied until the deletion
+                                            // completes, where other platforms read it as missing. One denied scan is therefore
+                                            // confirmed by the next before it ends the watch.
+                                            case Result.Failure(_: FileAccessDeniedException) if !deferredDenial =>
+                                                loop(previous, deferredRemoval, true)
                                             case Result.Failure(error: FileWatchException) => terminate(error)
                                             case Result.Panic(error)                       => panic(error)
                                         }
                                     // Async.sleep, not Clock.sleep: the latter hands back the timer Fiber rather than
                                     // suspending on it, so discarding it would leave this loop free-running.
-                                    def loop(previous: Map[Path, Snapshot], deferredRemoval: Boolean): Unit < (S & Async) =
-                                        Async.sleep(pollInterval).andThen(poll(previous, deferredRemoval))
+                                    def loop(
+                                        previous: Map[Path, Snapshot],
+                                        deferredRemoval: Boolean,
+                                        deferredDenial: Boolean
+                                    ): Unit < (S & Async) =
+                                        Async.sleep(pollInterval).andThen(poll(previous, deferredRemoval, deferredDenial))
                                     // The first interval is armed here, in the acquiring fiber, rather than inside the
                                     // poll fiber. Clock.sleep is the Fiber-returning form on purpose: registering the
                                     // timer before openWatcher returns is what makes the first tick deterministic. A
@@ -295,7 +308,7 @@ private[kyo] object PathWatch:
                                     // Clock an advance that lands before the fiber reaches its first sleep would set a
                                     // deadline that never fires.
                                     Clock.sleep(pollInterval).map { firstTick =>
-                                        Fiber.init(firstTick.get.andThen(poll(initial, false)))
+                                        Fiber.init(firstTick.get.andThen(poll(initial, false, false)))
                                     }.map { _ =>
                                         new Path.Watcher:
                                             def events: Stream[PathChange, Async & Scope & Abort[FileWatchException]] =

@@ -83,9 +83,9 @@ object NativeLoader:
         )
     end jsResolve
 
-    /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error. */
+    /** `true` when `path` exists on the filesystem (Node `fs.existsSync`); `false` on any error and on a host without `node:fs`. */
     private def fileExists(path: String): Boolean =
-        try NodeFs.existsSync(path)
+        try NodeFs.module.exists(_.existsSync(path))
         catch case _: Throwable => false
 
     /** `require.resolve(resolvePath)` if `require` is available and the path resolves, else `None`. */

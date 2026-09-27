@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
     import BorrowedStringBindingsImpl.*
+    BorrowedStringBindingsImpl.loaded()
 
     def getenvLike(name: String)(using kyo.AllowUnsafe): Ffi.Borrowed[String] =
         val __kyoScratch = Scratch.currentFor("kyo.example.BorrowedStringBindings", Scratch.configuredSize)
@@ -25,6 +26,7 @@ end BorrowedStringBindingsImpl
 
 object BorrowedStringBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BorrowedStringBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_borrowed_str")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

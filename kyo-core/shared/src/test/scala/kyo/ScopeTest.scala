@@ -1351,7 +1351,7 @@ class ScopeTest extends kyo.test.Test[Any]:
         // kicked off but not awaited leaves `released` false when the next effect observes it; the loop makes a
         // round that races the drain fail rather than pass, so the pending marker is stable.
         "a scope short-circuited by an outer handler awaits its async release before the next effect".pendingUntilFixed(
-            "by decision there is no backpressure on abnormal exit: the scope's synchronous releases run, but the detached drain that runs its async finalizers is not awaited before the next effect"
+            "Open: by decision there is no backpressure on abnormal exit: the scope's synchronous releases run, but the detached drain that runs its async finalizers is not awaited before the next effect"
         ) in {
             val rounds = 50
             Loop.indexed { i =>

@@ -143,9 +143,15 @@ private[kyo] object CallEngine:
             }
         }
 
-    // monitorLoop: poll the deadline (AtomicLong epoch millis) every pollInterval and fire timeoutSignal
-    // when the wall clock passes the deadline. Only uses Async & Abort[Nothing]; no Closed or JsonRpcError escapes here.
-    private def monitorLoop(
+    /** The reading every progress-reset deadline is set from and judged against. Monotonic: a wall-clock step would stretch or cut the
+      * timeout by the step.
+      */
+    private[kyo] def deadlineNowMillis(clock: Clock)(using AllowUnsafe): Long =
+        clock.unsafe.nowMonotonic().toMillis
+
+    // monitorLoop: poll the deadline (AtomicLong of deadlineNowMillis readings) every pollInterval and fire timeoutSignal
+    // when it passes. Only uses Async & Abort[Nothing]; no Closed or JsonRpcError escapes here.
+    private[kyo] def monitorLoop(
         pollInterval: Duration,
         dref: AtomicLong.Unsafe,
         timeoutSignal: Fiber.Promise[Unit, Any],
@@ -154,8 +160,7 @@ private[kyo] object CallEngine:
         Async.sleep(pollInterval).andThen {
             // Unsafe: read the ambient clock and the deadline cell from the monitor fiber
             Sync.Unsafe.defer {
-                // ambient wall-clock read inside the Sync.Unsafe.defer suspension boundary
-                val now      = clock.unsafe.now()(using AllowUnsafe.embrace.danger).toDuration.toMillis
+                val now      = deadlineNowMillis(clock)(using AllowUnsafe.embrace.danger)
                 val deadline = dref.get()(using AllowUnsafe.embrace.danger)
                 now > deadline
             }.map { expired =>
@@ -173,9 +178,9 @@ private[kyo] object CallEngine:
         }
 
     // Private helper: issues a call with pre-encoded params and an optional deadline ref for progress-reset-timeout.
-    // deadlineRef: when progressResetsTimeout = true, holds the epoch-millis deadline for the current call.
+    // deadlineRef: when progressResetsTimeout = true, holds the monotonic-millis deadline for the current call.
     //   Progress notifications extend the deadline by requestTimeout on each arrival.
-    //   A monitor fiber polls the deadline and fires a timeout when the wall clock exceeds it.
+    //   A monitor fiber polls the deadline and fires a timeout when monotonic time exceeds it.
     // Returns (idPromise, resultEffect).
     def callEncoded[Out: Schema](
         method: String,
@@ -213,7 +218,7 @@ private[kyo] object CallEngine:
                                     case Result.Panic(t)   => Abort.panic(t)
                                 }
                             else if config.progressResetsTimeout && deadlineRef.isDefined then
-                                // Progress-reset-timeout: a monitor fiber polls deadlineAt (AtomicLong epoch millis)
+                                // Progress-reset-timeout: a monitor fiber polls deadlineAt (AtomicLong monotonic millis)
                                 // every requestTimeout/10 and fires timeoutSignal when the deadline passes.
                                 // Progress notifications extend deadlineAt by requestTimeout each time they arrive.
                                 // There is ONE outer race: abortSignal vs exchange vs timeoutSignal.
@@ -370,11 +375,8 @@ private[kyo] object CallEngine:
                             // AtomicLong.Unsafe: deadline cell shared between call and monitor fibers
                             val deadlineRef: Maybe[AtomicLong.Unsafe] =
                                 if config.progressResetsTimeout && config.requestTimeout != Duration.Infinity then
-                                    // ambient wall-clock read inside the enclosing Sync.Unsafe.defer suspension boundary
                                     val initialDeadline =
-                                        clock.unsafe.now()(using
-                                            AllowUnsafe.embrace.danger
-                                        ).toDuration.toMillis + config.requestTimeout.toMillis
+                                        deadlineNowMillis(clock)(using AllowUnsafe.embrace.danger) + config.requestTimeout.toMillis
                                     // AtomicLong.Unsafe: per-request deadline cell
                                     Present(AtomicLong.Unsafe.init(initialDeadline)(using AllowUnsafe.embrace.danger))
                                 else Absent

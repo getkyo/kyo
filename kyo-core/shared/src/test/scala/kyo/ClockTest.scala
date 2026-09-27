@@ -217,6 +217,83 @@ class ClockTest extends kyo.test.Test[Any]:
                 }
             }
         }
+
+        "a wall-clock step" - {
+            import AllowUnsafe.embrace.danger
+
+            val start = Instant.Epoch + 1000.days
+
+            def stepped[A](f: (Clock.TimeControl, Clock, java.util.concurrent.atomic.AtomicReference[Instant]) => A < (Async & Abort[Any]))(
+                using Frame
+            ): A < (Async & Abort[Any]) =
+                Clock.withTimeControl { control =>
+                    Clock.get.map { controlled =>
+                        val wall = new java.util.concurrent.atomic.AtomicReference(start)
+                        f(control, Clock(Clock.Unsafe.withWall(controlled.unsafe)(() => wall.get())), wall)
+                    }
+                }
+
+            "forward leaves timeLeft and isOverdue alone" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start + 1.hour))
+                        left     <- deadline.timeLeft
+                        overdue  <- deadline.isOverdue
+                    yield
+                        assert(left == 10.seconds)
+                        assert(!overdue)
+                }
+            }
+
+            "backward leaves timeLeft alone" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start - 1.hour))
+                        left     <- deadline.timeLeft
+                    yield assert(left == 10.seconds)
+                }
+            }
+
+            "backward leaves an overdue deadline overdue" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(5.seconds)
+                        _        <- control.advance(6.seconds)
+                        _        <- Sync.defer(wall.set(start - 1.hour))
+                        overdue  <- deadline.isOverdue
+                        left     <- deadline.timeLeft
+                    yield
+                        assert(overdue)
+                        assert(left == Duration.Zero)
+                }
+            }
+
+            "monotonic progress still drains the deadline" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start + 1.day))
+                        _        <- control.advance(4.seconds)
+                        left     <- deadline.timeLeft
+                    yield assert(left == 6.seconds)
+                }
+            }
+
+            "an infinite deadline is never overdue" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(Duration.Infinity)
+                        _        <- Sync.defer(wall.set(Instant.Max))
+                        overdue  <- deadline.isOverdue
+                        left     <- deadline.timeLeft
+                    yield
+                        assert(!overdue)
+                        assert(left == Duration.Infinity)
+                }
+            }
+        }
     }
 
     "Integration" - {

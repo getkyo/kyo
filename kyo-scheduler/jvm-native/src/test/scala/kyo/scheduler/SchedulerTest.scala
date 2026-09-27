@@ -302,6 +302,82 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
         }
     }
 
+    "placement" - {
+        "a task whose placement scan fails is still placed before the failure propagates" in {
+            // A drain hands each task to schedule after taking it off the queue, so a schedule that throws before placing the task
+            // leaves it nowhere. The scan is where it throws: it checks each worker's availability, which preempts an over-slice
+            // task and, for a stalled worker, drains its queue.
+            val cfg = Scheduler.Config.default.copy(cores = 1, coreWorkers = 1, minWorkers = 1, maxWorkers = 1)
+            withScheduler(cfg) { s =>
+                val testThread = Thread.currentThread()
+                val armed      = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val thrown     = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val started    = new CountDownLatch(1)
+                val release    = new CountDownLatch(1)
+                val spinning   = TestTask(
+                    // Only the scan run by this test's own schedule call fails: armed around that call, and on this thread. The
+                    // cycle's preemptions pass, and so do the ones `status()` makes, which reads availability too.
+                    _preempt = () =>
+                        if ((Thread.currentThread() eq testThread) && armed.get() && thrown.compareAndSet(false, true))
+                            throw new StackOverflowError("injected"),
+                    _run = () => {
+                        started.countDown()
+                        while (release.getCount() > 0) {}
+                        Task.Done
+                    }
+                )
+                val task = TestTask()
+                try {
+                    s.schedule(spinning)
+                    assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    // The scan preempts only a task over its slice; the cycle marks the worker Stalled once it is.
+                    eventually(assert(s.status().workers.exists(w => (w ne null) && w.isStalled)))
+                    armed.set(true)
+                    val failure =
+                        try { s.schedule(task); None }
+                        catch { case e: StackOverflowError => Some(e) }
+                        finally armed.set(false)
+                    assert(thrown.get() && failure.isDefined, "the scan's failure must reach the caller")
+                } finally release.countDown()
+                eventually(assert(task.executions == 1, "the task whose placement failed was never placed"))
+                assert(s.placementFallbacks.sum() == 1, "the fallback placement must be counted")
+            }
+        }
+    }
+
+    "worker cycle" - {
+        "a fatal error in one cycle does not stop the cycles after it" in {
+            // The worker cycle runs as one long-lived loop on the timer pool, and it is what detects stalled workers, preempts their
+            // tasks and drains their queues. An error that escapes a cycle ends that loop, and nothing restarts it.
+            withScheduler { s =>
+                val thrown   = new java.util.concurrent.atomic.AtomicInteger(0)
+                val started  = new CountDownLatch(1)
+                val release  = new CountDownLatch(1)
+                val spinning = TestTask(
+                    // A task over its slice is preempted on every cycle. The first three preemptions on the cycle's own thread fail
+                    // the way the scheduler's drain recursion did on CI, one per cycle, so the third failure being counted is the
+                    // proof that the loop ran on after the first two.
+                    _preempt = () =>
+                        if ((Thread.currentThread() eq s.cycleThread) && thrown.getAndIncrement() < 3)
+                            throw new StackOverflowError("injected"),
+                    _run = () => {
+                        started.countDown()
+                        while (release.getCount() > 0) {}
+                        Task.Done
+                    }
+                )
+                try {
+                    s.schedule(spinning)
+                    assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    eventually(assert(
+                        s.cycleFailures.sum() >= 3,
+                        s"the cycle stopped after an error (${s.cycleFailures.sum()} failures counted)"
+                    ))
+                } finally release.countDown()
+            }
+        }
+    }
+
     "regulator harness liveness" - {
         // Each Scheduler permanently pins TWO timer-pool threads with infinite loops: the blocking-monitor scan loop
         // (BlockingMonitor's submitted task) and the worker-cycle loop (Scheduler.cycleTask). The concurrency and admission

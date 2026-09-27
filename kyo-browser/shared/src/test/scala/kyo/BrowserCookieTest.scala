@@ -485,6 +485,23 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
+    // The banner stays after the click, so only the deadline ends the wait; a deadline measured on the frozen Date.now never arrives.
+    "tryAcceptCookies times out on a banner that stays while the page's wall clock stands still" in {
+        withBrowser {
+            onPage(
+                """<div id="banner"><button id="cookie-accept">Accept</button></div>
+                  |<script>Date.now = function() { return 1700000000000; };</script>""".stripMargin
+            ) {
+                Browser.withConfig(_.loadSchedule(Schedule.fixed(100.millis).maxDuration(1.second))) {
+                    Abort.run[BrowserReadException](Browser.tryAcceptCookies)
+                }.map {
+                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case other                                                => fail(s"expected the banner wait to time out, got $other")
+                }
+            }
+        }
+    }
+
     // Variant B: lowercase-only id "cookies-accept". Selector 1 requires id matching BOTH 'accept' (case-sensitive)
     // AND 'cookie' (case-insensitive); "cookies-accept" satisfies both, so the heuristic fires on selector 1.
     "tryAcceptCookies fires on lowercase-only id 'cookies-accept' via selector [id*='accept'][id*='cookie' i]" in {

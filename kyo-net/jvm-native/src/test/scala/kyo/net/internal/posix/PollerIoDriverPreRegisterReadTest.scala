@@ -19,7 +19,8 @@ class PollerIoDriverPreRegisterReadTest extends Test:
     given Frame = Frame.internal
 
     private val transportConfig = kyo.net.NetConfig.default
-    private val sock            = Ffi.load[SocketBindings]
+    // Lazy: Ffi.load opens the library, which exists only where assumePoller lets a leaf run.
+    private lazy val sock = Ffi.load[SocketBindings]
 
     "a read registered after the peer's bytes already arrived is still delivered (no lost edge)" in {
         PosixTestSockets.assumePoller()

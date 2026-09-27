@@ -166,12 +166,12 @@ object Clock:
 
     object Deadline:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe) extends Serializable:
+        final class Unsafe(endMonotonic: Maybe[Duration], clock: Clock.Unsafe) extends Serializable:
 
             def timeLeft()(using AllowUnsafe): Duration =
-                endInstant.map(_.minusOrZero(clock.now())).getOrElse(Duration.Infinity)
+                endMonotonic.map(_.minusOrZero(clock.nowMonotonic())).getOrElse(Duration.Infinity)
 
-            def isOverdue()(using AllowUnsafe): Boolean = endInstant.exists(_ < clock.now())
+            def isOverdue()(using AllowUnsafe): Boolean = endMonotonic.exists(_ < clock.nowMonotonic())
 
             def safe: Deadline = Deadline(this)
         end Unsafe
@@ -852,7 +852,7 @@ object Clock:
 
         final def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe =
             if !duration.isFinite then Deadline.Unsafe(Maybe.empty, this)
-            else Deadline.Unsafe(Maybe(now() + duration), this)
+            else Deadline.Unsafe(Maybe(nowMonotonic() + duration), this)
 
         final def safe: Clock = Clock(this)
     end Unsafe
@@ -872,6 +872,15 @@ object Clock:
                             def call(): Unit = completeDiscard(Result.succeed(()))
                     }
                 end sleep
+
+        /** A clock whose wall reading is `wall` while its monotonic time and sleeps are `underlying`'s. It models a wall clock stepping on
+          * its own, as an NTP correction or a manual change does, which no public clock does within one scope.
+          */
+        private[kyo] def withWall(underlying: Unsafe)(wall: () => Instant): Unsafe =
+            new Unsafe:
+                def now()(using AllowUnsafe)          = wall()
+                def nowMonotonic()(using AllowUnsafe) = underlying.nowMonotonic()
+                def sleep(duration: Duration)         = underlying.sleep(duration)
     end Unsafe
 
 end Clock

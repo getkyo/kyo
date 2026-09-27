@@ -3350,75 +3350,79 @@ object Browser:
                 case Browser.ScreenshotFormat.Png  => "png"
                 case Browser.ScreenshotFormat.Jpeg => "jpeg"
                 case Browser.ScreenshotFormat.Webp => "jpeg"
+            // Two readings of the start: frame offsets are measured against Chrome's own wall-clock frame timestamps, so they take the
+            // wall reading, while the duration cap is a duration and takes the stopwatch.
             Clock.now.map { t0 =>
-                AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
-                    // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
-                    // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
-                    // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
-                    AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
-                        // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
-                        // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
-                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
-                        // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
-                        // elapsed ms), so the two reported numbers always share the same unit.
-                        val handler: CdpEvent.Generic => Unit < Sync = ev =>
-                            parseScreencastFrame(ev, t0).map {
-                                case Present((frame, sessionId)) =>
-                                    Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
-                                        Abort.run[BrowserReadException](
-                                            CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
-                                        ).unit
-                                    ).andThen(collected.updateAndGet(appendScreencastFrame(_, frame))).map { cur =>
-                                        def poison(cap: (Int, Int)): Unit < Sync =
-                                            poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
-                                        if cur.size > maxFrames then poison((maxFrames, cur.size))
-                                        else
-                                            Clock.now.map { now =>
-                                                val elapsedMs = now.toJava.toEpochMilli - t0.toJava.toEpochMilli
-                                                if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
-                                                else Kyo.unit
-                                            }
-                                        end if
-                                    }
-                                case Absent => Kyo.unit
-                            }
-                        session.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                            val restore = session.screencastEventDispatchers.getAndUpdate { m =>
-                                previousMap.get(sidKey) match
-                                    case Present(prev) => m.update(sidKey, prev)
-                                    case Absent        => m.remove(sidKey)
-                            }.unit
-                            // Best-effort stop on teardown: await the send so the cast is actually ended on normal completion,
-                            // but swallow any read failure so a connection already tearing down (interruption) does not re-raise
-                            // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
-                            val stop = Abort.run[BrowserReadException](CdpBackend.stopScreencast(session)).unit
-                            Scope.run {
-                                // Scope finalizers run sequentially in reverse registration order, so the two cleanups
-                                // must not be registered independently: that would always run `stop` before `restore`,
-                                // gating the local dispatcher removal behind a network round-trip bounded only by the
-                                // request timeout. On normal completion stop Chrome first so no in-flight frame is
-                                // orphaned to the bounded event channel, then drop the dispatcher. On failure or
-                                // interruption drop the dispatcher first so local cleanup is prompt and independent of
-                                // the best-effort stop (the connection is tearing down anyway).
-                                Scope.ensure {
-                                    case Absent     => stop.andThen(restore)
-                                    case Present(_) => restore.andThen(stop)
-                                }.andThen {
-                                    CdpBackend.startScreencast(
-                                        session,
-                                        StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
-                                    ).andThen {
-                                        body.map { result =>
-                                            poisoned.get.map { cap =>
-                                                collected.get.map { frames =>
-                                                    cap match
-                                                        case Present((limit, reached)) =>
-                                                            Abort.fail(BrowserCaptureLimitExceededException(
-                                                                "screenshotFrames",
-                                                                limit,
-                                                                reached
-                                                            ))
-                                                        case Absent => (frames, result)
+                Clock.stopwatch.map { capWatch =>
+                    AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
+                        // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
+                        // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
+                        // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
+                        AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
+                            // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
+                            // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
+                            // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
+                            // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
+                            // elapsed ms), so the two reported numbers always share the same unit.
+                            val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                                parseScreencastFrame(ev, t0).map {
+                                    case Present((frame, sessionId)) =>
+                                        Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
+                                            Abort.run[BrowserReadException](
+                                                CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
+                                            ).unit
+                                        ).andThen(collected.updateAndGet(appendScreencastFrame(_, frame))).map { cur =>
+                                            def poison(cap: (Int, Int)): Unit < Sync =
+                                                poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
+                                            if cur.size > maxFrames then poison((maxFrames, cur.size))
+                                            else
+                                                capWatch.elapsed.map { elapsed =>
+                                                    val elapsedMs = elapsed.toMillis
+                                                    if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
+                                                    else Kyo.unit
+                                                }
+                                            end if
+                                        }
+                                    case Absent => Kyo.unit
+                                }
+                            session.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                                val restore = session.screencastEventDispatchers.getAndUpdate { m =>
+                                    previousMap.get(sidKey) match
+                                        case Present(prev) => m.update(sidKey, prev)
+                                        case Absent        => m.remove(sidKey)
+                                }.unit
+                                // Best-effort stop on teardown: await the send so the cast is actually ended on normal completion,
+                                // but swallow any read failure so a connection already tearing down (interruption) does not re-raise
+                                // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
+                                val stop = Abort.run[BrowserReadException](CdpBackend.stopScreencast(session)).unit
+                                Scope.run {
+                                    // Scope finalizers run sequentially in reverse registration order, so the two cleanups
+                                    // must not be registered independently: that would always run `stop` before `restore`,
+                                    // gating the local dispatcher removal behind a network round-trip bounded only by the
+                                    // request timeout. On normal completion stop Chrome first so no in-flight frame is
+                                    // orphaned to the bounded event channel, then drop the dispatcher. On failure or
+                                    // interruption drop the dispatcher first so local cleanup is prompt and independent of
+                                    // the best-effort stop (the connection is tearing down anyway).
+                                    Scope.ensure {
+                                        case Absent     => stop.andThen(restore)
+                                        case Present(_) => restore.andThen(stop)
+                                    }.andThen {
+                                        CdpBackend.startScreencast(
+                                            session,
+                                            StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
+                                        ).andThen {
+                                            body.map { result =>
+                                                poisoned.get.map { cap =>
+                                                    collected.get.map { frames =>
+                                                        cap match
+                                                            case Present((limit, reached)) =>
+                                                                Abort.fail(BrowserCaptureLimitExceededException(
+                                                                    "screenshotFrames",
+                                                                    limit,
+                                                                    reached
+                                                                ))
+                                                            case Absent => (frames, result)
+                                                    }
                                                 }
                                             }
                                         }

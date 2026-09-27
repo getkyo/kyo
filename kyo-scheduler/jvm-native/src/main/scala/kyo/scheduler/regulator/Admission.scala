@@ -75,7 +75,7 @@ import scala.concurrent.duration.*
   * @param schedule
   *   Function to schedule probe tasks in the scheduler
   * @param nowMillis
-  *   Current time supplier for delay measurements
+  *   Monotonic milliseconds supplier for delay measurements and rotation windows; a wall clock would move both with every step
   * @param timer
   *   Timer for scheduling periodic regulation
   * @param config

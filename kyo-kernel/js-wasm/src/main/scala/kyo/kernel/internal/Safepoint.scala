@@ -115,8 +115,10 @@ object Safepoint:
 
     private[kyo] def endSlice(slot: Slot, prev: AnyRef): Unit = ()
 
+    // Monotonic milliseconds, the basis of the scheduler's InternalClock that builds `armedDeadline`: a wall-clock step on either side
+    // would preempt every slice at once or let one run unbounded.
     private def expired(): Boolean =
-        armedDeadline != Long.MaxValue && java.lang.System.currentTimeMillis() >= armedDeadline
+        armedDeadline != Long.MaxValue && java.lang.System.nanoTime() / 1000000L >= armedDeadline
 
     private[kyo] def stopped(slot: Slot): Boolean =
         stopRequested || expired()
