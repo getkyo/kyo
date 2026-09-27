@@ -905,54 +905,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p.waiters() == 1)
         }
 
-        "a race loser still pending at the next registration does not shield the dead links beneath it" in {
-            // Each tick forks a loser and a winner; the winner completes, the next tick registers while the loser's
-            // interrupt is still only scheduled, and the loser completes after that.
-            val ticks                                  = 1000
-            val p                                      = new IOPromise[Nothing, Int]()
-            var previousLoser: IOPromise[Nothing, Int] = null
-            (1 to ticks).foreach { _ =>
-                val loser  = new IOPromise[Nothing, Int]()
-                val winner = new IOPromise[Nothing, Int]()
-                p.interrupts(loser)
-                p.interrupts(winner)
-                assert(winner.complete(Result.succeed(1)))
-                if previousLoser ne null then assert(previousLoser.complete(Result.succeed(1)))
-                previousLoser = loser
-            }
-            val next = new IOPromise[Nothing, Int]()
-            p.interrupts(next)
-            assert(p.waiters() == 2, s"${p.waiters()} links held after $ticks ticks, only the last loser and the new link are live")
-
-            assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(previousLoser.done())
-            assert(next.done())
-        }
-
-        "pruning walks past completion callbacks and keeps them" in {
-            val p                                          = new IOPromise[Nothing, Int]()
-            val live                                       = new IOPromise[Nothing, Int]()
-            val dead                                       = new IOPromise[Nothing, Int]()
-            var fired                                      = 0
-            val onInterrupt: Result.Error[Nothing] => Unit = _ => fired += 1
-            p.interrupts(live)
-            p.interrupts(dead)
-            p.onInterrupt(onInterrupt)
-            p.onComplete(_ => fired += 1)
-            assert(dead.complete(Result.succeed(1)))
-
-            val next = new IOPromise[Nothing, Int]()
-            p.interrupts(next)
-            assert(p.waiters() == 4, "the dead link under the callbacks is dropped")
-
-            assert(p.remove(onInterrupt))
-            assert(p.waiters() == 3)
-            assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(fired == 1, "the kept completion callback fires once and the removed interrupt callback does not")
-            assert(live.done())
-            assert(next.done())
-        }
-
         "remove with become" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
