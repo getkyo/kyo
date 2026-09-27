@@ -1225,6 +1225,9 @@ object Span:
           * accumulator. This prevents timing side-channels that would otherwise reveal the position of the first differing byte, critical
           * for cryptographic MAC / signature verification (e.g., SCRAM ServerSignature).
           *
+          * The comparison is [[kyo.internal.crypto.ConstantTime.isEqual]], whose scaladoc states the limits: the lengths are not hidden,
+          * and the guarantee is the absence of a data-dependent exit in the source, not a property of the JIT, a JavaScript engine or LLVM.
+          *
           * @param other
           *   the Span to compare with
           * @return
