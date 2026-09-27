@@ -501,6 +501,36 @@ final case class SqlRequestTransactionFailedStatementException(detail: String)(u
             s"transaction to roll back only that part and keep the rest committable. Statement failure: $detail"
     )
 
+/** A statement reached a transaction that has already committed or rolled back, so it was refused rather than run.
+  *
+  * A fiber forked inside a `transaction` body inherits the transaction, and one the body never awaited can issue a statement after the body
+  * returned. By then the transaction's connection is back in the pool, so running the statement would put it on whatever session the pool
+  * leased that connection to next, inside a transaction it was never part of. A statement written for a transaction gets exactly one honest
+  * answer once that transaction is over: it does not run, anywhere.
+  *
+  * Await the forked fiber inside the body, or give it a `transaction` of its own, for a statement that has to run.
+  */
+final case class SqlRequestTransactionEndedException()(using Frame)
+    extends SqlRequestException(
+        "This statement belongs to a transaction that has already committed or rolled back, so it was refused rather than run outside it. " +
+            "A fiber forked inside the transaction body keeps the transaction; await it inside the body or give it a transaction of its own."
+    )
+
+/** A statement reached a locked section that has already released its advisory lock, so it was refused rather than run unlocked.
+  *
+  * The same shape as [[SqlRequestTransactionEndedException]]: a fiber forked inside a `withAdvisoryLock` body inherits the locked session,
+  * and a statement it issues after the body returned would run without the lock the body took it under, on a session the pool may already
+  * have leased to someone else.
+  *
+  * @param key
+  *   the advisory lock the section held
+  */
+final case class SqlRequestAdvisoryLockEndedException(key: Long)(using Frame)
+    extends SqlRequestException(
+        s"This statement belongs to a section holding advisory lock $key that has already released it, so it was refused rather than run " +
+            "without the lock. A fiber forked inside the locked body keeps the locked session; await it inside the body or take the lock again."
+    )
+
 /** RSA-OAEP encryption of the MySQL sha256_password payload failed. */
 final case class SqlRequestRsaOaepException(position: String, tag: String, cause: String | Throwable)(using Frame)
     extends SqlRequestException(

@@ -580,15 +580,20 @@ val settle: Unit < (Abort[SqlException] & DB) =
 - **Concurrent fibers inside the body are safe.** A forked fiber inherits the transaction, which is what
   keeps its statements atomic with the rest, and statements racing onto the shared connection serialise on a
   per-session mutex instead of interleaving frames on one socket.
+- **A fiber that outlives the body is refused, not rerouted.** A forked fiber the body never awaited still
+  carries the transaction after the commit, and by then its connection is back in the pool. A statement it
+  issues then fails with `SqlRequestTransactionEndedException` rather than running on whatever session the
+  pool leased that connection to next. Await the fiber inside the body, or give it a transaction of its own.
 
 Isolation and read-only mode are the two-argument form:
 `DB.transaction(Present(SqlClient.IsolationLevel.Serializable), readOnly = true)(body)`.
 
 `DB.withAdvisoryLock(key, timeout)` is the same session pinning without the transactional semantics: a
 cross-process critical section, held for the body and released by a scope finalizer on every exit edge.
-Statements inside route to the lock's session, so a one-connection pool still makes progress. MySQL bounds
-the wait with `timeout`. PostgreSQL's advisory lock takes none, so the wait is bounded by wrapping the
-whole call in `Async.timeout`.
+Statements inside route to the lock's session, so a one-connection pool still makes progress, and a
+statement from a forked fiber that arrives after the release fails with
+`SqlRequestAdvisoryLockEndedException` rather than running unlocked. MySQL bounds the wait with `timeout`.
+PostgreSQL's advisory lock takes none, so the wait is bounded by wrapping the whole call in `Async.timeout`.
 
 ## Rows, names, and column types
 

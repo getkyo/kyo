@@ -203,6 +203,9 @@ object Fiber:
 
         /** Maps the result of the Fiber.
           *
+          * A throw from `f` panics the new Fiber when this Fiber's result is settled. When the result still has effects to run,
+          * `f` runs where that result is evaluated and its throw is raised there.
+          *
           * @param f
           *   The function to apply to the Fiber's result
           * @return
@@ -364,9 +367,10 @@ object Fiber:
 
         /** Interrupts the Fiber and waits until it has released what it held.
           *
-          * A fiber's result is available once its finalizers have run, so this returns after them. Whether this call
-          * interrupted the fiber, an earlier one did, or it finished on its own, the wait ends the same way: with the
-          * fiber released.
+          * A fiber's result follows its synchronous releases, so this returns after them. A scope's async finalizers run
+          * on a detached drain that is not awaited, so they may still be running when this returns (see the `Open:`
+          * marker on `Finalizer.close` in Scope.scala). Whether this call interrupted the fiber, an earlier one did, or it
+          * finished on its own, the wait ends the same way: with the fiber released.
           */
         def interruptAwait(using frame: Frame): Unit < Async =
             interruptAwait(Result.Panic(Interrupted(frame)))
@@ -462,7 +466,18 @@ object Fiber:
 
             def map[B](f: A => B)(using AllowUnsafe, Frame): Unsafe[B, S] =
                 val p = new IOPromise[Any, B < S](interrupts = self.lower) with (Result[Any, A < S] => Unit):
-                    def apply(v: Result[Any, A < S]) = completeDiscard(v.map(_.map(f)))
+                    def apply(v: Result[Any, A < S]) =
+                        completeDiscard(v.map { comp =>
+                            // A settled result applies `f` here, inside `Result.map`, which turns its throw into this
+                            // promise's panic. `comp.map` would poll the safepoint first and, when denied, defer `f`
+                            // into the delivered value, where its throw is raised at the consumer instead. A result
+                            // that still has effects to run can only defer `f`: the row `S` need not carry Abort, so
+                            // nothing in the value can hold a panic, and a throw from the deferred `f` is raised where
+                            // the consumer runs it.
+                            comp.evalNow match
+                                case Present(a) => f(a)
+                                case Absent     => comp.map(f)
+                        })
                 self.lower.onComplete(p)
                 p
             end map

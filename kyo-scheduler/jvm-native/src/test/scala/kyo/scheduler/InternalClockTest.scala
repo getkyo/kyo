@@ -48,6 +48,22 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "the default source is monotonic time, not the wall clock" in {
+        // Bracketed rather than bounded: every published reading was sampled after `before` and before `after`, however slow the host.
+        val executor = Executors.newSingleThreadExecutor(Threads("test-internal-clock"))
+        val before   = InternalClock.monotonicMillis()
+        val clock    = new InternalClock(executor)
+        try {
+            val reading = clock.currentMillis()
+            val after   = InternalClock.monotonicMillis()
+            assert(before <= reading && reading <= after, s"expected a reading within [$before, $after], got $reading")
+        } finally {
+            clock.stop()
+            executor.shutdownNow()
+            ()
+        }
+    }
+
     /** Reads the clock until it publishes a value other than `previous`. The deadline is a give-up valve for a dead update
       * thread, not a bound anything is asserted against.
       */

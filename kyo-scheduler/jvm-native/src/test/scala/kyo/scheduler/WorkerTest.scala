@@ -966,6 +966,51 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             eventually(assert(spinning.executions == 1))
         }
 
+        "a drain that re-enters another stalled worker's drain does not drain itself again" in {
+            // Two stalled workers whose scheduleTask stands in for Scheduler.schedule when no worker is available: the random
+            // fallback places the task on an unavailable worker, and the next placement's scan checks that worker, which drains
+            // it. Each drained task is handed to the other worker and that worker is checked, so A's drain re-enters B's, whose
+            // task lands back on A while A's drain is still on the stack. Draining A again there nests without bound: on CI the
+            // scheduler threads died of StackOverflowError and took the tasks they had drained with them.
+            val workers = new Array[Worker](2)
+            val far     = Long.MaxValue / 2 // past any task's slice, so both workers read as stalled without waiting on the clock
+            val started = new CountDownLatch(2)
+            val release = new CountDownLatch(1)
+            val handoff: (Task, Worker) => Unit = (t, from) => {
+                val to = if (from eq workers(0)) workers(1) else workers(0)
+                to.enqueue(t)
+                val _ = to.checkAvailability(far)
+            }
+            workers(0) = createWorker(executor = executor, scheduleTask = handoff)
+            workers(1) = createWorker(executor = executor, scheduleTask = handoff)
+            val spinners = workers.toSeq.map { w =>
+                val spinning = TestTask(_run = () => {
+                    started.countDown()
+                    while (release.getCount() > 0) {}
+                    Task.Done
+                })
+                w.enqueue(spinning)
+                spinning
+            }
+            val task = TestTask()
+            try {
+                assert(started.await(5, TimeUnit.SECONDS))
+                // Takes both workers through Running -> Stalled while their queues are empty, so nothing drains yet.
+                assert(!workers(0).checkAvailability(far))
+                assert(!workers(1).checkAvailability(far))
+
+                workers(0).enqueue(task)
+                val overflow =
+                    try { val _ = workers(0).checkAvailability(far); None }
+                    catch { case e: StackOverflowError => Some(e) }
+                assert(overflow.isEmpty, "a drain re-entered through another worker's drain drained the same worker again, without bound")
+                // The task ends queued on one of the workers, behind its spinner, rather than lost.
+                assert(workers.map(_.load()).sum == 3, s"loads ${workers.map(_.load()).toList}")
+            } finally release.countDown()
+            eventually(assert(spinners.forall(_.executions == 1)))
+            eventually(assert(task.executions == 1))
+        }
+
         "cleared blocked flag restores availability" in {
             val worker = createWorker(executor = executor)
             // No task running, checkStalling won't trigger

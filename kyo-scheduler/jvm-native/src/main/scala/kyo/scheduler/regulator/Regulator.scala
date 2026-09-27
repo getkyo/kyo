@@ -6,7 +6,6 @@ import kyo.AllowUnsafe.embrace.danger
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.RegulatorStatus
 import kyo.scheduler.util.*
-import scala.util.control.NonFatal
 
 /** A self-tuning regulator that dynamically adjusts scheduler behavior based on system performance metrics. This base class provides
   * automatic adjustment of scheduler parameters based on real-time performance measurements and statistical analysis of timing variations.
@@ -143,7 +142,9 @@ abstract class Regulator(
             probesSent.increment()
             probe()
         } catch {
-            case ex if NonFatal(ex) =>
+            // Any Throwable, fatal ones included: this runs as a periodic task, and the executor suppresses every later run once
+            // one throws. A probe schedules a task, so it reaches the scheduler's drains.
+            case ex: Throwable =>
                 kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's probe collection has failed.", ex)
         }
     }
@@ -183,7 +184,8 @@ abstract class Regulator(
             stats.jitter.observe(jitter)
             stats.loadavg.observe(load)
         } catch {
-            case ex if NonFatal(ex) =>
+            // Any Throwable, for the same reason as `collect`: one escaping failure would end the adjustments for good.
+            case ex: Throwable =>
                 kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
         }
     }

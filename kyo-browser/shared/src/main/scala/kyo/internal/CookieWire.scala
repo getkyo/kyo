@@ -133,14 +133,14 @@ private[kyo] object CookieBanner:
                 }
                 if (!matched) return JSON.stringify({tag: 'none'});
                 matched.click();
-                const deadlineAt = Date.now() + ${deadlineMs};
+                const deadlineAt = performance.now() + ${deadlineMs};
                 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
                 while (true) {
                     const el = document.querySelector(matchedSel);
                     if (!el || el.offsetParent === null || getComputedStyle(el).visibility === 'hidden') {
                         return JSON.stringify({tag: 'accepted', selector: matchedSel});
                     }
-                    if (Date.now() >= deadlineAt) return JSON.stringify({tag: 'timeout'});
+                    if (performance.now() >= deadlineAt) return JSON.stringify({tag: 'timeout'});
                     await sleep(50);
                 }
             })()"""

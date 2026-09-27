@@ -123,36 +123,36 @@ final class PostgresClient private[kyo] (runtime: Runtime[PostgresSqlConnection]
       * The portable surface reaches a connection through [[SqlClient.usePinnedConnection]] and sees only the SPI; this reaches the same
       * connection at its concrete type, which is what `COPY` and the startup parameters need.
       *
-      * Routes like the portable [[SqlClient.usePinnedConnection]] does, so an operation here reaches an enclosing transaction's or lock's session
-      * rather than a second one. Two checks stand between the fiber-local and `op`, and they do DIFFERENT jobs, which is worth stating because
-      * conflating them is the mistake to avoid:
+      * Routed by [[SqlClient.usePinnedConnection]] itself, so an operation here reaches an enclosing transaction's or lock's session under its
+      * statement mutex, records its failure against the transaction, and is refused once that scope has ended, exactly as a portable statement
+      * is. Two checks stand between the fiber-local and `op`, and they do DIFFERENT jobs, which is worth stating because conflating them is the
+      * mistake to avoid:
       *
-      *   - The client comparison, inside [[SqlClient.pinnedSession]], is the CORRECTNESS gate. It decides whether joining this session is
-      *     legitimate at all, and without it a second client's statement lands on this client's connection: a different pool, a possibly different
-      *     server.
-      *   - The concrete-type narrowing below is a TYPING necessity and nothing more. `TransactionContext` holds the SPI type and this needs the
+      *   - The client comparison, inside the routed helper, is the CORRECTNESS gate. It decides whether joining this session is legitimate at
+      *     all, and without it a second client's statement lands on this client's connection: a different pool, a possibly different server.
+      *   - The concrete-type narrowing below is a TYPING necessity and nothing more. The helper hands out the SPI type and this needs the
       *     Postgres one, so the match has to happen whether or not it can fail. After the client gate it cannot: this client's pool opens only
-      *     `PostgresSqlConnection`. The fall-through therefore leases rather than pretending to decide something.
+      *     `PostgresSqlConnection`, which is why the other arm is a bug rather than a lease.
       *
-      * On the fall-through, reaching past the SPI means bypassing the in-flight window it maintains, so an interrupt during one of these operations
-      * leaves the pool with no evidence that a request was outstanding and the connection is destroyed rather than reclaimed. That is the conservative
-      * answer and the right one here: `COPY` has its own mid-transfer cleanup, which a generic drain would cut across. It does not apply to the routed
-      * branch, whose connection the enclosing transaction or lock already owns and will resolve itself.
+      * On the leased fall-through, reaching past the SPI means bypassing the in-flight window it maintains, so an interrupt during one of these
+      * operations leaves the pool with no evidence that a request was outstanding and the connection is destroyed rather than reclaimed. That is
+      * the conservative answer and the right one here: `COPY` has its own mid-transfer cleanup, which a generic drain would cut across. It does not
+      * apply to the routed branch, whose connection the enclosing transaction or lock already owns and will resolve itself.
       *
       * An operation that must NOT join the enclosing session calls [[useOwnPostgresConnection]] instead.
       */
     private def usePostgresConnection[A, S](op: kyo.internal.postgres.PostgresConnection => A < (S & Async & Abort[SqlException]))(using
         Frame
     ): A < (S & Async & Abort[SqlException]) =
-        self.pinnedSession.flatMap {
-            case Present(conn: PostgresSqlConnection) => op(conn.underlying)
-            case _                                    => self.useOwnPostgresConnection(op)
+        self.usePinnedConnection {
+            case conn: PostgresSqlConnection => op(conn.underlying)
+            case other                       => bug(s"kyo.sql: a Postgres client's pool handed out ${other.getClass.getName}")
         }
 
     /** Runs `op` on a Postgres connection of its own, never an enclosing transaction's or lock's.
       *
-      * The engine-side opt-out from [[usePostgresConnection]]'s routing, and the fall-through that helper uses. Only [[copyOut]] asks for it
-      * directly, and the reason is recorded there rather than here, because wanting an own session is a property of the operation.
+      * The engine-side opt-out from [[usePostgresConnection]]'s routing. Only [[copyOut]] asks for it, and the reason is recorded there rather
+      * than here, because wanting an own session is a property of the operation.
       */
     private def useOwnPostgresConnection[A, S](op: kyo.internal.postgres.PostgresConnection => A < (S & Async & Abort[SqlException]))(using
         Frame

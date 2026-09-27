@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class BufferBindingsImpl extends BufferBindings:
     import `BufferBindings_externs` as ext
+    BufferBindingsImpl.loaded()
 
     def process(buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Int, Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -23,6 +24,7 @@ end BufferBindingsImpl
 object BufferBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.BufferBindings")
+    private def loaded(): Unit = ()
 end BufferBindingsImpl
 
 @extern

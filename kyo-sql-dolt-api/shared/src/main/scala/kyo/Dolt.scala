@@ -69,8 +69,20 @@ abstract class Dolt private[kyo] (runtime: Runtime[?]) extends SqlClient(runtime
 
     /** Merges `from` into the current branch and answers what happened. A [[Dolt.Merge.Conflicted]] result leaves the conflicts in the
       * branch's working set: resolve them with [[resolveConflicts]] and [[commit]], or discard them with a hard [[reset]].
+      *
+      * Note: the embedded engine never keeps a conflict past a transaction, so there a conflicted merge is rolled back after its conflicts
+      * are read: the answer is the same [[Dolt.Merge.Conflicted]], and the branch is left as it was before the merge.
       */
     def merge(from: Dolt.Ref)(using Frame): Dolt.Merge < (Async & Abort[SqlException])
+
+    /** Merges `from` into the current branch without committing, and answers what happened. It is `git merge --no-ff --no-commit`.
+      *
+      * A clean merge leaves its result staged in the branch's working set as [[Dolt.Merge.Staged]]: the caller may write more, and the next
+      * [[commit]] records ONE commit with two parents holding the merged changes and those writes together. It never fast-forwards, since a
+      * fast-forward would put the merged commits on the branch as they are, with no commit of the caller's own to add to. Conflicts and an
+      * up-to-date branch answer as they do for [[merge]].
+      */
+    def stageMerge(from: Dolt.Ref)(using Frame): Dolt.StagedMerge < (Async & Abort[SqlException])
 
     /** Which tables hold merge conflicts, and how many rows each. The per-row detail is in `dolt_conflicts_<table>`. */
     def conflicts(using Frame): Chunk[Dolt.ConflictSummary] < (Async & Abort[SqlException])
@@ -321,62 +333,103 @@ object Dolt:
 
     end Diff
 
-    /** What a merge did, with the server's own account of it.
+    /** What [[Dolt.merge]] or [[Dolt.pull]] did, with the server's own account of it.
       *
       * A sum type rather than a failure, because a conflict is an ordinary outcome of merging. The engine forces that as much as taste
       * does: measured against a 2.3.4 server, a conflicting merge under autocommit raises an error and rolls back, while the same merge
       * inside an explicit transaction returns a row saying `conflicts found`. So [[Dolt.merge]] runs in a transaction and hands this back.
+      *
+      * The cases live on the companion and are shared with [[StagedMerge]], what [[Dolt.stageMerge]] answers: an up-to-date or a conflicted
+      * merge is the same outcome whichever operation met it, so each is one type belonging to both, and each operation's type holds exactly
+      * the cases that operation can produce.
       */
-    enum Merge derives CanEqual:
+    sealed trait Merge derives CanEqual:
+
+        /** The server's own summary of what happened, whichever case this is. */
+        def summary: String
+
+        /** Whether this merge left work for the caller to resolve. */
+        def isConflicted: Boolean
+
+        /** The commit this merge produced, absent when it produced none. */
+        def resultingCommit: Maybe[Commit]
+
+        /** How many rows are in conflict across every table, zero on a clean merge. */
+        def conflictCount: Long
+
+    end Merge
+
+    object Merge:
 
         /** The target already contained every commit being merged, so nothing moved and no commit was created. */
-        case UpToDate(message: String)
+        final case class UpToDate(message: String) extends Merge with StagedMerge:
+            def summary: String                = message
+            def isConflicted: Boolean          = false
+            def resultingCommit: Maybe[Commit] = Absent
+            def conflictCount: Long            = 0L
+        end UpToDate
 
         /** The target had no commits of its own since the fork, so its pointer moved forward and no merge commit was created. */
-        case FastForward(commit: Commit, message: String)
+        final case class FastForward(commit: Commit, message: String) extends Merge:
+            def summary: String                = message
+            def isConflicted: Boolean          = false
+            def resultingCommit: Maybe[Commit] = Present(commit)
+            def conflictCount: Long            = 0L
+        end FastForward
 
         /** Both sides had commits and they combined cleanly, producing a merge commit with two parents. */
-        case Merged(commit: Commit, message: String)
+        final case class Merged(commit: Commit, message: String) extends Merge:
+            def summary: String                = message
+            def isConflicted: Boolean          = false
+            def resultingCommit: Maybe[Commit] = Present(commit)
+            def conflictCount: Long            = 0L
+        end Merged
 
-        /** Both sides changed the same rows or the same schema. Nothing is committed and the conflicts sit in the working set.
+        /** Both sides changed the same rows or the same schema. Nothing is committed and the conflicts sit in the working set, except on the
+          * embedded engine, which rolls a conflicted merge back and leaves the branch as it was.
           *
           * `data` carries the per-table row counts and `schema` the tables whose SHAPE conflicts, both read inside the same transaction. A
           * schema conflict cannot be resolved by choosing a side row by row, which is why it is a separate field rather than another count.
           */
-        case Conflicted(data: Chunk[ConflictSummary], schema: Chunk[SchemaConflict], message: String)
+        final case class Conflicted(data: Chunk[ConflictSummary], schema: Chunk[SchemaConflict], message: String)
+            extends Merge with StagedMerge:
+            def summary: String                = message
+            def isConflicted: Boolean          = true
+            def resultingCommit: Maybe[Commit] = Absent
+            def conflictCount: Long            = data.map(_.count).sum
+        end Conflicted
 
-        /** The server's own summary of what happened, whichever case this is. Named apart from the `message` each case carries because an
-          * enum cannot expose one accessor over case fields of that same name.
+        /** The merge combined cleanly and its result is staged in the working set, uncommitted.
+          *
+          * The branch has not moved. The next [[Dolt.commit]] records a commit with two parents, the branch's head and the merged ref,
+          * holding the merged changes together with whatever the caller wrote in between. A hard [[Dolt.reset]] abandons the merge instead.
           */
-        def summary: String =
-            this match
-                case UpToDate(m)         => m
-                case FastForward(_, m)   => m
-                case Merged(_, m)        => m
-                case Conflicted(_, _, m) => m
-
-        /** Whether this merge left work for the caller to resolve. */
-        def isConflicted: Boolean =
-            this match
-                case _: Conflicted => true
-                case _             => false
-
-        /** The commit this merge produced, absent when it produced none. Named apart from the `commit` two cases carry, for the reason
-          * [[Merge.summary]] is.
-          */
-        def resultingCommit: Maybe[Commit] =
-            this match
-                case FastForward(c, _) => Present(c)
-                case Merged(c, _)      => Present(c)
-                case _                 => Absent
-
-        /** How many rows are in conflict across every table, zero on a clean merge. */
-        def conflictCount: Long =
-            this match
-                case Conflicted(data, _, _) => data.map(_.count).sum
-                case _                      => 0L
+        final case class Staged(message: String) extends StagedMerge:
+            def summary: String       = message
+            def isConflicted: Boolean = false
+            def conflictCount: Long   = 0L
+        end Staged
 
     end Merge
+
+    /** What [[Dolt.stageMerge]] did: a merge that commits nothing, whatever its outcome.
+      *
+      * [[Merge.Staged]] is the clean case. [[Merge.UpToDate]] and [[Merge.Conflicted]] are the same cases [[Dolt.merge]] answers, since
+      * nothing to merge and a conflict are the same outcome either way. There is no fast-forward case: a staged merge never moves the
+      * branch, even when a fast-forward was possible.
+      */
+    sealed trait StagedMerge derives CanEqual:
+
+        /** The server's own summary of what happened, whichever case this is. */
+        def summary: String
+
+        /** Whether this merge left conflicts for the caller to resolve. */
+        def isConflicted: Boolean
+
+        /** How many rows are in conflict across every table, zero on a clean merge. */
+        def conflictCount: Long
+
+    end StagedMerge
 
     /** How many rows of one table are in conflict, as `dolt_conflicts` reports it.
       *
