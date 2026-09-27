@@ -76,7 +76,7 @@ class StrictSchemaTest extends kyo.test.Test[Any]:
                     case other => fail(s"expected the nested object schema, got: $other")
                 end match
                 properties.toMap.get("union") match
-                    case Some(JsonSchema.OneOf(variants)) =>
+                    case Some(JsonSchema.OneOf(variants, _)) =>
                         assert(variants.map(_._1) == List("left", "right"), s"union variant names must be preserved: $variants")
                         variants.toMap.get("right") match
                             case Some(JsonSchema.Obj(_, rightRequired, _, _, _, _)) =>
@@ -116,6 +116,28 @@ class StrictSchemaTest extends kyo.test.Test[Any]:
                     case other => fail(s"expected the array schema with a require-all'd item object, got: $other")
                 end match
             case other => fail(s"expected an Obj, got: $other")
+        end match
+    }
+
+    "requireAll and the strict schema keep the description of a union and of a nullable property" in {
+        val union = JsonSchema.OneOf(
+            List("low" -> JsonSchema.Obj(List.empty, List.empty), "high" -> JsonSchema.Obj(List.empty, List.empty)),
+            Present("how urgent it is")
+        )
+        val nullable = JsonSchema.Nullable(JsonSchema.Str(), Present("the note, when there is one"))
+        val schema   = JsonSchema.Obj(properties = List("priority" -> union, "note" -> nullable), required = List.empty)
+        StrictSchema.requireAll(schema) match
+            case JsonSchema.Obj(properties, _, _, _, _, _) =>
+                assert(properties.toMap.get("priority") == Some(union))
+                assert(properties.toMap.get("note") == Some(nullable))
+            case other => fail(s"expected an Obj, got: $other")
+        end match
+        StrictSchema.result(schema) match
+            case Result.Success(strict) =>
+                val encoded = Json.encode(strict)
+                assert(encoded.contains("\"description\":\"how urgent it is\""), encoded)
+                assert(encoded.contains("\"description\":\"the note, when there is one\""), encoded)
+            case other => fail(s"expected a strict schema, got: $other")
         end match
     }
 

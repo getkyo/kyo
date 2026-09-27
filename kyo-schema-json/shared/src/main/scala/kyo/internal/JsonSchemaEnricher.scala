@@ -99,21 +99,19 @@ import scala.annotation.publicInBinary
         end match
     end applyConstraint
 
-    /** Adds a description to a JsonSchema, supporting the types that have a description field.
-      *
-      * For types without a description field (Nullable, OneOf, etc.), returns the schema unchanged.
-      */
+    /** Sets the description of a JsonSchema node; every case carries one. */
     def addDescription(schema: Json.JsonSchema, desc: String): Json.JsonSchema =
         import Json.JsonSchema
         schema match
-            case s: JsonSchema.Obj     => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Str     => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Num     => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Integer => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Arr     => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Bool    => s.copy(description = Maybe(desc))
-            case s: JsonSchema.Null    => s.copy(description = Maybe(desc))
-            case other                 => other // remaining types without a description field
+            case s: JsonSchema.Obj      => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Str      => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Num      => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Integer  => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Arr      => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Bool     => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Null     => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Nullable => s.copy(description = Maybe(desc))
+            case s: JsonSchema.OneOf    => s.copy(description = Maybe(desc))
         end match
     end addDescription
 

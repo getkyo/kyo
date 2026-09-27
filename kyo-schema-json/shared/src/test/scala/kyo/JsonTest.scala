@@ -8,6 +8,10 @@ class JsonTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    enum MemberLevel derives CanEqual, Schema:
+        case One, Two
+        case Custom(value: Int)
+
     private def jsonRoundTrip[A](value: A)(using schema: Schema[A]): A =
         val w = JsonWriter()
         schema.writeTo(value, w)
@@ -2100,6 +2104,25 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(result.isFailure, "OrderedDict should reject an oversized entry count via maxCollectionSize")
         }
 
+    }
+
+    "an enum declared as a member of a class" - {
+
+        "encodes a case as the variant wrapper" in {
+            assert(Json.encode[MemberLevel](MemberLevel.Two) == """{"Two":{}}""")
+            assert(Json.encode[MemberLevel](MemberLevel.Custom(4)) == """{"Custom":{"value":4}}""")
+        }
+
+        "decodes the variant wrapper" in {
+            assert(Json.decode[MemberLevel]("""{"Two":{}}""") == Result.succeed(MemberLevel.Two))
+        }
+
+        "round trips every case" in {
+            Chunk(MemberLevel.One, MemberLevel.Two, MemberLevel.Custom(4)).foreach { level =>
+                val decoded = Json.decode[MemberLevel](Json.encode[MemberLevel](level))
+                assert(decoded == Result.succeed(level), s"decoded $decoded")
+            }
+        }
     }
 
 end JsonTest

@@ -56,7 +56,7 @@ jobs:
       - name: Compile every module's natives (producer path)
         run: sbt -Dplatform=JVM ffiCompileAll
       - name: Build publishable artifacts (JVM)
-        run: sbt -Dplatform=JVM publishLocal
+        run: sbt -Dplatform=JVM +publishLocal
       # The half of the publish job's guard a single host can answer: completeness needs every
       # producer's artifacts pooled, so the full ffiPackagingCheckAll cannot pass on a pull request.
       # This half catches a native filed under a platform it is not for.

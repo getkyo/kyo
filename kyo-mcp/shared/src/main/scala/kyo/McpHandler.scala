@@ -533,6 +533,15 @@ object McpHandler:
         new ToolMultiHandler[In, E](meta, inSchema, handler, Chunk.empty, declaredError(errorTag))
     end toolRaw
 
+    /** The schema-at-runtime form of `toolRaw`: the wire metadata is given rather than derived from `In`,
+      * so a tool published with a schema (an MCP server's, a hand-built descriptor) advertises that
+      * schema verbatim, while `inSchema` still decodes the arguments the handler receives.
+      */
+    def toolRaw[In](meta: ToolMeta)[E](
+        handler: In => ToolOutcome < (Async & Abort[JsonRpcResponse.Halt | E])
+    )(using errorTag: ConcreteTag[E], inSchema: Schema[In], frame: Frame): McpHandler[In, ToolOutcome, E] =
+        new ToolMultiHandler[In, E](meta, inSchema, handler, Chunk.empty, declaredError(errorTag))
+
     /** Constructs a fixed-URI resource handler.
       *
       * The handler is a by-name effectful value because the URI is fully known at registration
