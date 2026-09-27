@@ -3888,6 +3888,33 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
         }
+
+        "a streaming route's non-2xx response reaches sendWith with its headers and body" - {
+            val route = HttpRoute.postRaw("stream-refused").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ =>
+                HttpResponse(HttpStatus.TooManyRequests).addHeader("retry-after", "7").addField("body", "slow down")
+            )
+            val streaming = HttpRoute.postRaw("stream-refused").request(_.bodyBinary).response(_.bodyStream)
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val request = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-refused", Absent))
+                            .addField("body", kyo.Span.empty[Byte])
+                        client.sendWith(streaming, request) { resp =>
+                            resp.fields.body.run.map { spans =>
+                                val text = spans.foldLeft("")((acc, span) => acc + new String(span.toArrayUnsafe, "UTF-8"))
+                                (resp.status, resp.headers.get("retry-after"), text, resp.rawBody)
+                            }
+                        }
+                    }
+                }.map { (status, retryAfter, text, rawBody) =>
+                    assert(status == HttpStatus.TooManyRequests)
+                    assert(retryAfter == Present("7"))
+                    assert(text == "slow down")
+                    assert(rawBody == Present("slow down"))
+                }
+            }
+        }
     }
 
     "unit methods" - {
