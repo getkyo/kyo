@@ -261,15 +261,15 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
             }
             (observer, count) = observed
             ready             = new DomTestEnv.MountReady
-            fiber   <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
-            _       <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("first-email") != null))
-            mounted <- Sync.defer(dom.document.getElementById("first-email"))
-            _       <- assertEventually(Sync.defer(ready.applied == 2))
-            _       <- text.set("two")
-            _       <- assertEventually(Sync.defer(dom.document.getElementById("first-text").getAttribute("value") == "two"))
-            _       <- assertEventually(Sync.defer(ready.applied == 3))
-            _       <- Sync.defer(count(observer.takeRecords().asInstanceOf[scalajs.Array[scalajs.Dynamic]]))
-            _       <- Sync.defer(discard(observer.disconnect()))
+            fiber    <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _        <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("first-email") != null))
+            mounted  <- Sync.defer(dom.document.getElementById("first-email"))
+            _        <- assertEventually(Sync.defer(ready.applied == 2))
+            _        <- text.set("two")
+            _        <- assertEventually(Sync.defer(dom.document.getElementById("first-text").getAttribute("value") == "two"))
+            _        <- assertEventually(Sync.defer(ready.applied == 3))
+            _        <- Sync.defer(count(observer.takeRecords().asInstanceOf[scalajs.Array[scalajs.Dynamic]]))
+            _        <- Sync.defer(discard(observer.disconnect()))
             replaced <- removals.get
             live     <- Sync.defer(dom.document.getElementById("first-email") eq mounted)
             _        <- fiber.interrupt
