@@ -99,6 +99,60 @@ class JsonDocTest extends kyo.test.Test[Any]:
         assert(!encoded.contains("\"description\""))
     }
 
+    enum Priority derives Schema:
+        case Low, High
+
+    case class Ticket(
+        @doc("how urgent the ticket is") priority: Priority,
+        @doc("the priority before the last change") previous: Maybe[Priority],
+        @doc("the ticket's title, " + "one line") title: String
+    ) derives Schema
+
+    "a @doc on an enum-typed field is the description of the field's oneOf" in {
+        val encoded = Json.encode(Json.jsonSchema[Ticket])
+        assert(encoded.contains("\"description\":\"how urgent the ticket is\""), encoded)
+    }
+
+    "a @doc on an optional enum-typed field is the description of the field's nullable oneOf" in {
+        val encoded = Json.encode(Json.jsonSchema[Ticket])
+        assert(encoded.contains("\"description\":\"the priority before the last change\""), encoded)
+    }
+
+    "a @doc built by concatenating literals is the field's description" in {
+        val encoded = Json.encode(Json.jsonSchema[Ticket])
+        assert(encoded.contains("\"description\":\"the ticket's title, one line\""), encoded)
+    }
+
+    "the descriptions of an enum-typed and an optional enum-typed field are on their oneOf and nullable nodes" in {
+        Json.jsonSchema[Ticket] match
+            case JsonSchema.Obj(properties, _, _, _, _, _) =>
+                val byName = properties.toMap
+                assert(byName.get("priority").collect { case o: JsonSchema.OneOf => o.description } ==
+                    Some(Present("how urgent the ticket is")))
+                assert(byName.get("previous").collect { case n: JsonSchema.Nullable => n.description } ==
+                    Some(Present("the priority before the last change")))
+            case other => fail(s"expected Obj schema, got $other")
+        end match
+    }
+
+    "a oneOf and a nullable round-trip their description through JSON" in {
+        val union: JsonSchema    = JsonSchema.OneOf(List("a" -> JsonSchema.Obj(List.empty, List.empty)), Present("one of them"))
+        val nullable: JsonSchema = JsonSchema.Nullable(JsonSchema.Str(), Present("maybe a string"))
+        assert(Json.decode[JsonSchema](Json.encode(union)).getOrThrow == union)
+        assert(Json.decode[JsonSchema](Json.encode(nullable)).getOrThrow == nullable)
+    }
+
+    case class Constant(@doc(JsonDocTest.constantDoc) x: Int) derives Schema
+
+    "a @doc naming a constant final val is the field's description" in {
+        assert(Json.encode(Json.jsonSchema[Constant]).contains("\"description\":\"a constant description\""))
+    }
+
+    "a @doc whose argument is not a constant string is a compile error" in {
+        val errs = scala.compiletime.testing.typeCheckErrors("kyo.Schema.derived[kyo.JsonDocTest.Computed]")
+        assert(errs.map(_.message).exists(_.contains("@doc expects a constant string")), errs.map(_.message).mkString("\n"))
+    }
+
     "a Bool/Null JsonSchema round-trips its description through JSON" in {
         val boolSchema: JsonSchema = JsonSchema.Bool(Maybe("a boolean note"))
         val encodedBool            = Json.encode(boolSchema)
@@ -111,4 +165,11 @@ class JsonDocTest extends kyo.test.Test[Any]:
         assert(decodedNull == nullSchema)
     }
 
+end JsonDocTest
+
+object JsonDocTest:
+    final val constantDoc   = "a constant description"
+    def computedDoc: String = "computed at run time"
+
+    case class Computed(@doc(computedDoc) x: Int)
 end JsonDocTest

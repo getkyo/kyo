@@ -62,8 +62,25 @@ object Markdown:
       *   The Markdown text to render. May be empty.
       */
     def render(source: String)(using Frame): Rendered =
+        render(source, Options())
+
+    /** Render with explicit [[Options]]; `Options(html = false)` is the form for text from untrusted authors. */
+    def render(source: String, options: Options)(using Frame): Rendered =
         if source.isBlank then Rendered(UI.empty, Chunk.empty)
-        else parseArticle(source)
+        else parseArticle(source, options)
+
+    /** How [[render]] treats markup that reaches past the Markdown grammar.
+      *
+      * `html = true` (the default) passes raw HTML through verbatim and turns every link and image URL into an `href` or `src`, which is
+      * right for trusted documents such as a project's own README.
+      *
+      * `html = false` is for text whose author the page does not trust, such as a chat message: raw HTML and HTML comments render as
+      * escaped text where they were written, and a link or image URL renders only when it is `http`, `https`, a `#fragment` or a path
+      * with no scheme. Any other scheme (`javascript:`, `data:`, ...) is refused after removing what a browser ignores in a URL (tabs,
+      * newlines, leading spaces and control characters) and ignoring case; a refused link renders as its text, a refused image as its alt
+      * text, and a linked image with a refused link as the image alone. The Markdown constructs render the same in both modes.
+      */
+    final case class Options(html: Boolean = true) derives CanEqual
 
     private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
         cs.map(n => UI.Ast.HtmlChildVal.lift(n))
@@ -120,11 +137,12 @@ object Markdown:
         val n = t.takeWhile(_ == '`').length
         n >= open && t.drop(n).trim.isEmpty
 
-    /** Group source lines into [[Block]] segments. Leading HTML comments are skipped. This is
+    /** Group source lines into [[Block]] segments. With `html`, HTML comments are skipped and
+      * `<img`/`<a` lines become raw embeds; without it, both are ordinary paragraph text. This is
       * line-level structuring only; the content of each block is parsed by the kyo-parse
       * block/inline parsers.
       */
-    private def splitBlocks(cleaned: String): Chunk[Block] =
+    private def splitBlocks(cleaned: String, html: Boolean): Chunk[Block] =
         val lines  = cleaned.linesIterator.toArray
         val blocks = new mutable.ArrayBuffer[Block]()
         var i      = 0
@@ -146,7 +164,7 @@ object Markdown:
         end skipComment
 
         // Skip leading HTML comments.
-        while i < lines.length && lines(i).trim.startsWith("<!--") do
+        while html && i < lines.length && lines(i).trim.startsWith("<!--") do
             i = skipComment()
         end while
 
@@ -177,7 +195,7 @@ object Markdown:
                     i += 1
                 end while
                 blocks += Block.Quote(bqLines.mkString("\n"))
-            else if trimmed.startsWith("<!--") then
+            else if html && trimmed.startsWith("<!--") then
                 i = skipComment()
             else if trimmed.startsWith("|") then
                 val tableLines = new mutable.ArrayBuffer[String]()
@@ -205,7 +223,7 @@ object Markdown:
             // <a may wrap <img on subsequent lines; coalesce until the closing </a>. The embed is
             // wrapped in UI.p so the article body stays a real UI node and the <a><img></a> nesting
             // is preserved as one unit.
-            else if trimmed.startsWith("<img") || trimmed.startsWith("<a") then
+            else if html && (trimmed.startsWith("<img") || trimmed.startsWith("<a")) then
                 if trimmed.startsWith("<img") then
                     blocks += Block.RawEmbed(trimmed)
                     i += 1
@@ -229,7 +247,7 @@ object Markdown:
                     !lines(i).trim.startsWith("- ") &&
                     !lines(i).startsWith("  - ") &&
                     !lines(i).trim.startsWith("|") &&
-                    !lines(i).trim.startsWith("<!--") &&
+                    !(html && lines(i).trim.startsWith("<!--")) &&
                     !isOrderedItem(lines(i).trim)
                 do
                     paraLines += lines(i).trim
@@ -249,8 +267,8 @@ object Markdown:
       * `Parse[Char]` parser. Heading ids are tracked in a mutable map local to this call; duplicate
       * ids receive `-2` (then `-3`, etc.) suffixes.
       */
-    private def parseArticle(cleaned: String)(using Frame): Rendered =
-        val blocks     = splitBlocks(cleaned)
+    private def parseArticle(cleaned: String, options: Options)(using Frame): Rendered =
+        val blocks     = splitBlocks(cleaned, options.html)
         val uiBlocks   = new mutable.ArrayBuffer[UI]()
         val headings   = new mutable.ArrayBuffer[Heading]()
         val slugCounts = new mutable.HashMap[String, Int]()
@@ -275,7 +293,7 @@ object Markdown:
             case Block.Heading(line) =>
                 val (level, text)  = parseHeading(line)
                 val slug           = makeSlug(text)
-                val inlineNodes    = parseInline(text)
+                val inlineNodes    = parseInline(text, options)
                 val inlineChildren = html(inlineNodes)
                 val heading: UI    = level match
                     case 1 => UI.h1.id(slug)(inlineChildren*)
@@ -293,23 +311,23 @@ object Markdown:
                 uiBlocks += renderFence(info, body)
 
             case Block.Quote(content) =>
-                uiBlocks += parseBlockquote(content)
+                uiBlocks += parseBlockquote(content, options)
 
             case Block.Table(lines) =>
-                uiBlocks += parseTable(lines)
+                uiBlocks += parseTable(lines, options)
 
             case Block.Unordered(lines) =>
-                uiBlocks += parseUnorderedList(lines)
+                uiBlocks += parseUnorderedList(lines, options)
 
             case Block.Ordered(lines) =>
-                val items = lines.map(l => UI.li(html(parseInline(parseOrderedItem(l)))*))
+                val items = lines.map(l => UI.li(html(parseInline(parseOrderedItem(l), options))*))
                 uiBlocks += UI.ol(html(items)*)
 
             case Block.RawEmbed(snippet) =>
                 uiBlocks += UI.p(UI.rawHtml(snippet))
 
             case Block.Paragraph(text) =>
-                uiBlocks += UI.p(html(parseInline(text))*)
+                uiBlocks += UI.p(html(parseInline(text, options))*)
         }
 
         val article: UI =
@@ -423,17 +441,17 @@ object Markdown:
     /** Parse a GFM pipe table. The first row is the header; the second is the separator; remaining
       * rows are body rows. Cell content is re-parsed with [[parseInline]].
       */
-    private def parseTable(tableLines: Chunk[String])(using Frame): UI =
+    private def parseTable(tableLines: Chunk[String], options: Options)(using Frame): UI =
         if tableLines.length < 2 then
             // Malformed table (missing separator): degrade to paragraph.
             UI.p(Ast.Text(tableLines.headOption.getOrElse("")))
         else
             val headerCells = parseRowCells(tableLines.head)
             val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Chunk.empty[String]
-            val headerTr    = UI.tr(html(headerCells.map(cell => UI.th(html(parseInline(cell))*)))*)
+            val headerTr    = UI.tr(html(headerCells.map(cell => UI.th(html(parseInline(cell, options))*)))*)
             val bodyTrs     = bodyRows.map { row =>
                 val cells = parseRowCells(row)
-                UI.tr(html(cells.map(cell => UI.td(html(parseInline(cell))*)))*)
+                UI.tr(html(cells.map(cell => UI.td(html(parseInline(cell, options))*)))*)
             }
             UI.table(html(headerTr +: bodyTrs)*)
         end if
@@ -442,7 +460,7 @@ object Markdown:
     /** Parse an unordered list from its grouped lines, handling two-space sub-indented items. The
       * `- ` / `  - ` markers are recognized with a `Parse[Char]` parser per line.
       */
-    private def parseUnorderedList(lines: Chunk[String])(using Frame): UI =
+    private def parseUnorderedList(lines: Chunk[String], options: Options)(using Frame): UI =
         val arr   = lines.toArray
         val items = new mutable.ArrayBuffer[Ast.Li]()
         var i     = 0
@@ -450,18 +468,18 @@ object Markdown:
             val line = arr(i)
             if line.startsWith("  - ") then
                 // Orphan sub-item with no preceding top-level item; treat as a top-level item.
-                items += UI.li(html(parseInline(parseListItem(line.trim)))*)
+                items += UI.li(html(parseInline(parseListItem(line.trim), options))*)
                 i += 1
             else
                 val text = parseListItem(line.trim)
                 i += 1
                 val subItems = new mutable.ArrayBuffer[Ast.Li]()
                 while i < arr.length && arr(i).startsWith("  - ") do
-                    subItems += UI.li(html(parseInline(parseListItem(arr(i).trim)))*)
+                    subItems += UI.li(html(parseInline(parseListItem(arr(i).trim), options))*)
                     i += 1
                 end while
-                if subItems.isEmpty then items += UI.li(html(parseInline(text))*)
-                else items += UI.li(html(parseInline(text) :+ UI.ul(html(subItems.toSeq)*))*)
+                if subItems.isEmpty then items += UI.li(html(parseInline(text, options))*)
+                else items += UI.li(html(parseInline(text, options) :+ UI.ul(html(subItems.toSeq)*))*)
             end if
         end while
         UI.ul(html(items.toSeq)*)
@@ -480,10 +498,10 @@ object Markdown:
     /** Parse a blockquote run into a `blockquote` element. The leading `> ` is already stripped by
       * the splitter. Nested paragraphs and fenced code blocks are recognized inside the quote.
       */
-    private def parseBlockquote(content: String)(using Frame): UI =
-        UI.blockquote(html(parseBlockquoteContent(content))*)
+    private def parseBlockquote(content: String, options: Options)(using Frame): UI =
+        UI.blockquote(html(parseBlockquoteContent(content, options))*)
 
-    private def parseBlockquoteContent(content: String)(using Frame): Chunk[UI] =
+    private def parseBlockquoteContent(content: String, options: Options)(using Frame): Chunk[UI] =
         val lines  = content.linesIterator.toArray
         val result = new mutable.ArrayBuffer[UI]()
         var i      = 0
@@ -506,7 +524,7 @@ object Markdown:
                 while i < lines.length && lines(i).trim.nonEmpty && !lines(i).trim.startsWith("```") do
                     paraLines += lines(i).trim
                     i += 1
-                result += UI.p(html(parseInline(paraLines.mkString(" ")))*)
+                result += UI.p(html(parseInline(paraLines.mkString(" "), options))*)
             end if
         end while
         Chunk.from(result)
@@ -524,6 +542,20 @@ object Markdown:
         else Href.Path(url)
     end toHref
 
+    /** The URL as `options` allows it: always with `html`, otherwise only an `http`/`https` URL, a
+      * fragment or a scheme-less path. The scheme is read the way a browser reads it, after removing
+      * tabs and newlines anywhere and control characters and spaces in front, and ignoring case.
+      */
+    private def allowed(url: String, options: Options): Maybe[String] =
+        if options.html then Present(url)
+        else
+            val cleaned = url.filterNot(c => c == '\t' || c == '\n' || c == '\r').dropWhile(_ <= ' ')
+            val scheme  = cleaned.takeWhile(c => c.isLetterOrDigit || c == '+' || c == '-' || c == '.')
+            val schemed = scheme.nonEmpty && scheme.head.isLetter && cleaned.drop(scheme.length).startsWith(":")
+            if !schemed || scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https") then Present(cleaned)
+            else Absent
+    end allowed
+
     /** Parse inline Markdown to a sequence of UI nodes with a kyo-parse `Parse[Char]` grammar.
       *
       * Handles, in PEG ordered-choice precedence: linked images (`[![alt](img)](link)`), images
@@ -532,9 +564,9 @@ object Markdown:
       * not parse degrades to a single literal character via `recoverWith` + `RecoverStrategy`, so
       * the row never aborts.
       */
-    private def parseInline(text: String)(using Frame): Chunk[UI] =
+    private def parseInline(text: String, options: Options)(using Frame): Chunk[UI] =
         if text.isEmpty then Chunk(Ast.Text(""))
-        else runParser(text)(inlineNodes).getOrElse(Chunk(Ast.Text(text)))
+        else runParser(text)(inlineNodes(options)).getOrElse(Chunk(Ast.Text(text)))
 
     /** One result of the inline grammar: either a single literal character (a degrade unit,
       * coalesced into `Ast.Text` runs) or a fully parsed inline `UI` node.
@@ -546,26 +578,26 @@ object Markdown:
     /** The inline grammar: repeat a single inline token until end of input, then coalesce adjacent
       * literal characters into `Ast.Text` runs.
       */
-    private def inlineNodes(using Frame): Chunk[UI] < Parse[Char] =
-        Parse.repeat(inlineToken).map(tokens => coalesceText(Chunk.from(tokens)))
+    private def inlineNodes(options: Options)(using Frame): Chunk[UI] < Parse[Char] =
+        Parse.repeat(inlineToken(options)).map(tokens => coalesceText(Chunk.from(tokens)))
 
     /** A single inline token, as a `Token`: `Lit(char)` is one literal character (a degrade unit);
       * `Node(ui)` is a parsed inline node. Unknown markup degrades to one literal character via the
       * `firstOf` last branch, and any fatal failure is recovered to one literal character via
       * `recoverWith` + `RecoverStrategy`, so the inline row never aborts.
       */
-    private def inlineToken(using Frame): Token < Parse[Char] =
+    private def inlineToken(options: Options)(using Frame): Token < Parse[Char] =
         def node(p: UI < Parse[Char]): Token < Parse[Char] = p.map(Token.Node(_))
         val literalChar: Token < Parse[Char]               = Parse.any[Char].map(Token.Lit(_))
         Parse.recoverWith(
             Parse.firstOf(
-                node(linkedImage),
-                node(image),
-                node(link),
+                node(linkedImage(options)),
+                node(image(options)),
+                node(link(options)),
                 node(bold),
                 node(italic),
                 node(inlineCode),
-                node(inlineHtml),
+                node(inlineHtml(options)),
                 literalChar
             ),
             RecoverStrategy.viaParser[Char, Token](Parse.any[Char].map(Token.Lit(_)))
@@ -604,8 +636,10 @@ object Markdown:
             yield c
         ).map(_.mkString)
 
-    /** `[![alt](img)](link)` -> `UI.a.href(link)(UI.img(img, alt))`. */
-    private def linkedImage(using Frame): UI < Parse[Char] =
+    /** `[![alt](img)](link)` -> `UI.a.href(link)(UI.img(img, alt))`; a link `options` refuses
+      * leaves the image alone.
+      */
+    private def linkedImage(options: Options)(using Frame): UI < Parse[Char] =
         for
             _   <- Parse.literal("[![")
             alt <- readUntilChar(']')
@@ -614,27 +648,37 @@ object Markdown:
             _   <- Parse.literal(")](")
             lnk <- readUntilChar(')')
             _   <- Parse.literal(')')
-        yield UI.a.href(toHref(lnk))(UI.img(ImgSrc.Path(img), alt))
+        yield
+            val picture = imageOf(img, alt, options)
+            allowed(lnk, options).fold(picture)(url => UI.a.href(toHref(url))(html(Seq(picture))*))
 
     /** `![alt](url)` -> `UI.img(url, alt)`. */
-    private def image(using Frame): UI < Parse[Char] =
+    private def image(options: Options)(using Frame): UI < Parse[Char] =
         for
             _   <- Parse.literal("![")
             alt <- readUntilChar(']')
             _   <- Parse.literal("](")
             url <- readUntilChar(')')
             _   <- Parse.literal(')')
-        yield UI.img(ImgSrc.Path(url), alt)
+        yield imageOf(url, alt, options)
 
-    /** `[text](url)` -> `UI.a.href(url)(parseInline(text)*)`. */
-    private def link(using Frame): UI < Parse[Char] =
+    /** The image, or its alt text when `options` refuses the URL. */
+    private def imageOf(url: String, alt: String, options: Options)(using Frame): UI =
+        allowed(url, options).fold(Ast.Text(alt): UI)(src => UI.img(ImgSrc.Path(src), alt))
+
+    /** `[text](url)` -> `UI.a.href(url)(parseInline(text)*)`; the text alone when `options`
+      * refuses the URL.
+      */
+    private def link(options: Options)(using Frame): UI < Parse[Char] =
         for
             _    <- Parse.literal('[')
             body <- readUntilString("](")
             _    <- Parse.literal("](")
             url  <- readUntilChar(')')
             _    <- Parse.literal(')')
-        yield UI.a.href(toHref(url))(html(parseInline(body))*)
+        yield
+            val text = parseInline(body, options)
+            allowed(url, options).fold(UI.fragment(text.toSeq*): UI)(href => UI.a.href(toHref(href))(html(text)*))
 
     /** `**text**` -> a bold `md-strong` span. */
     private def bold(using Frame): UI < Parse[Char] =
@@ -683,13 +727,17 @@ object Markdown:
         if s.length >= 2 && s.startsWith(" ") && s.endsWith(" ") && s.exists(_ != ' ') then s.substring(1, s.length - 1)
         else s
 
-    /** `<...>` -> a verbatim `UI.rawHtml` leaf for inline HTML snippets. */
-    private def inlineHtml(using Frame): UI < Parse[Char] =
+    /** `<...>` -> a verbatim `UI.rawHtml` leaf for inline HTML snippets, or escaped text when
+      * `options` does not allow HTML.
+      */
+    private def inlineHtml(options: Options)(using Frame): UI < Parse[Char] =
         for
             _     <- Parse.literal('<')
             inner <- nonEmptyUntilChar('>')
             _     <- Parse.literal('>')
-        yield UI.rawHtml("<" + inner + ">")
+        yield
+            val snippet = "<" + inner + ">"
+            if options.html then UI.rawHtml(snippet) else Ast.Text(snippet)
 
     /** Read at least one character up to (not including) `stop`; drops the branch if the run is
       * empty so an unmatched opener falls through to a literal character.

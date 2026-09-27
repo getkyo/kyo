@@ -13,6 +13,7 @@ import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.NotGiven
+import scala.util.control.NonFatal
 
 /** A low-level primitive for asynchronous computation control.
   *
@@ -266,7 +267,12 @@ object Fiber:
           *   The result of applying the function to the Fiber's result
           */
         def use[B, S2](f: A => B < S2)(using Frame): B < (Abort[E] & Async & S & S2) =
-            Async.use(self.lower)(_.map(f))
+            // `map` defers `f` when the result still has effects to run or the safepoint denies it, and a deferred `f` runs
+            // outside the fold in `Async.use` that turns its throw into a panic, so the throw is caught where `f` runs.
+            Async.use(self.lower)(_.map { a =>
+                try f(a)
+                catch case ex if NonFatal(ex) => Abort.panic(ex)
+            })
 
         /** Gets the result of the Fiber as a Result.
           *

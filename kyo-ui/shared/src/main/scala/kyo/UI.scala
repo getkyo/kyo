@@ -251,6 +251,22 @@ object UI:
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath)(ui)
 
+    /** Server-push for an app of many pages: every path under `basePath` is a page, and `ui` builds the page for its [[Request]]. The
+      * served document carries `head` (title, meta, links, the app's css), and a link to another path under `basePath` is an ordinary
+      * page load, so back, forward and reload land on the page of the URL.
+      *
+      * The GET evaluates `ui` for the request it serves. The page's client opens the session socket with its own path and query, and the
+      * session evaluates `ui` again for that same request, so the SSR page and the live session agree. Paths under `basePath/_kyo` are the
+      * framework's.
+      */
+    def runHandlers(basePath: String, head: PageHead)(ui: Request => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        UIServer.handlers(basePath, head)(ui)
+
+    /** The page a request-aware [[runHandlers]] is serving: `path` is relative to the base path (`/` for the base itself, never ending in
+      * `/` otherwise) and `query` holds the first value of each query parameter, decoded.
+      */
+    final case class Request(path: String, query: Map[String, String]) derives CanEqual
+
     /** Scrolls the element with `id` into the client viewport, from inside an event handler.
       *
       * The command rides the session the handler runs in: under [[runHandlers]] it travels the same

@@ -31,11 +31,12 @@ jobs:
     # with the staged natives below built for whichever host runs the job. The x64 pool
     # carries most of the repo's jobs and has roughly twice the p90 queue wait.
     runs-on: ubuntu-24.04-arm
-    # Measured: 108 to 112 minutes on main with a warm doctest cache, and about 131 on a run whose
-    # classpath change misses every cached block (about 10 minutes of doctest compiles on top). The
-    # cap leaves room for that cold run. Uncapped, a hang would hold a slot for GitHub's 360-minute
-    # default, which is the resource this job is shaped to conserve.
-    timeout-minutes: 180
+    # Measured with the class-name check on all four platforms: 108 to 112 minutes on main with a warm
+    # doctest cache, and about 131 on a run whose classpath change misses every cached block. The JS,
+    # Native and Wasm rows took 67 to 74 of those minutes, so the job should now take about 40 warm and
+    # 60 cold. The cap leaves room for the cold run. Uncapped, a hang would hold a slot for GitHub's
+    # 360-minute default, which is the resource this job is shaped to conserve.
+    timeout-minutes: 90
     env:
       # No -Xmx here: the checked-in .jvmopts governs the driver heap (12G). The sbt launcher
       # appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx wins and one
@@ -184,16 +185,12 @@ jobs:
 
       # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
       # both the Scala.js and Scala Native linkers keep the first class on the classpath and drop the rest.
-      # This is the only job that has every module of every platform, which is what the check needs: the ci
-      # rows compile all of them only on a push to main (a PR runs testDiff), and a name declared in `js`,
-      # `js-wasm`, `native` or `wasm` sources never reaches a JVM row at all.
       #
-      # One process per platform: each is a complete check for its platform, and none holds another's
-      # compile heap. The JVM run reuses what doctest compiled, and also covers the sbt plugins.
+      # JVM only. It reuses what doctest compiled (~2 min) and also covers the sbt plugins. The JS, Native
+      # and Wasm rows compile every module of their platform from nothing, 67 to 74 min together on
+      # ubuntu-24.04-arm, more than half of this job. A name declared only in `js`, `js-wasm`, `native` or
+      # `wasm` sources is therefore not checked in CI.
       - name: Class names
         run: |
           sbt 'checkClassNames --self-test'
           sbt 'checkClassNames JVM'
-          sbt 'checkClassNames JS'
-          sbt 'checkClassNames Native'
-          sbt 'checkClassNames Wasm'

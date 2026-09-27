@@ -241,6 +241,23 @@ val titles = commented.headings.map(_.text) // Chunk("Title")
 
 > **Note:** A leading or interior HTML comment is skipped, but any text after the closing `-->` is preserved as a paragraph rather than silently dropped.
 
+### Text from untrusted authors
+
+Chat messages, comments and anything else a page shows from people it does not trust go through `Markdown.render(source, Markdown.Options(html = false))`. The Markdown constructs render exactly as in the default mode; what changes is everything that reaches past the grammar:
+
+- Raw HTML and HTML comments render as escaped text where they were written, so `<img src=x onerror=...>` shows as those characters and runs nothing.
+- A link or image URL is kept only when it is `http`, `https`, a `#fragment` or a path with no scheme. Any other scheme (`javascript:`, `data:`, `vbscript:`, ...) is refused, read the way a browser reads it: case ignored, tabs and newlines inside removed, spaces and control characters in front removed. A refused link renders as its text, a refused image as its alt text, and a linked image whose link is refused as the image alone.
+
+```scala
+import kyo.*
+
+val post = Markdown.render(
+    "Look <img src=x onerror=alert(1)> and [here](javascript:alert`1`).\n",
+    Markdown.Options(html = false)
+)
+// Renders: Look &lt;img src=x onerror=alert(1)&gt; and here.
+```
+
 ## Total by construction
 
 You never wrap `render` in error handling, and that is deliberate. Every construct degrades instead of failing, which is exactly what lets the result be a plain value you can use in any position. An empty or whitespace-only source is the base case:

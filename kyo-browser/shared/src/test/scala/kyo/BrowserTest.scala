@@ -109,11 +109,14 @@ abstract class BrowserTest extends BaseChromeTest:
             else Abort.fail[BrowserSetupException](ex)
         } { f }
 
+    /** Runs `f` in a fresh tab of the shared Chrome. The warm-up runs before the body is marked started: a Chrome that dies during it
+      * has not run any of `f`, so the shared Chrome relaunches it and retries once, where a loss inside `f` is never retried.
+      */
     def withBrowser[A, S](f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         cancelOnUnsupportedPlatform {
-            SharedChrome.withUrl(url => Browser.run(url)(warmupGate(f)))
+            SharedChrome.withUrl((url, started) => Browser.run(url)(warmupGate(started).andThen(f)))
         }
 
     /** Boots a tab on the DevTools JSON page (cookies / localStorage tests need a real http origin).
@@ -121,15 +124,18 @@ abstract class BrowserTest extends BaseChromeTest:
       * The origin is 127.0.0.1 rather than localhost because the DevTools server listens on IPv4 only and Chrome resolves localhost to
       * ::1 first, so every request would open with a refused connect. On windows-x64 runners the connect around that refusal
       * intermittently fails with WSAENOBUFS (10055), which fails the navigation.
+      *
+      * The warm-up and the navigation run before the body is marked started, so a Chrome lost during either is retried as in
+      * [[withBrowser]].
       */
     def withBrowserOnLocalhost[A, S](f: A < (Browser & S))(using
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         cancelOnUnsupportedPlatform {
-            SharedChrome.withUrl { url =>
+            SharedChrome.withUrl { (url, started) =>
                 val port    = url.split(":")(2).split("/")(0)
                 val httpUrl = s"http://127.0.0.1:$port/json/version"
-                Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
+                Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(started)).andThen(f))
             }
         }
 

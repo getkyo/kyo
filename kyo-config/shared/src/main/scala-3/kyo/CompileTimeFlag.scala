@@ -12,8 +12,12 @@ import scala.quoted.*
   *
   * Stricter than `Flag.Reader.boolean`, which reads anything other than "true" as false: a flag resolved at compile time does not show up
   * in `Flag.dump()`, so `enabled=yes` fails the build rather than becoming a feature that is quietly off.
+  *
+  * Public rather than `private[kyo]`: an inline method that references a qualified-private object compiles to an inline accessor in its
+  * own class, which `DebuggerBytecodeTest` forbids, and `@publicInBinary`, the other way to avoid it, does not exist on the Scala 3.3
+  * cross-build this module publishes.
   */
-private[kyo] object CompileTimeFlag:
+object CompileTimeFlag:
 
     inline def boolean(inline name: String, inline default: Boolean): Boolean = ${ booleanImpl('name, 'default) }
 

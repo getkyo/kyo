@@ -402,6 +402,92 @@ class SelectorIntegrationTest extends BrowserTest:
         }
     }
 
+    // ── accessible names: aria-labelledby, aria-label, the `for` label, a wrapping label's own text, the content ──
+
+    private def countOf(html: String, selector: Browser.Selector)(using Frame) =
+        Browser.goto(page(html)).andThen(Browser.count(selector))
+
+    "a role selector's name is aria-labelledby's text first, over aria-label and a label" in {
+        val html = """
+            <span id="primary">Primary</span>
+            <label for="field">Other</label>
+            <input id="field" type="text" aria-labelledby="primary" aria-label="Secondary">
+        """
+        withBrowser {
+            for
+                labelledBy <- countOf(html, Browser.Selector.textbox("Primary"))
+                ariaLabel  <- countOf(html, Browser.Selector.textbox("Secondary"))
+                label      <- countOf(html, Browser.Selector.textbox("Other"))
+            yield assert((labelledBy, ariaLabel, label) == (1, 0, 0))
+        }
+    }
+
+    "aria-labelledby naming several elements joins their text with spaces" in {
+        val html = """
+            <span id="a">Billing</span><span id="b">address</span>
+            <input type="text" aria-labelledby="a b">
+        """
+        withBrowser(countOf(html, Browser.Selector.textbox("Billing address")).map(n => assert(n == 1)))
+    }
+
+    "a role selector's name is aria-label over a label" in {
+        val html = """
+            <label for="field">Visible</label>
+            <input id="field" type="text" aria-label="Spoken">
+        """
+        withBrowser {
+            for
+                ariaLabel <- countOf(html, Browser.Selector.textbox("Spoken"))
+                label     <- countOf(html, Browser.Selector.textbox("Visible"))
+            yield assert((ariaLabel, label) == (1, 0))
+        }
+    }
+
+    "a control named by a <label for> matches its role selector by that name" in {
+        val html = """
+            <label for="name">Name</label>
+            <input id="name" type="text">
+        """
+        withBrowser(countOf(html, Browser.Selector.textbox("Name")).map(n => assert(n == 1)))
+    }
+
+    "a control inside its label is named by the label's own text, without the control's content" in {
+        val html = """
+            <label>Color <select id="color"><option>Red</option><option>Blue</option></select></label>
+        """
+        withBrowser {
+            for
+                named  <- countOf(html, Browser.Selector.combobox("Color"))
+                withIt <- countOf(html, Browser.Selector.combobox("Color RedBlue"))
+            yield assert((named, withIt) == (1, 0))
+        }
+    }
+
+    "a role selector's name falls back to the content, whitespace collapsed, and to an input button's value" in {
+        val html = """
+            <button>  Save
+                draft </button>
+            <input type="submit" value="Send">
+        """
+        withBrowser {
+            for
+                content <- countOf(html, Browser.Selector.button("Save draft"))
+                value   <- countOf(html, Browser.Selector.button("Send"))
+            yield assert((content, value) == (1, 1))
+        }
+    }
+
+    "Selector.label matches a label wrapping a <select> by its own text, not its options'" in {
+        val p = page("""
+            <label>Size <select id="size"><option value="s">Small</option><option value="l">Large</option></select></label>
+        """)
+        withBrowser {
+            Browser.goto(p)
+                .andThen(Browser.count(Browser.Selector.label("Size")))
+                .map(n => assert(n == 1, s"expected the select, got $n matches"))
+        }
+    }
+
     "Selector.placeholder resolves <input placeholder=…>" in {
         val p = page("""<input id="q" placeholder="Search">""")
         withBrowser {

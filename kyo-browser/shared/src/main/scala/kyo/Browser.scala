@@ -286,6 +286,10 @@ object Browser:
       * Intended for test suites that drive many short browser sessions. Not a substitute for `Browser.run(launch)` in production code,
       * where one-off browser sessions are normal.
       *
+      * When the shared Chrome is found gone before `f` starts (its launch failed, or the connection or tab setup lost it), Chrome is
+      * relaunched and the call retried once. When it is lost while `f` runs, the call fails with the [[BrowserConnectionLostException]]
+      * and is not retried, since `f` may already have acted on state outside the browser; the next call gets a relaunched Chrome.
+      *
       * @param session
       *   session-time configuration installed for the inner computation. Launch-time fields cannot be overridden here: the shared Chrome
       *   was launched once with the canonical config at process start.
@@ -293,10 +297,8 @@ object Browser:
     def runShared[A, S](session: Maybe[Browser.SessionConfig] = Absent)(f: A < (Browser & S))(using
         Frame
     ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
-        // Browser.run(url) already wraps its body in Scope.run; runShared inherits that absorption.
         // configLocal propagation mirrors Browser.run(launch, session): Present(sc) overrides via withConfig; Absent inherits outer Local.
-        // withUrl (not init) so a dead shared Chrome is invalidated and relaunched once instead of cascading the dead URL to every caller.
-        val body = SharedChrome.withUrl(url => Browser.run(url)(f))
+        val body = SharedChrome.run(_ => f)
         session match
             case Absent      => body
             case Present(sc) => withConfig(sc)(body)

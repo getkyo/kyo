@@ -443,6 +443,14 @@ class FiberTest extends kyo.test.Test[Any]:
                 result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
             yield assert(result.isPanic)
         }
+
+        "exception in use function when the result still has effects to run" in {
+            for
+                promise <- Promise.init[Int, Var[Int]]
+                _       <- promise.complete(Result.succeed(Var.get[Int]))
+                result  <- Var.run(42)(Abort.run[Throwable](promise.use(_ => throw new RuntimeException("Use exception"))))
+            yield assert(result.isPanic, s"$result")
+        }
     }
 
     "useResult" - {

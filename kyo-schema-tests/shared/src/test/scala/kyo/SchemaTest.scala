@@ -11,9 +11,63 @@ import kyo.internal.ProtobufWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 
+// --- sums declared as members of a class ---
+
+trait MELevels:
+    enum Level derives CanEqual, Schema:
+        case One, Two
+end MELevels
+
+object MELevelsInTrait extends MELevels
+
+object MEObject:
+    class Inner:
+        enum Level derives CanEqual, Schema:
+            case One, Two
+end MEObject
+
+class MEClass:
+    class Inner:
+        enum Level derives CanEqual, Schema:
+            case One, Two
+end MEClass
+
+// Nothing here derives a schema, so each derivation happens at the test's site, outside this class.
+class MEHolder:
+    enum Level derives CanEqual:
+        case One, Two
+        case Custom(value: Int)
+
+    sealed trait Signal derives CanEqual
+    case object Start              extends Signal
+    case object Stop               extends Signal
+    case class Pause(seconds: Int) extends Signal
+end MEHolder
+
+sealed trait MEScattered
+class MEScatteredHost:
+    case object Inside extends MEScattered
+
 class SchemaTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
+
+    enum MemberLevel derives CanEqual, Schema:
+        case One, Two
+
+    enum MemberShape derives CanEqual, Schema:
+        case Point
+        case Circle(radius: Int)
+        case Origin
+    end MemberShape
+
+    case class MemberTask(name: String, level: MemberLevel, shape: MemberShape) derives CanEqual, Schema
+
+    private val noFields = Structure.Value.Record(Chunk.empty)
+
+    private def assertLevels[L](one: L, two: L)(using Schema[L], kyo.test.AssertScope): Unit =
+        assert(Structure.encode[L](two) == Structure.Value.VariantCase("Two", noFields))
+        assert(Structure.decode[L](Structure.Value.VariantCase("One", noFields)) == Result.succeed(one))
 
     // =========================================================================
     // apply
@@ -3708,6 +3762,95 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(errs.nonEmpty)
             val msg = errs.map(_.message).mkString("\n")
             assert(msg.contains("case field 'n'"), s"message: $msg")
+        }
+    }
+
+    "an enum declared as a member of a class" - {
+
+        "encodes a case as its variant" in {
+            assert(Structure.encode[MemberLevel](MemberLevel.Two) == Structure.Value.VariantCase("Two", noFields))
+        }
+
+        "decodes a case" in {
+            val decoded = Structure.decode[MemberLevel](Structure.Value.VariantCase("One", noFields))
+            assert(decoded == Result.succeed(MemberLevel.One), s"decoded $decoded")
+        }
+
+        "as a member of a trait" in {
+            assertLevels(MELevelsInTrait.Level.One, MELevelsInTrait.Level.Two)
+        }
+
+        "as a member of a class nested in an object" in {
+            val inner = new MEObject.Inner
+            assertLevels(inner.Level.One, inner.Level.Two)
+        }
+
+        "as a member of a class nested in a class" in {
+            val outer = new MEClass
+            val inner = new outer.Inner
+            assertLevels(inner.Level.One, inner.Level.Two)
+        }
+
+        "a case with a payload beside cases without one" in {
+            val circle = MemberShape.Circle(3)
+            assert(Structure.encode[MemberShape](circle) == Structure.Value.VariantCase(
+                "Circle",
+                Structure.Value.Record(Chunk("radius" -> Structure.Value.Integer(3)))
+            ))
+            Chunk(MemberShape.Point, circle, MemberShape.Origin).foreach { shape =>
+                val decoded = Structure.decode[MemberShape](Structure.encode[MemberShape](shape))
+                assert(decoded == Result.succeed(shape), s"decoded $decoded")
+            }
+        }
+
+        "a case class field of a member enum type" in {
+            val task    = MemberTask("ship", MemberLevel.Two, MemberShape.Origin)
+            val encoded = Structure.encode(task)
+            assert(encoded == Structure.Value.Record(Chunk(
+                "name"  -> Structure.Value.Str("ship"),
+                "level" -> Structure.Value.VariantCase("Two", noFields),
+                "shape" -> Structure.Value.VariantCase("Origin", noFields)
+            )))
+            assert(Structure.decode[MemberTask](encoded) == Result.succeed(task))
+        }
+
+        "derived at a site outside the class" in {
+            val holder                 = new MEHolder
+            given Schema[holder.Level] = Schema.derived[holder.Level]
+            assertLevels(holder.Level.One, holder.Level.Two)
+            val custom = holder.Level.Custom(7)
+            assert(Structure.decode[holder.Level](Structure.encode[holder.Level](custom)) == Result.succeed(custom))
+        }
+    }
+
+    "a case with no path from the sum type is a compile error naming the case" - {
+
+        "a case declared inside a class the sum is not in" in {
+            val errs = scala.compiletime.testing.typeCheckErrors("kyo.Schema.derived[kyo.MEScattered]")
+            val msg  = errs.map(_.message).mkString("\n")
+            assert(msg.contains("its case Inside is declared inside MEScatteredHost, which is not an object"), s"message: $msg")
+        }
+
+        "a member enum reached through a type projection" in {
+            val errs = scala.compiletime.testing.typeCheckErrors("kyo.Schema.derived[kyo.MEHolder#Level]")
+            val msg  = errs.map(_.message).mkString("\n")
+            assert(msg.contains("its case One cannot be selected from kyo.MEHolder"), s"message: $msg")
+        }
+    }
+
+    "an enum local to a method" in {
+        enum Level derives CanEqual, Schema:
+            case One, Two
+        assertLevels(Level.One, Level.Two)
+    }
+
+    "a sealed trait declared as a member of a class, derived at a site outside the class" in {
+        val holder                  = new MEHolder
+        given Schema[holder.Signal] = Schema.derived[holder.Signal]
+        assert(Structure.encode[holder.Signal](holder.Stop) == Structure.Value.VariantCase("Stop", noFields))
+        Chunk[holder.Signal](holder.Start, holder.Stop, holder.Pause(5)).foreach { signal =>
+            val decoded = Structure.decode[holder.Signal](Structure.encode[holder.Signal](signal))
+            assert(decoded == Result.succeed(signal), s"decoded $decoded")
         }
     }
 

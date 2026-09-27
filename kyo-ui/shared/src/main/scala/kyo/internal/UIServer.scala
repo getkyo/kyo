@@ -15,6 +15,50 @@ private[kyo] object UIServer:
         ))
     end handlers
 
+    /** The query parameter the client puts the page's path and query in when it opens the session socket. */
+    val pageParam: String = "kyo-page"
+
+    /** Every path under `basePath` is a page: the GET evaluates `ui` for its request, and the session socket, which carries the page's
+      * URL in [[pageParam]], evaluates it for the same request.
+      */
+    def handlers(basePath: String, head: UI.PageHead)(ui: UI.Request => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        val base = normalizePath(basePath)
+        Sync.defer(Seq(
+            requestPage(HttpRoute.getText(if base.isEmpty then "/" else base), base, head, ui),
+            requestPage(HttpRoute.getRaw(HttpPath.Literal(base) / HttpPath.Capture.Rest("page")).response(_.bodyText), base, head, ui),
+            HttpHandler.webSocket(s"$base/_kyo/ws") { (request, ws) =>
+                val page = request.query(pageParam).map(HttpUrl.fromUri).getOrElse(HttpUrl.fromUri(base))
+                serveSession(ws, Sync.defer(ui(requestOf(base, page))))
+            }
+        ))
+    end handlers
+
+    private def requestPage[In](
+        route: HttpRoute[In, "body" ~ String, Nothing],
+        base: String,
+        head: UI.PageHead,
+        ui: UI.Request => UI < Async
+    )(using Frame): HttpHandler[?, ?, ?] =
+        route.handler { request =>
+            for
+                uiTree        <- Sync.defer(ui(requestOf(base, request.url)))
+                (html, rules) <- HtmlRenderer.renderWithCss(uiTree, Seq.empty)
+            yield HttpResponse.ok(HtmlRenderer.serverPage(head, html, rules.map(_._2).mkString, base))
+                .addHeader("Content-Type", "text/html; charset=utf-8")
+        }
+
+    /** The request as the UI sees it: the path under `base`, `/` for the base itself and never ending in `/` otherwise, and the query with
+      * the first value of each repeated name.
+      */
+    private def requestOf(base: String, url: HttpUrl): UI.Request =
+        val under = url.path.stripPrefix(base)
+        val path  = if under.isEmpty || under == "/" then "/" else if under.endsWith("/") then under.dropRight(1) else under
+        val query = url.queryParams.toSeq.foldLeft(Map.empty[String, String]) { case (acc, (name, value)) =>
+            if acc.contains(name) then acc else acc.updated(name, value)
+        }
+        UI.Request(path, query)
+    end requestOf
+
     private def getPage(base: String, pagePath: String, ui: => UI < Async)(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.getText(pagePath).handler { _ =>
             for

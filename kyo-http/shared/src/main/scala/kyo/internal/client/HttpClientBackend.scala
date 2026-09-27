@@ -176,8 +176,9 @@ final private[kyo] class HttpClientBackend private (
                                     // (e.g. podman's `/images/create` returns a JSON error on auth failure
                                     // rather than progress events). Streaming the response would trap that
                                     // body inside an unconsumed Stream that callers never drain, throwing
-                                    // away the only diagnostic. Going through the buffered path lets
-                                    // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
+                                    // away the only diagnostic. The buffered body is handed back as the
+                                    // response's one-element stream and as its rawBody (decodeAndComplete),
+                                    // so the caller keeps the status, headers and body.
                                     if parsed.statusCode >= 400 then
                                         // The buffered fallback consumes the whole error body before completing
                                         // resultPromise, so the reuse decision mirrors the buffered contract.
@@ -565,6 +566,11 @@ final private[kyo] class HttpClientBackend private (
 
     /** Decode response body and complete the result promise. Closes the connection if the server indicated Connection: close
       * (isKeepAlive=false) so it won't be reused from the pool.
+      *
+      * A streaming route's non-2xx response arrives here buffered (see `sendStreaming`). It is decoded as the stream its route
+      * declares, over the buffered bytes, with the bytes as `rawBody`: a buffered decode cannot produce a stream-typed body and would
+      * fail with an `HttpStatusException` that carries no headers, losing what the caller reads from a refusal (`Retry-After`).
+      * `rawBody` keeps the body on the status failure the body-only methods raise.
       */
     private def decodeAndComplete[In, Out](
         conn: HttpConnection,
@@ -574,15 +580,16 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using AllowUnsafe, Frame): Unit =
+        val status = HttpStatus(parsed.statusCode)
         try
-            RouteUtil.decodeBufferedResponse(
-                route,
-                HttpStatus(parsed.statusCode),
-                parsed.headers,
-                bodyBytes,
-                route.method.name,
-                request.url
-            ) match
+            val decoded =
+                if !status.isSuccess && RouteUtil.isStreamingResponse(route) then
+                    val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
+                    RouteUtil.decodeStreamingResponse(route, status, parsed.headers, body, route.method.name, request.url)
+                        .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))
+                else
+                    RouteUtil.decodeBufferedResponse(route, status, parsed.headers, bodyBytes, route.method.name, request.url)
+            decoded match
                 case Result.Success(response) =>
                     if !parsed.isKeepAlive then conn.transport.close()
                     resultPromise.completeDiscard(Result.succeed(response))
@@ -590,9 +597,11 @@ final private[kyo] class HttpClientBackend private (
                     resultPromise.completeDiscard(Result.fail(e))
                 case Result.Panic(t) =>
                     resultPromise.completeDiscard(Result.panic(t))
+            end match
         catch
             case t: Throwable =>
                 resultPromise.completeDiscard(Result.panic(t))
+        end try
     end decodeAndComplete
 
     // -- Streaming response path --

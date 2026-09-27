@@ -465,6 +465,23 @@ class HttpServerTest extends BaseHttpTest:
             }
         }
 
+        "the handler's request url carries the whole query, declared by the route or not" - {
+            val route = HttpRoute.getRaw("search").request(_.query[String]("q")).response(_.bodyText)
+            val ep    = route.handler { req =>
+                val all = req.url.queryParams.toSeq.map((k, v) => s"$k=$v").mkString("&")
+                HttpResponse.ok(s"${req.url.path} $all ${req.query("page").getOrElse("none")} ${req.fields.q}")
+            }
+            runServer(ep) { url =>
+                send(
+                    url,
+                    route,
+                    HttpRequest.getRaw(HttpUrl.fromUri("/search?page=2")).addField("q", "a b")
+                ).map { resp =>
+                    assert(resp.fields.body == "/search page=2&q=a b 2 a b", resp.fields.body)
+                }
+            }
+        }
+
         "multiple query params" - {
             val route = HttpRoute.getRaw("search")
                 .request(_.query[String]("q").query[Int]("page"))
