@@ -4,10 +4,10 @@ import kyo.*
 
 /** Whether a podman or docker runtime looks reachable, by probing for the daemon sockets (not a CLI on PATH).
   *
-  * Read by the conformance backend registry [[SqlTestBackends]] to decide whether any backend can be exercised: an
-  * unreachable runtime yields no backends, which `SqlBackendTest.forEachBackend` turns into a single RED "no SQL
-  * backend available" leaf rather than a green run with no coverage. Skipping these Linux-only suites on Windows is a
-  * separate concern, handled by [[kyo.SqlContainerTest]] via `Platform.isWindows`, not by this probe.
+  * Read by kyo's container-backed conformance descriptors to answer `reachable`: an unreachable runtime leaves no
+  * backend to exercise, which `SqlBackendTest.forEachBackend` turns into a single RED "no SQL backend available" leaf
+  * rather than a green run with no coverage. Windows is a separate concern, answered by those descriptors through
+  * `Platform.isWindows`, not by this probe.
   *
   * This lives in kyo-sql's test tree, not kyo-pod's `ContainerRuntimeBase`, because that class is off this
   * classpath, and it checks sockets only: CLI detection needs per-platform process spawning. `KYO_POD_RUNTIME`, when

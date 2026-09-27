@@ -142,6 +142,31 @@ class RTNoLeakSuite extends TestBase[Any]:
     "no-leak-passes" in assert(1 == 1)
 end RTNoLeakSuite
 
+/** Two mixins registering the same leaf path, each body counting its own runs, plus one leaf with a unique path. */
+trait RTDuplicateFirst extends TestBase[Any]:
+    "shared" - {
+        "leaf" in Sync.defer(RTDuplicatePathSuite.firstRuns.incrementAndGet(): Unit).andThen(succeed)
+    }
+end RTDuplicateFirst
+
+trait RTDuplicateSecond extends TestBase[Any]:
+    "shared" - {
+        "leaf" in Sync.defer(RTDuplicatePathSuite.secondRuns.incrementAndGet(): Unit).andThen(succeed)
+    }
+end RTDuplicateSecond
+
+class RTDuplicatePathSuite extends TestBase[Any] with RTDuplicateFirst with RTDuplicateSecond:
+    "unique" in succeed
+end RTDuplicatePathSuite
+
+object RTDuplicatePathSuite:
+    val firstRuns: AtomicInteger  = new AtomicInteger(0)
+    val secondRuns: AtomicInteger = new AtomicInteger(0)
+    def reset(): Unit             =
+        firstRuns.set(0)
+        secondRuns.set(0)
+end RTDuplicatePathSuite
+
 /** A normal joined `assert(false)` leaf: the throw propagates on the body path and scores Failed (the existing throw
   * path still works, unaffected by the sink machinery).
   */
@@ -484,6 +509,22 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(defaultSr.leafResults.exists(_._1 == Chunk("<constructor>")), "expected a <constructor> failure leaf")
             assert(defaultSr.leakCheckSockets, "default config: socket-leak detection is on and must carry through a constructor failure")
             assert(!socketsOffSr.leakCheckSockets, "leakCheckSockets(false) must be carried into the constructor-failure report")
+    }
+
+    "Duplicate leaf paths: the path fails once and neither body runs, the unique leaf is unaffected" in {
+        RTDuplicatePathSuite.reset()
+        TestRunner.runToFuture(classOf[RTDuplicatePathSuite], RunConfig.default).map { report =>
+            val results = report.suiteReports.flatMap(_.leafResults)
+            assert(RTDuplicatePathSuite.firstRuns.get() == 0, s"first body ran ${RTDuplicatePathSuite.firstRuns.get()} times")
+            assert(RTDuplicatePathSuite.secondRuns.get() == 0, s"second body ran ${RTDuplicatePathSuite.secondRuns.get()} times")
+            assert(results.count(_._1 == Chunk("shared", "leaf")) == 1, s"got $results")
+            assert(leafByPath(report, Chunk("shared", "leaf")).exists {
+                case f: TestResult.Failed => f.diagram.contains("registered 2 times"); case _ => false
+            })
+            assert(leafByPath(report, Chunk("unique")).exists {
+                case _: TestResult.Passed => true; case _ => false
+            })
+        }
     }
 
 end RunnerTest

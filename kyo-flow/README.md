@@ -838,7 +838,20 @@ The rows themselves are `FlowStore.ExecutionState`, carrying the lifecycle, the 
 
 ### The conformance suite
 
-`FlowStoreTest` is an abstract test class in this module's test sources. An implementation extends it and supplies `makeStore`, and the suite then exercises the SPI contract against the real backend. It is organised invariant by invariant, I1 through I9, and then verb by verb: `claimReady`'s blocking and acceptance rules, `renewClaim`, `finish`, `requestCancel`, `listExecutions` with its filters and pagination, field operations, signal delivery, execution state, event history, and workflow metadata. Running it green is how a store demonstrates it upholds the invariants above, rather than by inspection.
+`FlowStoreConformanceTest` is the suite every store must pass, published as its own artifact, `kyo-flow-conformance`, for every platform kyo-flow publishes. A store adds it to its test scope, wires kyo-test's runner as the kyo-test README's "Build wiring" section describes, extends the suite, and supplies `makeStore`, which must hand back a fresh, empty store on every call:
+
+```scala doctest:expect=skipped
+// build.sbt
+libraryDependencies += "io.getkyo" %%% "kyo-flow-conformance" % "<version>" % Test
+
+// src/test/scala
+class PostgresFlowStoreTest extends FlowStoreConformanceTest:
+    def makeStore(using Frame): FlowStore < (Async & Scope) = PostgresFlowStore.init(testPool)
+```
+
+On JS the test link needs `ModuleKind.CommonJSModule`, since kyo-flow reaches Node builtins through `require`. On Scala Native it needs the kyo FFI plugin wired as kyo-net's [Scala Native builds](../kyo-net/README.md#scala-native-builds) describes, since kyo-net's C shims link into the test binary.
+
+The suite is organised invariant by invariant, I1 through I9, and then verb by verb: `claimReady`'s blocking and acceptance rules, `renewClaim`, `finish`, `requestCancel`, `listExecutions` with its filters and pagination, field operations, signal delivery, execution state, event history, and workflow metadata. Running it green is how a store demonstrates it upholds the invariants above, rather than by inspection.
 
 ## The HTTP endpoints
 

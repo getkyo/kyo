@@ -39,4 +39,23 @@ class SqlStaticMacroNoDialectTest extends Test:
         )
     }
 
+    // With no dialect the fold never succeeds, so `.run` splices the caller's own query tree into its `.runDynamic`
+    // fallback. That tree has to pass -Xcheck-macros for every operator a query can carry, including the text
+    // operators whose bodies inline a cast.
+    case class Scored(id: Long, v: Maybe[Int]) derives SqlSchema
+
+    "a .run falling back to .runDynamic compiles for the operators that inline a cast" - {
+        "like" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").where(_.p.name.like("a%")).run""")
+        "like a term" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").where(c => c.p.name.like(c.p.name)).run""")
+        "notLike" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").where(_.p.name.notLike("a%")).run""")
+        "ilike" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").where(_.p.name.ilike("a%")).run""")
+        "notIlike" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").where(_.p.name.notIlike("a%")).run""")
+        "++ a value" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").select(c => c.p.name ++ "!").run""")
+        "++ a column" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").select(c => c.p.name ++ c.p.name).run""")
+        "substring" in typeCheck("""def probe(using Frame) = Sql.from[Person]("p").select(c => c.p.name.substring(2, 3)).run""")
+        "+ a value on a nullable column" in typeCheck("""def probe(using Frame) = Sql.from[Scored]("s").select(c => c.s.v + 1).run""")
+        "- a value on a nullable column" in typeCheck("""def probe(using Frame) = Sql.from[Scored]("s").select(c => c.s.v - 1).run""")
+        "* a value on a nullable column" in typeCheck("""def probe(using Frame) = Sql.from[Scored]("s").select(c => c.s.v * 2).run""")
+    }
+
 end SqlStaticMacroNoDialectTest

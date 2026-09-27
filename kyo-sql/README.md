@@ -953,3 +953,23 @@ client's routing).
 `SqlRow.Codec` is the backend's decoder for the rows it produced, one instance per result set carrying whatever
 decode context it needs. `Codec.catchingColumn` and `Codec.catching` wrap a decode so a thrown failure arrives
 as the typed `SqlDecodeException` the transport expects.
+
+### Running the conformance battery
+
+`kyo-sql-conformance` publishes the battery kyo's own engines pass, as one abstract class, `SqlConformanceTest`.
+A backend's tests add it in test scope, wire kyo-test's runner, and subclass it with a `SqlConformanceBackend`
+descriptor. The descriptor hands the battery the backend itself, which it opens every client through, so the
+test run needs none of the registration above. It also answers the capability questions the leaves branch on
+(whether the engine has `RETURNING`, how its DDL spells each column kind, which isolation levels it honours), and
+provisions a fresh schema per leaf. On JS the test link needs `ModuleKind.CommonJSModule`.
+
+```scala doctest:expect=skipped
+// build.sbt
+libraryDependencies += "io.getkyo" %%% "kyo-sql-conformance" % "<version>" % Test
+
+// src/test/scala
+class ExampleConformanceTest extends SqlConformanceTest(Seq(new ExampleConformanceBackend))
+```
+
+Leaves that compare engines run with a single descriptor too: one that pins its expected answer still asserts
+it, and one that only compares is cancelled. A run where no descriptor is reachable fails.
