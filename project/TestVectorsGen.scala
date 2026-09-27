@@ -10,11 +10,13 @@ import sbt.*
   * A vector set is a directory under the module's `shared/src/test/vectors/` holding the upstream files byte for byte and a `MANIFEST`:
   *
   * {{{
-  * source <url the files were fetched from>
-  * source-sha256 <sha-256 of what that url served>
+  * source <url the files were fetched from: an archive, a document, or a repository tree pinned to a commit>
+  * source-sha256 <sha-256 of what that url served, when it is a single archive or document>
   * license <terms the upstream publishes the files under>
-  * file <name> <sha-256 of the file> <path inside the source, when the source is an archive>
+  * file <name> <sha-256 of the file> <path inside the source>
   * }}}
+  *
+  * Only the `file` lines are read by the build; the others record provenance for a reviewer.
   *
   * The generator fails the build when a file in the set is not listed, a listed file is missing, or a digest differs, so a checked-in file
   * cannot drift from what its manifest says was fetched. It emits one object whose `text(set, name)` returns a file's content and
