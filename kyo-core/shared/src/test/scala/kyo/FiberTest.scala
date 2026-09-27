@@ -389,6 +389,15 @@ class FiberTest extends kyo.test.Test[Any]:
             yield assert(result.isPanic)
             end for
         }
+
+        "exception in mapping function when the result still has effects to run" in {
+            for
+                promise     <- Promise.init[Int, Var[Int]]
+                _           <- promise.complete(Result.succeed(Var.get[Int]))
+                mappedFiber <- promise.map[Int](_ => throw new RuntimeException("Mapping exception"))
+                result      <- Var.run(42)(Abort.run[Throwable](mappedFiber.get))
+            yield assert(result.isPanic, s"$result")
+        }
     }
 
     "flatMap" - {
