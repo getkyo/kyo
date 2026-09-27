@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc7515.txt
+source-sha256 ecbf84674118e62526511c1237e1deaa86aada86d25b247623a2a7e04ae62e40
+license IETF Trust Legal Provisions (TLP 5, effective 2015-03-25; RFC 7515 was published in May 2015), section 3.c.i: anyone may copy, publish, display and distribute IETF Documents in full and without modification; the file is whole, unmodified, and keeps its copyright notice
+file rfc7515.txt ecbf84674118e62526511c1237e1deaa86aada86d25b247623a2a7e04ae62e40 rfc7515.txt
