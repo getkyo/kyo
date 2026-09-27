@@ -148,6 +148,49 @@ class Ed25519Test extends kyo.test.Test[Any]:
             assert(!Ed25519.verify(offCurve, v2.message, v2.signature))
             assert(!Ed25519.verify(v2.publicKey, v2.message, offCurve ++ v2.signature.drop(32)))
         }
+
+        "a y whose candidate root squares to u decodes to that root" in {
+            val y = firstY(RootBranch.Direct)
+            assert(rootBranch(y) == RootBranch.Direct)
+            assertDecodesOnCurve(y)
+        }
+
+        "a y whose candidate root squares to -u decodes to the candidate times sqrt(-1)" in {
+            val y = firstY(RootBranch.TimesSqrtMinusOne)
+            assert(rootBranch(y) == RootBranch.TimesSqrtMinusOne)
+            assert(!onCurve(candidateRoot(y), y))
+            assertDecodesOnCurve(y)
+        }
+
+        "the sign bit selects the root of that parity, on both branches" in {
+            Seq(firstY(RootBranch.Direct), firstY(RootBranch.TimesSqrtMinusOne)).foreach { y =>
+                val even = Ed25519.decode(le32(y), 0).map(_.x)
+                val odd  = Ed25519.decode(le32(y.setBit(255)), 0).map(_.x)
+                assert(even.map(_.testBit(0)) == Maybe(false))
+                assert(odd.map(_.testBit(0)) == Maybe(true))
+                assert(even.flatMap(e => odd.map(o => (e + o).mod(P))) == Maybe(BigInt(0)))
+            }
+        }
+    }
+
+    // --- the group equation ---
+
+    "group equation" - {
+        "k is reduced modulo L before it multiplies the key" in {
+            val zero       = le32(BigInt(0))
+            val signature  = zero ++ zero
+            val reducedIs3 = messageWhere(zero, zero)((reduced, raw) => reduced.mod(4) == 3 && raw.mod(4) != 3)
+            val rawIs3     = messageWhere(zero, zero)((reduced, raw) => reduced.mod(4) != 3 && raw.mod(4) == 3)
+            assert(Ed25519.verify(zero, reducedIs3, signature))
+            assert(!Ed25519.verify(zero, rawIs3, signature))
+        }
+
+        "R with the right x and the wrong y is rejected: identity key, R = (0, -1), S = 0" in {
+            val r = le32(P - 1)
+            assert(Ed25519.decode(r, 0).map(p => (p.x, p.y)) == Maybe((BigInt(0), P - 1)))
+            assert(!Ed25519.verify(identityKey, anyMessage, r ++ le32(BigInt(0))))
+            assert(Ed25519.verify(identityKey, anyMessage, identityR ++ le32(BigInt(0))))
+        }
     }
 
     // --- lengths ---
@@ -207,6 +250,13 @@ class Ed25519Test extends kyo.test.Test[Any]:
         }
     }
 
+    private def assertDecodesOnCurve(y: BigInt)(using kyo.test.AssertScope): Unit =
+        val decoded = Ed25519.decode(le32(y), 0)
+        assert(decoded.map(p => (p.y, p.z)) == Maybe((y, BigInt(1))))
+        assert(decoded.map(p => onCurve(p.x, y)) == Maybe(true))
+        assert(decoded.map(_.x.testBit(0)) == Maybe(false))
+    end assertDecodesOnCurve
+
 end Ed25519Test
 
 object Ed25519Test:
@@ -231,13 +281,44 @@ object Ed25519Test:
 
     /** A message for which `SHA-512(r || key || m) mod L` is `remainder` mod 4. */
     def messageWithK(r: Array[Byte], key: Array[Byte], remainder: Int): Array[Byte] =
+        messageWhere(r, key)((reduced, _) => reduced.mod(4) == remainder)
+
+    /** The first message `m` for which `accept(h mod L, h)` holds, `h` being `SHA-512(r || key || m)` read little-endian. */
+    def messageWhere(r: Array[Byte], key: Array[Byte])(accept: (BigInt, BigInt) => Boolean): Array[Byte] =
         @tailrec def search(i: Int): Array[Byte] =
             val candidate = s"message $i".getBytes(StandardCharsets.UTF_8)
-            val k         = littleEndian(Sha512.hashChunks(Seq(r, key, candidate))).mod(L)
-            if k.mod(4) == remainder then candidate else search(i + 1)
+            val raw       = littleEndian(Sha512.hashChunks(Seq(r, key, candidate)))
+            if accept(raw.mod(L), raw) then candidate else search(i + 1)
         end search
         search(0)
-    end messageWithK
+    end messageWhere
+
+    // --- the square root of RFC 8032 section 5.1.3, step 3 ---
+
+    enum RootBranch derives CanEqual:
+        case Direct, TimesSqrtMinusOne, NoRoot
+
+    def candidateRoot(y: BigInt): BigInt =
+        val u = (y * y - 1).mod(P)
+        val v = (Dcurve * y * y + 1).mod(P)
+        (u * v.pow(3) * (u * v.pow(7)).modPow((P - 5) / 8, P)).mod(P)
+    end candidateRoot
+
+    def rootBranch(y: BigInt): RootBranch =
+        val u     = (y * y - 1).mod(P)
+        val v     = (Dcurve * y * y + 1).mod(P)
+        val x     = candidateRoot(y)
+        val check = (v * x * x).mod(P)
+        if check == u then RootBranch.Direct
+        else if check == (-u).mod(P) then RootBranch.TimesSqrtMinusOne
+        else RootBranch.NoRoot
+    end rootBranch
+
+    /** The smallest `y >= 2` whose root takes `branch`; `y = 1` is excluded because its root is 0. */
+    def firstY(branch: RootBranch): BigInt =
+        Iterator.iterate(BigInt(2))(_ + 1).find(rootBranch(_) == branch).get
+
+    def onCurve(x: BigInt, y: BigInt): Boolean = (y * y - x * x - 1 - Dcurve * x * x * y * y).mod(P) == 0
 
     def flip(bytes: Array[Byte], bit: Int): Array[Byte] =
         val copy = bytes.clone()

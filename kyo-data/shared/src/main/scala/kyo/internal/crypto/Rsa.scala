@@ -66,6 +66,7 @@ private[kyo] object Rsa:
             case Result.Success(bytes) =>
                 if bytes.size > 0 && bytes(0) == 0 then Result.fail(KeyFailure.LeadingZero(component))
                 else Result.succeed(BigInt(1, bytes.toArray))
-            case _ => Result.fail(KeyFailure.NotBase64Url(component))
+            case Result.Failure(_)   => Result.fail(KeyFailure.NotBase64Url(component))
+            case panic: Result.Panic => panic
 
 end Rsa
