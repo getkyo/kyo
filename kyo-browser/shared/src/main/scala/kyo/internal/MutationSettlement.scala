@@ -115,10 +115,10 @@ private[kyo] object MutationSettlement:
         BrowserEval.evalJs(s"""(() => {
             if (window.__kyoMutObs) {
                 window.__kyoMutObsRef = (window.__kyoMutObsRef || 0) + 1;
-                window.__kyoMutLast = Date.now();
+                window.__kyoMutLast = performance.now();
                 return 'shared';
             }
-            window.__kyoMutLast = Date.now();
+            window.__kyoMutLast = performance.now();
             window.__kyoMutCount = 0;
             window.__kyoMutObsRef = 1;
             window.__kyoMutObs = new MutationObserver((records) => {
@@ -144,7 +144,7 @@ private[kyo] object MutationSettlement:
                 });
                 if (real.length === 0) return;
                 window.__kyoMutCount = (window.__kyoMutCount || 0) + real.length;
-                window.__kyoMutLast = Date.now();
+                window.__kyoMutLast = performance.now();
             });
             const opts = { childList: true, subtree: true, attributes: true, characterData: true };
             window.__kyoMutObs.observe(document.body, opts);
@@ -200,15 +200,15 @@ private[kyo] object MutationSettlement:
         // returns and BEFORE the polling loop begins, giving an "action-complete" mutation baseline.
         val js = s"""(async () => {
             const windowMs      = $windowMs;
-            const deadlineAt    = Date.now() + $deadlineMs;
-            const firstGraceAt  = Date.now() + $firstGraceMs;
+            const deadlineAt    = performance.now() + $deadlineMs;
+            const firstGraceAt  = performance.now() + $firstGraceMs;
             const pollMs        = ${pollInterval.toMillis};
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
             // Frameworks (e.g. kyo-ui) serialise event POSTs through `window._kyoPostQ`. A queued POST that
             // has not yet round-tripped will produce a DOM mutation AFTER our quiet window expires; awaiting
             // the queue lets the trailing mutation land before settlement begins counting. Bound the await
             // by `deadlineAt` via Promise.race so a hung POST chain cannot wedge settlement.
-            const deadlineSentinel = sleep(Math.max(0, deadlineAt - Date.now()));
+            const deadlineSentinel = sleep(Math.max(0, deadlineAt - performance.now()));
             await Promise.race([(window._kyoPostQ || Promise.resolve()), deadlineSentinel]);
             // After the POST queue settles, surface any framework-reported failures as a typed reply. Reset
             // the counters so the next action starts clean.
@@ -222,9 +222,10 @@ private[kyo] object MutationSettlement:
             // Deadline-bounded inside the body: each iteration checks `deadlineAt` plus the settle/grace conditions, so the loop terminates within `overallDeadline` regardless of mutation activity.
             while (true) {
                 const count = window.__kyoMutCount || 0;
-                const last  = window.__kyoMutLast  || Date.now();
-                const now   = Date.now();
-                const delta = now - last;
+                const last  = window.__kyoMutLast  || performance.now();
+                const now   = performance.now();
+                // Whole milliseconds: performance.now() is fractional, and the reply decodes delta as a Long.
+                const delta = Math.round(now - last);
                 const sawMutation = count > startCount;
                 if (sawMutation && delta >= windowMs) return JSON.stringify({tag: 'done', count: count, delta: delta});
                 if (!sawMutation && now >= firstGraceAt) return JSON.stringify({tag: 'done', count: count, delta: delta});

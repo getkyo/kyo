@@ -35,8 +35,9 @@ private[kyo] object DomDragRuntime:
         def nowMillis(): Double
         def every(millis: Int)(run: () => Unit): CancelTimer
 
-    private object BrowserTiming extends Timing:
-        def nowMillis(): Double                              = js.Date.now()
+    private[kyo] object BrowserTiming extends Timing:
+        // Monotonic: the pending-drop timeout is a duration, and `Date.now` moves with every wall-clock step.
+        def nowMillis(): Double                              = js.Dynamic.global.performance.now().asInstanceOf[Double]
         def every(millis: Int)(run: () => Unit): CancelTimer =
             val id = dom.window.setInterval(() => run(), millis)
             new CancelTimer:

@@ -28,7 +28,7 @@ class SchedulerTest extends AsyncFreeSpec with NonImplicitAssertions {
     "status line" - {
         "counts scheduled, run, and preempted slices" in {
             val clock     = new ManualClock
-            val scheduler = new Scheduler("unused", 0, () => clock.now)
+            val scheduler = new Scheduler("unused", 0, () => clock.now, () => clock.now)
             val done      = Promise[Unit]()
             var slices    = 0
             scheduler.schedule(task { () =>
@@ -50,7 +50,7 @@ class SchedulerTest extends AsyncFreeSpec with NonImplicitAssertions {
 
         "reports the longest slice since the previous line" in {
             val clock     = new ManualClock
-            val scheduler = new Scheduler("unused", 0, () => clock.now)
+            val scheduler = new Scheduler("unused", 0, () => 0L, () => clock.now)
             val done      = Promise[Unit]()
             scheduler.schedule(task { () =>
                 clock.now += 40
@@ -71,11 +71,22 @@ class SchedulerTest extends AsyncFreeSpec with NonImplicitAssertions {
 
         "starts with the ts field ci-monitor reads" in {
             val clock     = new ManualClock
-            val scheduler = new Scheduler("unused", 0, () => clock.now)
+            val scheduler = new Scheduler("unused", 0, () => clock.now, () => 0L)
             val line      = scheduler.statusLine()
             assert(line.startsWith("kyo.sched ts=1000 "))
             assert(fields(line)("platform") == "js")
         }
+    }
+
+    "InternalClock reads monotonic time, unmoved by a wall-clock step back" in {
+        val date     = js.Dynamic.global.Date
+        val original = date.now
+        val before   = InternalClock.monotonicMillis()
+        date.updateDynamic("now")((() => 0.0): js.Function0[Double])
+        val reading =
+            try new InternalClock().currentMillis()
+            finally date.updateDynamic("now")(original)
+        assert(reading >= before, s"the scheduler clock went from $before back to $reading with the wall clock")
     }
 
     "status file" - {
@@ -83,7 +94,7 @@ class SchedulerTest extends AsyncFreeSpec with NonImplicitAssertions {
             val fs                                    = js.Dynamic.global.process.getBuiltinModule("fs")
             val os                                    = js.Dynamic.global.process.getBuiltinModule("os")
             val path                                  = s"${os.tmpdir()}/kyo-sched-js-test-${js.Math.random().toString.drop(2)}.status"
-            val scheduler                             = new Scheduler(path, 10, () => 42L)
+            val scheduler                             = new Scheduler(path, 10, () => 42L, () => 0L)
             def written(attempt: Int): Future[String] =
                 if (fs.existsSync(path).asInstanceOf[Boolean]) Future.successful(fs.readFileSync(path, "utf8").asInstanceOf[String])
                 else if (attempt >= 500) Future.failed(new AssertionError(s"status file never written: $path"))
@@ -100,7 +111,7 @@ class SchedulerTest extends AsyncFreeSpec with NonImplicitAssertions {
         }
 
         "no file is written when no path is configured" in {
-            val scheduler = new Scheduler("", 10, () => 42L)
+            val scheduler = new Scheduler("", 10, () => 42L, () => 0L)
             assert(!scheduler.writesStatus)
         }
     }

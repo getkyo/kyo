@@ -285,6 +285,26 @@ class BrowserScreencastTest extends BrowserTest:
         }
     }
 
+    "screenshotFrames measures the duration cap on monotonic time while the wall clock stands still" in {
+        // Opened around the session so the fiber that dispatches screencast frames, where the cap is judged, reads the frozen wall too.
+        Clock.let(Clock(Clock.Unsafe.withWall(Clock.live.unsafe)(() => Instant.Epoch))) {
+            withBrowser {
+                onPage(spinPage) {
+                    Abort.run[BrowserReadException] {
+                        Browser.screenshotFrames[Unit, Any](maxDurationMs = 300L, maxFrames = 10000) {
+                            spinFor(800.millis)
+                        }
+                    }.map {
+                        case Result.Failure(ex: BrowserCaptureLimitExceededException) =>
+                            assert(ex.limit == 300, s"expected the duration cap (300ms) but got limit ${ex.limit}")
+                        case other =>
+                            fail(s"expected the duration cap to fire with the wall clock frozen but got $other")
+                    }
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Test 11: Webp maps to the screencast jpeg codec without aborting
     // -------------------------------------------------------------------------

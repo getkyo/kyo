@@ -22,6 +22,18 @@ class BrowserNetworkTest extends BrowserTest:
         }
     }
 
+    "waitForNetworkIdle measures the idle window on monotonic time while the page's wall clock stands still" in {
+        withBrowser {
+            onPage("<html><body><script>Date.now = function() { return 1700000000000; };</script></body></html>") {
+                Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(5.seconds))) {
+                    Abort.run[BrowserReadException](Browser.waitForNetworkIdle(100.millis))
+                }.map { outcome =>
+                    assert(outcome.isSuccess, s"a quiet page never read as idle under a frozen Date.now: $outcome")
+                }
+            }
+        }
+    }
+
     "waitForNetworkIdle waits for pending fetch to complete" in {
         withBrowser {
             onPage("""<html><body>

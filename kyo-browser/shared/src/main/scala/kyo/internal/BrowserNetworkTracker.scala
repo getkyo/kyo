@@ -24,14 +24,14 @@ private[kyo] object BrowserNetworkTracker:
             if (window.__kyoNetTrackingInstalled) return 'ok';
             window.__kyoNetTrackingInstalled = true;
             window.__kyoNetPending = 0;
-            window.__kyoNetLastActivity = Date.now();
+            window.__kyoNetLastActivity = performance.now();
             const origFetch = window.fetch;
             window.fetch = function() {
                 window.__kyoNetPending++;
-                window.__kyoNetLastActivity = Date.now();
+                window.__kyoNetLastActivity = performance.now();
                 return origFetch.apply(this, arguments).then(
-                    r => { window.__kyoNetPending--; window.__kyoNetLastActivity = Date.now(); return r; },
-                    e => { window.__kyoNetPending--; window.__kyoNetLastActivity = Date.now(); throw e; }
+                    r => { window.__kyoNetPending--; window.__kyoNetLastActivity = performance.now(); return r; },
+                    e => { window.__kyoNetPending--; window.__kyoNetLastActivity = performance.now(); throw e; }
                 );
             };
             const origOpen = XMLHttpRequest.prototype.open;
@@ -40,10 +40,10 @@ private[kyo] object BrowserNetworkTracker:
             XMLHttpRequest.prototype.send = function() {
                 if (this.__kyoTracked) {
                     window.__kyoNetPending++;
-                    window.__kyoNetLastActivity = Date.now();
+                    window.__kyoNetLastActivity = performance.now();
                     this.addEventListener('loadend', () => {
                         window.__kyoNetPending--;
-                        window.__kyoNetLastActivity = Date.now();
+                        window.__kyoNetLastActivity = performance.now();
                     });
                 }
                 return origSend.apply(this, arguments);
@@ -107,7 +107,7 @@ private[kyo] object BrowserNetworkTracker:
                     BrowserEval.evalJs(s"""(() => {
                         const pending = window.__kyoNetPending || 0;
                         const lastActivity = window.__kyoNetLastActivity || 0;
-                        const now = Date.now();
+                        const now = performance.now();
                         if (pending === 0 && lastActivity > 0 && (now - lastActivity) >= $idleMs) return 'idle';
                         if (pending === 0 && lastActivity === 0) {
                             window.__kyoNetLastActivity = now;
