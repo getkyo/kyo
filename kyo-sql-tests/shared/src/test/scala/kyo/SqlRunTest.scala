@@ -262,7 +262,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     ): Unit < (Async & Abort[SqlException] & Scope & DB) =
         client.transaction {
             SqlClient.txLocal.use { active =>
-                val pinned = active.getOrElse(fail("transaction must install a TransactionContext")).connection
+                val pinned = active.getOrElse(fail("transaction must install a TransactionContext")).session.connection
                 client.executeRaw(s"INSERT INTO probe VALUES ($sessionIdSql)").andThen {
                     Sql.from[Probe]("p").select(c => c.p.pid).run.flatMap { seen =>
                         SqlClient.txLocal.let(Absent)(observer.query("SELECT pid FROM probe")).map { outside =>

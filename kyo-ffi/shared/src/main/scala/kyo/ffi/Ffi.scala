@@ -338,23 +338,26 @@ object Ffi:
       * this platform, before instantiating anything. Accounted for means: the manifest declares this platform and the bundled resource or a
       * readable `-Dkyo.ffi.<id>.path` override exists; or the manifest does not declare this platform and the library still resolves, by
       * override, by a bundled resource, or as a system install. A library declared for other platforms only, which is what
-      * `FfiLibrary.osTargets` produces, therefore fails HERE with a catchable `LibraryNotFound` rather than in the impl companion's
-      * initializer at the first call, where a throw poisons the class. This is a JVM guarantee: JS ships no manifest and raises its own
+      * `FfiLibrary.osTargets` produces, therefore fails with a catchable `LibraryNotFound` before the impl companion's initializer runs,
+      * rather than inside it, where a throw poisons the class. This is a JVM guarantee: JS ships no manifest and raises its own
       * `LibraryNotFound` from the loader instead, and Native links its C at build time.
       *
-      * It is NOT a guarantee that the library loads. A native the manifest declares and the classpath carries is not opened here, so one that
-      * is present but unloadable (bytes for another architecture, a missing transitive dependency, an override naming a file that is not a
-      * library) still fails at the first binding call. The generated impl also runs its own ABI checks and `NativeLoader.load` when its
-      * companion initializes, so `AbiMismatch` raised by the generated-impl or struct-layout checks surfaces there too, wrapped in
-      * `ExceptionInInitializerError`. A caller that must contain every load failure still guards the first binding call; what `load` now
-      * guarantees is that a native missing FOR THIS PLATFORM is not one of the failures it has to catch there.
+      * The library is then loaded here as well: constructing the generated impl initializes its companion, which opens the native, runs the
+      * generated-impl and struct-layout ABI checks, and binds every symbol. A native that is present but unloadable (bytes for another
+      * architecture, a missing transitive dependency, an override naming a file that is not a library) fails this call with the
+      * initializer's own exception, not an `ExceptionInInitializerError`, and the first binding call never pays the load.
+      *
+      * A failed load is final for the process: every later `load` of the same binding rethrows the first failure. The platform keeps the
+      * failed initialization (a poisoned class on the JVM, a half-built module on JS whose dispatch table is null), so a retry could only
+      * answer `NoClassDefFoundError` or hand back an impl whose every call fails.
       *
       * An id whose symbols live only in the native linker's default lookup is not treated as resolvable; declare it in `ffiSystemLibraries`,
       * which carries no manifest entry and skips the check.
       *
       * @throws kyo.ffi.FfiLoadError
       *   on a documented load failure: `LibraryNotFound` (native library not resolvable), `AbiMismatch`, `Unsupported` (32-bit host,
-      *   browser Scala.js), or `ImplNotFound` (no generated impl on the classpath).
+      *   browser Scala.js), or `ImplNotFound` (no generated impl on the classpath). A native that resolves but does not open raises the
+      *   platform loader's own exception.
       * @throws java.lang.IllegalStateException
       *   on the JVM when the generated impl class lacks a public nullary constructor: the ISE thrown inside `FfiReflect.instantiate`
       *   escapes `Ffi.load` uncaught (`computeIfAbsent` propagates it; only the class-not-found case is wrapped into `ImplNotFound`).

@@ -86,32 +86,47 @@ final private[kyo] class CdpBackend private[kyo] (
 
     /** A call whose reply stands for something the browser now holds (a context, an override), owed `release` on `finalizer`.
       *
-      * The release registers as the reply arrives. The call is detached: a caller abandoned at the join has the call
-      * release what it created rather than dropping the late reply. `finalizer` is a parameter, not the innermost scope,
-      * so a caller can own the reply across a scope of its own that ends earlier.
+      * The obligation is registered on `finalizer` before the call is issued, and the reply and the scope's end meet in one
+      * state cell: whichever comes second releases. Registering at the reply instead leaves a window with nothing to
+      * release it: an interrupt that lands while the caller is still running, between issuing the call and parking on the
+      * reply, is recorded on the caller's own status and never reaches the reply's promise, so the reply then arrives to a
+      * caller that will not run and a promise nobody contests. The call is detached: a caller abandoned at the join has the
+      * call release what it created rather than dropping the late reply. `finalizer` is a parameter, not the innermost
+      * scope, so a caller can own the reply across a scope of its own that ends earlier.
       */
     private[kyo] def acquire[P: Schema, R: Schema](finalizer: Scope.Finalizer, method: String, params: P)(
         release: R => Unit < (Async & Abort[BrowserReadException])
     )(using Frame): R < (Async & Abort[BrowserReadException]) =
-        // Unsafe: the handoff promise and the detached call are unsafe-tier; the registration runs in the step the reply
-        // arrives.
+        // Unsafe: the handoff promise, the state cell and the detached call are unsafe-tier.
         Sync.Unsafe.defer {
             val handoff = Promise.Unsafe.init[R, Abort[BrowserReadException]]()
+            val state   = AtomicRef.Unsafe.init[Acquired[R]](Acquired.Pending)
+            finalizer.ensureUnsafe { _ =>
+                state.getAndSet(Acquired.Ended) match
+                    case Acquired.Delivered(reply) => release(reply)
+                    case _                         => Kyo.unit
+            }
             Fiber.Unsafe.init(send[P, R](method, params)).onComplete { result =>
                 result.foldError(
                     replyComp =>
                         val reply = replyComp.eval
-                        if !handoff.complete(Result.succeed(reply)) then discard(Fiber.Unsafe.init(release(reply)))
+                        if state.compareAndSet(Acquired.Pending, Acquired.Delivered(reply)) then
+                            handoff.completeDiscard(Result.succeed(reply))
+                        else discard(Fiber.Unsafe.init(release(reply)))
                     ,
                     error => handoff.completeDiscard(error)
                 )
             }
-            handoff.safe.get.ensureMap { reply =>
-                finalizer.ensureUnsafe(_ => release(reply))
-                reply
-            }
+            handoff.safe.get
         }
     end acquire
+
+    /** Where an [[acquire]]'s reply stands between the call and the scope's end. */
+    private enum Acquired[+R]:
+        case Pending
+        case Ended
+        case Delivered(reply: R)
+    end Acquired
 
     private[kyo] def acquire[P: Schema, R: Schema](method: String, params: P)(
         release: R => Unit < (Async & Abort[BrowserReadException])

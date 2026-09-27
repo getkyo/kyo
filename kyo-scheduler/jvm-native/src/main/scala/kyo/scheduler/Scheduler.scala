@@ -25,7 +25,6 @@ import kyo.scheduler.util.XSRandom
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-import scala.util.control.NonFatal
 
 /** A high-performance task scheduler with adaptive concurrency control and admission regulation.
   *
@@ -107,6 +106,12 @@ final class Scheduler(
     private val clock   = new InternalClock(clockExecutor)
     private val workers = new Array[Worker](maxWorkers)
     private val flushes = new LongAdder
+    // Declared before cycleTask, which starts the loop that writes them: an initializer that ran after the loop started would
+    // overwrite what it wrote. `cycleThread` lets tests aim at the cycle's own work, since other threads check worker
+    // availability too.
+    private[scheduler] val cycleFailures                 = new LongAdder
+    private[scheduler] val placementFallbacks            = new LongAdder
+    @volatile private[scheduler] var cycleThread: Thread = null
 
     @volatile private var allocatedWorkers = 0
     @volatile private var currentWorkers   = coreWorkers
@@ -295,6 +300,27 @@ final class Scheduler(
       *   - Falls back to random worker assignment only when no worker is available
       */
     private def schedule(task: Task, submitter: Worker): Unit = {
+        val worker =
+            try selectWorker(submitter)
+            catch {
+                case ex: Throwable =>
+                    // The scan checks availability, which preempts and drains other workers. A drain hands this task here after
+                    // taking it off its queue, so it exists nowhere else: place it before the failure propagates.
+                    placementFallbacks.increment()
+                    randomWorker().enqueue(task)
+                    throw ex
+            }
+        worker.enqueue(task)
+    }
+
+    private def randomWorker(): Worker = {
+        var worker: Worker = null
+        while (worker eq null)
+            worker = workers(XSRandom.nextInt(currentWorkers))
+        worker
+    }
+
+    private def selectWorker(submitter: Worker): Worker = {
         val nowMs          = clock.currentMillis()
         var worker: Worker = null
         if (submitter eq null) {
@@ -332,9 +358,7 @@ final class Scheduler(
                 remaining -= 1
             }
         }
-        while (worker eq null)
-            worker = workers(XSRandom.nextInt(currentWorkers))
-        worker.enqueue(task)
+        if (worker eq null) randomWorker() else worker
     }
 
     /** Attempts to steal a task from another worker with higher load.
@@ -494,6 +518,7 @@ final class Scheduler(
             (
                 () => {
                     val thread = Thread.currentThread()
+                    cycleThread = thread
                     while (!thread.isInterrupted()) {
                         cycleWorkers()
                         LockSupport.parkNanos(cycleIntervalNs)
@@ -524,7 +549,10 @@ final class Scheduler(
                 position += 1
             }
         } catch {
-            case ex if NonFatal(ex) =>
+            // Any Throwable, fatal ones included: this runs as one long-lived loop that nothing restarts, and without it no worker
+            // is detected as stalled, preempted or drained again. A StackOverflowError has unwound by the time it lands here.
+            case ex: Throwable =>
+                cycleFailures.increment()
                 bug(s"Worker cyclying has failed.", ex)
         }
     }
@@ -535,7 +563,9 @@ final class Scheduler(
             statsScope.gauge("current_workers")(currentWorkers),
             statsScope.gauge("allocated_workers")(allocatedWorkers),
             statsScope.gauge("load_avg")(loadAvg()),
-            statsScope.gauge("flushes")(flushes.sum().toDouble)
+            statsScope.gauge("flushes")(flushes.sum().toDouble),
+            statsScope.gauge("loop_failures")((cycleFailures.sum() + blockingMonitor.failures.sum()).toDouble),
+            statsScope.gauge("placement_fallbacks")(placementFallbacks.sum().toDouble)
         )
 
     def status(): Status = {

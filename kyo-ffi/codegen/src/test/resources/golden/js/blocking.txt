@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class BlockingBindingsImpl extends BlockingBindings:
     import BlockingBindingsImpl.*
+    BlockingBindingsImpl.loaded()
 
     def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         val bufU8 = kyo.ffi.internal.FfiUnsafe.expect[JsRawSegment](buf.raw.asInstanceOf[AnyRef], classOf[JsRawSegment], "JsRawSegment on JS", "kyo.example.BlockingBindings", "recv").u8a
@@ -25,6 +26,7 @@ end BlockingBindingsImpl
 
 object BlockingBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BlockingBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_blocking",
         Seq(

@@ -919,6 +919,61 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!p3.done())
         }
 
+        "remove keeps the other links" in {
+            val p1     = new IOPromise[Nothing, Int]()
+            val linked = new IOPromise[Nothing, Int]()
+            val kept   = new IOPromise[Nothing, Int]()
+            p1.interrupts(kept)
+            p1.interrupts(linked)
+            assert(p1.remove(linked))
+            assert(p1.interrupt(Result.Panic(new Exception("Interrupted p1"))))
+            assert(!linked.done())
+            assert(kept.block(deadline()).isPanic)
+        }
+
+        "remove of a link on the chain merged by become" in {
+            val target = new IOPromise[Nothing, Int]()
+            val source = new IOPromise[Nothing, Int]()
+            val linked = new IOPromise[Nothing, Int]()
+            val kept   = new IOPromise[Nothing, Int]()
+            source.interrupts(kept)
+            source.interrupts(linked)
+            assert(source.become(target))
+            assert(target.remove(linked))
+            assert(target.interrupt(Result.Panic(new Exception("Interrupted target"))))
+            assert(!linked.done())
+            assert(kept.block(deadline()).isPanic)
+        }
+
+        "remove of a link on the target's own chain after become" in {
+            val target = new IOPromise[Nothing, Int]()
+            val source = new IOPromise[Nothing, Int]()
+            val linked = new IOPromise[Nothing, Int]()
+            val kept   = new IOPromise[Nothing, Int]()
+            target.interrupts(linked)
+            source.interrupts(kept)
+            assert(source.become(target))
+            assert(target.remove(linked))
+            assert(target.interrupt(Result.Panic(new Exception("Interrupted target"))))
+            assert(!linked.done())
+            assert(kept.block(deadline()).isPanic)
+        }
+
+        "remove keeps the completion callbacks on both merged chains" in {
+            val target = new IOPromise[Nothing, Int]()
+            val source = new IOPromise[Nothing, Int]()
+            val linked = new IOPromise[Nothing, Int]()
+            var seen   = List.empty[Result[Nothing, Int]]
+            target.onComplete(r => seen = r :: seen)
+            source.onComplete(r => seen = r :: seen)
+            source.interrupts(linked)
+            assert(source.become(target))
+            assert(target.remove(linked))
+            assert(target.complete(Result.succeed(42)))
+            assert(seen == List(Result.succeed(42), Result.succeed(42)))
+            assert(!linked.done())
+        }
+
         "remove with uninterruptible" in {
             val original        = new IOPromise[Nothing, Int]()
             val uninterruptible = original.uninterruptible()

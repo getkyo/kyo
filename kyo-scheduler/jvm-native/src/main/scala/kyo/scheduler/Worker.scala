@@ -120,6 +120,13 @@ abstract private class Worker(
     // monitor before dispatch, worker before clearing currentTask + Thread.interrupted().
     private[scheduler] val interruptLock = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // Held while checkAvailability's drain re-schedules this worker's tasks. Re-scheduling a drained task scans the other
+    // workers, whose drains scan this one again while it is still Stalled and refilled by the fallback placement; draining it
+    // again there nests without bound (StackOverflowError on the scheduling thread, and the tasks it had drained are lost). A
+    // flag rather than a State: the drain runs on another thread, and the owner's plain `state.set` in the run loop would
+    // erase a state.
+    private val draining = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     @scala.annotation.tailrec
     private def acquireInterruptLock(): Unit =
         if (!interruptLock.compareAndSet(false, true))
@@ -191,6 +198,18 @@ abstract private class Worker(
     def drain(): Unit =
         queue.drain(schedule)
 
+    /** The drain of an unavailable worker found by `checkAvailability`. A no-op while one is already in progress on any thread: what
+      * arrives meanwhile stays queued for the next check.
+      *
+      * The run loop's exit and `Scheduler.flush` call `drain` itself, unconditionally. A task enqueued after a concurrent drain took its
+      * snapshot and before the loop set this worker idle gets no wakeup, since the enqueue saw it running, and would sit until the next
+      * check drained it: the exit's own drain is what hands it on.
+      */
+    private def drainUnavailable(): Unit =
+        if (draining.compareAndSet(false, true))
+            try drain()
+            finally draining.set(false)
+
     /** Re-heapifies this worker's own queue when an interrupt has reset a queued task's runtime in place.
       *
       * Gated on two conditions so the common case stays off the hot path: the epoch from currentInterruptEpoch
@@ -234,7 +253,7 @@ abstract private class Worker(
         val available = (st ne State.Stalled) && !blocked && !stalling
         if (!available) {
             if ((st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
-                drain()
+                drainUnavailable()
             else if ((blocked || stalling) && !queue.isEmpty())
                 // Drain again for a worker that is ALREADY Stalled and still cannot serve its queue. The transition drain
                 // above fires once, on the Running -> Stalled edge, but tasks keep arriving after it: Scheduler.schedule
@@ -250,7 +269,7 @@ abstract private class Worker(
                 // stranded work: an I/O driver parked in a poll whose event the stranded task would produce, or a finalizer
                 // spinning on a flag the stranded task sets. A task that honors the preemption yields within its next
                 // suspension point and run() then polls its own queue, so the drain moves at most the arrivals of one cycle.
-                drain()
+                drainUnavailable()
         }
         available
     }
@@ -422,7 +441,8 @@ abstract private class Worker(
             statsScope.counterGauge("completions")(completions),
             statsScope.counterGauge("mounts")(mounts),
             statsScope.counterGauge("stolen_tasks")(stolenTasks),
-            statsScope.counterGauge("lost_tasks")(lostTasks.sum())
+            statsScope.counterGauge("lost_tasks")(lostTasks.sum()),
+            statsScope.counterGauge("drain_put_backs")(queue.drainPutBacks.sum())
         )
 
     def status(): WorkerStatus = {

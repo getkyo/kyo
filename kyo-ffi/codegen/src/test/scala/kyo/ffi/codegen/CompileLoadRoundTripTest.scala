@@ -329,6 +329,59 @@ class CompileLoadRoundTripTest extends kyo.test.Test[Any]:
         end try
     }
 
+    "constructing the impl loads its library, so a missing one fails the construction and not the first call" in {
+        val absentId    = "kyo_round_trip_absent"
+        val absentTrait = "AbsentRoundTrip"
+        val absentFqcn  = s"$pkgName.${absentTrait}Impl"
+        val absentPath  = scratchDir.resolve("no-such-library.bin")
+        val workDir     = Files.createTempDirectory(scratchDir, "absent-")
+        val srcDir      = Files.createDirectories(workDir.resolve("src"))
+        val outDir      = Files.createDirectories(workDir.resolve("classes"))
+        val traitSrc    = srcDir.resolve(s"$absentTrait.scala")
+        val implSrc     = srcDir.resolve(s"${absentTrait}Impl.scala")
+        Files.writeString(
+            traitSrc,
+            emitBindingTrait().replace(traitSimpleName, absentTrait).replace(s""""$libraryId"""", s""""$absentId"""")
+        )
+        Files.writeString(
+            implSrc,
+            JvmEmitter.emit(mkTrait(
+                simpleName = absentTrait,
+                library = absentId,
+                packageName = pkgName,
+                methods = List(
+                    mkMethod(
+                        "roundTripAdd",
+                        "round_trip_add",
+                        List(ParamSpec("a", TypeRef.IntT), ParamSpec("b", TypeRef.IntT)),
+                        ReturnShape.Primitive(TypeRef.IntT)
+                    )
+                )
+            ))
+        )
+        assert(compileInProcess(Seq(traitSrc, implSrc), outDir), s"compilation failed; sources at $srcDir")
+
+        java.lang.System.setProperty(s"kyo.ffi.$absentId.path", absentPath.toString): Unit
+        val cl = new URLClassLoader(Array(outDir.toUri.toURL), getClass.getClassLoader)
+        try
+            val implClass = cl.loadClass(absentFqcn)
+            val failure   =
+                try
+                    implClass.getDeclaredConstructor().newInstance()
+                    None
+                catch case e: java.lang.reflect.InvocationTargetException => Some(e.getCause)
+            val chain = Iterator.iterate(failure.orNull)(_.getCause).takeWhile(_ ne null).toList
+            assert(failure.isDefined, "the impl constructed without loading its library")
+            assert(
+                chain.exists(t => String.valueOf(t.getMessage).contains("no-such-library.bin")),
+                s"the construction failed for a reason other than the missing library: ${chain.map(_.toString)}"
+            )
+        finally
+            cl.close()
+            java.lang.System.clearProperty(s"kyo.ffi.$absentId.path"): Unit
+        end try
+    }
+
     "negative: a deliberately broken emission fails compilation" in {
         val workDir  = Files.createTempDirectory(scratchDir, "bad-")
         val srcDir   = Files.createDirectories(workDir.resolve("src"))

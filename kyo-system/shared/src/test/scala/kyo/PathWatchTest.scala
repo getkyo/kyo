@@ -113,6 +113,62 @@ class PathWatchTest extends FileSystemWatchTestSuite:
             PathWatch.polling(this, path, options)
     end RecoveryFaultRead
 
+    /** Reads `target` as access denied while `denied` is set, which is how Windows reports a path that is being deleted. */
+    final private class DeniedRead(
+        delegate: FileSystem.Write[Sync],
+        target: Path,
+        denied: AtomicBoolean
+    ) extends FileSystem.Read[Sync], FileSystem.Watch:
+        export delegate.{exists as _, list as _, stat as _, *}
+
+        val deniedReports = new java.util.concurrent.atomic.AtomicInteger(0)
+
+        private def isDenied(path: Path)(using Frame): Boolean < Sync =
+            if path != target then false
+            else
+                denied.get.map {
+                    case true  => Sync.defer(deniedReports.incrementAndGet()).andThen(true)
+                    case false => false
+                }
+
+        override def exists(path: Path)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            exists(path, false)
+
+        override def exists(path: Path, followLinks: Boolean)(using Frame): Boolean < (Sync & Abort[FileReadException]) =
+            isDenied(path).map {
+                case true  => Abort.fail(FileAccessDeniedException(path))
+                case false => delegate.exists(path, followLinks)
+            }
+
+        override def stat(path: Path)(using Frame): Path.PathStat < (Sync & Abort[FileReadException]) =
+            isDenied(path).map {
+                case true  => Abort.fail(FileAccessDeniedException(path))
+                case false => delegate.stat(path)
+            }
+
+        override def list(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
+            isDenied(path).map {
+                case true  => Abort.fail(FileAccessDeniedException(path))
+                case false => delegate.list(path)
+            }
+
+        def list(path: Path, glob: Glob, caseSensitivity: Glob.CaseSensitivity)(using
+            Frame
+        ): Chunk[Path] < (Sync & Abort[FileReadException | FileStructureException]) =
+            delegate.list(path, glob, caseSensitivity)
+
+        def openWatcher(path: Path, options: WatchOptions)(using
+            Frame
+        ): Path.Watcher < (Sync & Async & Scope & Abort[FileWatchException]) =
+            PathWatch.polling(this, path, options)
+    end DeniedRead
+
+    /** Advances one poll interval and waits for what that poll led to: the next poll armed, or the stream ended. Waiting for the
+      * re-armed poll alone would hang a leaf whose watcher ended instead, where the leaf's own assertion should report it.
+      */
+    private def pollOnce(clock: Clock.TimeControl, ended: Promise[Unit, Any])(using Frame): Unit < Async =
+        clock.advance(10.millis).andThen(Async.race(clock.awaitPendingSleepers(1), ended.get))
+
     protected def withFileSystem(
         use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
             (Async & Sync & Scope & Abort[FileSystemException])
@@ -786,6 +842,93 @@ class PathWatchTest extends FileSystemWatchTestSuite:
                         Abort.run[FileWatchException](fs.openWatcher(root, WatchOptions())).map {
                             case Result.Panic(error) => assert(error eq marker)
                             case other               => fail(s"expected existence-check panic, found $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a root that reads access denied while it goes away invalidates the watch" in {
+        Clock.withTimeControl { clock =>
+            hostRoot("kyo-path-watch-denied-root").map { dir =>
+                val delegate = FileSystem.host
+                val root     = dir / "denied-root"
+                AtomicBoolean.init(false).map { denied =>
+                    val fs = new DeniedRead(delegate, root, denied)
+                    delegate.mkDir(root).andThen {
+                        fs.openWatcher(root, WatchOptions()).map { watcher =>
+                            Fiber.initUnscoped(Scope.run(Abort.run[FileWatchException](watcher.events.run))).map { fiber =>
+                                Promise.init[Unit, Any].map { ended =>
+                                    fiber.onComplete(_ => ended.completeUnitDiscard).andThen {
+                                        denied.set(true).andThen(pollOnce(clock, ended)).andThen {
+                                            delegate.removeAll(root).andThen(denied.set(false))
+                                        }.andThen(clock.advance(10.millis)).andThen(fiber.get).map { result =>
+                                            assert(fs.deniedReports.get() > 0)
+                                            assert(result == Result.Success(Chunk(PathChange.Invalidated(root))))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a child that reads access denied while it goes away is reported removed" in {
+        Clock.withTimeControl { clock =>
+            hostRoot("kyo-path-watch-denied-child").map { dir =>
+                val delegate = FileSystem.host
+                val root     = dir / "denied-child-root"
+                val child    = root / "child.txt"
+                AtomicBoolean.init(false).map { denied =>
+                    val fs = new DeniedRead(delegate, child, denied)
+                    delegate.write(child, "value", Path.WriteOptions()).andThen {
+                        fs.openWatcher(root, WatchOptions()).map { watcher =>
+                            Fiber.initUnscoped(Scope.run(Abort.run[FileWatchException](watcher.events.take(1).run))).map { fiber =>
+                                Promise.init[Unit, Any].map { ended =>
+                                    fiber.onComplete(_ => ended.completeUnitDiscard).andThen {
+                                        denied.set(true).andThen(pollOnce(clock, ended)).andThen {
+                                            delegate.removeAll(child).andThen(denied.set(false))
+                                        }.andThen {
+                                            // A removal is itself confirmed by a second poll, so the event follows two polls on.
+                                            pollOnce(clock, ended).andThen(clock.advance(10.millis))
+                                        }.andThen(fiber.get).map { result =>
+                                            assert(fs.deniedReports.get() > 0)
+                                            assert(result == Result.Success(Chunk(PathChange.Removed(child))))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a root that keeps reading access denied fails the watch with it" in {
+        Clock.withTimeControl { clock =>
+            hostRoot("kyo-path-watch-denied-stays").map { dir =>
+                val delegate = FileSystem.host
+                val root     = dir / "denied-stays-root"
+                AtomicBoolean.init(false).map { denied =>
+                    val fs = new DeniedRead(delegate, root, denied)
+                    delegate.mkDir(root).andThen {
+                        fs.openWatcher(root, WatchOptions()).map { watcher =>
+                            Fiber.initUnscoped(Scope.run(Abort.run[FileWatchException](watcher.events.run))).map { fiber =>
+                                Promise.init[Unit, Any].map { ended =>
+                                    fiber.onComplete(_ => ended.completeUnitDiscard).andThen {
+                                        denied.set(true).andThen(pollOnce(clock, ended)).andThen(clock.advance(10.millis))
+                                            .andThen(fiber.get).map { result =>
+                                                assert(result == Result.Failure(FileAccessDeniedException(root)))
+                                                assert(fs.deniedReports.get() >= 2)
+                                            }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

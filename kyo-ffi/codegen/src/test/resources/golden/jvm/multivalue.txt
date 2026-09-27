@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class MultiValueBindingsImpl extends MultiValueBindings:
     import MultiValueBindingsImpl.*
+    MultiValueBindingsImpl.loaded()
 
     def readInto(fd: Int, buf: Buffer[Byte])(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[kyo.example.golden.ReadResult, Any] =
         kyo.ffi.internal.BlockingBridge.run {
@@ -29,6 +30,7 @@ end MultiValueBindingsImpl
 
 object MultiValueBindingsImpl:
     AbiCheck.verify(1, "kyo.example.MultiValueBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_mv")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class HandleBindingsImpl extends HandleBindings:
     import HandleBindingsImpl.*
+    HandleBindingsImpl.loaded()
 
     def open(path: String)(using kyo.AllowUnsafe): Ffi.Handle[kyo.example.golden.MyHandle] =
         val retValRaw = facade.open(path)
@@ -25,6 +26,7 @@ end HandleBindingsImpl
 
 object HandleBindingsImpl:
     AbiCheck.verify(1, "kyo.example.HandleBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_handle",
         Seq(

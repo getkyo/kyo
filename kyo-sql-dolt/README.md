@@ -156,6 +156,30 @@ Each `Dolt.ConflictSummary` names the table holding its rows through `conflictTa
 conflicted table's own prefixed `base_`, `our_` and `their_`. A **schema** conflict is reported separately,
 because choosing a side row by row means nothing when the two sides disagree about what columns the table has.
 
+### Adding to a merge before it commits
+
+`stageMerge` is `git merge --no-ff --no-commit`: a clean merge leaves its result staged in the working set, so
+the caller can write more and commit once. That one commit has both parents and holds the merged changes
+together with the caller's writes. It never fast-forwards, since a fast-forward would put the merged commits on
+the branch as they are, with no commit of the caller's own to add to.
+
+```scala
+Dolt.use { dolt =>
+    dolt.stageMerge(Dolt.Ref.Branch("restock")).map { outcome =>
+        // Ascribed for the reason the example above is: one case commits and the others do not.
+        (outcome match
+            case Dolt.Merge.Staged(_) =>
+                dolt.executeRaw("INSERT INTO item (sku) VALUES ('KYO-2')")
+                    .andThen(dolt.commit("merge restock").map(Maybe(_)))
+            case _ => Absent
+        ): Maybe[Dolt.Commit] < (Async & Abort[SqlException])
+    }
+}
+```
+
+Its answer is a `Dolt.StagedMerge`, which holds only the cases a staged merge can produce: `UpToDate` and
+`Conflicted` are the same values `merge` answers, and `Staged` replaces `FastForward` and `Merged`.
+
 ## Reading history
 
 Every read answers the whole row the server has, so showing who changed what needs no follow-up query:

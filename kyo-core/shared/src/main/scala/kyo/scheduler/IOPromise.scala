@@ -433,6 +433,8 @@ private[kyo] object IOPromise:
             new Pending[E, A]:
                 def waiters: Int               = self.waiters + tail.waiters
                 def interrupt(error: Error[E]) = interruptLoop(self, error)
+                // Not a step loop like the two above: `run` and `interrupt` consume a node and return the rest, while
+                // `remove` returns the whole chain rebuilt, so stepping over it never reaches Empty.
                 // `tail` holds what was registered on a promise before it became this one.
                 def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
                     val head = self.remove(key)
