@@ -439,7 +439,7 @@ ever called: on a plaintext connection it fails with `SqlConnectionClearPassword
 sending the password in the clear. Configure TLS through the portable `sslmode` URL option or `config.tlsMode`, both
 documented in [kyo-sql](../kyo-sql/README.md#engines-and-configuration).
 
-Digests come from core's `internal/auth/PureHash.scala`, which both engines share.
+Digests come from kyo-data's `kyo.internal.crypto` package, which both engines share.
 
 ## Configuration
 

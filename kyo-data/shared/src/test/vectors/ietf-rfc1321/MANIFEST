@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc1321.txt
+source-sha256 284a79d148400d9cd2a423211d1103b5cef0fb9256a4cbe6d7ebe5197c3149dd
+license IETF Trust Legal Provisions (TLP 5, effective 2015-03-25), section 3.c.i: anyone may copy, publish, display and distribute IETF Documents in full and without modification; the file is whole, unmodified, and keeps its notices, including RSA Data Security's on the reference implementation it contains
+file rfc1321.txt 284a79d148400d9cd2a423211d1103b5cef0fb9256a4cbe6d7ebe5197c3149dd rfc1321.txt

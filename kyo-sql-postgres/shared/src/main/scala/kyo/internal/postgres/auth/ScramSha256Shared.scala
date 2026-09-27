@@ -2,7 +2,9 @@ package kyo.internal.postgres.auth
 
 import java.util.Base64
 import kyo.Span
-import kyo.internal.auth.PureHash
+import kyo.internal.crypto.Hmac
+import kyo.internal.crypto.Pbkdf2
+import kyo.internal.crypto.Sha256
 
 /** SCRAM-SHA-256 / SCRAM-SHA-256-PLUS (RFC 7677 / RFC 5802) client built on pure-Scala crypto.
   *
@@ -19,8 +21,8 @@ import kyo.internal.auth.PureHash
   * [[ChannelBinding.NotSupported]] to `"n,,"`, both with the header alone as the `c=` value. Which of the last two applies is the difference
   * between reporting a possible downgrade and reporting no capability, so the caller decides it rather than this class inferring it.
   *
-  * The state machine lives in [[ScramSha256Base]]; this class supplies the three crypto primitives from
-  * [[kyo.internal.auth.PureHash]], so the same bytes are produced on every platform without `javax.crypto`.
+  * The state machine lives in [[ScramSha256Base]]; this class supplies the three crypto primitives from kyo-data's
+  * `kyo.internal.crypto`, so the same bytes are produced on every platform without `javax.crypto`.
   *
   * Reference: RFC 7677 §3 test vectors, RFC 5802 §5
   */
@@ -28,13 +30,13 @@ final private[kyo] class ScramSha256Shared(username: String, clientNonce: String
     extends ScramSha256Base(username, clientNonce, channelBinding):
 
     private[kyo] def sha256(input: Array[Byte]): Array[Byte] =
-        PureHash.sha256(input)
+        Sha256.hash(input)
 
     private[kyo] def hmacSha256(key: Array[Byte], data: Array[Byte]): Array[Byte] =
-        PureHash.hmacSha256(key, data)
+        Hmac.sha256(key, data)
 
     private[kyo] def pbkdf2HmacSha256(password: Array[Byte], salt: Array[Byte], iterations: Int, keyLength: Int): Array[Byte] =
-        PureHash.pbkdf2HmacSha256(password, salt, iterations, keyLength)
+        Pbkdf2.hmacSha256(password, salt, iterations, keyLength)
 
 end ScramSha256Shared
 

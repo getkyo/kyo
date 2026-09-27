@@ -4,7 +4,8 @@ import kyo.*
 import kyo.SqlRequestException
 import kyo.SqlRequestRsaKeyTooLargeException
 import kyo.SqlRequestRsaOaepException
-import kyo.internal.auth.PureHash
+import kyo.internal.crypto.Bytes
+import kyo.internal.crypto.Sha1
 
 /** Pure-Scala RSA-OAEP encryption (RFC 8017 §7.1.1) using SHA-1 and MGF1-SHA-1.
   *
@@ -244,9 +245,9 @@ private[kyo] object RsaOaep:
         java.lang.System.arraycopy(m, 0, db, hLen + psLen + 1, mLen)
 
         val dbMask     = mgf1(seed, k - hLen - 1)
-        val maskedDb   = PureHash.xor(db, dbMask)
+        val maskedDb   = Bytes.xor(db, dbMask)
         val seedMask   = mgf1(maskedDb, hLen)
-        val maskedSeed = PureHash.xor(seed, seedMask)
+        val maskedSeed = Bytes.xor(seed, seedMask)
 
         // EM = 0x00 || maskedSeed || maskedDB
         val em = new Array[Byte](k)
@@ -276,9 +277,8 @@ private[kyo] object RsaOaep:
     /** Returns the key size in bytes (modulus byte length, rounding up to the next whole byte). */
     private[auth] def keyLenBytes(modulus: BigInt): Int = (modulus.bitLength + 7) / 8
 
-    /** SHA-1 hash of the input bytes. Delegates to [[kyo.internal.auth.PureHash.sha1]] which is platform-neutral. */
     private[auth] def sha1(input: Array[Byte]): Array[Byte] =
-        PureHash.sha1(input)
+        Sha1.hash(input)
 
     // --- DER reader ---
 

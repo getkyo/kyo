@@ -11,7 +11,7 @@ import kyo.SqlConnectionScramFailedException
 import kyo.SqlConnectionScramIterationsTooHighException
 import kyo.SqlDecodeScramFormatException
 import kyo.SqlException
-import kyo.internal.auth.PureHash
+import kyo.internal.crypto.Bytes
 
 /** Which of RFC 5802's three GS2 channel-binding flags the client is entitled to send.
   *
@@ -49,7 +49,7 @@ end ChannelBinding
   * Leaving the three crypto primitives abstract costs one virtual dispatch per call (immaterial versus network latency) and keeps the
   * override points explicit and auditable.
   *
-  * [[ScramSha256Shared]] is the subclass the driver uses; it supplies all three primitives from [[kyo.internal.auth.PureHash]], so the
+  * [[ScramSha256Shared]] is the subclass the driver uses; it supplies all three primitives from kyo-data's `kyo.internal.crypto`, so the
   * exchange behaves identically on every platform.
   */
 abstract private[kyo] class ScramSha256Base(username: String, clientNonce: String, channelBinding: ChannelBinding):
@@ -99,7 +99,7 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
             val clientFinalWoProof = s"c=$cBindingValue,r=$serverNonce"
             val authMessage        = s"$clientFirstBare,$serverFirst,$clientFinalWoProof"
             val clientSignature    = hmacSha256(storedKey, authMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            val clientProof        = PureHash.xor(clientKey, clientSignature)
+            val clientProof        = Bytes.xor(clientKey, clientSignature)
             val clientFinal        = s"$clientFinalWoProof,p=${b64encode(clientProof)}"
 
             val serverKey = hmacSha256(saltedPassword, "Server Key".getBytes(java.nio.charset.StandardCharsets.UTF_8))

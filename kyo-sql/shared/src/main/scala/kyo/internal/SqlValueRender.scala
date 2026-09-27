@@ -4,6 +4,7 @@ import kyo.Chunk
 import kyo.Maybe
 import kyo.Span
 import kyo.discard
+import kyo.internal.crypto.Hex
 
 /** The one rendering `SqlRow.text` answers with, for every backend and every wire format.
   *
@@ -199,24 +200,13 @@ object SqlValueRender:
 
     // ── Bytes ───────────────────────────────────────────────────────────────────
 
-    private val hexDigits = "0123456789abcdef"
-
     /** `\x` then two lowercase hex digits per byte.
       *
       * A byte column has no text rendering to pass through, so a form has to be chosen rather than found. No spelling is a literal on every
       * engine, so the prefix is kept for the one thing it buys: telling a rendered byte string from a rendered string.
       */
     def bytes(value: Array[Byte]): String =
-        val sb = new StringBuilder(2 + value.length * 2)
-        discard(sb.append("\\x"))
-        var i = 0
-        while i < value.length do
-            val b = value(i) & 0xff
-            discard(sb.append(hexDigits.charAt(b >>> 4)).append(hexDigits.charAt(b & 0x0f)))
-            i += 1
-        end while
-        sb.toString
-    end bytes
+        "\\x" + Hex.encode(value)
 
     // ── Array ───────────────────────────────────────────────────────────────────
 
