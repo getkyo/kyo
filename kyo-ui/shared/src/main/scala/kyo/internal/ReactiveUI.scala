@@ -1032,7 +1032,7 @@ private[kyo] object ReactiveUI:
                         }
                     case Some(expiresAt) =>
                         Clock.nowMonotonic.map { now =>
-                            val wait                = expiresAt - now
+                            val wait                = expiresAt.minusOrZero(now)
                             val sleep: Unit < Async = if wait > Duration.Zero then Clock.sleep(wait).map(_.get) else ()
                             Abort.runPartial[Closed](Async.race(sleep, expiryWake.take.unit)).map {
                                 case Result.Success(_) =>

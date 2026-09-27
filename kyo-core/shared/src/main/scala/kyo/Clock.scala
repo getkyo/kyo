@@ -22,6 +22,7 @@ import scala.collection.mutable.PriorityQueue
   *   - Controlling execution timing with `sleep` for suspending execution
   *   - Scheduling recurring tasks with `repeatWithDelay` and `repeatAtInterval`
   *   - Controlling time flow for testing with `withTimeShift` and `withTimeControl`
+  *   - Displacing the wall reading alone with `withTimeOffset`
   *
   * The Clock API has both stateful methods (bound to a specific Clock instance) and stateless methods (using the local Clock in context).
   * This design allows most code to use the simpler stateless API while still supporting custom Clock implementations when needed.
@@ -136,7 +137,7 @@ object Clock:
     object Stopwatch:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         final class Unsafe(start: Duration, clock: Clock.Unsafe) extends Serializable:
-            def elapsed()(using AllowUnsafe): Duration = clock.nowMonotonic() - start
+            def elapsed()(using AllowUnsafe): Duration = clock.nowMonotonic().minusOrZero(start)
             def safe: Stopwatch                        = Stopwatch(this)
         end Unsafe
     end Stopwatch
@@ -168,7 +169,7 @@ object Clock:
         final class Unsafe(endMonotonic: Maybe[Duration], clock: Clock.Unsafe) extends Serializable:
 
             def timeLeft()(using AllowUnsafe): Duration =
-                endMonotonic.map(_ - clock.nowMonotonic()).getOrElse(Duration.Infinity)
+                endMonotonic.map(_.minusOrZero(clock.nowMonotonic())).getOrElse(Duration.Infinity)
 
             def isOverdue()(using AllowUnsafe): Boolean = endMonotonic.exists(_ < clock.nowMonotonic())
 
@@ -239,7 +240,7 @@ object Clock:
                         def nowMonotonic()(using AllowUnsafe) =
                             now().toDuration
                         def now()(using AllowUnsafe) =
-                            val diff = underlying.now() - start
+                            val diff = underlying.now().minusOrZero(start)
                             start + (diff * factor)
                         end now
                         override def sleep(duration: Duration) =
@@ -248,6 +249,106 @@ object Clock:
             }
         end if
     end withTimeShift
+
+    /** A signed displacement of the wall clock, in nanoseconds, applied by [[withTimeOffset]].
+      *
+      * It is signed because a displaced clock may read ahead of the clock it derives from or behind it, which a [[Duration]] cannot carry:
+      * a `Duration` is never negative. [[TimeOffset.between]] is the displacement that makes a reading of `from` read `to`, negative when
+      * `to` precedes `from`.
+      *
+      * `toNanos` and [[TimeOffset.fromNanos]] round-trip exactly, which makes the signed nanosecond count the form to persist an offset
+      * in and reapply it later.
+      *
+      * Note: an offset of `ahead(Duration.Infinity)` pins the displaced reading at `Instant.Max`, and `behind(Duration.Infinity)` at
+      * `Instant.Min`. Sums of offsets saturate at those two bounds rather than wrapping.
+      *
+      * @see
+      *   [[withTimeOffset]] For running an effect under a displaced clock
+      * @see
+      *   [[withTimeShift]] For scaling the rate of the clock instead
+      */
+    opaque type TimeOffset = Long
+
+    object TimeOffset:
+
+        given CanEqual[TimeOffset, TimeOffset] = CanEqual.derived
+
+        /** No displacement. */
+        val Zero: TimeOffset = 0L
+
+        /** Displaces the reading forward, later than the underlying clock. */
+        def ahead(by: Duration): TimeOffset = by.toNanos
+
+        /** Displaces the reading backward, earlier than the underlying clock. */
+        def behind(by: Duration): TimeOffset = -by.toNanos
+
+        /** The displacement that makes a reading of `from` read `to`: `to` minus `from`, negative when `to` precedes `from`. */
+        def between(from: Instant, to: Instant): TimeOffset =
+            to.minus(from) match
+                case Present(forward) => ahead(forward)
+                case Absent           => behind(from.minusOrZero(to))
+
+        /** The offset of `nanos` signed nanoseconds, the inverse of `toNanos`. */
+        def fromNanos(nanos: Long): TimeOffset = Math.max(nanos, -Long.MaxValue)
+
+        extension (self: TimeOffset)
+
+            /** The signed displacement in nanoseconds. */
+            def toNanos: Long = self
+        end extension
+    end TimeOffset
+
+    /** Runs an effect with a Clock whose wall reading is displaced by `offset` from the current Clock's.
+      *
+      * Only the wall reading moves: `now` is the current Clock's `now` plus `offset`, while `nowMonotonic` and sleeps are the current
+      * Clock's, unchanged and unscaled. Stopwatches, deadlines, `Async.sleep` and `Async.timeout` therefore measure the same durations as
+      * outside the scope. Nested offsets sum. Fibers forked inside the scope inherit the displaced Clock.
+      *
+      * Under [[withTimeControl]], `now` is the controlled time plus `offset`, and a sleep fires when the control advances past its
+      * duration.
+      *
+      * IMPORTANT: a [[withTimeControl]] opened inside the scope does not reuse an outer control. The displaced Clock is not a
+      * [[TimeControl]], so it starts a new controlled Clock at `Instant.Epoch`, with neither the offset nor the outer control's time.
+      *
+      * @param offset
+      *   The signed displacement of the wall reading
+      * @param v
+      *   The effect to run with the displaced clock
+      * @return
+      *   The result of running the effect with the displaced clock
+      */
+    def withTimeOffset[A, S](offset: TimeOffset)(v: => A < S)(using Frame): A < (Sync & S) =
+        if offset == TimeOffset.Zero then v
+        else
+            Sync.Unsafe.withLocal(local) { clock =>
+                val displaced =
+                    clock.unsafe match
+                        case outer: OffsetUnsafe => OffsetUnsafe(outer.underlying, addOffsets(outer.offset, offset))
+                        case underlying          => OffsetUnsafe(underlying, offset)
+                let(Clock(displaced))(v)
+            }
+        end if
+    end withTimeOffset
+
+    // Flat rather than stacked, so nested offsets sum before saturating: ahead(Infinity) inside behind(Infinity) reads the underlying time.
+    final private class OffsetUnsafe(val underlying: Unsafe, val offset: TimeOffset) extends Unsafe:
+        def now()(using AllowUnsafe) =
+            val base = underlying.now()
+            if offset >= 0 then base + Duration.fromNanos(offset)
+            else base - Duration.fromNanos(-offset)
+        end now
+        def nowMonotonic()(using AllowUnsafe) = underlying.nowMonotonic()
+        def sleep(duration: Duration)         = underlying.sleep(duration)
+    end OffsetUnsafe
+
+    private def addOffsets(a: TimeOffset, b: TimeOffset): TimeOffset =
+        val sum = a + b
+        // Overflow is two operands of one sign producing a sum of the other.
+        if ((a ^ sum) & (b ^ sum)) < 0 then
+            if a > 0 then Long.MaxValue else -Long.MaxValue
+        else TimeOffset.fromNanos(sum)
+        end if
+    end addOffsets
 
     /** Interface for controlling time in a test environment.
       *

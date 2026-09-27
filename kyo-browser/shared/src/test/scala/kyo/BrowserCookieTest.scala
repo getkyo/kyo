@@ -270,7 +270,7 @@ class BrowserCookieTest extends BrowserTest:
                                 case Some(c) =>
                                     c.expires match
                                         case Present(actual) =>
-                                            val deltaMillis = math.abs(((actual - expected): Duration).toMillis)
+                                            val deltaMillis = actual.max(expected).minusOrZero(actual.min(expected)).toMillis
                                             assert(
                                                 deltaMillis < 1000,
                                                 s"expected expires within 1s of $expected but got $actual (delta=${deltaMillis}ms)"

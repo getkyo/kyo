@@ -2277,8 +2277,8 @@ class FlowEngineTest extends FlowEngineSupport:
                                 "registering the definition must recover the execution it was held for"
                             )
                             assert(
-                                elapsed - Instant.Epoch < pollFor,
-                                s"the recovery must come from the registration rather than from the poll timing out, took ${elapsed - Instant.Epoch}"
+                                elapsed.minusOrZero(Instant.Epoch) < pollFor,
+                                s"the recovery must come from the registration rather than from the poll timing out, took ${elapsed.minusOrZero(Instant.Epoch)}"
                             )
                         end for
                     }
@@ -5114,8 +5114,8 @@ class FlowEngineTest extends FlowEngineSupport:
                 yield
                     assert(status == Flow.Status.Completed, s"expected Completed, got $status")
                     assert(
-                        (after - before) >= 200.millis,
-                        s"three iterations separated by 100ms cannot finish in ${after - before}"
+                        after.minusOrZero(before) >= 200.millis,
+                        s"three iterations separated by 100ms cannot finish in ${after.minusOrZero(before)}"
                     )
                 end for
             }
@@ -8880,7 +8880,7 @@ class FlowEngineTest extends FlowEngineSupport:
                     after  <- Clock.now
                 yield
                     assert(status == Flow.Status.Completed, s"expected Completed, got $status")
-                    val elapsed = after - before
+                    val elapsed = after.minusOrZero(before)
                     assert(
                         elapsed < 3.seconds,
                         s"four one-second items at concurrency 4 should overlap, they took $elapsed"

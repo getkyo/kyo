@@ -337,16 +337,16 @@ object Schedule:
                     case Absent     => offset
                     case Present(_) => (offset.toNanos % periodNanos).nanos
 
-                val elapsed  = (reference - Instant.Epoch).toNanos % periodNanos
+                val elapsed  = reference.minusOrZero(Instant.Epoch).toNanos % periodNanos
                 val nextTime = reference - elapsed.nanos + effectiveOffset
 
                 val finalTime =
                     if nextTime <= now then
-                        val periodsToSkip = ((now - nextTime).toNanos / periodNanos) + 1
+                        val periodsToSkip = (now.minusOrZero(nextTime).toNanos / periodNanos) + 1
                         nextTime + (periodsToSkip * periodNanos).nanos
                     else nextTime
 
-                Maybe((finalTime - now, Anchored(period, offset, Present(finalTime))))
+                Maybe((finalTime.minusOrZero(now), Anchored(period, offset, Present(finalTime))))
             end next
 
             def show =
@@ -392,7 +392,7 @@ object Schedule:
                 schedule.next(now).flatMap { (d, s) =>
                     if d > duration then Maybe.empty
                     else if d == Duration.Zero && s == schedule then Maybe((d, Schedule.done))
-                    else Maybe((d, s.maxDuration(duration - d)))
+                    else Maybe((d, s.maxDuration(duration.minusOrZero(d))))
                 }
             def show = s"(${schedule.show}).maxDuration(${duration.show})"
         end MaxDuration

@@ -236,7 +236,7 @@ class ProcessExitCodeTest extends kyo.test.Test[Any]:
                     _        <- clock.advance(2.minutes)
                     result   <- fiber.get
                     finished <- Clock.live.now
-                    elapsed = finished - started
+                    elapsed = finished.minusOrZero(started)
                 yield assert(
                     pending.isEmpty && result == Absent && elapsed < budget,
                     s"expected a clock-driven deadline; pending=$pending result=$result elapsed=$elapsed"
