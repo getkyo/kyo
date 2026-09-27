@@ -41,6 +41,17 @@ class Sha256Test extends kyo.test.Test[Any]:
             assert(hex(Sha256.hash(utf8(input))) == "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1")
         }
 
+        "matches the published one-million-a digest" in {
+            val input = Array.fill(1000000)('a'.toByte)
+            assert(hex(Sha256.hash(input)) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+        }
+
+        "matches exact digests for repeated-character inputs at the padding boundaries" in {
+            assert(hex(Sha256.hash(Array.fill(55)('y'.toByte))) == "fb66d40c3bfff05b0d5af8612d0abfbfacc6f5f26c330bc7ad634f1f44bc20ad")
+            assert(hex(Sha256.hash(Array.fill(56)('z'.toByte))) == "c66a5b692b9a20229733ef8b87cfec52679c86a0c0245643484c46d4dcd82afa")
+            assert(hex(Sha256.hash(Array.fill(64)('x'.toByte))) == "7ce100971f64e7001e8fe5a51973ecdfe1ced42befe7ee8d5fd6219506b5393c")
+        }
+
         "matches exact digests for generated boundary inputs" in {
             val vectors = Seq(
                 1   -> "4a64a107f0cb32536e5bce6c98c393db21cca7f4ea187ba8c4dca8b51d4ea80a",
