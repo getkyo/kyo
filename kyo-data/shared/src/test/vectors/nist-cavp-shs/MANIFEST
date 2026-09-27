@@ -1,0 +1,6 @@
+source https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/shs/shabytetestvectors.zip
+source-sha256 929ef80b7b3418aca026643f6f248815913b60e01741a44bba9e118067f4c9b8
+license NIST CAVP Secure Hash Standard byte-oriented test vectors, a work of the United States government, not subject to copyright in the United States
+file SHA512ShortMsg.rsp e53a36c03609e5a3e3cc4b6e117a499db7864c23ec825c6cec99503a45f40764 shabytetestvectors/SHA512ShortMsg.rsp
+file SHA512LongMsg.rsp b1f3f05d5c209777954d49521d7ea1349447c36a0c52849e044bc397a27dd410 shabytetestvectors/SHA512LongMsg.rsp
+file SHA512Monte.rsp 8ca78659286c2f01667a98fc7accd32fc171ae7b24ac00f1a8ce6b77770247fa shabytetestvectors/SHA512Monte.rsp

@@ -800,7 +800,15 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %%% "pprint" % "0.9.6"
+            libraryDependencies += "com.lihaoyi" %%% "pprint" % "0.9.6",
+            Test / sourceGenerators += Def.task {
+                TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.crypto",
+                    "TestVectors"
+                )
+            }.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
