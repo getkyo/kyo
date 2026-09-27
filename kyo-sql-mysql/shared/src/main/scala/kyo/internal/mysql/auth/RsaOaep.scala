@@ -44,7 +44,7 @@ private[kyo] object RsaOaep:
         plaintext: Span[Byte],
         random: SecureRandom
     )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
-        Rsa.publicKeyFromPem(publicKeyPem) match
+        Rsa.encryptionKeyFromPem(publicKeyPem) match
             case Result.Success(key) =>
                 val k      = key.sizeInBytes
                 val maxLen = k - 2 * hLen - 2

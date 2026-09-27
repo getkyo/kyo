@@ -109,6 +109,12 @@ class RsaPkcs1Test extends kyo.test.Test[Any]:
         assert(message.sameElements(rfc7515.signingInput) && signature.sameElements(rfc7515.signature))
     }
 
+    "a key read from a PEM, which passed only the ceilings, cannot be passed to verifySha256" in {
+        typeCheckFailure("""kyo.internal.crypto.Rsa.encryptionKeyFromPem(kyo.internal.crypto.RsaSpkiTest.testPubPem).map { key =>
+            kyo.internal.crypto.RsaPkcs1.verifySha256(key, Array.emptyByteArray, Array.emptyByteArray)
+        }""")("Rsa.PublicKey")
+    }
+
 end RsaPkcs1Test
 
 object RsaPkcs1Test:

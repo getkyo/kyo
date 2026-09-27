@@ -8,16 +8,20 @@ import kyo.*
   * and `m.modPow(e, n)` costs time quadratic in the modulus length and linear in the exponent's, so both are bounded before any
   * arithmetic runs: at most [[MaxModulusBits]] and [[MaxExponentBits]], the ceilings every entry point applies.
   *
-  * Two entry points build a key, and they differ in what else they check:
+  * Two kinds of key, each its own type, since they differ in what else was checked:
   *
-  *   - [[PublicKey.apply]] and [[publicKeyFromJwk]] build a key for signature verification. They add RFC 7518 section 3.3's floor of 2048
-  *     bits for RS256, and reject an even modulus, an exponent below 3 and an even exponent, which RFC 8017 section 3.1 rules out for any
-  *     RSA key. A JWK's `n` and `e` must be unpadded base64url without leading zero octets, as RFC 7518 section 6.3.1 requires.
-  *   - [[publicKeyFromPem]] and [[publicKeyFromSpki]] build a key a peer offers to encrypt to (a SubjectPublicKeyInfo, as a MySQL server
-  *     sends its `sha256_password` key). They apply the two ceilings and nothing else, so every key such a server can be configured with is
-  *     accepted; the reader takes BER as well as DER and does not compare the algorithm identifier.
+  *   - [[PublicKey]], built by [[PublicKey.apply]] and [[publicKeyFromJwk]], is a key for signature verification. Those add RFC 7518
+  *     section 3.3's floor of 2048 bits for RS256, and reject an even modulus, an exponent below 3 and an even exponent, which RFC 8017
+  *     section 3.1 rules out for any RSA key. A JWK's `n` and `e` must be unpadded base64url without leading zero octets, as RFC 7518
+  *     section 6.3.1 requires.
+  *   - [[EncryptionKey]], built by [[encryptionKeyFromPem]] and [[encryptionKeyFromSpki]], is a key a peer offers to encrypt to (a
+  *     SubjectPublicKeyInfo, as a MySQL server sends its `sha256_password` key). Those apply the two ceilings and nothing else, so every
+  *     key such a server can be configured with is accepted; the reader takes BER as well as DER and does not compare the algorithm
+  *     identifier. An `EncryptionKey` with `e = 1` or a 512-bit modulus is a valid value, which is why no verifier accepts the type: a
+  *     signature check over it would verify every message.
   *
-  * [[publicOperation]] is RSAEP and RSAVP1 of RFC 8017 sections 5.1.1 and 5.2.2, one computation, over octet strings of the key's length.
+  * [[publicOperation]] is RSAEP and RSAVP1 of RFC 8017 sections 5.1.1 and 5.2.2, one computation, over octet strings of the key's length,
+  * defined for both kinds.
   *
   * Failure is a [[Rsa.KeyFailure]] or [[Rsa.SpkiFailure]] value carrying what was measured, never an exception and never a module's own
   * error type: each caller maps it to its own failure leaf.
@@ -30,8 +34,7 @@ private[kyo] object Rsa:
 
     val MaxExponentBits: Int = 64
 
-    /** An RSA public key whose modulus and exponent sit under the two cost ceilings; one built through [[PublicKey.apply]] or
-      * [[publicKeyFromJwk]] also passed the verification checks of [[Rsa]].
+    /** An RSA public key whose modulus and exponent passed every verification check of [[Rsa]].
       *
       * A plain class rather than a case class: a case class companion gets a public synthesized `fromProduct` that calls the private
       * constructor, which would build a key past every check.
@@ -61,15 +64,34 @@ private[kyo] object Rsa:
             else Result.succeed(new PublicKey(modulus, exponent))
             end if
         end apply
+    end PublicKey
 
-        private[Rsa] def underCeilings(modulus: BigInt, exponent: BigInt): Result[SpkiFailure, PublicKey] =
+    /** A peer's RSA public key whose modulus and exponent sit under the two cost ceilings, and nothing else was checked. Its only use is
+      * encrypting to the peer; see [[Rsa]] for why it is not a [[PublicKey]].
+      *
+      * A plain class for the reason [[PublicKey]] is one.
+      */
+    final class EncryptionKey private (val modulus: BigInt, val exponent: BigInt) derives CanEqual:
+        def sizeInBytes: Int = (modulus.bitLength + 7) / 8
+
+        override def equals(other: Any): Boolean = other match
+            case that: EncryptionKey => modulus == that.modulus && exponent == that.exponent
+            case _                   => false
+
+        override def hashCode: Int = 31 * modulus.hashCode + exponent.hashCode
+
+        override def toString: String = s"EncryptionKey($modulus, $exponent)"
+    end EncryptionKey
+
+    object EncryptionKey:
+        private[Rsa] def underCeilings(modulus: BigInt, exponent: BigInt): Result[SpkiFailure, EncryptionKey] =
             val modulusBits  = modulus.bitLength
             val exponentBits = exponent.bitLength
             if modulusBits > MaxModulusBits then Result.fail(SpkiFailure.ModulusTooLarge(modulusBits, MaxModulusBits))
             else if exponentBits > MaxExponentBits then Result.fail(SpkiFailure.ExponentTooLarge(exponentBits, MaxExponentBits))
-            else Result.succeed(new PublicKey(modulus, exponent))
+            else Result.succeed(new EncryptionKey(modulus, exponent))
         end underCeilings
-    end PublicKey
+    end EncryptionKey
 
     /** The key a JSON Web Key's `n` and `e` members describe (RFC 7518 section 6.3.1). */
     def publicKeyFromJwk(n: String, e: String): Result[KeyFailure, PublicKey] =
@@ -80,7 +102,7 @@ private[kyo] object Rsa:
     /** The key a PEM `PUBLIC KEY` block holds: a base64 SubjectPublicKeyInfo between the two marker lines, whitespace anywhere. A body
       * whose final unit lacks its `=` padding is padded before decoding. Under the two ceilings only.
       */
-    def publicKeyFromPem(pem: String): Result[SpkiFailure, PublicKey] =
+    def encryptionKeyFromPem(pem: String): Result[SpkiFailure, EncryptionKey] =
         if !pem.contains(PemHeader) then Result.fail(SpkiFailure.PemHeaderMissing)
         else
             val body   = pem.replace(PemHeader, "").replace(PemFooter, "").replaceAll("\\s+", "")
@@ -90,17 +112,17 @@ private[kyo] object Rsa:
                     case 3 => body + "="
                     case _ => body
             Base64.decode(padded) match
-                case Result.Success(der) => publicKeyFromSpki(der.toArray)
+                case Result.Success(der) => encryptionKeyFromSpki(der.toArray)
                 case Result.Failure(e)   => Result.fail(SpkiFailure.PemNotBase64(e))
                 case panic: Result.Panic => panic
             end match
         end if
-    end publicKeyFromPem
+    end encryptionKeyFromPem
 
     /** The key a DER SubjectPublicKeyInfo holds (RFC 5280 section 4.1, with the RSAPublicKey of RFC 8017 appendix A.1.1 in its BIT
       * STRING). Under the two ceilings only.
       */
-    def publicKeyFromSpki(der: Array[Byte]): Result[SpkiFailure, PublicKey] =
+    def encryptionKeyFromSpki(der: Array[Byte]): Result[SpkiFailure, EncryptionKey] =
         val reader                                       = new DerReader(der)
         val parsed: Result[DerFailure, (BigInt, BigInt)] =
             for
@@ -118,23 +140,30 @@ private[kyo] object Rsa:
                 exponent        <- reader.readInteger()
             yield (modulus, exponent)
         parsed match
-            case Result.Success((modulus, exponent)) => PublicKey.underCeilings(modulus, exponent)
+            case Result.Success((modulus, exponent)) => EncryptionKey.underCeilings(modulus, exponent)
             case Result.Failure(failure)             => Result.fail(SpkiFailure.Der(failure))
             case panic: Result.Panic                 => panic
         end match
-    end publicKeyFromSpki
+    end encryptionKeyFromSpki
 
     /** `input ^ e mod n` as `key.sizeInBytes` big-endian bytes: RSAEP for a message and RSAVP1 for a signature, which RFC 8017 defines as
       * the same computation. `Absent` when `input` is not the key's length or its value is not below the modulus, the range both
       * primitives require. No argument is modified.
       */
     def publicOperation(key: PublicKey, input: Array[Byte]): Maybe[Array[Byte]] =
-        val k = key.sizeInBytes
+        publicOperation(key.modulus, key.exponent, input)
+
+    /** [[publicOperation]] over a peer's key: RSAEP, the message to encrypt raised to the peer's exponent. */
+    def publicOperation(key: EncryptionKey, input: Array[Byte]): Maybe[Array[Byte]] =
+        publicOperation(key.modulus, key.exponent, input)
+
+    private def publicOperation(modulus: BigInt, exponent: BigInt, input: Array[Byte]): Maybe[Array[Byte]] =
+        val k = (modulus.bitLength + 7) / 8
         if input.length != k then Absent
         else
             val m = BigInt(1, input)
-            if m >= key.modulus then Absent
-            else Present(bigEndian(m.modPow(key.exponent, key.modulus), k))
+            if m >= modulus then Absent
+            else Present(bigEndian(m.modPow(exponent, modulus), k))
         end if
     end publicOperation
 
@@ -193,7 +222,7 @@ private[kyo] object Rsa:
         encoded
     end bigEndian
 
-    /** A tag-length-value reader for the one structure [[publicKeyFromSpki]] walks. It reads lengths and never checks a declared length
+    /** A tag-length-value reader for the one structure [[encryptionKeyFromSpki]] walks. It reads lengths and never checks a declared length
       * against the bytes that follow, takes long-form lengths the short form would fit, and reads an INTEGER's magnitude whatever its high
       * bit: BER as much as DER, which is what a server's key was accepted as before the reader lived here.
       */
