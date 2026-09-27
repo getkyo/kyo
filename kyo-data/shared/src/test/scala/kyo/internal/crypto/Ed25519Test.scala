@@ -76,7 +76,8 @@ class Ed25519Test extends kyo.test.Test[Any]:
         val answers = cases.map { c =>
             Ed25519.verify(bytes(c("pub_key").string), bytes(c("message").string), bytes(c("signature").string))
         }
-        assert(answers == expected)
+        val mismatchedCases = answers.indices.filter(i => answers(i) != expected(i))
+        assert(mismatchedCases == Seq.empty, s"cases answering differently from RFC 8032 cofactorless: $mismatchedCases")
     }
 
     // --- the scalar S ---
