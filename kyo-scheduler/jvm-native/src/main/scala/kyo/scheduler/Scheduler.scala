@@ -548,7 +548,7 @@ final class Scheduler(
       *
       * Critical for work stealing and load balancing decisions.
       */
-    private def cycleWorkers(): Unit = {
+    private[scheduler] def cycleWorkers(): Unit = {
         try {
             val nowMs    = clock.currentMillis()
             var position = 0
