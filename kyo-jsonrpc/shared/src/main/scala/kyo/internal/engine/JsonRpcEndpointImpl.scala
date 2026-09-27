@@ -683,8 +683,8 @@ object JsonRpcEndpointImpl:
                                                                                         writerChannel,
                                                                                         WriterMsg.SendEnvelope(responseEnvelope)
                                                                                     )(using frame, AllowUnsafe.embrace.danger)
-                                                                                    discard(pendingInbound.remove(id))
                                                                                 end if
+                                                                                discard(pendingInbound.remove(id))
                                                                             case _ => ()
                                                                         end match
                                                                     }(using AllowUnsafe.embrace.danger)
