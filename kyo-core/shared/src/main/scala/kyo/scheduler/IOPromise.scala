@@ -335,6 +335,8 @@ private[kyo] object IOPromise:
 
     private val interruptPanic = Result.Panic(Interrupted(Frame.internal))
 
+    private val pruneWindow = 4
+
     sealed abstract class Pending[E, A]:
         self =>
 
@@ -352,6 +354,19 @@ private[kyo] object IOPromise:
           */
         def dropIfDead: Pending[E, A] = this
 
+        /** This chain with every dead link among its first `budget` live nodes dropped, rebuilding only the nodes above a drop.
+          * Returns `this` when nothing was dropped. A node that cannot be rebuilt onto a new base ends the walk.
+          */
+        private[IOPromise] def pruneBelow(budget: Int): Pending[E, A] = this
+
+        final private def pruned(budget: Int): Pending[E, A] =
+            @tailrec def skipDead(chain: Pending[E, A]): Pending[E, A] =
+                val next = chain.dropIfDead
+                if next eq chain then chain else skipDead(next)
+            val head = skipDead(this)
+            if budget == 0 then head else head.pruneBelow(budget)
+        end pruned
+
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int               = self.waiters + 1
@@ -363,6 +378,9 @@ private[kyo] object IOPromise:
                     else
                         val rest = self.remove(key)
                         if rest eq self then this else rest.onComplete(f)
+                override private[IOPromise] def pruneBelow(budget: Int) =
+                    val rest = self.pruned(budget - 1)
+                    if rest eq self then this else rest.onComplete(f)
                 def run(v: Result[E, A]) =
                     eval(discard(f(v.asInstanceOf[Result[E, A]])))
                     self
@@ -371,38 +389,44 @@ private[kyo] object IOPromise:
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             interrupts(p, Absent)
 
+        /** Pruning walks past live nodes, not only the dead run at the head. A race's loser is interrupted by the race
+          * completing, which only schedules it, so the parent's next registration usually finds that loser's link still live
+          * right under the head. Stopping there keeps every link beneath it, dead ones included, for the parent's lifetime:
+          * a parent looping on races grows by a race's worth of links per iteration without bound. The walk is capped at
+          * `pruneWindow` live nodes so registration stays O(1) amortized for a parent with many live children: the live
+          * nodes walked and rebuilt are bounded by the window, and each dead link is walked once, when it is dropped. The
+          * window covers the still-live losers of a few races whose interrupts have not run yet.
+          */
         final def interrupts[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
-            // Without this a long-lived fiber keeps a link per child it ever forked.
-            @tailrec def live(chain: Pending[E, A]): Pending[E, A] =
-                val next = chain.dropIfDead
-                if next eq chain then chain else live(next)
-            val base = live(this)
-            if base ne this then base.interrupts(p, release)
-            else
-                new Pending[E, A]:
-                    def interrupt(error: Error[E]) =
-                        val ex =
-                            error match
-                                case error: Result.Panic => error
-                                case _                   => interruptPanic
+            pruned(pruneWindow).link(p, release)
 
-                        // A masked `p` refuses the interrupt and fires nothing, so the awaiter is woken here.
-                        // `remove` is false if completion already fired `release`.
-                        if !p.interrupt(ex) then
-                            release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
-                        self
-                    end interrupt
-                    def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
-                        if (key eq p) || release.exists(_ eq key) then self
-                        else
-                            val rest = self.remove(key)
-                            if rest eq self then this else rest.interrupts(p, release)
-                    override def dropIfDead  = if p.done() then self else this
-                    def waiters: Int         = self.waiters + 1
-                    def run(v: Result[E, A]) =
-                        self
-            end if
-        end interrupts
+        private def link[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
+            new Pending[E, A]:
+                def interrupt(error: Error[E]) =
+                    val ex =
+                        error match
+                            case error: Result.Panic => error
+                            case _                   => interruptPanic
+
+                    // A masked `p` refuses the interrupt and fires nothing, so the awaiter is woken here.
+                    // `remove` is false if completion already fired `release`.
+                    if !p.interrupt(ex) then
+                        release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
+                    self
+                end interrupt
+                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
+                    if (key eq p) || release.exists(_ eq key) then self
+                    else
+                        val rest = self.remove(key)
+                        if rest eq self then this else rest.link(p, release)
+                override def dropIfDead                                 = if p.done() then self else this
+                override private[IOPromise] def pruneBelow(budget: Int) =
+                    val rest = self.pruned(budget - 1)
+                    if rest eq self then this else rest.link(p, release)
+                def waiters: Int         = self.waiters + 1
+                def run(v: Result[E, A]) =
+                    self
+        end link
 
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
             new Pending[E, A]:
@@ -414,6 +438,9 @@ private[kyo] object IOPromise:
                     else
                         val rest = self.remove(key)
                         if rest eq self then this else rest.onInterrupt(f)
+                override private[IOPromise] def pruneBelow(budget: Int) =
+                    val rest = self.pruned(budget - 1)
+                    if rest eq self then this else rest.onInterrupt(f)
                 def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self

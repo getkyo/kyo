@@ -1300,6 +1300,25 @@ class SignalTest extends kyo.test.Test[Any]:
                 yield assert(parked == 1, s"observer holds $parked registrations after $ticks repair ticks")
             }
         }
+
+        "a parked observe's own fiber does not accumulate links to finished race children across repair ticks" in {
+            // Each tick's race forks two children onto the observe fiber. The race wakes the observe fiber before it
+            // interrupts the loser, so the next tick registers while the loser is still pending.
+            val repairInterval = 1.second
+            val ticks          = 20
+            Clock.withTimeControl { control =>
+                for
+                    ref   <- Signal.initRef(0)
+                    fiber <- Fiber.initUnscoped(ref.observe(repairInterval)(_ => Kyo.unit))
+                    _     <- control.awaitPendingSleepers(1)
+                    _     <- Kyo.foreachDiscard(1 to ticks) { _ =>
+                        control.advance(repairInterval).andThen(control.awaitPendingSleepers(1))
+                    }
+                    links <- fiber.waiters
+                    _     <- fiber.interrupt
+                yield assert(links <= 4, s"observe fiber holds $links child links after $ticks repair ticks")
+            }
+        }
     }
 
 end SignalTest
