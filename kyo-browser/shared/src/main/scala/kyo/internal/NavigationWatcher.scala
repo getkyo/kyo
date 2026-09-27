@@ -538,7 +538,7 @@ private[kyo] object NavigationWatcher:
             if ($requireIdle) {
                 const pending = window.__kyoNetPending || 0;
                 const last = window.__kyoNetLastActivity || 0;
-                const now = Date.now();
+                const now = performance.now();
                 idleOk = pending === 0 && last > 0 && (now - last) >= $idleMs;
             }
             // HTTP status from primary navigation entry; 0 if unavailable (data: URLs, file: URLs).

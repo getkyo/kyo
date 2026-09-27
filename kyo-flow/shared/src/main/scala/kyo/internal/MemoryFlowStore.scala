@@ -322,16 +322,15 @@ private[kyo] class MemoryFlowStore(
                 )
             }.map(_.getOrElse(Woke.TimedOut))
 
-        Clock.nowWith { start =>
-            val deadline                             = start + timeout
+        Clock.deadline(timeout).map { deadline =>
             def poll: Seq[FlowStore.Claimed] < Async =
                 tryOnce.map { claimed =>
                     if claimed.nonEmpty then claimed
                     else
-                        Clock.nowWith { now =>
-                            if !(now < deadline) then Seq.empty
+                        deadline.timeLeft.map { remaining =>
+                            if remaining == Duration.Zero then Seq.empty
                             else
-                                awaitChange(deadline - now).map {
+                                awaitChange(remaining).map {
                                     // A write about an execution may have made one ready for this caller, so the poll
                                     // re-asks and keeps waiting until its own deadline.
                                     case Woke.Write => poll

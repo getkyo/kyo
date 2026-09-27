@@ -122,7 +122,7 @@ final class Scheduler(
     private val timer = InternalTimer(timerExecutor)
 
     private val admissionRegulator =
-        new Admission(() => loadAvg(), schedule, () => System.currentTimeMillis, timer)
+        new Admission(() => loadAvg(), schedule, () => InternalClock.monotonicMillis(), timer)
 
     private val concurrencyRegulator =
         new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer)

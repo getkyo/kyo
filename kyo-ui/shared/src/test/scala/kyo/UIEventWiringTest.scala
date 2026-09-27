@@ -725,6 +725,42 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         }
     }
 
+    "drag session expiry runs on monotonic time when the wall clock steps back" in {
+        val limits  = ReactiveUI.DragSessionLimits(maxSessions = 1, lifetime = 1.second)
+        val expired = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+        val start   = UIEvent.DragStart(
+            Seq.empty,
+            DragProtocol.StartData("stepped", Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
+        )
+        Clock.withTimeControl { control =>
+            Clock.get.map { controlled =>
+                val stepped = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val clock   = Clock(Clock.Unsafe.withWall(controlled.unsafe) { () =>
+                    val now = controlled.unsafe.now()(using AllowUnsafe.embrace.danger)
+                    if stepped.get() then now - 1.hour else now
+                })
+                Clock.let(clock) {
+                    for
+                        resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
+                        _           <- DragCommands.resolveSink.let(Present((id, decision) =>
+                            resolutions.getAndUpdate(_.append((id, decision))).unit
+                        )) {
+                            withDispatch(UI.div, limits) { dispatch =>
+                                for
+                                    _ <- dispatch(Seq.empty, start)
+                                    _ <- control.advance(Duration.Zero, 100.millis)
+                                    _ <- Sync.defer(stepped.set(true))
+                                    _ <- control.advance(1.second, 100.millis)
+                                yield ()
+                            }
+                        }
+                        actual <- resolutions.get
+                    yield assert(actual == Chunk("stepped" -> expired))
+                }
+            }
+        }
+    }
+
     "drop serializes queued over and end while end-first rejects a later drop" in {
         def start(id: String) = UIEvent.DragStart(
             Seq.empty,
@@ -903,10 +939,13 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                 resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
                 _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
                     withDispatch(UI.div, limits) { dispatch =>
+                        // The controlled clock moving back is the only way a later session gets an earlier deadline. It stays
+                        // past Epoch because the controlled monotonic reading floors there.
                         for
+                            _ <- control.set(Instant.Epoch + 3.hours, 100.millis)
                             _ <- dispatch(Seq.empty, start("later"))
                             _ <- control.advance(Duration.Zero, 100.millis)
-                            _ <- control.set(Instant.Epoch - 2.hours, 100.millis)
+                            _ <- control.set(Instant.Epoch + 1.hour, 100.millis)
                             _ <- dispatch(Seq.empty, start("earlier"))
                             _ <- control.advance(1.hour, 100.millis)
                         yield ()
