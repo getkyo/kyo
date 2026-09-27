@@ -54,9 +54,10 @@ object TestVectorsGen {
                     case _                        => sys.error(s"test vectors: malformed MANIFEST line in $set: $line")
                 }
             }
-        val present = IO.listFiles(dir).filter(_.isFile).map(_.getName).filter(_ != "MANIFEST").toSet
+        val present  = IO.listFiles(dir).filter(_.isFile).map(_.getName).filter(_ != "MANIFEST").toSet
         val unlisted = present -- listed.map(_._1)
-        if (unlisted.nonEmpty) sys.error(s"test vectors: $set has files its MANIFEST does not list: ${unlisted.toSeq.sorted.mkString(", ")}")
+        if (unlisted.nonEmpty)
+            sys.error(s"test vectors: $set has files its MANIFEST does not list: ${unlisted.toSeq.sorted.mkString(", ")}")
         listed.map { case (name, expected) =>
             val file = dir / name
             if (!file.exists) sys.error(s"test vectors: $set/$name is listed in MANIFEST but missing")
