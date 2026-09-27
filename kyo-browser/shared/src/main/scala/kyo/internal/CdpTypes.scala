@@ -338,6 +338,9 @@ final private[kyo] case class ScreenshotResult(data: String) derives Schema
 /** `Page.printToPDF`. */
 final private[kyo] case class PrintToPdfResult(data: String) derives Schema
 
+/** `Runtime.getHeapUsage`. CDP types both fields as `number`, so they arrive as doubles even though they count bytes. */
+final private[kyo] case class GetHeapUsageResult(usedSize: Double, totalSize: Double) derives Schema
+
 /** Input domain. */
 final private[kyo] case class DispatchKeyEventParams(
     `type`: CdpTypes.KeyEventType,
