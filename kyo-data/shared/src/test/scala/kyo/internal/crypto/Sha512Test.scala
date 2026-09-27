@@ -2,7 +2,6 @@ package kyo.internal.crypto
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.internal.Sha256
 
 class Sha512Test extends kyo.test.Test[Any]:
 

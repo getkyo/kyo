@@ -1,8 +1,8 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
-import kyo.internal.Sha1
-import kyo.internal.Sha256
+import kyo.internal.crypto.Sha1
+import kyo.internal.crypto.Sha256
 
 /** A universally unique identifier as specified by RFC 9562 (which obsoletes RFC 4122).
   *

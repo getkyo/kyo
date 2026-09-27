@@ -1,7 +1,5 @@
 package kyo.internal.crypto
 
-import kyo.internal.Sha256
-
 /** RSASSA-PKCS1-v1_5 signature verification with SHA-256 (RFC 8017 section 8.2.2), the RS256 of JSON Web Signatures.
   *
   * The signature is raised to the public exponent and the result compared whole with the encoded message EMSA-PKCS1-v1_5 (section 9.2)

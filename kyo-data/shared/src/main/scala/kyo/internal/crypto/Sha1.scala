@@ -1,16 +1,17 @@
-package kyo.internal
+package kyo.internal.crypto
 
 import scala.annotation.tailrec
 
-/** Pure Scala SHA-1 implementation used by [[kyo.UUID.v5]].
+/** SHA-1 (FIPS 180-4) in pure Scala, the one implementation every platform runs.
   *
-  * Avoids `java.security.MessageDigest`, which is unavailable on Scala Native and Scala.js without platform-specific polyfills.
-  * kyo-data cross-builds for JVM, JS, Native, and Wasm, so a deterministic name-based UUID constructor needs a shared,
-  * dependency-free digest. The implementation follows the FIPS 180-4 algorithm: pad the message, split into 512-bit blocks, and
-  * compress each block with the 80-step SHA-1 round function. Output is a 20-byte digest.
+  * `java.security.MessageDigest` is unavailable on Scala.js, Scala Native and Wasm, and kyo-data sits below every module that could supply
+  * a platform digest, so the algorithm is written here once: pad the message, split it into 512-bit blocks, and compress each block with
+  * the 80-step round function. `hash` digests one array and `hashChunks` digests a sequence of arrays as one message without copying them
+  * together. The output is 20 bytes.
   *
-  * Note: SHA-1 is cryptographically broken but is the algorithm RFC 9562 mandates for version 5 UUIDs. This is not used for any
-  * security-sensitive operation.
+  * WARNING: SHA-1 is broken for collision resistance. It exists here only for protocols that fix it by specification (a name-based UUID,
+  * a handshake accept key, a legacy password exchange, a mask generation function), none of which relies on collision resistance. It is
+  * not a choice for new code.
   */
 private[kyo] object Sha1:
 
@@ -49,21 +50,34 @@ private[kyo] object Sha1:
             if j < 80 then
                 w(j) = Integer.rotateLeft(w(j - 3) ^ w(j - 8) ^ w(j - 14) ^ w(j - 16), 1)
                 extendWords(j + 1)
-        @tailrec def compress(j: Int, a: Int, b: Int, c: Int, d: Int, e: Int): (Int, Int, Int, Int, Int) =
-            if j >= 80 then (a, b, c, d, e)
-            else
-                val (f, k) =
-                    if j < 20 then ((b & c) | (~b & d), 0x5a827999)
-                    else if j < 40 then (b ^ c ^ d, 0x6ed9eba1)
-                    else if j < 60 then ((b & c) | (b & d) | (c & d), 0x8f1bbcdc.toInt)
-                    else (b ^ c ^ d, 0xca62c1d6.toInt)
-                val temp = Integer.rotateLeft(a, 5) + f + e + k + w(j)
-                compress(j + 1, temp, a, Integer.rotateLeft(b, 30), c, d)
-
         def processBlock(input: Array[Byte], offset: Int): Unit =
             loadWords(input, 0, offset)
             extendWords(16)
-            val (a, b, c, d, e) = compress(0, h0, h1, h2, h3, h4)
+            var a = h0
+            var b = h1
+            var c = h2
+            var d = h3
+            var e = h4
+            var j = 0
+            while j < 80 do
+                val f =
+                    if j < 20 then (b & c) | (~b & d)
+                    else if j < 40 then b ^ c ^ d
+                    else if j < 60 then (b & c) | (b & d) | (c & d)
+                    else b ^ c ^ d
+                val k =
+                    if j < 20 then 0x5a827999
+                    else if j < 40 then 0x6ed9eba1
+                    else if j < 60 then 0x8f1bbcdc.toInt
+                    else 0xca62c1d6.toInt
+                val temp = Integer.rotateLeft(a, 5) + f + e + k + w(j)
+                e = d
+                d = c
+                c = Integer.rotateLeft(b, 30)
+                b = a
+                a = temp
+                j += 1
+            end while
             h0 += a
             h1 += b
             h2 += c

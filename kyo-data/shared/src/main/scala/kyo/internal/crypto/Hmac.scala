@@ -1,7 +1,5 @@
 package kyo.internal.crypto
 
-import kyo.internal.Sha256
-
 /** HMAC (RFC 2104) instantiated with SHA-256, the construction RFC 4231 specifies and webhook signatures use.
   *
   * The tag is `H((K ^ opad) || H((K ^ ipad) || message))` over the 64-byte SHA-256 block, where a key longer than the block is first

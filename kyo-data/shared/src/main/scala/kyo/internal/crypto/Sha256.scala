@@ -1,13 +1,13 @@
-package kyo.internal
+package kyo.internal.crypto
 
 import scala.annotation.tailrec
 
-/** Pure Scala SHA-256 implementation used by [[kyo.UUID.v8Sha256]].
+/** SHA-256 (FIPS 180-4) in pure Scala, the one implementation every platform runs.
   *
-  * Avoids `java.security.MessageDigest`, which is unavailable on Scala Native and Scala.js without platform-specific polyfills.
-  * kyo-data cross-builds for JVM, JS, Native, and Wasm, so a deterministic name-based UUID constructor needs a shared,
-  * dependency-free digest. The implementation follows the FIPS 180-4 algorithm: pad the message, split into 512-bit blocks, and
-  * compress each block with the 64-round SHA-256 compression function. Output is a 32-byte digest.
+  * `java.security.MessageDigest` is unavailable on Scala.js, Scala Native and Wasm, and kyo-data sits below every module that could supply
+  * a platform digest, so the algorithm is written here once: pad the message, split it into 512-bit blocks, and compress each block with
+  * the 64-round function. `hash` digests one array and `hashChunks` digests a sequence of arrays as one message without copying them
+  * together, which is how a MAC or a domain-separated derivation prefixes its input. The output is 32 bytes.
   */
 private[kyo] object Sha256:
 
@@ -62,31 +62,35 @@ private[kyo] object Sha256:
                 val s1 = Integer.rotateRight(w(j - 2), 17) ^ Integer.rotateRight(w(j - 2), 19) ^ (w(j - 2) >>> 10)
                 w(j) = w(j - 16) + s0 + w(j - 7) + s1
                 extendWords(j + 1)
-        @tailrec def compress(
-            j: Int,
-            a: Int,
-            b: Int,
-            c: Int,
-            d: Int,
-            e: Int,
-            f: Int,
-            g: Int,
-            h: Int
-        ): (Int, Int, Int, Int, Int, Int, Int, Int) =
-            if j >= 64 then (a, b, c, d, e, f, g, h)
-            else
+        def processBlock(input: Array[Byte], offset: Int): Unit =
+            loadWords(input, 0, offset)
+            extendWords(16)
+            var a = h0
+            var b = h1
+            var c = h2
+            var d = h3
+            var e = h4
+            var f = h5
+            var g = h6
+            var h = h7
+            var j = 0
+            while j < 64 do
                 val s1    = Integer.rotateRight(e, 6) ^ Integer.rotateRight(e, 11) ^ Integer.rotateRight(e, 25)
                 val ch    = (e & f) ^ (~e & g)
                 val temp1 = h + s1 + ch + k(j) + w(j)
                 val s0    = Integer.rotateRight(a, 2) ^ Integer.rotateRight(a, 13) ^ Integer.rotateRight(a, 22)
                 val maj   = (a & b) ^ (a & c) ^ (b & c)
                 val temp2 = s0 + maj
-                compress(j + 1, temp1 + temp2, a, b, c, d + temp1, e, f, g)
-
-        def processBlock(input: Array[Byte], offset: Int): Unit =
-            loadWords(input, 0, offset)
-            extendWords(16)
-            val (a, b, c, d, e, f, g, h) = compress(0, h0, h1, h2, h3, h4, h5, h6, h7)
+                h = g
+                g = f
+                f = e
+                e = d + temp1
+                d = c
+                c = b
+                b = a
+                a = temp1 + temp2
+                j += 1
+            end while
             h0 += a
             h1 += b
             h2 += c

@@ -3,7 +3,7 @@ package kyo.internal.websocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
-import kyo.internal.Sha1
+import kyo.internal.crypto.Sha1
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import scala.annotation.tailrec
