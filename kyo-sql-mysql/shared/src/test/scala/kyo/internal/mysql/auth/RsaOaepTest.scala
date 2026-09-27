@@ -2,23 +2,19 @@ package kyo.internal.mysql.auth
 
 import kyo.*
 import kyo.SqlException
-import kyo.internal.mysql.auth.RsaOaep.RsaPublicKey
+import kyo.internal.crypto.Rsa
 
-/** Unit tests for [[RsaOaep]], pure-Scala RSA-OAEP implementation.
+/** Unit tests for [[RsaOaep]], the OAEP encoding over kyo-data's RSA.
   *
   * Coverage:
   *   - OAEP-encode output length
-  *   - PEM parser correctness
-  *   - PEM parser rejects missing header
-  *   - PEM parser rejects bad base64
-  *   - ASN.1 BER decoder extracts modulus and exponent
-  *   - ASN.1 BER decoder rejects malformed DER
-  *   - MGF1 known-answer test vector
   *   - Deterministic OAEP encryption pinned to known ciphertext
   *   - Non-deterministic OAEP (same input, distinct ciphertext on re-run)
   *   - Plaintext-too-long raises SqlRequestException
   *   - Empty plaintext encrypts successfully
-  *   - A peer-supplied modulus and exponent are bounded, so the peer cannot choose how long modPow runs
+  *   - Every way the shared key parser can refuse a server's key surfaces as this module's leaf, with the fields it carried before the
+  *     parser moved: a missing PEM header, a body that is not base64, a truncated DER structure, and a modulus or exponent above its
+  *     ceiling, so the peer cannot choose how long modPow runs
   *
   * Test RSA key is a pre-generated 2048-bit RSA public key (SubjectPublicKeyInfo PEM). Tests involving full RSA encryption use the
   * [[seeded]] `SecureRandom` for determinism and compare against vectors pre-computed in Java using the same `java.util.Random(42)` seed.
@@ -82,122 +78,71 @@ FwIDAQAB
         0xc3.toByte
     )
 
+    private val hello: Span[Byte] = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
     // ─── OAEP-encode length ─────────────────────────────────────────────────────
 
     "RsaOaep OAEP-encode of a known message has correct length, 256 bytes for 2048-bit key" in {
         // k=256 bytes for 2048-bit modulus. encrypt() returns a Span of exactly k bytes.
-        val plaintext = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        RsaOaep.encrypt(testPubPem, plaintext, seeded(42)).map { ct =>
+        RsaOaep.encrypt(testPubPem, hello, seeded(42)).map { ct =>
             assert(ct.size == 256)
         }
     }
 
-    // ─── PEM parser strips header/footer and decodes base64 ─────────────────────
+    // ─── The shared parser's refusals, as this module's leaves ──────────────────
 
-    "RsaOaep PEM parser strips header/footer and decodes base64 correctly" in {
-        RsaOaep.parsePem(testPubPem).map { key =>
-            // 2048-bit RSA key: modulus is 256 bytes = 2048 bits.
-            assert(key.modulus.bitLength >= 2047) // BigInt.bitLength ignores leading zeros
-            assert(key.exponent == BigInt(65537))
-        }
-    }
-
-    // ─── PEM parser rejects malformed header ─────────────────────────────────────
-
-    "RsaOaep PEM parser rejects PEM with missing '-----BEGIN PUBLIC KEY-----' header" in {
+    "RsaOaep rejects a key with no '-----BEGIN PUBLIC KEY-----' header as position PEM, tag header-missing" in {
         val noPem = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..."
-        Abort.run[SqlRequestException](RsaOaep.parsePem(noPem)).map {
-            case Result.Failure(e: SqlRequestException) =>
+        Abort.run[SqlRequestException](RsaOaep.encrypt(noPem, hello, seeded(1))).map {
+            case Result.Failure(e: SqlRequestRsaOaepException) =>
+                assert(e.position == "PEM")
+                assert(e.tag == "header-missing")
+                assert(e.getCause.getMessage == "missing BEGIN PUBLIC KEY header")
                 assert(e.getMessage.contains("BEGIN PUBLIC KEY"))
             case other =>
-                fail(s"Expected SqlRequestException for missing header, got: $other")
+                fail(s"Expected SqlRequestRsaOaepException for missing header, got: $other")
         }
     }
 
-    // ─── PEM parser rejects bad base64 ───────────────────────────────────────────
-
-    "RsaOaep PEM parser rejects PEM with invalid base64 body" in {
+    "RsaOaep rejects a PEM body that is not base64 as position PEM, tag base64, the decoder's exception as the cause" in {
         val badPem =
             "-----BEGIN PUBLIC KEY-----\n" +
                 "!!!not-valid-base64!!!%%%\n" +
                 "-----END PUBLIC KEY-----\n"
-        Abort.run[SqlRequestException](RsaOaep.parsePem(badPem)).map {
-            case Result.Failure(e: SqlRequestException) =>
+        Abort.run[SqlRequestException](RsaOaep.encrypt(badPem, hello, seeded(1))).map {
+            case Result.Failure(e: SqlRequestRsaOaepException) =>
+                assert(e.position == "PEM")
+                assert(e.tag == "base64")
+                assert(e.getCause.isInstanceOf[IllegalArgumentException])
                 assert(e.getMessage.contains("base64") || e.getMessage.toLowerCase.contains("illegal"))
             case other =>
-                fail(s"Expected SqlRequestException for bad base64, got: $other")
+                fail(s"Expected SqlRequestRsaOaepException for bad base64, got: $other")
         }
     }
 
-    // ─── ASN.1 BER decoder extracts modulus + exponent ──────────────────────────
-
-    "RsaOaep ASN.1 BER decoder extracts modulus and exponent from SubjectPublicKeyInfo DER" in {
-        // Parse the PEM to get DER, then test parseDerSpki directly.
-        val cleaned = testPubPem
-            .replace("-----BEGIN PUBLIC KEY-----", "")
-            .replace("-----END PUBLIC KEY-----", "")
-            .replaceAll("\\s+", "")
-        val der = java.util.Base64.getDecoder.decode(cleaned)
-        RsaOaep.parseDerSpki(der).map { key =>
-            // 2048-bit modulus.
-            assert(key.modulus.bitLength >= 2047)
-            // Public exponent = 65537 = 0x010001.
-            assert(key.exponent == BigInt(65537))
-            // Modulus must be positive and large.
-            assert(key.modulus > BigInt(0))
-        }
-    }
-
-    // ─── ASN.1 BER decoder rejects malformed structure ──────────────────────────
-
-    "RsaOaep ASN.1 BER decoder rejects truncated DER (malformed structure)" in {
-        // Provide a truncated DER, just a SEQUENCE tag with no length/content.
-        val truncated = Array[Byte](0x30.toByte)
-        Abort.run[SqlRequestException](RsaOaep.parseDerSpki(truncated)).map {
-            case Result.Failure(_: SqlRequestException) =>
-                succeed
+    "RsaOaep rejects a truncated DER structure as position DER, tag length" in {
+        // A lone SEQUENCE tag with no length byte after it.
+        val truncated = pemOf(Array[Byte](0x30.toByte))
+        Abort.run[SqlRequestException](RsaOaep.encrypt(truncated, hello, seeded(1))).map {
+            case Result.Failure(e: SqlRequestRsaOaepException) =>
+                assert(e.position == "DER")
+                assert(e.tag == "length")
+                assert(e.getCause.getMessage == "unexpected end of data")
             case other =>
-                fail(s"Expected SqlRequestException for malformed DER, got: $other")
+                fail(s"Expected SqlRequestRsaOaepException for malformed DER, got: $other")
         }
     }
 
-    // ─── MGF1 with SHA-1 matches known-answer test vector ────────────────────────
-
-    "RsaOaep MGF1 with SHA-1 produces RFC-verified output, two known-answer vectors" in {
-        // Vector 1: MGF1(seed=00 00 00 00, maskLen=20)
-        // SHA-1(00 00 00 00 || 00 00 00 00) = 05fe405753166f125559e7c9ac558654f107c7e9
-        // Verified independently with Python hashlib.
-        val seed1     = Array[Byte](0x00, 0x00, 0x00, 0x00)
-        val expected1 = Array[Byte](
-            0x05.toByte,
-            0xfe.toByte,
-            0x40.toByte,
-            0x57.toByte,
-            0x53.toByte,
-            0x16.toByte,
-            0x6f.toByte,
-            0x12.toByte,
-            0x55.toByte,
-            0x59.toByte,
-            0xe7.toByte,
-            0xc9.toByte,
-            0xac.toByte,
-            0x55.toByte,
-            0x86.toByte,
-            0x54.toByte,
-            0xf1.toByte,
-            0x07.toByte,
-            0xc7.toByte,
-            0xe9.toByte
-        )
-        assert(RsaOaep.mgf1(seed1, 20).sameElements(expected1))
-
-        // Vector 2: MGF1(seed=aa, maskLen=4)
-        // SHA-1(aa || 00 00 00 00) first 4 bytes = f667b659
-        // Verified independently with Python hashlib.
-        val seed2     = Array[Byte](0xaa.toByte)
-        val expected2 = Array[Byte](0xf6.toByte, 0x67.toByte, 0xb6.toByte, 0x59.toByte)
-        assert(RsaOaep.mgf1(seed2, 4).sameElements(expected2))
+    "RsaOaep rejects a DER structure whose tag is not the expected one as position DER, tag tag-0x30, naming what was found" in {
+        val wrongTag = pemOf(Array[Byte](0x31.toByte, 0x00.toByte))
+        Abort.run[SqlRequestException](RsaOaep.encrypt(wrongTag, hello, seeded(1))).map {
+            case Result.Failure(e: SqlRequestRsaOaepException) =>
+                assert(e.position == "DER")
+                assert(e.tag == "tag-0x30")
+                assert(e.getCause.getMessage == "found 0x31 at offset 0")
+            case other =>
+                fail(s"Expected SqlRequestRsaOaepException for a wrong tag, got: $other")
+        }
     }
 
     // ─── OAEP with deterministic seed pins to known ciphertext ───────────────────
@@ -206,8 +151,7 @@ FwIDAQAB
         // Pre-computed with Java: java.util.Random(42).nextBytes(20) = 359d41...
         // Then BigInt.modPow applied with this key's n and e.
         // First 16 bytes of ciphertext verified: 651390aa73e80e41925aac7e098055c3
-        val plaintext = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        RsaOaep.encrypt(testPubPem, plaintext, seeded(42)).map { ct =>
+        RsaOaep.encrypt(testPubPem, hello, seeded(42)).map { ct =>
             assert(ct.size == 256)
             // Pin first 16 bytes to known answer.
             assert(ct.toArray.take(16).sameElements(expectedCiphertextFirst16))
@@ -259,11 +203,11 @@ FwIDAQAB
         // size and runs straight through with no suspension point, so an unbounded modulus is carrier time the peer
         // picks and no caller-side timeout can reclaim.
         val bits = 65536
-        Abort.run[SqlRequestException](RsaOaep.parsePem(syntheticKeyPem(bits, BigInt(65537)))).map {
+        Abort.run[SqlRequestException](RsaOaep.encrypt(syntheticKeyPem(bits, BigInt(65537)), hello, seeded(1))).map {
             case Result.Failure(e: SqlRequestRsaKeyTooLargeException) =>
                 assert(e.component == SqlRequestRsaKeyTooLargeException.Component.Modulus, s"got ${e.component}")
                 assert(e.bits == bits, s"the refusal must name the size offered, got ${e.bits}")
-                assert(e.limit == RsaOaep.MaxModulusBits, s"the refusal must name the ceiling, got ${e.limit}")
+                assert(e.limit == Rsa.MaxModulusBits, s"the refusal must name the ceiling, got ${e.limit}")
             case other =>
                 fail(s"Expected SqlRequestRsaKeyTooLargeException for a $bits-bit modulus, got: $other")
         }
@@ -273,11 +217,11 @@ FwIDAQAB
         // Bounding the modulus alone leaves the work open: a 2048-bit modulus with a 4096-bit exponent is 4096
         // squarings of a 2048-bit integer.
         val hugeExponent = (BigInt(1) << 4095) | BigInt(1)
-        Abort.run[SqlRequestException](RsaOaep.parsePem(syntheticKeyPem(2048, hugeExponent))).map {
+        Abort.run[SqlRequestException](RsaOaep.encrypt(syntheticKeyPem(2048, hugeExponent), hello, seeded(1))).map {
             case Result.Failure(e: SqlRequestRsaKeyTooLargeException) =>
                 assert(e.component == SqlRequestRsaKeyTooLargeException.Component.Exponent, s"got ${e.component}")
                 assert(e.bits == 4096, s"the refusal must name the size offered, got ${e.bits}")
-                assert(e.limit == RsaOaep.MaxExponentBits, s"the refusal must name the ceiling, got ${e.limit}")
+                assert(e.limit == Rsa.MaxExponentBits, s"the refusal must name the ceiling, got ${e.limit}")
             case other =>
                 fail(s"Expected SqlRequestRsaKeyTooLargeException for a 4096-bit exponent, got: $other")
         }
@@ -287,9 +231,9 @@ FwIDAQAB
         // MySQL's auto-generated keys are 2048-bit with exponent 65537, well inside both. This leaf pins the boundary
         // itself: a ceiling that rejected the value equal to it would be an off-by-one nobody would notice until a
         // server was configured at exactly that size.
-        RsaOaep.parsePem(syntheticKeyPem(RsaOaep.MaxModulusBits, (BigInt(1) << (RsaOaep.MaxExponentBits - 1)) | BigInt(1))).map { key =>
-            assert(key.modulus.bitLength == RsaOaep.MaxModulusBits)
-            assert(key.exponent.bitLength == RsaOaep.MaxExponentBits)
+        val pem = syntheticKeyPem(Rsa.MaxModulusBits, (BigInt(1) << (Rsa.MaxExponentBits - 1)) | BigInt(1))
+        RsaOaep.encrypt(pem, hello, seeded(3)).map { ct =>
+            assert(ct.size == Rsa.MaxModulusBits / 8)
         }
     }
 
@@ -303,10 +247,12 @@ FwIDAQAB
         val modulus   = (BigInt(1) << (modulusBits - 1)) | BigInt(1)
         val rsaKey    = tlv(0x30, derInteger(modulus) ++ derInteger(exponent))
         val bitString = tlv(0x03, Array(0x00.toByte) ++ rsaKey)
-        val spki      = tlv(0x30, rsaEncryptionAlgorithmId ++ bitString)
-        val body      = java.util.Base64.getMimeEncoder(64, Array('\n'.toByte)).encodeToString(spki)
-        s"-----BEGIN PUBLIC KEY-----\n$body\n-----END PUBLIC KEY-----"
+        pemOf(tlv(0x30, rsaEncryptionAlgorithmId ++ bitString))
     end syntheticKeyPem
+
+    private def pemOf(der: Array[Byte]): String =
+        val body = java.util.Base64.getMimeEncoder(64, Array('\n'.toByte)).encodeToString(der)
+        s"-----BEGIN PUBLIC KEY-----\n$body\n-----END PUBLIC KEY-----"
 
     /** DER AlgorithmIdentifier for `rsaEncryption` (OID 1.2.840.113549.1.1.1) with a NULL parameter. */
     private val rsaEncryptionAlgorithmId: Array[Byte] =

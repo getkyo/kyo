@@ -5,49 +5,26 @@ import kyo.SqlRequestException
 import kyo.SqlRequestRsaKeyTooLargeException
 import kyo.SqlRequestRsaOaepException
 import kyo.internal.crypto.Bytes
+import kyo.internal.crypto.Mgf1
+import kyo.internal.crypto.Rsa
 import kyo.internal.crypto.Sha1
 
-/** Pure-Scala RSA-OAEP encryption (RFC 8017 §7.1.1) using SHA-1 and MGF1-SHA-1.
+/** RSA-OAEP encryption (RFC 8017 section 7.1.1) with SHA-1 and MGF1-SHA-1, the padding MySQL's password plugins expect.
   *
   * Matches the byte-for-byte output of `javax.crypto.Cipher.getInstance("RSA/ECB/OAEPWithSHA-1AndMGF1Padding")` when given the same random
-  * seed. Works on JVM, Scala Native, and Scala.js via `scala.math.BigInt.modPow`.
+  * seed. The key parsing, the mask generation and the RSA operation come from kyo-data's `kyo.internal.crypto`; this object holds the
+  * encoding of the message and maps the parser's neutral failures to this module's leaves.
   *
   * Primary entry point: [[RsaOaep.encrypt]].
   */
 private[kyo] object RsaOaep:
 
-    /** Platform-neutral RSA public key. Carries the raw big-endian modulus and exponent decoded from a SubjectPublicKeyInfo DER structure.
-      *
-      * @param modulus
-      *   RSA modulus n (big-endian, positive)
-      * @param exponent
-      *   RSA public exponent e (typically 65537 = 0x010001)
-      */
-    final case class RsaPublicKey(modulus: BigInt, exponent: BigInt) derives CanEqual
-
     // SHA-1 output length (hLen) per RFC 8017.
     private val hLen = 20
 
-    /** Highest modulus bit length the driver will encrypt against.
-      *
-      * The key is whatever the peer put in an `AuthMoreData` packet, on a connection that is neither encrypted nor authenticated, and it is
-      * bounded on the wire only by MySQL's packet limit. `m.modPow(e, n)` costs on the order of the exponent's bit length in multiplications
-      * of `n`-sized integers, each quadratic in `n`, and it runs straight through with no suspension point, so an unbounded modulus lets the
-      * peer decide how long a carrier is held. MySQL's `sha256_password_auto_generate_rsa_keys` produces 2048-bit keys; this ceiling is four
-      * times that.
-      */
-    private[kyo] val MaxModulusBits: Int = 8192
-
-    /** Highest public-exponent bit length the driver will encrypt against.
-      *
-      * The exponent is the other multiplier of the work in `modPow`, so bounding the modulus alone leaves the cost open. Real RSA public
-      * exponents are 3, 17, or 65537, the largest of which is 17 bits.
-      */
-    private[kyo] val MaxExponentBits: Int = 64
-
     // SHA-1 of empty string (lHash for empty label).
     // da39a3ee5e6b4b0d3255bfef95601890afd80709
-    private val lHash: Array[Byte] = sha1(Array.empty[Byte])
+    private val lHash: Array[Byte] = Sha1.hash(Array.empty[Byte])
 
     /** Encrypts `plaintext` using RSA-OAEP with SHA-1 / MGF1-SHA-1 and an empty label.
       *
@@ -67,171 +44,61 @@ private[kyo] object RsaOaep:
         plaintext: Span[Byte],
         random: SecureRandom
     )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
-        parsePem(publicKeyPem).flatMap { key =>
-            val k      = keyLenBytes(key.modulus)
-            val maxLen = k - 2 * hLen - 2
-            val mLen   = plaintext.size
-            if mLen > maxLen then
-                Abort.fail(SqlRequestRsaOaepException(
-                    "EME-OAEP",
-                    "plaintext-length",
-                    new Exception(s"plaintext $mLen > max $maxLen for ${k * 8}-bit key")
-                ))
-            else
-                random.nextBytes(hLen).map { seedSeq =>
-                    val seed = seedSeq.toArray
-                    val em   = emeOaepEncode(plaintext.toArray, k, seed)
-                    val m    = os2ip(em)
-                    val c    = rsaep(key, m)
-                    Span.from(i2osp(c, k))
-                }
-            end if
-        }
+        Rsa.publicKeyFromPem(publicKeyPem) match
+            case Result.Success(key) =>
+                val k      = key.sizeInBytes
+                val maxLen = k - 2 * hLen - 2
+                val mLen   = plaintext.size
+                if mLen > maxLen then
+                    Abort.fail(SqlRequestRsaOaepException(
+                        "EME-OAEP",
+                        "plaintext-length",
+                        new Exception(s"plaintext $mLen > max $maxLen for ${k * 8}-bit key")
+                    ))
+                else
+                    random.nextBytes(hLen).map { seedSeq =>
+                        val em = emeOaepEncode(plaintext.toArray, k, seedSeq.toArray)
+                        Rsa.publicOperation(key, em) match
+                            case Present(ciphertext) => Span.from(ciphertext)
+                            case Absent => bug(s"RSA-OAEP: an encoded message of $k bytes starting with 0x00 is below the modulus")
+                    }
+                end if
+            case Result.Failure(failure) => Abort.fail(leaf(failure))
+            case Result.Panic(cause)     => Abort.panic(cause)
+        end match
     end encrypt
 
-    /** Parses a PEM-encoded SubjectPublicKeyInfo RSA public key.
-      *
-      * Accepts "-----BEGIN PUBLIC KEY-----" header (PKCS#8 SubjectPublicKeyInfo, as returned by MySQL 8.0). Strips
-      * header/footer/whitespace, base64-decodes the body, and parses the resulting DER with [[parseDerSpki]].
-      *
-      * @param pem
-      *   PEM string (may contain headers and whitespace)
-      * @return
-      *   parsed [[RsaPublicKey]]
-      * @throws SqlRequestException
-      *   if the PEM header is absent or the DER structure is malformed
-      */
-    def parsePem(pem: String)(using Frame): RsaPublicKey < Abort[SqlRequestException] =
-        val header = "-----BEGIN PUBLIC KEY-----"
-        val footer = "-----END PUBLIC KEY-----"
-        if !pem.contains(header) then
-            Abort.fail(SqlRequestRsaOaepException(
-                "PEM",
-                "header-missing",
-                new Exception("missing BEGIN PUBLIC KEY header")
-            ))
-        else
-            val cleaned = pem
-                .replace(header, "")
-                .replace(footer, "")
-                .replaceAll("\\s+", "")
-            Abort.catching[IllegalArgumentException](e =>
-                SqlRequestRsaOaepException("PEM", "base64", e)
-            ) {
-                java.util.Base64.getDecoder.decode(cleaned)
-            }.flatMap { derBytes =>
-                parseDerSpki(derBytes)
-            }
-        end if
-    end parsePem
-
-    /** Parses a SubjectPublicKeyInfo DER byte array into an [[RsaPublicKey]].
-      *
-      * Decodes the ASN.1 BER structure:
-      * {{{
-      * SubjectPublicKeyInfo ::= SEQUENCE {
-      *   algorithm AlgorithmIdentifier,
-      *   subjectPublicKey BIT STRING
-      * }
-      * RSAPublicKey ::= SEQUENCE {
-      *   modulus INTEGER,
-      *   publicExponent INTEGER
-      * }
-      * }}}
-      *
-      * @param der
-      *   DER-encoded SubjectPublicKeyInfo bytes
-      * @return
-      *   [[RsaPublicKey]] with modulus and exponent
-      * @throws SqlRequestException
-      *   if the DER structure is malformed or an unexpected tag is encountered
-      */
-    def parseDerSpki(der: Array[Byte])(using Frame): RsaPublicKey < Abort[SqlRequestException] =
-        val reader = new DerReader(der)
-        // outer SEQUENCE
-        reader.readTag(0x30).flatMap { _ =>
-            reader.readLength().flatMap { _ =>
-                // AlgorithmIdentifier SEQUENCE
-                reader.readTag(0x30).flatMap { _ =>
-                    reader.readLength().flatMap { algoLen =>
-                        // skip OID + NULL
-                        reader.skip(algoLen).flatMap { _ =>
-                            // BIT STRING
-                            reader.readTag(0x03).flatMap { _ =>
-                                reader.readLength().flatMap { _ =>
-                                    // skip unused-bits byte (always 0x00 for RSA)
-                                    reader.skip(1).flatMap { _ =>
-                                        // inner RSAPublicKey SEQUENCE
-                                        reader.readTag(0x30).flatMap { _ =>
-                                            reader.readLength().flatMap { _ =>
-                                                reader.readInteger().flatMap { modulus =>
-                                                    reader.readInteger().flatMap { exponent =>
-                                                        boundedKey(modulus, exponent)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    end parseDerSpki
-
-    /** MGF1 mask generation function with SHA-1 (RFC 8017 Appendix B.2.1).
-      *
-      * @param mgfSeed
-      *   seed bytes
-      * @param maskLen
-      *   desired output length in bytes
-      * @return
-      *   `maskLen` pseudo-random bytes
-      */
-    def mgf1(mgfSeed: Array[Byte], maskLen: Int): Array[Byte] =
-        val hashes     = (maskLen + hLen - 1) / hLen
-        val result     = new Array[Byte](hashes * hLen)
-        val counterBuf = new Array[Byte](4)
-        var counter    = 0
-        while counter < hashes do
-            counterBuf(0) = ((counter >>> 24) & 0xff).toByte
-            counterBuf(1) = ((counter >>> 16) & 0xff).toByte
-            counterBuf(2) = ((counter >>> 8) & 0xff).toByte
-            counterBuf(3) = (counter & 0xff).toByte
-            val combined = new Array[Byte](mgfSeed.length + 4)
-            java.lang.System.arraycopy(mgfSeed, 0, combined, 0, mgfSeed.length)
-            java.lang.System.arraycopy(counterBuf, 0, combined, mgfSeed.length, 4)
-            val hash = sha1(combined)
-            java.lang.System.arraycopy(hash, 0, result, counter * hLen, hLen)
-            counter += 1
-        end while
-        java.util.Arrays.copyOf(result, maskLen)
-    end mgf1
-
-    // --- Private helpers ---
-
-    /** Accepts a parsed key only when both components sit under their ceilings, so the exponentiation's cost is settled before any of it runs.
-      */
-    private def boundedKey(modulus: BigInt, exponent: BigInt)(using Frame): RsaPublicKey < Abort[SqlRequestException] =
-        val modulusBits  = modulus.bitLength
-        val exponentBits = exponent.bitLength
-        if modulusBits > MaxModulusBits then
-            Abort.fail(SqlRequestRsaKeyTooLargeException(
-                SqlRequestRsaKeyTooLargeException.Component.Modulus,
-                modulusBits,
-                MaxModulusBits
-            ))
-        else if exponentBits > MaxExponentBits then
-            Abort.fail(SqlRequestRsaKeyTooLargeException(
-                SqlRequestRsaKeyTooLargeException.Component.Exponent,
-                exponentBits,
-                MaxExponentBits
-            ))
-        else RsaPublicKey(modulus, exponent)
-        end if
-    end boundedKey
+    /** This module's leaf for each way the shared parser can refuse a server's key. */
+    private def leaf(failure: Rsa.SpkiFailure)(using Frame): SqlRequestException =
+        import Rsa.DerFailure
+        import Rsa.SpkiFailure
+        failure match
+            case SpkiFailure.PemHeaderMissing =>
+                SqlRequestRsaOaepException("PEM", "header-missing", new Exception("missing BEGIN PUBLIC KEY header"))
+            case SpkiFailure.PemNotBase64(cause) =>
+                SqlRequestRsaOaepException("PEM", "base64", cause)
+            case SpkiFailure.Der(DerFailure.EndOfData(tag)) =>
+                SqlRequestRsaOaepException("DER", s"tag-0x${tag.toHexString}", new Exception("unexpected end of data"))
+            case SpkiFailure.Der(DerFailure.UnexpectedTag(tag, actual, offset)) =>
+                SqlRequestRsaOaepException(
+                    "DER",
+                    s"tag-0x${tag.toHexString}",
+                    new Exception(s"found 0x${actual.toHexString} at offset $offset")
+                )
+            case SpkiFailure.Der(DerFailure.LengthEndOfData) =>
+                SqlRequestRsaOaepException("DER", "length", new Exception("unexpected end of data"))
+            case SpkiFailure.Der(DerFailure.LengthUnsupported(offset)) =>
+                SqlRequestRsaOaepException("DER", "length", new Exception(s"unsupported long-form at offset $offset"))
+            case SpkiFailure.Der(DerFailure.SkipPastEnd(count, offset)) =>
+                SqlRequestRsaOaepException("DER", "skip", new Exception(s"skip($count) past end at offset $offset"))
+            case SpkiFailure.Der(DerFailure.IntegerExceedsData(offset)) =>
+                SqlRequestRsaOaepException("DER", "integer", new Exception(s"exceeds data at offset $offset"))
+            case SpkiFailure.ModulusTooLarge(bits, limit) =>
+                SqlRequestRsaKeyTooLargeException(SqlRequestRsaKeyTooLargeException.Component.Modulus, bits, limit)
+            case SpkiFailure.ExponentTooLarge(bits, limit) =>
+                SqlRequestRsaKeyTooLargeException(SqlRequestRsaKeyTooLargeException.Component.Exponent, bits, limit)
+        end match
+    end leaf
 
     /** EME-OAEP-ENCODE per RFC 8017 §7.1.1. Returns a k-byte encoded message EM. */
     private def emeOaepEncode(m: Array[Byte], k: Int, seed: Array[Byte]): Array[Byte] =
@@ -244,9 +111,9 @@ private[kyo] object RsaOaep:
         db(hLen + psLen) = 0x01.toByte
         java.lang.System.arraycopy(m, 0, db, hLen + psLen + 1, mLen)
 
-        val dbMask     = mgf1(seed, k - hLen - 1)
+        val dbMask     = Mgf1.sha1(seed, k - hLen - 1)
         val maskedDb   = Bytes.xor(db, dbMask)
-        val seedMask   = mgf1(maskedDb, hLen)
+        val seedMask   = Mgf1.sha1(maskedDb, hLen)
         val maskedSeed = Bytes.xor(seed, seedMask)
 
         // EM = 0x00 || maskedSeed || maskedDB
@@ -256,123 +123,5 @@ private[kyo] object RsaOaep:
         java.lang.System.arraycopy(maskedDb, 0, em, 1 + hLen, k - hLen - 1)
         em
     end emeOaepEncode
-
-    /** OS2IP, octet string to non-negative integer (big-endian unsigned). */
-    private def os2ip(bytes: Array[Byte]): BigInt = BigInt(1, bytes)
-
-    /** RSA encryption primitive: c = m^e mod n. */
-    private def rsaep(key: RsaPublicKey, m: BigInt): BigInt = m.modPow(key.exponent, key.modulus)
-
-    /** I2OSP, integer to octet string of exactly `xLen` bytes (big-endian, zero-padded on the left). */
-    private def i2osp(x: BigInt, xLen: Int): Array[Byte] =
-        val raw      = x.toByteArray // signed two's-complement, may have leading 0x00
-        val stripped = if raw.length > 0 && raw(0) == 0 then java.util.Arrays.copyOfRange(raw, 1, raw.length) else raw
-        val result   = new Array[Byte](xLen)
-        if stripped.length > xLen then
-            bug(s"RSA-OAEP I2OSP: integer too large (${stripped.length} > $xLen)")
-        java.lang.System.arraycopy(stripped, 0, result, xLen - stripped.length, stripped.length)
-        result
-    end i2osp
-
-    /** Returns the key size in bytes (modulus byte length, rounding up to the next whole byte). */
-    private[auth] def keyLenBytes(modulus: BigInt): Int = (modulus.bitLength + 7) / 8
-
-    private[auth] def sha1(input: Array[Byte]): Array[Byte] =
-        Sha1.hash(input)
-
-    // --- DER reader ---
-
-    /** Minimal BER/DER tag-length-value reader for SubjectPublicKeyInfo parsing. Not general-purpose. */
-    final private class DerReader(der: Array[Byte]):
-        private var pos: Int = 0
-
-        /** Expects the next byte to equal `tag`; advances position. Raises on mismatch. */
-        def readTag(tag: Int)(using Frame): Unit < Abort[SqlRequestException] =
-            if pos >= der.length then
-                Abort.fail(SqlRequestRsaOaepException(
-                    "DER",
-                    s"tag-0x${tag.toHexString}",
-                    new Exception("unexpected end of data")
-                ))
-            else
-                val actual = der(pos) & 0xff
-                if actual != tag then
-                    Abort.fail(SqlRequestRsaOaepException(
-                        "DER",
-                        s"tag-0x${tag.toHexString}",
-                        new Exception(s"found 0x${actual.toHexString} at offset $pos")
-                    ))
-                else
-                    pos += 1
-                end if
-            end if
-        end readTag
-
-        /** Reads a BER length field; returns the length value and advances position past it. */
-        def readLength()(using Frame): Int < Abort[SqlRequestException] =
-            if pos >= der.length then
-                Abort.fail(SqlRequestRsaOaepException("DER", "length", new Exception("unexpected end of data")))
-            else
-                val first = der(pos) & 0xff
-                pos += 1
-                if (first & 0x80) == 0 then
-                    // Short form: length is in the 7 lower bits.
-                    first
-                else
-                    val nBytes = first & 0x7f
-                    if nBytes == 0 || nBytes > 4 || pos + nBytes > der.length then
-                        Abort.fail(SqlRequestRsaOaepException(
-                            "DER",
-                            "length",
-                            new Exception(s"unsupported long-form at offset ${pos - 1}")
-                        ))
-                    else
-                        var len = 0
-                        var i   = 0
-                        while i < nBytes do
-                            len = (len << 8) | (der(pos) & 0xff)
-                            pos += 1
-                            i += 1
-                        end while
-                        len
-                    end if
-                end if
-            end if
-        end readLength
-
-        /** Skips `n` bytes unconditionally. */
-        def skip(n: Int)(using Frame): Unit < Abort[SqlRequestException] =
-            if pos + n > der.length then
-                Abort.fail(SqlRequestRsaOaepException(
-                    "DER",
-                    "skip",
-                    new Exception(s"skip($n) past end at offset $pos")
-                ))
-            else
-                pos += n
-            end if
-        end skip
-
-        /** Reads a DER INTEGER tag+length+value; returns the value as a positive BigInt. */
-        def readInteger()(using Frame): BigInt < Abort[SqlRequestException] =
-            readTag(0x02).flatMap { _ =>
-                readLength().flatMap { len =>
-                    if pos + len > der.length then
-                        Abort.fail(SqlRequestRsaOaepException(
-                            "DER",
-                            "integer",
-                            new Exception(s"exceeds data at offset $pos")
-                        ))
-                    else
-                        val bytes = java.util.Arrays.copyOfRange(der, pos, pos + len)
-                        pos += len
-                        // BigInt(1, bytes) interprets as positive regardless of high bit.
-                        BigInt(1, bytes)
-                    end if
-                }
-            }
-        end readInteger
-
-    end DerReader
 
 end RsaOaep

@@ -14,7 +14,7 @@ import kyo.net.NetTlsConfig
   *   - Root connects and runs `ALTER USER 'test'@'%' IDENTIFIED WITH sha256_password BY 'test'` to switch the test user to sha256_password.
   *   - Leaves 1 and 2 leave the server's own `default_authentication_plugin` at `caching_sha2_password`, so the server still names that plugin
   *     in its `HandshakeV10` and reaches `sha256_password` through an `AuthSwitchRequest`. They therefore cover `performSha256Auth`, not the
-  *     initial-response branch: leaf 1 the plaintext RSA-OAEP round via [[kyo.internal.auth.RsaOaep]], leaf 2 the TLS path where the client
+  *     initial-response branch: leaf 1 the plaintext RSA-OAEP round via [[kyo.internal.mysql.auth.RsaOaep]], leaf 2 the TLS path where the client
   *     sends the cleartext NUL-terminated password and skips RSA.
   *   - Leaf 3 starts the server with `--default-authentication-plugin=sha256_password`, which is the only configuration in which the client's
   *     `HandshakeResponse41` carries a `sha256_password` initial auth response at all. Without it that branch is unreachable, which is how it

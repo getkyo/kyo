@@ -19,6 +19,47 @@ class RsaTest extends kyo.test.Test[Any]:
         assert(jwk(key.modulus) == rfc7515.n)
     }
 
+    "public operation" - {
+        "RFC 7515's signature recovers the EMSA-PKCS1-v1_5 block: 00 01, 202 bytes of ff, 00, the SHA-256 DigestInfo" in {
+            Rsa.publicOperation(rfc7515.key, rfc7515.signature) match
+                case Present(block) =>
+                    assert(block.length == 256)
+                    assert(block(0) == 0 && block(1) == 1)
+                    assert(block.slice(2, 204).forall(_ == 0xff.toByte))
+                    assert(block(204) == 0)
+                    assert(block.drop(224).sameElements(Sha256.hash(rfc7515.signingInput)))
+                case Absent => fail("the signature is below the modulus and of its length")
+        }
+
+        "an input that is not the key's length is Absent" in {
+            assert(Rsa.publicOperation(rfc7515.key, rfc7515.signature.take(255)) == Absent)
+            assert(Rsa.publicOperation(rfc7515.key, rfc7515.signature :+ 0.toByte) == Absent)
+            assert(Rsa.publicOperation(rfc7515.key, Array.emptyByteArray) == Absent)
+        }
+
+        "an input whose value is not below the modulus is Absent" in {
+            val key = rfc7515.key
+            assert(Rsa.publicOperation(key, magnitude(key.modulus)) == Absent)
+            assert(Rsa.publicOperation(key, Array.fill[Byte](256)(0xff.toByte)) == Absent)
+            assert(Rsa.publicOperation(key, magnitude(key.modulus - 1)).map(_.length) == Present(256))
+        }
+
+        "0 and 1 are fixed points, as the key's length in bytes" in {
+            val key  = rfc7515.key
+            val zero = new Array[Byte](256)
+            val one  = new Array[Byte](256)
+            one(255) = 1
+            assert(Rsa.publicOperation(key, zero).map(_.toSeq) == Present(zero.toSeq))
+            assert(Rsa.publicOperation(key, one).map(_.toSeq) == Present(one.toSeq))
+        }
+
+        "leaves the input unchanged" in {
+            val input = rfc7515.signature.clone()
+            discard(Rsa.publicOperation(rfc7515.key, input))
+            assert(input.sameElements(rfc7515.signature))
+        }
+    }
+
     "size bounds" - {
         "a 2048-bit modulus, the minimum, is accepted" in {
             assert(Rsa.publicKeyFromJwk(jwk(oddOfBits(2048)), "AQAB").map(_.modulus.bitLength) == Result.succeed(2048))
