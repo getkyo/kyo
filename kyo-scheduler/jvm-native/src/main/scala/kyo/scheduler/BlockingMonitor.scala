@@ -5,13 +5,14 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.util.ThreadUserTime
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 /** Monitors worker threads for blocking by sampling user CPU time.
   *
   * A thread is "blocked" when its user CPU time stops advancing — it is blocked in a kernel operation (I/O, sleep, lock) rather than
-  * executing user code. The monitor detects this by periodically sampling per-thread user CPU time: if two consecutive samples return the
-  * same value, the thread is blocked. This catches all forms of blocking including cases where Thread.getState() is misleading — socket
+  * executing user code. The monitor detects this by periodically sampling per-thread user CPU time: if two consecutive samples of the
+  * same mounted thread return the same value, the thread is blocked. A worker that unmounted between two scans made progress whatever
+  * its counter reads, so its next sample starts a new baseline instead. This catches all forms of blocking including cases where
+  * Thread.getState() is misleading — socket
   * reads, server accepts, NIO operations, and file I/O on FIFOs all report RUNNABLE despite being blocked in the kernel. User-mode time
   * (excluding kernel time) is used on all platforms, which also identifies threads spinning in kernel locks (contended futex/mutex) as
   * blocked.
@@ -106,14 +107,17 @@ private[scheduler] class BlockingMonitor(
     private val blockedFlags  = new Array[Boolean](maxWorkers)
     private val blockCounts   = new Array[Int](maxWorkers)
 
-    @volatile private var monitorThread: Thread = null
-    private var lastCycleNanos: Long            = 0L
+    @volatile private[scheduler] var monitorThread: Thread = null
+    private var lastCycleNanos: Long                       = 0L
     // Effective threshold scaled by scheduling pressure. When the monitor's own parkNanos
     // takes longer than expected, the system is CPU-starved and flat CPU time on worker
     // threads is expected (not blocking). The threshold scales proportionally so truly blocked
     // threads (flat indefinitely) still get detected while CPU-starved threads (flat transiently)
     // don't reach the elevated threshold before getting CPU time again.
     private var effectiveBlockThreshold: Int = blockThreshold
+
+    // Scans that failed and were survived. Declared before `task`, which starts the loop that increments it.
+    private[scheduler] val failures = new java.util.concurrent.atomic.LongAdder
 
     private val task =
         if (executor ne null)
@@ -162,7 +166,8 @@ private[scheduler] class BlockingMonitor(
     // verify that a burst of wake() calls coalesces into few scans, not one scan per call.
     @volatile private[scheduler] var cycles: Long = 0L
 
-    private def cycle(): Unit = {
+    // One scan. Exposed to tests that drive a monitor over workers without its thread.
+    private[scheduler] def cycle(): Unit = {
         cycles += 1
         try {
             // Scan every worker slot, not just the first currentWorkers(): the regulator can
@@ -178,15 +183,21 @@ private[scheduler] class BlockingMonitor(
                 process(count, 0)
             }
         } catch {
-            case ex if NonFatal(ex) =>
+            // Any Throwable, fatal ones included: this runs as one long-lived loop that nothing restarts, and without it no worker
+            // is flagged blocked or sent its interrupt again. A StackOverflowError has unwound by the time it lands here.
+            case ex: Throwable =>
+                failures.increment()
                 bug(s"Blocking monitor has failed.", ex)
         }
     }
 
-    /** Samples CPU time and updates blocking state for the given thread IDs. Used by tests to drive the monitor without workers. */
+    /** Samples CPU time and updates blocking state for the given thread IDs, as one scan. Used by tests to drive the monitor without
+      * workers.
+      */
     private[scheduler] def sample(threadIds: Array[Long], count: Int): Unit = {
         ThreadUserTime.userTimes(threadIds, count, userTimes)
         detectOnly(threadIds, count, 0)
+        resetFrom(count)
     }
 
     /** Whether the thread at this position has unchanged user CPU time. */
@@ -203,13 +214,16 @@ private[scheduler] class BlockingMonitor(
                 positions(count) = position
                 tasks(count) = worker.currentTask
                 collect(n, position + 1, count + 1)
-            } else
+            } else {
+                reset(position)
                 collect(n, position + 1, count)
+            }
         }
 
     /** Records the sample `(tid, userTime)` for slot `pos` and returns whether the thread was idle across the last two samples of the same
       * thread. A change of thread at the slot resets the baseline and the accumulated block count instead of inheriting the previous
-      * occupant's state. Exposed to tests as the single sampling-state transition.
+      * occupant's state, and so does a scan the slot was absent from (see `reset`). Exposed to tests as the single sampling-state
+      * transition.
       */
     private[scheduler] def updateSlot(pos: Int, tid: Long, userTime: Long): Boolean = {
         val sameThread = lastThreadIds(pos) == tid
@@ -221,6 +235,21 @@ private[scheduler] class BlockingMonitor(
         else blockCounts(pos) = 0
         idle
     }
+
+    // A slot absent from a scan is a worker that unmounted. It made progress before it mounts again whatever its thread's CPU
+    // counter then reads, so the sample it left must not be the baseline of its next one. On Windows the counter advances in
+    // 15.6ms ticks, and a worker that mounts, runs microseconds of work and unmounts never moves it.
+    private def reset(pos: Int): Unit = {
+        lastUserTimes(pos) = -1L
+        blockCounts(pos) = 0
+        blockedFlags(pos) = false
+    }
+
+    @tailrec private def resetFrom(pos: Int): Unit =
+        if (pos < blockCounts.length) {
+            reset(pos)
+            resetFrom(pos + 1)
+        }
 
     // Single pass: detect blocking from CPU time samples, set blocked flags, dispatch interrupts.
     // Requires blockThreshold consecutive idle samples before marking a worker as blocked,

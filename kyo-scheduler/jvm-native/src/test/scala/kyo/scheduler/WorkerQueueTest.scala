@@ -256,6 +256,29 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(queue.isEmpty())
         }
 
+        "a hand-off that throws puts back every element it never received" in {
+            // drain empties the queue before handing anything off, so an element the hand-off never received exists nowhere else.
+            // Fatal errors included: the scheduler's drain hand-off overflowed the stack on CI and the rest of the snapshot vanished.
+            // The element the hand-off was handling when it threw is the hand-off's own: it may already have placed it, and putting
+            // it back too would queue one task twice.
+            val queue = new WorkerQueue()
+            (1 to 5).foreach(i => queue.add(task(i)))
+            val handedOff = new java.util.ArrayList[Int]()
+            val thrown    =
+                try {
+                    queue.drain { t =>
+                        if (handedOff.size() == 2) throw new StackOverflowError("injected")
+                        val _ = handedOff.add(t.runtime())
+                    }
+                    None
+                } catch { case e: StackOverflowError => Some(e) }
+            assert(thrown.isDefined, "the hand-off's failure must propagate to the caller")
+            assert(handedOff.size() == 2)
+            // Three were received (two completed, the third threw); the two never received go back.
+            assert(queue.size() == 2)
+            assert(queue.drainPutBacks.sum() == 2)
+        }
+
         "multiple elements" in {
             val queue = new WorkerQueue()
             queue.add(task(1))
