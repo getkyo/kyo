@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** The `SqlRow.text` contract on every registered backend: one stored value reads as ONE string, whichever engine holds it and whichever wire
+/** The `SqlRow.text` contract on every listed backend: one stored value reads as ONE string, whichever engine holds it and whichever wire
   * protocol carried the row.
   *
   * The table below names one logical value per row, the literal each engine spells it with, and the single rendering both must answer, so an

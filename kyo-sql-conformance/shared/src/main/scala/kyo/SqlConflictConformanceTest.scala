@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What a conflict clause suppresses, run against every registered backend: `onConflictDoNothing` skips a conflicting row and NOTHING else,
+/** What a conflict clause suppresses, run against every listed backend: `onConflictDoNothing` skips a conflicting row and NOTHING else,
   * whichever engine ran it.
   *
   * A conflict clause is a narrow instruction, and one engine implements it with a blunt one. `ON CONFLICT DO NOTHING` suppresses unique and

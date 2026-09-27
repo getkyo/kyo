@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What a transaction MEANS on every registered backend: the same sequence of statements commits the same rows, whichever engine ran it.
+/** What a transaction MEANS on every listed backend: the same sequence of statements commits the same rows, whichever engine ran it.
   *
   * The sibling suite proves the isolation vocabulary is accepted. This one is about what survives when something inside the transaction goes
   * wrong, which is where the engines disagree most expensively: the same program can commit different data with no error reaching the caller.

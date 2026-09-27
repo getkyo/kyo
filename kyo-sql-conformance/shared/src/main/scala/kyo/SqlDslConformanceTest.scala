@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What a DSL expression COMPUTES, on every registered backend. The sibling suites pin how a stored value is spelled; a leaf here fails only
+/** What a DSL expression COMPUTES, on every listed backend. The sibling suites pin how a stored value is spelled; a leaf here fails only
   * where a syntax difference has become a meaning difference.
   */
 trait SqlDslConformanceTest extends SqlBackendTest:

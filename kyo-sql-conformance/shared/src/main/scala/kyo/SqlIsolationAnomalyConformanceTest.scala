@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What a transaction ISOLATES, compared across every registered backend: two concurrent sessions, one written program.
+/** What a transaction ISOLATES, compared across every listed backend: two concurrent sessions, one written program.
   *
   * The sibling suite proves the four levels are accepted and applied. Neither says what any of them MEANS, and a program that reads
   * differently on two engines has no symptom until its data is already wrong.

@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What happens at the EDGE of a neutral type's domain, on every registered backend.
+/** What happens at the EDGE of a neutral type's domain, on every listed backend.
   *
   * The codec battery round-trips values both engines agree about. These are values a Scala type admits and one engine's column does not, and
   * the domain limits are NOT conformable: no driver change makes a `DOUBLE` hold NaN or a `text` column hold a NUL byte.

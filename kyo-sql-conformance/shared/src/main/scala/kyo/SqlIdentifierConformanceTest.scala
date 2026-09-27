@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What an IDENTIFIER means at the length where the engines part company, run against every registered backend.
+/** What an IDENTIFIER means at the length where the engines part company, run against every listed backend.
   *
   * Identifier length is a limit a caller never writes down and a generator crosses without trying: a name assembled from a table, a column,
   * and a suffix reaches sixty-odd characters on its own. The engines differ there, and in the dangerous direction. One rejects an over-long

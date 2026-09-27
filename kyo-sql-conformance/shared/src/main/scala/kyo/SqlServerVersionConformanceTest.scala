@@ -7,8 +7,8 @@ import kyo.Sql.*
   * consults.
   *
   * The per-backend claim is what needs a battery of its own: that `serverVersion` parses correctly on each engine, and that it is the value
-  * a version gate actually reads. Every leaf runs through [[SqlBackendTest.forEachBackend]] against whatever backend descriptors are
-  * discovered, so a third backend that registers a descriptor gets these leaves for free with no change here.
+  * a version gate actually reads. Every leaf runs through [[SqlBackendTest.forEachBackend]], so a backend gets these leaves by
+  * listing its descriptor, with no change here.
   *
   * The third leaf's gate, `client.dialect.valuesConstructorSince`, is read off `client.dialect` (an `Idiom`) rather than a hardcoded
   * literal, so the leaf branches on a capability the connected dialect names, never on an engine. One shipping dialect gates the VALUES

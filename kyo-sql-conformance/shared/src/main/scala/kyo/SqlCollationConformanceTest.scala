@@ -1,6 +1,6 @@
 package kyo
 
-/** How string comparison behaves on every registered backend: the same predicate over the same rows selects the same rows.
+/** How string comparison behaves on every listed backend: the same predicate over the same rows selects the same rows.
   *
   * This divergence returns WRONG ROWS rather than failing. One engine's default collation is case- and accent-insensitive, so
   * `where(_.name == "alice")` matches a stored `Alice` there and nothing on the other, and a unique index rejects the pair as duplicates.

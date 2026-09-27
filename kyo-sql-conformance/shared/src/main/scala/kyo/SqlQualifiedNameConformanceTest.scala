@@ -3,7 +3,7 @@ package kyo
 import SqlConformanceBackend.ColumnType
 import SqlQualifiedNameConformanceTest.QualifiedProbe
 
-/** What a SCHEMA-QUALIFIED table name means, run through the DSL against every registered backend.
+/** What a SCHEMA-QUALIFIED table name means, run through the DSL against every backend in [[SqlBackendTest.backends]].
   *
   * Every engine here has a schema, and every engine spells the qualification the same way: the schema and the table quoted separately with
   * a period between them. What they disagree about is what a schema IS, which is why nothing in this file names one. PostgreSQL holds a
@@ -18,7 +18,7 @@ import SqlQualifiedNameConformanceTest.QualifiedProbe
   * The statements go through the DSL rather than hand-written SQL, and each leaf covers every statement kind that renders a table name:
   * SELECT, INSERT, UPDATE and DELETE each reach the renderer by their own path, and a hand-written string would exercise none of them. The
   * schema comes from the descriptor, so these run through the RUNTIME renderer; what the compile-time fold emits for each flavor is pinned
-  * by [[SqlQualifiedNameStaticTest]].
+  * by kyo-sql's own static render tests.
   *
   * DDL stays raw because the DSL has none.
   */

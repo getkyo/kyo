@@ -2,7 +2,7 @@ package kyo
 
 import SqlConformanceBackend.ColumnType
 
-/** What a write REPORTS on every registered backend: the same statement answers the same count and the same generated key.
+/** What a write REPORTS on every listed backend: the same statement answers the same count and the same generated key.
   *
   * The suites that pin what a write STORES check the half the engines already agree on. This checks the number and the key handed back, which
   * a caller branches on without ever reading a row. Written through the typed API, so the renderer is under test alongside the behaviour.

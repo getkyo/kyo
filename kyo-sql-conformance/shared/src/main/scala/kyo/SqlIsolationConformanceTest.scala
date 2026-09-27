@@ -1,12 +1,10 @@
 package kyo
 
 /** Cross-backend conformance for `SqlClient.transaction`'s isolation vocabulary: each of the four [[SqlClient.IsolationLevel]]s, plus a
-  * read-only transaction, run against every available backend.
+  * read-only transaction, run against every backend in [[SqlBackendTest.backends]].
   *
-  * [[SqlClientTransactionTest]] covers the isolation vocabulary's shape (the four levels, exhaustive matching) and each behavior in depth
-  * on a single engine (a level reported back through an engine-specific introspection query, a read-only rejection). This suite is the
-  * cross-backend half: every leaf runs through [[SqlBackendTest.forEachBackend]] against whatever backend descriptors are discovered, so a
-  * third backend that registers a descriptor gets these leaves for free with no change here.
+  * The vocabulary's shape (the four levels, exhaustive matching) is kyo-sql's own to test. This suite is the cross-backend half: every leaf
+  * runs through [[SqlBackendTest.forEachBackend]], so a backend gets these leaves by listing its descriptor, with no change here.
   *
   * The property under test is behavioral rather than textual: a level's transaction runs and commits a normal write, proving the server
   * accepted the level rather than rejecting the BEGIN/START TRANSACTION outright, and a read-only transaction refuses a write with a
@@ -16,10 +14,8 @@ package kyo
   * since asking for one level and quietly getting a weaker one is the lost-update bug this suite exists to catch. The leaves split on
   * `honouredIsolationLevels` and the refusal loop claims the other side, so every backend meets every level through exactly one of the two.
   *
-  * It also asserts the level the server ACTUALLY applied, which for a long time nothing did. That the SQL to introspect it differs per
-  * engine is a mechanism difference, which is what a descriptor absorbs, and it was previously the stated reason for leaving the property
-  * out of scope entirely. The gap it left was total: `SqlClient.IsolationLevel.sqlKeyword` had no test reference anywhere in the repository,
-  * so a caller could ask for one level, silently get another, and lose updates with nothing red.
+  * It also asserts the level the server ACTUALLY applied, through the descriptor's `isolationIntrospectionSql`, since the SQL to ask
+  * differs per engine. Without it a caller could ask for one level, silently get another, and lose updates with nothing red.
   */
 trait SqlIsolationConformanceTest extends SqlBackendTest:
 

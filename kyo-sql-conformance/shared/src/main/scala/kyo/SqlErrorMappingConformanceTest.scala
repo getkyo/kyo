@@ -1,7 +1,7 @@
 package kyo
 
 /** Conformance battery for the mapping from a server's SQLSTATE to kyo-sql's typed [[SqlServerException]] family, run against every
-  * discovered backend through [[SqlBackendTest.forEachBackend]].
+  * listed backend through [[SqlBackendTest.forEachBackend]].
   *
   * The typed family is the cross-engine contract: [[SqlServerException.apply]] dispatches on the SQLSTATE class (class 23 to
   * [[SqlServerConstraintViolationException]], class 42 to [[SqlServerSyntaxException]]), and every engine follows the ANSI class
