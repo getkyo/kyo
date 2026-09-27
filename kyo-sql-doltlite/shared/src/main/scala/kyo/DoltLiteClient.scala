@@ -54,6 +54,9 @@ final private[kyo] class DoltLiteClient(runtime: Runtime[DoltLiteConnection]) ex
     override def merge(from: Dolt.Ref)(using Frame): Dolt.Merge < (Async & Abort[SqlException]) =
         DoltLiteStatements.merge(this, from)
 
+    override def stageMerge(from: Dolt.Ref)(using Frame): Dolt.StagedMerge < (Async & Abort[SqlException]) =
+        DoltLiteStatements.stageMerge(this, from)
+
     override def conflicts(using Frame): Chunk[Dolt.ConflictSummary] < (Async & Abort[SqlException]) =
         DoltLiteStatements.conflicts(this)
 

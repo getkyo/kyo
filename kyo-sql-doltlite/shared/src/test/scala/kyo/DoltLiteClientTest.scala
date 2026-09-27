@@ -66,6 +66,21 @@ class DoltLiteClientTest extends Test:
         }
     }
 
+    "the log of another branch starts at that branch's own commit" in {
+        withDolt { dolt =>
+            for
+                seed    <- seeded(dolt)
+                _       <- dolt.createBranch("feature")
+                own     <- dolt.onBranch("feature")(dolt.executeRaw("INSERT INTO person VALUES (2, 'bob')").andThen(dolt.commit("add bob")))
+                history <- dolt.log(Dolt.Ref.Branch("feature"), Present(2))
+                commit  <- dolt.log(Dolt.Ref.Commit(own.hash), Present(1))
+            yield
+                assert(history.map(_.hash) == Chunk(own.hash, seed.hash), s"got ${history.map(_.message)}")
+                assert(commit.map(_.message) == Chunk("add bob"), s"got ${commit.map(_.message)}")
+            end for
+        }
+    }
+
     "status reports uncommitted work and goes quiet once it is committed" in {
         withDolt { dolt =>
             for
@@ -169,6 +184,158 @@ class DoltLiteClientTest extends Test:
             yield
                 assert(afterSoft == 2L, s"a mixed reset keeps the working set, got $afterSoft")
                 assert(afterHard == 1L, s"a hard reset discards it, got $afterHard")
+            end for
+        }
+    }
+
+    private def count(dolt: Dolt)(using Frame): Long < (Async & Abort[SqlException] & DB) =
+        dolt.query("SELECT COUNT(*) FROM person").map(rows => rows(0).decode[Long](0))
+
+    "a staged merge where a fast-forward was possible commits once, with both parents and the caller's rows" in {
+        withDolt { dolt =>
+            for
+                seed <- seeded(dolt)
+                _    <- dolt.createBranch("feature")
+                bob  <- dolt.onBranch("feature") {
+                    dolt.executeRaw("INSERT INTO person VALUES (2, 'bob')").andThen(dolt.commit("add bob"))
+                }
+                staged <- dolt.stageMerge(Dolt.Ref.Branch("feature"))
+                head   <- dolt.log(limit = Present(1))
+                _      <- dolt.executeRaw("INSERT INTO person VALUES (9, 'anchor')")
+                merged <- dolt.commit("merge feature with anchor")
+                added  <- dolt.diff(Dolt.Ref.Commit(seed.hash), Dolt.Ref.Commit(merged.hash), "person")
+                rows   <- count(dolt)
+            yield
+                assert(staged == Dolt.Merge.Staged(staged.summary), s"a clean staged merge is Staged, got $staged")
+                assert(head.head.hash == seed.hash, "the branch must not move until the caller commits")
+                assert(merged.parents.toSet == Set(seed.hash, bob.hash), s"the commit joins both histories, got ${merged.parents}")
+                assert(added.size == 2 && added.forall(_.kind == Dolt.Diff.Kind.Added), s"bob and the anchor, got $added")
+                assert(rows == 3L, s"got $rows")
+            end for
+        }
+    }
+
+    "a staged merge of diverged branches commits once with both parents" in {
+        withDolt { dolt =>
+            for
+                _   <- seeded(dolt)
+                _   <- dolt.createBranch("feature")
+                bob <- dolt.onBranch("feature") {
+                    dolt.executeRaw("INSERT INTO person VALUES (2, 'bob')").andThen(dolt.commit("add bob"))
+                }
+                _      <- dolt.executeRaw("INSERT INTO person VALUES (3, 'carol')")
+                carol  <- dolt.commit("add carol")
+                staged <- dolt.stageMerge(Dolt.Ref.Branch("feature"))
+                _      <- dolt.executeRaw("INSERT INTO person VALUES (9, 'anchor')")
+                merged <- dolt.commit("merge feature with anchor")
+                rows   <- count(dolt)
+            yield
+                assert(!staged.isConflicted && staged.conflictCount == 0L, s"got $staged")
+                assert(merged.parents.toSet == Set(carol.hash, bob.hash), s"got ${merged.parents}")
+                assert(rows == 4L, s"alice, bob, carol and the anchor, got $rows")
+            end for
+        }
+    }
+
+    "a staged merge of a branch already contained answers up to date and stages nothing" in {
+        withDolt { dolt =>
+            for
+                _      <- seeded(dolt)
+                _      <- dolt.createBranch("stale")
+                staged <- dolt.stageMerge(Dolt.Ref.Branch("stale"))
+                status <- dolt.status
+            yield
+                assert(staged == Dolt.Merge.UpToDate(staged.summary), s"got $staged")
+                assert(status.isEmpty, s"nothing to commit, got $status")
+            end for
+        }
+    }
+
+    "a conflicting staged merge answers the conflicts as merge does" in {
+        withDolt { dolt =>
+            for
+                _ <- seeded(dolt)
+                _ <- dolt.createBranch("left")
+                _ <- dolt.createBranch("right")
+                _ <- dolt.onBranch("left") {
+                    dolt.executeRaw("UPDATE person SET name = 'alice-left' WHERE id = 1").andThen(dolt.commit("left edit"))
+                }
+                _ <- dolt.onBranch("right") {
+                    dolt.executeRaw("UPDATE person SET name = 'alice-right' WHERE id = 1").andThen(dolt.commit("right edit"))
+                }
+                staged <- dolt.onBranch("left")(dolt.stageMerge(Dolt.Ref.Branch("right")))
+                left   <- dolt.onBranch("left")(dolt.status.map(status => dolt.conflicts.map((status, _))))
+                merged <- dolt.onBranch("left")(dolt.merge(Dolt.Ref.Branch("right")))
+            yield
+                staged match
+                    case Dolt.Merge.Conflicted(data, schema, _) =>
+                        assert(data == Chunk(Dolt.ConflictSummary("person", 1L)), s"got $data")
+                        assert(schema.isEmpty, "the shapes agree, only the rows conflict")
+                    case other => fail(s"expected a conflicted merge, got $other")
+                end match
+                // This engine's side of the declared divergence: the conflicted merge rolled back, so nothing is left behind.
+                assert(left == (Chunk.empty, Chunk.empty), s"the branch must be as it was before the merge, got $left")
+                assert(merged.isConflicted && merged.conflictCount == staged.conflictCount, s"merge answers the same conflict, got $merged")
+            end for
+        }
+    }
+
+    "a conflicting merge answers the conflicts and leaves the branch as it was" in {
+        withDolt { dolt =>
+            for
+                _        <- seeded(dolt)
+                _        <- dolt.createBranch("left")
+                _        <- dolt.createBranch("right")
+                leftHead <- dolt.onBranch("left") {
+                    dolt.executeRaw("UPDATE person SET name = 'alice-left' WHERE id = 1").andThen(dolt.commit("left edit"))
+                }
+                _ <- dolt.onBranch("right") {
+                    dolt.executeRaw("UPDATE person SET name = 'alice-right' WHERE id = 1").andThen(dolt.commit("right edit"))
+                }
+                outcome <- dolt.onBranch("left")(dolt.merge(Dolt.Ref.Branch("right")))
+                head    <- dolt.log(Dolt.Ref.Branch("left"), Present(1))
+                name    <- dolt.onBranch("left")(dolt.query("SELECT name FROM person WHERE id = 1").map(rows => rows(0).decode[String](0)))
+            yield
+                outcome match
+                    case Dolt.Merge.Conflicted(data, schema, message) =>
+                        assert(data == Chunk(Dolt.ConflictSummary("person", 1L)), s"got $data")
+                        assert(schema.isEmpty, "the shapes agree, only the rows conflict")
+                        assert(message.nonEmpty, "the engine's own account must be carried")
+                    case other => fail(s"expected a conflicted merge, got $other")
+                end match
+                assert(head.head.hash == leftHead.hash, "a conflicted merge commits nothing")
+                assert(name == "alice-left", s"the rollback restores the branch's own row, got $name")
+            end for
+        }
+    }
+
+    "merging a branch already contained answers up to date" in {
+        withDolt { dolt =>
+            for
+                _      <- seeded(dolt)
+                _      <- dolt.createBranch("stale")
+                merged <- dolt.merge(Dolt.Ref.Branch("stale"))
+            yield
+                assert(merged == Dolt.Merge.UpToDate(merged.summary), s"got $merged")
+                assert(merged.resultingCommit.isEmpty, "nothing was created")
+            end for
+        }
+    }
+
+    "a merge with nothing on the target fast-forwards" in {
+        withDolt { dolt =>
+            for
+                _   <- seeded(dolt)
+                _   <- dolt.createBranch("feature")
+                bob <- dolt.onBranch("feature") {
+                    dolt.executeRaw("INSERT INTO person VALUES (2, 'bob')").andThen(dolt.commit("add bob"))
+                }
+                merged <- dolt.merge(Dolt.Ref.Branch("feature"))
+                rows   <- count(dolt)
+            yield
+                assert(merged.isInstanceOf[Dolt.Merge.FastForward], s"got $merged")
+                assert(merged.resultingCommit.map(_.hash) == Present(bob.hash), s"the branch moves to bob's commit, got $merged")
+                assert(rows == 2L, s"the merged row must be present, got $rows")
             end for
         }
     }
