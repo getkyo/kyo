@@ -407,7 +407,7 @@ class WritePumpTest extends Test:
         // Anti-flakiness: smallBufferedPair guarantees a real Partial on the first write; drainPeer unblocks the retry. After the retry,
         // resetPeer delivers a real RST; feeding the pump a burst of spans drives the writes that surface the RST as WriteResult.Error.
         // closedLatch is the real-event latch on teardown; the burst is the flood-until-error idiom, not a timing wait.
-        "write error after retry also triggers teardown" in {
+        "write error after retry also triggers teardown".times(300) in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
