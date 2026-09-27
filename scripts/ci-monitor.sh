@@ -265,18 +265,48 @@ sockets_headline() {
     printf 'tcp=%s timeWait=%s ephemeral=%s' "${tcp:-?}" "${timewait:-?}" "${range:-?}"
 }
 
+# Commit-pressure headline: what a WSAENOBUFS (Windows error 10055) reads as when the socket headline is healthy.
+# AFD takes a socket's buffers from non-paged pool under the system commit limit, so a connect fails with 10055
+# when either runs out while `tcp` and `timeWait` sit far below the port range: measured on windows-x64 runners
+# with a few hundred TCP entries against a 16384-port range and the pagefile down to single-digit megabytes.
+# `commitMB` is the committed charge, `commitLimitMB` the limit (physical memory plus pagefile), `nonpagedMB` the
+# pool. Windows only, through `typeperf`, the counter reader every runner image ships. Best-effort; a field that
+# cannot be sampled prints `?`.
+commit_headline() {
+    case "$OS" in
+        MINGW* | MSYS* | CYGWIN*) ;;
+        *) return 0 ;;
+    esac
+    command -v typeperf >/dev/null 2>&1 || return 0
+    local sample committed limit pool
+    # typeperf prints a CSV header naming the counters, then one row per sample: a quoted timestamp and the
+    # values in bytes. The header starts with a quote too, so the row that counts is the last one whose values
+    # are numeric; a typeperf that printed only its header reads as unsampled rather than as zero.
+    sample=$(MSYS2_ARG_CONV_EXCL='*' typeperf '\Memory\Committed Bytes' '\Memory\Commit Limit' '\Memory\Pool Nonpaged Bytes' -sc 1 2>/dev/null |
+        tr -d '\r' | awk -F'","' '/^"/ && NF == 4 && $2 ~ /^[0-9.]+$/ { row = $0 } END { if (row) print row }')
+    if [ -z "$sample" ]; then
+        printf 'commitMB=? commitLimitMB=? nonpagedMB=?'
+        return 0
+    fi
+    committed=$(printf '%s' "$sample" | awk -F'","' '{ printf "%d", $2 / 1048576 }')
+    limit=$(printf '%s' "$sample" | awk -F'","' '{ printf "%d", $3 / 1048576 }')
+    pool=$(printf '%s' "$sample" | awk -F'","' '{ gsub(/"/, "", $4); printf "%d", $4 / 1048576 }')
+    printf 'commitMB=%s commitLimitMB=%s nonpagedMB=%s' "${committed:-?}" "${limit:-?}" "${pool:-?}"
+}
+
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
 log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
 while true; do
     os="$(os_headline)"
     tasks="$(tasks_headline)"
     sock="$(sockets_headline)"
+    commit="$(commit_headline)"
     top="$(proc_top)"
     sc="$(sched_snapshot)"
     free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
     disk_check "$free_mb"
     crit=""
     [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${top:+ $top}${sc:+ $sc}${crit}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${commit:+ $commit}${top:+ $top}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done

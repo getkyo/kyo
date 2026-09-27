@@ -3621,7 +3621,7 @@ lazy val `kyo-ui` =
         .crossType(CrossType.Full)
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
-        .dependsOn(`kyo-browser` % Test)
+        .dependsOn(`kyo-browser` % "test->test")
         .withKyoTest
         .settings(
             `kyo-settings`
