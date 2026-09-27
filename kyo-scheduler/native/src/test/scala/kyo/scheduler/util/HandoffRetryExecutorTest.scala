@@ -28,19 +28,21 @@ class HandoffRetryExecutorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     /** Delegate that runs submissions on real threads, dropping the first `drops` of them.
       *
-      * `rejectOnCall` / `throwOnCall` fail one specific arrival by its ordinal, so a test can fail a RETRY (call 2)
-      * while leaving the initial submission accepted: an initial rejection is the caller's to handle, not the
-      * wrapper's, so it would exercise a different contract.
+      * `rejectOnCall` / `throwOnCall` / `interruptOnCall` fail one specific arrival by its ordinal: call 1 is the initial
+      * submission, call 2 its first retry. Once shut down, every arrival is rejected, as a real pool's is.
       */
-    private class StubPool(drops: Int, rejectOnCall: Int = 0, throwOnCall: Int = 0) extends AbstractExecutorService {
+    private class StubPool(drops: Int, rejectOnCall: Int = 0, throwOnCall: Int = 0, interruptOnCall: Int = 0)
+        extends AbstractExecutorService {
         val accepted               = new AtomicInteger(0)
         @volatile private var down = false
         private val dropped        = new AtomicInteger(0)
 
         def execute(command: Runnable): Unit = {
+            if (down) throw new RejectedExecutionException("stub is shut down")
             val call = accepted.incrementAndGet()
             if (call == rejectOnCall) throw new RejectedExecutionException("stub")
             if (call == throwOnCall) throw new IllegalStateException("rogue executor")
+            if (call == interruptOnCall) throw new InterruptedException("stub")
             if (dropped.getAndIncrement() < drops) () // accepted, never run: the defect
             else {
                 val t = factory.newThread(command)
@@ -122,5 +124,50 @@ class HandoffRetryExecutorTest extends AnyFreeSpec with NonImplicitAssertions {
         eventually(assert(runs.get() == n, s"expected $n runs, got ${runs.get()}"))
         eventually(assert(exec.pendingSize == 0))
         exec.shutdown()
+    }
+
+    "a submission the live pool refuses does not reach the caller and still runs exactly once" in {
+        val pool    = new StubPool(drops = 0, throwOnCall = 1)
+        val exec    = new HandoffRetryExecutor(pool, factory)
+        val runs    = new AtomicInteger(0)
+        val ran     = new CountDownLatch(1)
+        val failure =
+            try { exec.execute { () => runs.incrementAndGet(); ran.countDown() }; None }
+            catch { case e: Throwable => Some(e) }
+        assert(failure.isEmpty, s"the refusal must not reach the caller, got $failure")
+        assert(exec.submitFailures == 1)
+        assert(ran.await(30, TimeUnit.SECONDS), "the refused submission was never re-submitted")
+        eventually(assert(runs.get() == 1, s"expected exactly one run, got ${runs.get()}"))
+        eventually(assert(exec.pendingSize == 0))
+        exec.shutdown()
+    }
+
+    "a submission refused with an InterruptedException runs and keeps the caller's interrupt" in {
+        val pool    = new StubPool(drops = 0, interruptOnCall = 1)
+        val exec    = new HandoffRetryExecutor(pool, factory)
+        val ran     = new CountDownLatch(1)
+        val failure =
+            try { exec.execute(() => ran.countDown()); None }
+            catch { case e: InterruptedException => Some(e) }
+        val interrupted = Thread.interrupted()
+        assert(failure.isEmpty, s"the refusal must not reach the caller, got $failure")
+        assert(interrupted, "the caller's interrupt must be re-armed")
+        assert(exec.submitFailures == 1)
+        assert(ran.await(30, TimeUnit.SECONDS), "the refused submission was never re-submitted")
+        exec.shutdown()
+    }
+
+    "a shut-down pool's rejection reaches the caller and nothing is tracked" in {
+        val pool = new StubPool(drops = 0)
+        val exec = new HandoffRetryExecutor(pool, factory)
+        val runs = new AtomicInteger(0)
+        exec.shutdown()
+        val failure =
+            try { exec.execute(() => { val _ = runs.incrementAndGet() }); None }
+            catch { case e: RejectedExecutionException => Some(e) }
+        assert(failure.isDefined, "a shut-down pool's rejection is the caller's to handle")
+        assert(exec.pendingSize == 0)
+        assert(exec.submitFailures == 0)
+        assert(runs.get() == 0)
     }
 }
