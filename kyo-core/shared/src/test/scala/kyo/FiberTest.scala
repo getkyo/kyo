@@ -99,6 +99,21 @@ class FiberTest extends kyo.test.Test[Any]:
                     c <- p.get
                 yield assert(a && b && c == 42)
             }
+
+            "a parked fiber that forked children wakes after a promise became it" in {
+                // The race links its two children into the fiber before the fiber parks on the race, so the fiber's
+                // chain holds two links plus the parked one when the promise becomes it.
+                for
+                    child <- Promise.init[Int, Any]
+                    gate  <- Promise.init[Int, Any]
+                    inner <- Fiber.init(Async.race(child.get, gate.get))
+                    _     <- assertEventually(inner.waiters.map(_ == 3))
+                    outer <- Promise.init[Int, Any]
+                    a     <- outer.become(inner)
+                    _     <- gate.complete(Result.succeed(1))
+                    r     <- outer.get
+                yield assert(a && r == 1)
+            }
         }
 
         "completeDiscard" in {
@@ -387,6 +402,17 @@ class FiberTest extends kyo.test.Test[Any]:
                 mappedFiber <- fiber.map(_ => throw new RuntimeException("Mapping exception"))
                 result      <- Abort.run[Throwable](mappedFiber.get)
             yield assert(result.isPanic)
+            end for
+        }
+
+        "a throw from the mapping function deferred by pending effects is raised where the result runs" in {
+            val ex = new RuntimeException("Mapping exception")
+            for
+                promise     <- Promise.init[Int, Var[Int]]
+                _           <- promise.complete(Result.succeed(Var.get[Int]))
+                mappedFiber <- promise.map[Int](_ => throw ex)
+                result      <- Var.run(42)(Abort.run[Throwable](mappedFiber.get))
+            yield assert(result == Result.Failure(ex), s"$result")
             end for
         }
     }

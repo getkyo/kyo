@@ -382,15 +382,12 @@ private[kyo] object IOPromise:
                     case _ if (p eq Pending.Empty) => tail
                     case p: Pending[E, A]          => interruptLoop(p.interrupt(error), error)
 
-            @tailrec def removeInterruptsLoop(p: Pending[E, A], other: IOPromise[?, ?]): Pending[E, A] =
-                p match
-                    case _ if (p eq Pending.Empty) => tail
-                    case p: Pending[E, A]          => removeInterruptsLoop(p.removeInterrupt(other), other)
-
             new Pending[E, A]:
-                def waiters: Int                            = self.waiters + tail.waiters
-                def interrupt(error: Error[E])              = interruptLoop(self, error)
-                def removeInterrupt(other: IOPromise[?, ?]) = removeInterruptsLoop(self, other)
+                def waiters: Int               = self.waiters + tail.waiters
+                def interrupt(error: Error[E]) = interruptLoop(self, error)
+                // Not a step loop like the two above: `run` and `interrupt` consume a node and return the rest, while
+                // `removeInterrupt` returns the whole chain rebuilt, so stepping over it never reaches Empty.
+                def removeInterrupt(other: IOPromise[?, ?]) = self.removeInterrupt(other).merge(tail.removeInterrupt(other))
                 def run(v: Result[E, A])                    = runLoop(self, v)
             end new
         end merge
