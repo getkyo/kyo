@@ -5,7 +5,6 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.util.ThreadUserTime
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 /** Monitors worker threads for blocking by sampling user CPU time.
   *
@@ -106,14 +105,17 @@ private[scheduler] class BlockingMonitor(
     private val blockedFlags  = new Array[Boolean](maxWorkers)
     private val blockCounts   = new Array[Int](maxWorkers)
 
-    @volatile private var monitorThread: Thread = null
-    private var lastCycleNanos: Long            = 0L
+    @volatile private[scheduler] var monitorThread: Thread = null
+    private var lastCycleNanos: Long                       = 0L
     // Effective threshold scaled by scheduling pressure. When the monitor's own parkNanos
     // takes longer than expected, the system is CPU-starved and flat CPU time on worker
     // threads is expected (not blocking). The threshold scales proportionally so truly blocked
     // threads (flat indefinitely) still get detected while CPU-starved threads (flat transiently)
     // don't reach the elevated threshold before getting CPU time again.
     private var effectiveBlockThreshold: Int = blockThreshold
+
+    // Scans that failed and were survived. Declared before `task`, which starts the loop that increments it.
+    private[scheduler] val failures = new java.util.concurrent.atomic.LongAdder
 
     private val task =
         if (executor ne null)
@@ -178,7 +180,10 @@ private[scheduler] class BlockingMonitor(
                 process(count, 0)
             }
         } catch {
-            case ex if NonFatal(ex) =>
+            // Any Throwable, fatal ones included: this runs as one long-lived loop that nothing restarts, and without it no worker
+            // is flagged blocked or sent its interrupt again. A StackOverflowError has unwound by the time it lands here.
+            case ex: Throwable =>
+                failures.increment()
                 bug(s"Blocking monitor has failed.", ex)
         }
     }

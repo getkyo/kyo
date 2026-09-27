@@ -1124,6 +1124,52 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
         }
     }
 
+    // ── resilience ──────────────────────────────────────────────────────
+
+    "resilience" - {
+
+        "a fatal error in one scan does not stop the scans after it" in {
+            // The monitor runs as one long-lived loop on the timer pool. An error that escapes a scan ends that loop, and nothing
+            // restarts it: blocked workers are never flagged again and interrupts are never dispatched again, for the life of the
+            // scheduler. Its own scheduler and timer pool, so a monitor killed here cannot leak into the shared one.
+            val timer   = java.util.concurrent.Executors.newScheduledThreadPool(8, kyo.scheduler.util.Threads("test-timer"))
+            val sched   = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer)
+            val started = new CountDownLatch(1)
+            val release = new CountDownLatch(1)
+            val thrown  = new AtomicBoolean(false)
+            val task    = new TestTask(_run = () => {
+                started.countDown()
+                release.await()
+                Task.Done
+            }) {
+                // The monitor asks every mounted task whether it needs an interrupt on each scan. Other threads ask too (a
+                // preemption and a runtime update both check it), so only a call on the monitor's own thread fails, the way the
+                // scheduler's drain recursion did on CI.
+                override def needsInterrupt(): Boolean =
+                    if ((Thread.currentThread() eq sched.blockingMonitor.monitorThread) && thrown.compareAndSet(false, true))
+                        throw new StackOverflowError("injected")
+                    else false
+            }
+            try {
+                sched.schedule(task)
+                assert(started.await(5, TimeUnit.SECONDS))
+                eventually(assert(thrown.get()))
+                val after = sched.blockingMonitor.cycles
+                // Counts the monitor's own scans; the deadline only bails out a monitor that stopped.
+                val deadline = System.nanoTime() + 60L * 1000 * 1000 * 1000
+                while (sched.blockingMonitor.cycles < after + 20 && System.nanoTime() < deadline) Thread.`yield`()
+                assert(
+                    sched.blockingMonitor.cycles >= after + 20,
+                    s"the monitor stopped scanning after the error (cycles ${sched.blockingMonitor.cycles}, was $after)"
+                )
+            } finally {
+                release.countDown()
+                sched.shutdown()
+                timer.shutdownNow(): Unit
+            }
+        }
+    }
+
     // ── task bit-packing (no scheduler needed) ──────────────────────────
 
     "task bit-packing" - {
