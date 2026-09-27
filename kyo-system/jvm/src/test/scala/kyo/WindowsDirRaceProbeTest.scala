@@ -61,8 +61,9 @@ class WindowsDirRaceProbeTest extends kyo.test.Test[Any]:
         var lingerings = 0
         var round      = 0
         while round < rounds do
-            val root = base.resolve(s"root-$round")
-            discard(Files.createDirectory(root))
+            val ancestor = base.resolve(s"anc-$round")
+            val root     = if op.endsWith("Ancestor") then ancestor.resolve(s"root-$round") else base.resolve(s"root-$round")
+            discard(Files.createDirectories(root))
             if withChild then discard(Files.writeString(root.resolve("child"), "x"))
             val stop   = new AtomicBoolean(false)
             val scans  = new AtomicLong(0L)
@@ -87,8 +88,11 @@ class WindowsDirRaceProbeTest extends kyo.test.Test[Any]:
                 tries += 1
                 try
                     op match
-                        case "remove" => removeAll(root)
-                        case "move"   => discard(Files.move(root, base.resolve(s"moved-$round")))
+                        case "remove"         => removeAll(root)
+                        case "move"           => discard(Files.move(root, base.resolve(s"moved-$round")))
+                        case "moveAncestor"   => discard(Files.move(ancestor, base.resolve(s"moved-$round")))
+                        case "removeAncestor" => removeAll(ancestor)
+                    end match
                     done = true
                 catch
                     case ex: Throwable =>
@@ -137,7 +141,7 @@ class WindowsDirRaceProbeTest extends kyo.test.Test[Any]:
         Sync.defer {
             val lines =
                 for
-                    op    <- Seq("remove", "move")
+                    op    <- Seq("moveAncestor", "removeAncestor")
                     kind  <- Seq("none", "exists", "list", "all")
                     child <- Seq(false, true)
                 yield probe(op, kind, child)
