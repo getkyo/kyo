@@ -131,6 +131,54 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "resilience" - {
+        // Each step runs as a periodic task on a ScheduledExecutorService, which suppresses every later run once one throws: a single
+        // failure would stop the regulator for the life of the scheduler. A probe schedules a task, which can reach the scheduler's
+        // drains, and the drain recursion overflowed the stack on CI. These run on a real executor because TestTimer does not
+        // reproduce the suppression.
+
+        def withRealTimer[A](f: kyo.scheduler.InternalTimer => A): A = {
+            val exec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+            try f(kyo.scheduler.InternalTimer(exec))
+            finally exec.shutdownNow(): Unit
+        }
+
+        // Polls a count until it reaches `target`; the deadline only bails out a step that stopped running.
+        def awaitCount(count: () => Int, target: Int, what: String): Unit = {
+            val deadline = System.nanoTime() + 30L * 1000 * 1000 * 1000
+            while (count() < target && System.nanoTime() < deadline) Thread.`yield`()
+            val _ = assert(count() >= target, s"$what stopped after the error (${count()} runs)")
+        }
+
+        val cfg = Config(10, 1.millis, 1.millis, 200, 100, 0.8, 1.3)
+
+        "a fatal error in one probe does not stop the probes after it" in withRealTimer { timer =>
+            val thrown = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val probes = new java.util.concurrent.atomic.AtomicInteger(0)
+            val _      = new Regulator(() => 0d, timer, cfg) {
+                def probe(): Unit =
+                    if (thrown.compareAndSet(false, true)) throw new StackOverflowError("injected")
+                    else { val _ = probes.incrementAndGet() }
+                def update(diff: Int): Unit = ()
+            }
+            awaitCount(() => probes.get(), 20, "probing")
+        }
+
+        "a fatal error in one adjustment does not stop the adjustments after it" in withRealTimer { timer =>
+            // The adjustment reads the load average on every run, and nothing else here does.
+            val thrown                                     = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val reads                                      = new java.util.concurrent.atomic.AtomicInteger(0)
+            val loadAvg: java.util.function.DoubleSupplier = () =>
+                if (thrown.compareAndSet(false, true)) throw new StackOverflowError("injected")
+                else { val _ = reads.incrementAndGet(); 0d }
+            val _ = new Regulator(loadAvg, timer, cfg) {
+                def probe(): Unit           = ()
+                def update(diff: Int): Unit = ()
+            }
+            awaitCount(() => reads.get(), 20, "adjusting")
+        }
+    }
+
     trait Context {
 
         val timer                 = TestTimer()
