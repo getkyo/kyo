@@ -210,21 +210,24 @@ private[kyo] object Rsa:
                     val count = first & 0x7f
                     if count == 0 || count > 4 || pos + count > der.length then Result.fail(DerFailure.LengthUnsupported(pos - 1))
                     else
-                        var length = 0
+                        var length = 0L
                         var i      = 0
                         while i < count do
                             length = (length << 8) | (der(pos) & 0xff)
                             pos += 1
                             i += 1
                         end while
-                        Result.succeed(length)
+                        // Four bytes with the top bit set exceed Int.MaxValue; read as an Int they would be negative and move the reader
+                        // backwards.
+                        if length > Int.MaxValue then Result.fail(DerFailure.LengthUnsupported(pos - 1 - count))
+                        else Result.succeed(length.toInt)
                     end if
                 end if
             end if
         end readLength
 
         def skip(count: Int): Result[DerFailure, Unit] =
-            if pos + count > der.length then Result.fail(DerFailure.SkipPastEnd(count, pos))
+            if pos.toLong + count > der.length then Result.fail(DerFailure.SkipPastEnd(count, pos))
             else
                 pos += count
                 Result.unit
@@ -233,7 +236,7 @@ private[kyo] object Rsa:
         def readInteger(): Result[DerFailure, BigInt] =
             readTag(0x02).flatMap { _ =>
                 readLength().flatMap { length =>
-                    if pos + length > der.length then Result.fail(DerFailure.IntegerExceedsData(pos))
+                    if pos.toLong + length > der.length then Result.fail(DerFailure.IntegerExceedsData(pos))
                     else
                         val bytes = java.util.Arrays.copyOfRange(der, pos, pos + length)
                         pos += length

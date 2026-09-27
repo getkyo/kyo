@@ -98,6 +98,53 @@ class RsaSpkiTest extends kyo.test.Test[Any]:
             val key     = keyOf(Rsa.publicKeyFromSpki(loose))
             assert(key.modulus == modulus && key.exponent == BigInt(65537))
         }
+
+        "a four-byte length with its top bit set is LengthUnsupported, never a position moved backwards" in {
+            // 0x84 ff ff ff f0 read as a signed Int is -16; skipping it would put the reader before the array.
+            val algorithm = Array[Byte](0x30, 0x05, 0x30, 0x84.toByte, 0xff.toByte, 0xff.toByte, 0xff.toByte, 0xf0.toByte)
+            assert(Rsa.publicKeyFromSpki(algorithm) == Result.fail(SpkiFailure.Der(DerFailure.LengthUnsupported(3))))
+            val integer = Array[Byte](
+                0x30,
+                0x10,
+                0x30,
+                0x00,
+                0x03,
+                0x10,
+                0x00,
+                0x30,
+                0x10,
+                0x02,
+                0x84.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte
+            )
+            assert(Rsa.publicKeyFromSpki(integer) == Result.fail(SpkiFailure.Der(DerFailure.LengthUnsupported(10))))
+        }
+
+        "a length that fits an Int but not the data is reported against the data, not wrapped around" in {
+            val skip = Array[Byte](0x30, 0x05, 0x30, 0x84.toByte, 0x7f, 0xff.toByte, 0xff.toByte, 0xff.toByte)
+            assert(Rsa.publicKeyFromSpki(skip) == Result.fail(SpkiFailure.Der(DerFailure.SkipPastEnd(Int.MaxValue, 8))))
+            val integer = Array[Byte](
+                0x30,
+                0x10,
+                0x30,
+                0x00,
+                0x03,
+                0x10,
+                0x00,
+                0x30,
+                0x10,
+                0x02,
+                0x84.toByte,
+                0x7f,
+                0xff.toByte,
+                0xff.toByte,
+                0xff.toByte
+            )
+            assert(Rsa.publicKeyFromSpki(integer) == Result.fail(SpkiFailure.Der(DerFailure.IntegerExceedsData(15))))
+        }
     }
 
     "ceilings" - {
