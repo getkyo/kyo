@@ -2,6 +2,7 @@ package kyo.internal
 
 import CdpTypes.*
 import kyo.*
+import kyo.internal.cdp.PageDownload
 
 /** Interrupts landing on the round trips a [[CdpBackend]] and the tab setup make, driven over an in-memory CDP wire whose browser side
   * this suite plays.
@@ -10,14 +11,25 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     private val cfg = Browser.LaunchConfig.default
 
-    final private class Wire(val seen: AtomicRef[Chunk[String]], val replies: AtomicInt)
+    /** `served` is released when the browser side stops reading, which happens once the client side closes the wire. */
+    final private class Wire(
+        val seen: AtomicRef[Chunk[String]],
+        val replies: AtomicInt,
+        val requests: AtomicRef[Chunk[JsonRpcRequest]],
+        val served: Latch
+    )
 
-    /** Plays the browser side: records each request on `wire`, holds a reply behind its `gates` entry, and releases a
-      * method's `seenGates` entry the moment its request arrives, before any reply.
+    /** Plays the browser side: records each request on `wire`, holds a reply behind its `gates` entry, releases a
+      * method's `seenGates` entry the moment its request arrives, before any reply, and answers the first request of each
+      * `rejectFirst` method with a JSON-RPC error.
       */
-    private def serve(browserEnd: JsonRpcTransport, wire: Wire, gates: Map[String, Latch], seenGates: Map[String, Latch])(using
-        Frame
-    ): Fiber[Unit, Any] < Sync =
+    private def serve(
+        browserEnd: JsonRpcTransport,
+        wire: Wire,
+        gates: Map[String, Latch],
+        seenGates: Map[String, Latch],
+        rejectFirst: Set[String]
+    )(using Frame): Fiber[Unit, Any] < Sync =
         def result(method: String): Structure.Value = method match
             case "Browser.getVersion" =>
                 summon[Schema[BrowserVersionResult]].toStructureValue(BrowserVersionResult("1.3", "Chrome/1", "1", "ua", "v8"))
@@ -35,37 +47,121 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             Abort.run[Closed | JsonRpcError] {
                 browserEnd.incoming.foreach {
                     case req: JsonRpcRequest =>
-                        wire.seen.updateAndGet(_.append(req.method)).andThen {
-                            seenGates.get(req.method) match
-                                case Some(seen) => seen.release
-                                case None       => Kyo.unit
-                        }.andThen {
-                            gates.get(req.method) match
-                                case Some(gate) => gate.await
-                                case None       => Kyo.unit
-                        }.andThen(browserEnd.send(JsonRpcResponse.success(req.id, result(req.method))))
+                        wire.requests.updateAndGet(_.append(req)).andThen(wire.seen.updateAndGet(_.append(req.method))).map { seen =>
+                            val reply =
+                                if rejectFirst.contains(req.method) && seen.count(_ == req.method) == 1 then
+                                    JsonRpcResponse.failure(req.id, JsonRpcImplementationError(-32000, s"${req.method} rejected"))
+                                else JsonRpcResponse.success(req.id, result(req.method))
+                            (seenGates.get(req.method) match
+                                case Some(arrived) => arrived.release
+                                case None          => Kyo.unit
+                            ).andThen {
+                                gates.get(req.method) match
+                                    case Some(gate) => gate.await
+                                    case None       => Kyo.unit
+                            }.andThen(browserEnd.send(reply))
+                        }
                     case _: JsonRpcResponse => wire.replies.incrementAndGet.unit
                     case _                  => Kyo.unit
                 }
-            }.unit
+            }.unit.andThen(wire.served.release)
         }
     end serve
 
-    private def wired[A](gates: Map[String, Latch], seenGates: Map[String, Latch] = Map.empty)(
+    private def wired[A](gates: Map[String, Latch], seenGates: Map[String, Latch] = Map.empty, rejectFirst: Set[String] = Set.empty)(
         f: (JsonRpcTransport, JsonRpcTransport, Wire) => A < (Async & Abort[Any] & Scope)
     )(using
         Frame
     ): A < (Async & Abort[Any] & Scope) =
         for
-            seen    <- AtomicRef.init(Chunk.empty[String])
-            replies <- AtomicInt.init(0)
-            wire = new Wire(seen, replies)
+            seen     <- AtomicRef.init(Chunk.empty[String])
+            replies  <- AtomicInt.init(0)
+            requests <- AtomicRef.init(Chunk.empty[JsonRpcRequest])
+            served   <- Latch.init(1)
+            wire = new Wire(seen, replies, requests, served)
             pair <- JsonRpcTransport.inMemory
             (client, browser) = pair
-            server <- serve(browser, wire, gates, seenGates)
+            server <- serve(browser, wire, gates, seenGates, rejectFirst)
             _      <- Scope.ensure(server.interrupt.andThen(client.close).andThen(browser.close))
             a      <- f(client, browser, wire)
         yield a
+
+    /** The params of every `method` request the wire recorded, in arrival order. */
+    private def paramsSent[P](wire: Wire, method: String)(using schema: Schema[P], frame: Frame): Chunk[P] < Sync =
+        wire.requests.get.map(_.filter(_.method == method).map(req =>
+            schema.fromStructureValue(req.params.getOrElse(Structure.Value.Record(Chunk.empty))).getOrThrow
+        ))
+
+    // The CDP params types carry no `CanEqual`, so the leaves compare these renderings of their fields.
+    private def shown(m: Maybe[String]): String =
+        m match
+            case Present(v) => s"'$v'"
+            case Absent     => "absent"
+
+    private def shownViewport(p: ViewportParams): String = s"${p.width}x${p.height} mobile=${p.mobile}"
+
+    private def shownMedia(p: SetEmulatedMediaParams): String =
+        val features = p.features match
+            case Present(fs) => fs.map(f => s"${f.name}=${f.value}").mkString("[", ",", "]")
+            case Absent      => "absent"
+        s"media=${shown(p.media)} features=$features"
+    end shownMedia
+
+    private def shownDownload(p: PageDownload.SetDownloadBehaviorParams): String =
+        val events = p.eventsEnabled match
+            case Present(e) => e.toString
+            case Absent     => "absent"
+        s"${p.behavior.wire} path=${shown(p.downloadPath)} events=$events"
+    end shownDownload
+
+    /** Runs `body` on a tab built over a wire whose browser rejects the first request of each `rejectFirst` method, with
+      * quiescence disabled so `afterAction` sends each override directly.
+      */
+    private def onTab[A](rejectFirst: Set[String])(body: Wire => A < (Browser & Async & Abort[BrowserReadException]))(using
+        Frame
+    ): A < (Async & Abort[Any] & Scope) =
+        wired(Map.empty, rejectFirst = rejectFirst) { (client, _, wire) =>
+            Scope.run {
+                CdpBackend.initUnscoped(client, cfg).map { backend =>
+                    BrowserTabSetup.mkBrowserTab(TargetId("target-1"), SessionId("session-1"), backend, Absent).map { tab =>
+                        Browser.runOn(tab)(Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero))(body(wire)))
+                    }
+                }
+            }
+        }
+
+    private def rejectedBy(result: Result[BrowserReadException, Unit], method: String): Boolean =
+        result.failure match
+            case Present(e: BrowserProtocolErrorException) => e.method == method
+            case _                                         => false
+
+    /** Runs `wrap` around a body that records whether the tab's `registry` holds its session's entry and then fails, and
+      * returns that record, the wrapper's outcome, and whether the entry is still held after the wrapper returned.
+      */
+    private def entryAroundFailingBody[V](registry: BrowserTab => AtomicRef[Dict[String, V]])(
+        wrap: Unit < (Browser & Async & Abort[BrowserReadException]) => Unit < (Browser & Async & Abort[BrowserReadException])
+    )(using Frame): (Boolean, Result[BrowserReadException, Unit], Boolean) < (Async & Abort[Any] & Scope) =
+        onTab(Set.empty) { _ =>
+            Browser.use { tab =>
+                val key = tab.sessionId.value
+                for
+                    held    <- AtomicBoolean.init(false)
+                    outcome <- Abort.run[BrowserReadException](wrap(
+                        registry(tab).get.map(m => held.set(m.contains(key))).andThen(
+                            Abort.fail(BrowserProtocolErrorException("test.body", "the body failed"))
+                        )
+                    ))
+                    during <- held.get
+                    after  <- registry(tab).get.map(_.contains(key))
+                yield (during, outcome, after)
+                end for
+            }
+        }
+
+    private def failedInBody(outcome: Result[BrowserReadException, Unit]): Boolean =
+        outcome.failure match
+            case Present(e: BrowserProtocolErrorException) => e.method == "test.body"
+            case _                                         => false
 
     private def sawEventually(wire: Wire, method: String)(using Frame, kyo.test.AssertScope): Boolean < Async =
         Abort.run[Timeout](Async.timeout(2.seconds)(assertEventually(wire.seen.get.map(_.contains(method))))).map(_.isSuccess)
@@ -125,7 +221,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     case _: JsonRpcResponse => wire.replies.incrementAndGet.unit
                     case _                  => Kyo.unit
                 }
-            }.unit
+            }.unit.andThen(wire.served.release)
         }
     end serveEval
 
@@ -133,9 +229,11 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         f: (JsonRpcTransport, JsonRpcTransport, Wire, Latch) => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =
         for
-            seen    <- AtomicRef.init(Chunk.empty[String])
-            replies <- AtomicInt.init(0)
-            wire = new Wire(seen, replies)
+            seen     <- AtomicRef.init(Chunk.empty[String])
+            replies  <- AtomicInt.init(0)
+            requests <- AtomicRef.init(Chunk.empty[JsonRpcRequest])
+            served   <- Latch.init(1)
+            wire = new Wire(seen, replies, requests, served)
             gate <- Latch.init(1)
             pair <- JsonRpcTransport.inMemory
             (client, browser) = pair
@@ -152,18 +250,51 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException | BrowserSetupException](
                         Scope.run(CdpBackend.initUnscoped(client, cfg).andThen(Async.never))
                     ))
-                    probed   <- sawEventually(wire, "Browser.getVersion")
-                    _        <- fiber.interrupt
-                    _        <- gate.release
-                    _        <- fiber.getResult
+                    probed <- sawEventually(wire, "Browser.getVersion")
+                    _      <- fiber.interrupt
+                    _      <- gate.release
+                    _      <- fiber.getResult
+                    // `getResult` does not await the stopped scope's finalizer drain, so the endpoint's close can still be
+                    // pending here; the leaf waits on the endpoint closing the wire before it probes for an answer.
+                    closed   <- Abort.run[Timeout](Async.timeout(2.seconds)(wire.served.await)).map(_.isSuccess)
                     _        <- Abort.run[Closed](browser.send(JsonRpcRequest(JsonRpcId(9001L), "Probe.ping", Absent, Absent)))
                     answered <- Abort.run[Timeout](Async.timeout(1.second)(assertEventually(wire.replies.get.map(_ > 0)))).map(_.isSuccess)
                 yield
                     assert(probed, "the init never reached the version probe")
+                    assert(closed, "the endpoint the init built never closed the wire after the init was stopped")
                     assert(!answered, "an endpoint nobody owns is still answering the wire after the init that built it was stopped")
                 end for
             }
         }
+    }
+
+    "an interrupt landing anywhere between the version probe's send and its reply closes the endpoint the init built" in {
+        // Fires the interrupt the instant the probe's request arrives, before any reply, so the landing spots are sampled
+        // on both sides of the init parking on that reply.
+        Kyo.foreachDiscard(1 to 80) { round =>
+            Latch.init(1).map { gate =>
+                Latch.init(1).map { sent =>
+                    Scope.run {
+                        wired(Map("Browser.getVersion" -> gate), Map("Browser.getVersion" -> sent)) { (client, _, wire) =>
+                            for
+                                fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException | BrowserSetupException](
+                                    Scope.run(CdpBackend.initUnscoped(client, cfg).andThen(Async.never))
+                                ))
+                                _      <- sent.await
+                                _      <- fiber.interrupt
+                                _      <- gate.release
+                                _      <- fiber.getResult
+                                closed <- Abort.run[Timeout](Async.timeout(2.seconds)(wire.served.await)).map(_.isSuccess)
+                            yield assert(
+                                closed,
+                                s"round $round: the endpoint the init built never closed the wire after the init was stopped"
+                            )
+                            end for
+                        }
+                    }
+                }
+            }
+        }.andThen(succeed)
     }
 
     // The probe captures the dialog queue the drainer parks on, so the orphan is observable.
@@ -391,6 +522,171 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                     }
                 }
             }
+        }
+    }
+
+    "a rejected viewport override leaves no cached override for a later scope to restore" in {
+        val method = "Emulation.setDeviceMetricsOverride"
+        onTab(Set(method)) { wire =>
+            for
+                rejected  <- Abort.run[BrowserReadException](Browser.withViewport(800, 600)(Kyo.unit))
+                _         <- Browser.withViewport(1024, 768)(Kyo.unit)
+                cleared   <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
+                methods   <- wire.seen.get.map(_.filter(_.startsWith("Emulation.")))
+                overrides <- paramsSent[ViewportParams](wire, method)
+            yield
+                assert(rejectedBy(rejected, method), s"the first withViewport did not fail with the override's error reply: $rejected")
+                assert(cleared, s"the later scope never cleared the viewport it applied: $methods")
+                assert(methods == Chunk(method, method, "Emulation.clearDeviceMetricsOverride"))
+                assert(overrides.map(shownViewport) == Chunk("800x600 mobile=false", "1024x768 mobile=false"))
+            end for
+        }
+    }
+
+    "a rejected emulated-media override leaves no cached override for a later scope to restore" in {
+        val method = "Emulation.setEmulatedMedia"
+        onTab(Set(method)) { wire =>
+            for
+                rejected <- Abort.run[BrowserReadException](
+                    Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Dark))(Kyo.unit)
+                )
+                _        <- Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Light))(Kyo.unit)
+                restored <- sawEventuallyCount(wire, method, 3)
+                sent     <- paramsSent[SetEmulatedMediaParams](wire, method)
+            yield
+                assert(rejectedBy(rejected, method), s"the first withEmulation did not fail with the override's error reply: $rejected")
+                assert(restored, s"the later scope never restored the media it applied: $sent")
+                assert(sent.map(shownMedia) == Chunk(
+                    "media=absent features=[prefers-color-scheme=dark]",
+                    "media=absent features=[prefers-color-scheme=light]",
+                    "media='' features=[]"
+                ))
+            end for
+        }
+    }
+
+    /** Two absolute directories on this platform, removed when the leaf's scope ends, and the renderings the wire carries for
+      * them: the policy command sends each path in the platform's native spelling, so on Windows its slashes become backslashes.
+      */
+    private def downloadDirs(using Frame) =
+        for
+            first  <- Path.run(Path.tempDir("kyo-browser-rejected-policy-"))
+            second <- Path.run(Path.tempDir("kyo-browser-applied-policy-"))
+            os     <- System.operatingSystem
+        yield (
+            first.toString,
+            second.toString,
+            s"allow path='${PageDownload.nativeDownloadPath(os, first.toString)}' events=true",
+            s"allow path='${PageDownload.nativeDownloadPath(os, second.toString)}' events=true"
+        )
+
+    "a rejected download policy leaves no cached policy for a later scope to restore" in {
+        val method = "Page.setDownloadBehavior"
+        downloadDirs.map { (first, second, firstSent, secondSent) =>
+            onTab(Set(method)) { wire =>
+                for
+                    rejected <- Abort.run[BrowserReadException](Browser.withDownloads(first)(Kyo.unit))
+                    _        <- Browser.withDownloads(second)(Kyo.unit)
+                    restored <- sawEventuallyCount(wire, method, 3)
+                    sent     <- paramsSent[PageDownload.SetDownloadBehaviorParams](wire, method)
+                yield
+                    assert(rejectedBy(rejected, method), s"the first withDownloads did not fail with the policy's error reply: $rejected")
+                    assert(restored, s"the later scope never restored the policy it applied: $sent")
+                    assert(sent.map(shownDownload) == Chunk(firstSent, secondSent, "deny path=absent events=true"))
+                end for
+            }
+        }
+    }
+
+    "a rejected setViewport leaves no cached override for a later scope to restore" in {
+        val method = "Emulation.setDeviceMetricsOverride"
+        onTab(Set(method)) { wire =>
+            for
+                rejected  <- Abort.run[BrowserReadException](Browser.setViewport(800, 600))
+                _         <- Browser.withViewport(1024, 768)(Kyo.unit)
+                cleared   <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
+                methods   <- wire.seen.get.map(_.filter(_.startsWith("Emulation.")))
+                overrides <- paramsSent[ViewportParams](wire, method)
+            yield
+                assert(rejectedBy(rejected, method), s"setViewport did not fail with the override's error reply: $rejected")
+                assert(cleared, s"the later scope never cleared the viewport it applied: $methods")
+                assert(methods == Chunk(method, method, "Emulation.clearDeviceMetricsOverride"))
+                assert(overrides.map(shownViewport) == Chunk("800x600 mobile=false", "1024x768 mobile=false"))
+            end for
+        }
+    }
+
+    "a rejected allowDownloads leaves no cached policy for a later scope to restore" in {
+        val method = "Page.setDownloadBehavior"
+        downloadDirs.map { (first, second, firstSent, secondSent) =>
+            onTab(Set(method)) { wire =>
+                for
+                    rejected <- Abort.run[BrowserReadException](Browser.allowDownloads(first))
+                    _        <- Browser.withDownloads(second)(Kyo.unit)
+                    restored <- sawEventuallyCount(wire, method, 3)
+                    sent     <- paramsSent[PageDownload.SetDownloadBehaviorParams](wire, method)
+                yield
+                    assert(rejectedBy(rejected, method), s"allowDownloads did not fail with the policy's error reply: $rejected")
+                    assert(restored, s"the later scope never restored the policy it applied: $sent")
+                    assert(sent.map(shownDownload) == Chunk(firstSent, secondSent, "deny path=absent events=true"))
+                end for
+            }
+        }
+    }
+
+    // These registries write their entry and register its restore in one step with no suspension, so no gate can land an
+    // interrupt between the two. A body that fails right after the write is the closest landing the wire can force.
+    "a body failing inside withDialogs.accept leaves no dialog handler for the session" in {
+        entryAroundFailingBody(_.session.dialogHandlers)(body => Browser.withDialogs.accept(body)).map { (during, outcome, after) =>
+            assert(during, "the dialog handler was not installed while the body ran")
+            assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+            assert(!after, "the dialog handler outlived the body that failed")
+        }
+    }
+
+    "a body failing inside withDialogs.recorded leaves no dialog recorder for the session" in {
+        entryAroundFailingBody(_.session.dialogRecorders)(body => Browser.withDialogs.recorded(body).unit).map {
+            (during, outcome, after) =>
+                assert(during, "the dialog recorder was not installed while the body ran")
+                assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+                assert(!after, "the dialog recorder outlived the body that failed")
+        }
+    }
+
+    "a body failing inside onDownload leaves no download dispatcher for the session" in {
+        entryAroundFailingBody(_.session.downloadEventDispatchers)(body => Browser.onDownload[Unit, Sync](_ => Kyo.unit)(body)).map {
+            (during, outcome, after) =>
+                assert(during, "the download dispatcher was not installed while the body ran")
+                assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+                assert(!after, "the download dispatcher outlived the body that failed")
+        }
+    }
+
+    "a body failing inside onConsole leaves no console dispatcher for the session" in {
+        entryAroundFailingBody(_.session.consoleEventDispatchers)(body => Browser.onConsole[Unit, Sync](_ => Kyo.unit)(body)).map {
+            (during, outcome, after) =>
+                assert(during, "the console dispatcher was not installed while the body ran")
+                assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+                assert(!after, "the console dispatcher outlived the body that failed")
+        }
+    }
+
+    "a body failing inside screenshotFrames leaves no screencast dispatcher for the session" in {
+        entryAroundFailingBody(_.session.screencastEventDispatchers)(body => Browser.screenshotFrames()(body).unit).map {
+            (during, outcome, after) =>
+                assert(during, "the screencast dispatcher was not installed while the body ran")
+                assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+                assert(!after, "the screencast dispatcher outlived the body that failed")
+        }
+    }
+
+    "a body failing inside the frame-context tracker's scope leaves no frame dispatcher for the session" in {
+        entryAroundFailingBody(_.backend.frameEventDispatchers)(body =>
+            Browser.use(tab => Scope.run(BrowserTabSetup.installFrameContextTracker(tab).andThen(body)))
+        ).map { (during, outcome, after) =>
+            assert(during, "the frame dispatcher was not installed while the body ran")
+            assert(failedInBody(outcome), s"the body's failure did not propagate: $outcome")
+            assert(!after, "the frame dispatcher outlived the body that failed")
         }
     }
 
