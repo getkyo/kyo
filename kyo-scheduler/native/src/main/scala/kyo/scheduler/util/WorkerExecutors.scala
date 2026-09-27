@@ -26,13 +26,31 @@ private[scheduler] object WorkerExecutors {
     private val gateLock                     = new Object
     private var previousInit: CountDownLatch = new CountDownLatch(0)
 
+    /** Waits up to one second for the previous thread's init, bounded so a stalled predecessor cannot deadlock startup.
+      *
+      * Uninterruptible because the pool calls `newThread` on the submitting thread, and that thread is often a carrier settling an
+      * interrupted fiber with its interrupt flag set: throwing here would fail the dispatch of the worker being woken. The interrupt is
+      * re-armed afterwards because the interrupted fiber's own handling still reads it.
+      */
+    private def awaitInit(prev: CountDownLatch): Unit = {
+        val deadline    = java.lang.System.nanoTime() + TimeUnit.SECONDS.toNanos(1)
+        var interrupted = false
+        var done        = false
+        while (!done) {
+            val remaining = deadline - java.lang.System.nanoTime()
+            if (remaining <= 0) done = true
+            else
+                try done = prev.await(remaining, TimeUnit.NANOSECONDS)
+                catch { case _: InterruptedException => interrupted = true }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
+    }
+
     private def gated(base: ThreadFactory): ThreadFactory =
         new ThreadFactory {
             def newThread(r: Runnable): Thread =
                 gateLock.synchronized {
-                    val prev = previousInit
-                    // Bounded so a stalled predecessor cannot deadlock startup; init is sub-millisecond.
-                    prev.await(1, TimeUnit.SECONDS)
+                    awaitInit(previousInit)
                     val done = new CountDownLatch(1)
                     previousInit = done
                     base.newThread(new Runnable {
