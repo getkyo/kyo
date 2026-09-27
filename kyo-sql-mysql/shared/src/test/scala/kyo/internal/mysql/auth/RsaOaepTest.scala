@@ -181,6 +181,9 @@ FwIDAQAB
             case Result.Failure(e: SqlRequestRsaOaepException) =>
                 assert(e.position == "EME-OAEP", s"expected position 'EME-OAEP', got: ${e.position}")
                 assert(e.tag == "plaintext-length", s"expected tag 'plaintext-length', got: ${e.tag}")
+                // The plaintext is the password, so its length stays out of the message.
+                assert(e.getCause.getMessage == "plaintext longer than 214 bytes, the most a 2048-bit key takes")
+                assert(!e.getMessage.contains("215"))
             case other =>
                 fail(s"Expected SqlRequestRsaOaepException for oversized plaintext, got: $other")
         }

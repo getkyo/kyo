@@ -48,12 +48,12 @@ private[kyo] object RsaOaep:
             case Result.Success(key) =>
                 val k      = key.sizeInBytes
                 val maxLen = k - 2 * hLen - 2
-                val mLen   = plaintext.size
-                if mLen > maxLen then
+                // The plaintext is the password, so its length stays out of the message.
+                if plaintext.size > maxLen then
                     Abort.fail(SqlRequestRsaOaepException(
                         "EME-OAEP",
                         "plaintext-length",
-                        new Exception(s"plaintext $mLen > max $maxLen for ${k * 8}-bit key")
+                        new Exception(s"plaintext longer than $maxLen bytes, the most a ${k * 8}-bit key takes")
                     ))
                 else
                     random.nextBytes(hLen).map { seedSeq =>
