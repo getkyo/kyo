@@ -13,11 +13,13 @@ private[kyo] object FindEnclosing:
         val fileName = pos.sourceFile.name
         if fileName.isEmpty || fileName.startsWith("<") then false // synthetic file, like scala-cli/repl
         else
-            val path     = pos.sourceFile.path.replace('\\', '/')
+            val path = pos.sourceFile.path.replace('\\', '/')
+            // A `-testkit` module publishes suites for other projects to extend, so its suites are test code in main sources.
             val excluded =
-                ((path.contains("src/test/") || path.contains("src_managed/test/")) && testFileSuffixes.exists(
-                    fileName.endsWith
-                )) || fileName.endsWith("Bench.scala")
+                ((path.contains("src/test/") || path.contains("src_managed/test/") || path.contains("-testkit/")) &&
+                    testFileSuffixes.exists(
+                        fileName.endsWith
+                    )) || fileName.endsWith("Bench.scala")
             apply(sym => sym.fullName.startsWith("kyo.") && !excluded).nonEmpty
         end if
     end isInternal

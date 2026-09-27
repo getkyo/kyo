@@ -440,6 +440,7 @@ lazy val kyoJVM: Project = project
         `kyo-system`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-flow-testkit`.jvm,
         `kyo-ai`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
@@ -530,6 +531,7 @@ lazy val kyoJS = project
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
+        `kyo-flow-testkit`.js,
         `kyo-ai`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
@@ -598,6 +600,7 @@ lazy val kyoNative = project
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
+        `kyo-flow-testkit`.native,
         `kyo-ai`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
@@ -675,6 +678,7 @@ lazy val kyoWasm = project
         `kyo-stats-machine`.wasm,
         `kyo-aeron`.wasm,
         `kyo-flow`.wasm,
+        `kyo-flow-testkit`.wasm,
         `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
@@ -3009,6 +3013,26 @@ lazy val `kyo-flow` =
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+
+// FlowStore's conformance suite as a published artifact, so a store written outside kyo proves itself against the leaves the in-memory
+// store passes. The suite is main source because no artifact publishes test sources, and the in-memory store's run lives in this
+// module's tests because kyo-flow's tests cannot depend on a module that depends on kyo-flow.
+lazy val `kyo-flow-testkit` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-flow-testkit"))
+        .dependsOn(`kyo-flow`)
+        .dependsOn(`kyo-test-api`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,

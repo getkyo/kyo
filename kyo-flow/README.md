@@ -838,7 +838,18 @@ The rows themselves are `FlowStore.ExecutionState`, carrying the lifecycle, the 
 
 ### The conformance suite
 
-`FlowStoreTest` is an abstract test class in this module's test sources. An implementation extends it and supplies `makeStore`, and the suite then exercises the SPI contract against the real backend. It is organised invariant by invariant, I1 through I9, and then verb by verb: `claimReady`'s blocking and acceptance rules, `renewClaim`, `finish`, `requestCancel`, `listExecutions` with its filters and pagination, field operations, signal delivery, execution state, event history, and workflow metadata. Running it green is how a store demonstrates it upholds the invariants above, rather than by inspection.
+`FlowStoreTest` is an abstract kyo-test suite published as its own artifact, `kyo-flow-testkit`, for every platform kyo-flow supports. An implementation adds it to its test scope, wires kyo-test's runner as the kyo-test README's "Build wiring" section describes, extends the suite, and supplies `makeStore`; the suite then exercises the SPI contract against the real backend.
+
+```scala doctest:expect=skipped
+// build.sbt
+libraryDependencies += "io.getkyo" %%% "kyo-flow-testkit" % "<version>" % Test
+
+// src/test/scala
+class PostgresFlowStoreTest extends FlowStoreTest:
+    def makeStore(using Frame): FlowStore < (Async & Scope) = PostgresFlowStore.init(testPool)
+```
+
+The suite is organised invariant by invariant, I1 through I9, and then verb by verb: `claimReady`'s blocking and acceptance rules, `renewClaim`, `finish`, `requestCancel`, `listExecutions` with its filters and pagination, field operations, signal delivery, execution state, event history, and workflow metadata. Running it green is how a store demonstrates it upholds the invariants above, rather than by inspection.
 
 ## The HTTP endpoints
 
