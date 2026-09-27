@@ -2,6 +2,7 @@ package kyo.test.internal
 
 import kyo.Abort
 import kyo.Async
+import kyo.Clock
 import kyo.Duration
 import kyo.Frame
 import kyo.Maybe
@@ -445,9 +446,17 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
       * failing attempt the retry catches and discards that throwable, so its stale record must be removed (mirroring `intercept`); otherwise
       * the runner would flip a leaf that eventually passes to Failed. Removal is by the exact caught instance, never a blanket drain, so
       * records made by other fibers are untouched.
+      *
+      * The retries pace on the live clock while `cond` runs under the caller's clock. A leaf that holds the clock
+      * (`Clock.withTimeControl`) would otherwise sleep the first retry on held time that nothing advances, and never evaluate `cond`
+      * again.
       */
     protected def assertEventually[S1](cond: => Boolean < S1)(using f: Frame, as: kyo.test.AssertScope): Unit < (Async & S1) =
         as.recordEvaluated()
+        Clock.get.map(scoped => Clock.let(Clock.live)(assertEventually(Clock.let(scoped)(cond), as)))
+    end assertEventually
+
+    private def assertEventually[S1](cond: => Boolean < S1, as: kyo.test.AssertScope)(using f: Frame): Unit < (Async & S1) =
         Abort.run[AssertionError] {
             Retry[AssertionError](Schedule.fixed(10.millis)) {
                 // Run only the AssertionError channel here so the thrown assertion outcomes are observable for the un-record/retry

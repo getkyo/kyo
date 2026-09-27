@@ -141,6 +141,14 @@ private object LiveCoverageFixtures:
         "ev-to".timeout(200.millis) in assertEventually(Sync.defer(false))
     end EventuallyTimeoutSuite
 
+    val evHeldCounter: AtomicInteger = new AtomicInteger(0)
+
+    class EventuallyHeldClockSuite extends TestBase[Any]:
+        "ev-held".timeout(5.seconds) in Clock.withTimeControl { _ =>
+            assertEventually(Sync.defer(evHeldCounter.incrementAndGet() >= 3))
+        }
+    end EventuallyHeldClockSuite
+
     // ── 10. ignore ────────────────────────────────────────────────────────────────────────────
 
     val ignoreCounter: AtomicInteger = new AtomicInteger(0)
@@ -387,6 +395,15 @@ class LiveCoverageTest extends AsyncFreeSpec with NonImplicitAssertions:
         // the test framework surfaces a TimedOut result.
         discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyTimeoutSuite])).map { report =>
             assert(report.timedOut == 1, s"expected timedOut==1 but got $report")
+        }
+    }
+
+    // ── 9c. assertEventually: re-evaluates while the leaf holds the clock ─────────────────────
+
+    "assertEventually: re-evaluates while the leaf holds the clock" in {
+        LiveCoverageFixtures.evHeldCounter.set(0)
+        discharge(TestRunner.runReport(classOf[LiveCoverageFixtures.EventuallyHeldClockSuite])).map { report =>
+            assert(report.passed == 1, s"expected passed==1 but got $report")
         }
     }
 
