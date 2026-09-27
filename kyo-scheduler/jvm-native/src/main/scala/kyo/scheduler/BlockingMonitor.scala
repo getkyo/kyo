@@ -9,8 +9,10 @@ import scala.annotation.tailrec
 /** Monitors worker threads for blocking by sampling user CPU time.
   *
   * A thread is "blocked" when its user CPU time stops advancing — it is blocked in a kernel operation (I/O, sleep, lock) rather than
-  * executing user code. The monitor detects this by periodically sampling per-thread user CPU time: if two consecutive samples return the
-  * same value, the thread is blocked. This catches all forms of blocking including cases where Thread.getState() is misleading — socket
+  * executing user code. The monitor detects this by periodically sampling per-thread user CPU time: if two consecutive samples of the
+  * same thread running the same task return the same value, the thread is blocked. A worker that changed task or unmounted between two
+  * scans made progress whatever its counter reads, so those samples start a new baseline instead. This catches all forms of blocking
+  * including cases where Thread.getState() is misleading — socket
   * reads, server accepts, NIO operations, and file I/O on FIFOs all report RUNNABLE despite being blocked in the kernel. User-mode time
   * (excluding kernel time) is used on all platforms, which also identifies threads spinning in kernel locks (contended futex/mutex) as
   * blocked.
@@ -102,6 +104,8 @@ private[scheduler] class BlockingMonitor(
     // another's fabricates idle/active verdicts and corrupts blockCounts.
     private val lastThreadIds = new Array[Long](maxWorkers)
     private val lastUserTimes = Array.fill[Long](maxWorkers)(-1L)
+    private val lastTasks     = new Array[Task](maxWorkers)
+    private val lastSeen      = new Array[Long](maxWorkers)
     private val blockedFlags  = new Array[Boolean](maxWorkers)
     private val blockCounts   = new Array[Int](maxWorkers)
 
@@ -179,6 +183,7 @@ private[scheduler] class BlockingMonitor(
                 ThreadUserTime.userTimes(threadIds, count, userTimes)
                 process(count, 0)
             }
+            forget(0)
         } catch {
             // Any Throwable, fatal ones included: this runs as one long-lived loop that nothing restarts, and without it no worker
             // is flagged blocked or sent its interrupt again. A StackOverflowError has unwound by the time it lands here.
@@ -188,11 +193,23 @@ private[scheduler] class BlockingMonitor(
         }
     }
 
-    /** Samples CPU time and updates blocking state for the given thread IDs. Used by tests to drive the monitor without workers. */
-    private[scheduler] def sample(threadIds: Array[Long], count: Int): Unit = {
+    /** Samples CPU time and updates blocking state for the given thread IDs, each running the same task as on every other call. Used
+      * by tests to drive the monitor without workers.
+      */
+    private[scheduler] def sample(threadIds: Array[Long], count: Int): Unit =
+        sample(threadIds, sameTasks, count)
+
+    /** Samples CPU time and updates blocking state for the given thread IDs running the given tasks, as one scan. Used by tests to
+      * drive the monitor without workers.
+      */
+    private[scheduler] def sample(threadIds: Array[Long], sampled: Array[Task], count: Int): Unit = {
+        cycles += 1
         ThreadUserTime.userTimes(threadIds, count, userTimes)
-        detectOnly(threadIds, count, 0)
+        detectOnly(threadIds, sampled, count, 0)
+        forget(0)
     }
+
+    private val sameTasks = Array.fill[Task](maxWorkers)(BlockingMonitor.SameTask)
 
     /** Whether the thread at this position has unchanged user CPU time. */
     private[scheduler] def isBlocked(position: Int): Boolean =
@@ -212,20 +229,35 @@ private[scheduler] class BlockingMonitor(
                 collect(n, position + 1, count)
         }
 
-    /** Records the sample `(tid, userTime)` for slot `pos` and returns whether the thread was idle across the last two samples of the same
-      * thread. A change of thread at the slot resets the baseline and the accumulated block count instead of inheriting the previous
-      * occupant's state. Exposed to tests as the single sampling-state transition.
+    /** Records the sample `(tid, userTime, task)` for slot `pos` and returns whether the thread was idle across this sample and the
+      * previous one. The two samples must be continuous: the same thread, the same task, and no scan in between where the slot was
+      * absent. Anything else is a new baseline rather than a continuation, because a worker that changed task or unmounted since the
+      * last scan made progress by definition, whatever its CPU counter reads: on Windows the counter advances in 15.6ms ticks and a
+      * worker doing microseconds of work between ticks never moves it. Exposed to tests as the single sampling-state transition.
       */
-    private[scheduler] def updateSlot(pos: Int, tid: Long, userTime: Long): Boolean = {
-        val sameThread = lastThreadIds(pos) == tid
+    private[scheduler] def updateSlot(pos: Int, tid: Long, userTime: Long): Boolean =
+        updateSlot(pos, tid, userTime, BlockingMonitor.SameTask)
+
+    private[scheduler] def updateSlot(pos: Int, tid: Long, userTime: Long, task: Task): Boolean = {
+        val continuous = lastThreadIds(pos) == tid && (task ne null) && (lastTasks(pos) eq task)
         val lastTime   = lastUserTimes(pos)
         lastThreadIds(pos) = tid
         lastUserTimes(pos) = userTime
-        val idle = sameThread && userTime >= 0 && lastTime >= 0 && userTime == lastTime
+        lastTasks(pos) = task
+        lastSeen(pos) = cycles
+        val idle = continuous && userTime >= 0 && lastTime >= 0 && userTime == lastTime
         if (idle) blockCounts(pos) += 1
         else blockCounts(pos) = 0
         idle
     }
+
+    // Drops the task reference of every slot absent from this scan, so a completed task is not retained and the slot's next
+    // sample starts a new baseline.
+    @tailrec private def forget(pos: Int): Unit =
+        if (pos < lastTasks.length) {
+            if (lastSeen(pos) != cycles) lastTasks(pos) = null
+            forget(pos + 1)
+        }
 
     // Single pass: detect blocking from CPU time samples, set blocked flags, dispatch interrupts.
     // Requires blockThreshold consecutive idle samples before marking a worker as blocked,
@@ -235,7 +267,7 @@ private[scheduler] class BlockingMonitor(
     @tailrec private def process(count: Int, i: Int): Unit =
         if (i < count) {
             val pos     = positions(i)
-            val _       = updateSlot(pos, threadIds(i), userTimes(i))
+            val _       = updateSlot(pos, threadIds(i), userTimes(i), tasks(i))
             val blocked = blockCounts(pos) >= effectiveBlockThreshold
             val worker  = workers(pos)
             worker.blocked = blocked
@@ -264,11 +296,19 @@ private[scheduler] class BlockingMonitor(
 
     // Detection only, used by tests via sample() where there are no workers. Slots are
     // keyed by batch index; the identity guard in updateSlot applies the same way.
-    @tailrec private def detectOnly(tids: Array[Long], count: Int, i: Int): Unit =
+    @tailrec private def detectOnly(tids: Array[Long], sampled: Array[Task], count: Int, i: Int): Unit =
         if (i < count) {
-            blockedFlags(i) = updateSlot(i, tids(i), userTimes(i))
-            detectOnly(tids, count, i + 1)
+            blockedFlags(i) = updateSlot(i, tids(i), userTimes(i), sampled(i))
+            detectOnly(tids, sampled, count, i + 1)
         }
 
     def stop(): Unit = if (task ne null) { val _ = task.cancel(true) }
+}
+
+private[scheduler] object BlockingMonitor {
+
+    /** The task the thread-only test hooks report on every scan, so a repeated sample of one thread stays a continuous streak. */
+    private[scheduler] object SameTask extends Task {
+        def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result = Task.Done
+    }
 }

@@ -42,6 +42,27 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
     private def blockedWorkerCount(): Int =
         scheduler.status().workers.count(w => (w ne null) && w.isBlocked)
 
+    /** Runs `check` with the id of a daemon thread parked on a latch for the duration, whose user CPU time is flat by construction. */
+    private def withParkedThread(check: Array[Long] => Unit): Unit = {
+        val started  = new CountDownLatch(1)
+        val release  = new CountDownLatch(1)
+        val threadId = new AtomicLong(0L)
+        val thread   = new Thread((() => {
+            threadId.set(ThreadUserTime.currentThreadId())
+            started.countDown()
+            try { val _ = release.await(30, TimeUnit.SECONDS) }
+            catch { case _: InterruptedException => () }
+        }): Runnable)
+        thread.setDaemon(true)
+        thread.start()
+        assert(started.await(5, TimeUnit.SECONDS))
+        try check(Array(threadId.get()))
+        finally {
+            release.countDown()
+            thread.join(5000)
+        }
+    }
+
     /** Runs a blocking operation on a thread and verifies the detector identifies it as blocked. Uses latches for synchronization — no
       * Thread.sleep needed since blocked threads have flat CPU time immediately.
       */
@@ -391,6 +412,36 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
                 t0.join(5000)
                 t1.join(5000)
             }
+
+            "a task change resets the idle streak" in {
+                withParkedThread { ids =>
+                    val detector = new BlockingMonitor(1)
+                    val first    = Array[Task](TestTask())
+                    val second   = Array[Task](TestTask())
+                    detector.sample(ids, first, 1)
+                    detector.sample(ids, first, 1)
+                    assert(detector.isBlocked(0), "the same task with flat CPU time is blocked")
+                    detector.sample(ids, second, 1)
+                    assert(!detector.isBlocked(0), "a new task on the thread is a new baseline")
+                    detector.sample(ids, second, 1)
+                    val _ = assert(detector.isBlocked(0), "the new task with flat CPU time is blocked in turn")
+                }
+            }
+
+            "a scan without the slot resets the idle streak" in {
+                withParkedThread { ids =>
+                    val detector = new BlockingMonitor(1)
+                    val tasks    = Array[Task](TestTask())
+                    detector.sample(ids, tasks, 1)
+                    detector.sample(ids, tasks, 1)
+                    assert(detector.isBlocked(0), "the mounted task with flat CPU time is blocked")
+                    detector.sample(ids, tasks, 0)
+                    detector.sample(ids, tasks, 1)
+                    assert(!detector.isBlocked(0), "a remount after an absent scan is a new baseline")
+                    detector.sample(ids, tasks, 1)
+                    val _ = assert(detector.isBlocked(0), "the remounted task with flat CPU time is blocked in turn")
+                }
+            }
         }
 
         "edge cases" - {
@@ -442,6 +493,17 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions with Ev
                 assert(m.updateSlot(0, 7L, 100L))
                 assert(!m.updateSlot(0, 8L, 100L), "a new thread must not inherit the previous occupant's state")
                 assert(m.updateSlot(0, 8L, 100L), "the new thread accumulates from its own baseline")
+            }
+
+            "a task change at the slot resets the baseline even when sampled values collide" in {
+                val m      = new BlockingMonitor(4)
+                val first  = TestTask()
+                val second = TestTask()
+                assert(!m.updateSlot(0, 7L, 100L, first))
+                assert(m.updateSlot(0, 7L, 100L, first))
+                assert(!m.updateSlot(0, 7L, 100L, second), "a new task on the thread must not inherit the previous task's state")
+                assert(m.updateSlot(0, 7L, 100L, second), "the new task accumulates from its own baseline")
+                assert(!m.updateSlot(0, 7L, 100L, null), "a mounted worker between tasks is a new baseline")
             }
 
             "slots accumulate independently" in {
