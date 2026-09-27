@@ -99,6 +99,21 @@ class FiberTest extends kyo.test.Test[Any]:
                     c <- p.get
                 yield assert(a && b && c == 42)
             }
+
+            "a parked fiber that forked children wakes after a promise became it" in {
+                // The race links its two children into the fiber before the fiber parks on the race, so the fiber's
+                // chain holds two links plus the parked one when the promise becomes it.
+                for
+                    child <- Promise.init[Int, Any]
+                    gate  <- Promise.init[Int, Any]
+                    inner <- Fiber.init(Async.race(child.get, gate.get))
+                    _     <- assertEventually(inner.waiters.map(_ == 3))
+                    outer <- Promise.init[Int, Any]
+                    a     <- outer.become(inner)
+                    _     <- gate.complete(Result.succeed(1))
+                    r     <- outer.get
+                yield assert(a && r == 1)
+            }
         }
 
         "completeDiscard" in {
