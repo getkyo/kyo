@@ -233,6 +233,52 @@ class DomBackendReactiveRangesTest extends kyo.test.Test[Any]:
         yield ()
     }
 
+    "a region's first observed value leaves the nodes the mount rendered in place" in {
+        for
+            text  <- Signal.initRef("one")
+            email <- Signal.initRef("one@example.com")
+            ui = UI.div(
+                UI.input.id("first-text").value(text),
+                UI.emailInput.id("first-email").value(email)
+            )
+            removals <- AtomicInt.init(0)
+            observed <- Sync.defer {
+                val count: scalajs.Array[scalajs.Dynamic] => Unit = records =>
+                    records.foreach { record =>
+                        val removed = record.removedNodes.asInstanceOf[scalajs.Array[dom.Node]]
+                        removed.foreach { node =>
+                            if node.nodeType == 1 && node.asInstanceOf[dom.Element].id == "first-email" then
+                                import AllowUnsafe.embrace.danger
+                                // Unsafe: the observer callback is a plain JS callback with no effect context.
+                                discard(removals.unsafe.incrementAndGet())
+                        }
+                    }
+                val callback: scalajs.Function2[scalajs.Array[scalajs.Dynamic], scalajs.Dynamic, Unit] = (records, _) =>
+                    count(records)
+                val observer = scalajs.Dynamic.newInstance(dom.window.asInstanceOf[scalajs.Dynamic].MutationObserver)(callback)
+                discard(observer.observe(dom.document.body, scalajs.Dynamic.literal(childList = true, subtree = true)))
+                (observer, count)
+            }
+            (observer, count) = observed
+            ready             = new DomTestEnv.MountReady
+            fiber   <- Fiber.initUnscoped(Scope.run(DomBackend.mount(ui, ready)))
+            _       <- assertEventually(Sync.defer(ready.installed && dom.document.getElementById("first-email") != null))
+            mounted <- Sync.defer(dom.document.getElementById("first-email"))
+            _       <- assertEventually(Sync.defer(ready.applied == 2))
+            _       <- text.set("two")
+            _       <- assertEventually(Sync.defer(dom.document.getElementById("first-text").getAttribute("value") == "two"))
+            _       <- assertEventually(Sync.defer(ready.applied == 3))
+            _       <- Sync.defer(count(observer.takeRecords().asInstanceOf[scalajs.Array[scalajs.Dynamic]]))
+            _       <- Sync.defer(discard(observer.disconnect()))
+            replaced <- removals.get
+            live     <- Sync.defer(dom.document.getElementById("first-email") eq mounted)
+            _        <- fiber.interrupt
+            _        <- fiber.getResult
+        yield
+            assert(replaced == 0)
+            assert(live)
+    }
+
     "local own-bound text email and number inputs morph in place while focused" in {
         for
             text   <- Signal.initRef("one")

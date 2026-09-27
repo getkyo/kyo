@@ -111,7 +111,8 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 }
                 _ <- regions.replaceWith(
                     One,
-                    s"<tbody data-kyo-range-host='$One'><tr id='new-row'><td>new</td></tr></tbody>"
+                    s"<tbody data-kyo-range-host='$One'><tr id='new-row'><td>new</td></tr></tbody>",
+                    keepCurrent = false
                 )((_, _, _) => false) { (oldRoots, newRoots) =>
                     assert(oldRoots.map(_.id) == Seq("authored"))
                     assert(newRoots.map(_.id) == Seq("new-row"))
@@ -255,6 +256,108 @@ class DomReactiveRegionsTest extends kyo.test.Test[Any]:
                 assertPanicContains(reorderedResult, "Reactive range end is not after its start")
                 assert(corrupted.innerHTML == corruptedBefore)
                 assert(reordered.innerHTML == reorderedBefore)
+        }
+    }
+
+    private def keepCurrent(regions: DomReactiveRegions, regionId: String, html: String)(using Frame): Unit < Sync =
+        regions.replaceWith(regionId, html, keepCurrent = true)((_, _, _) => false)((_, _) => ())((_, _) => ())
+
+    "a first value with the inserted markup keeps the range once, and a later or different value replaces it" in {
+        val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one'><!--kyo-re:$One--></div>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                mounted = root.querySelector("#field")
+                _ <- keepCurrent(regions, One, "<input id='field' value='one'>")
+                kept = root.querySelector("#field")
+                _ <- keepCurrent(regions, One, "<input id='field' value='one'>")
+                repeated = root.querySelector("#field")
+                _ <- keepCurrent(regions, One, "<input id='field' value='two'>")
+                changed = root.querySelector("#field")
+                size <- regions.size
+            yield
+                assert(kept eq mounted)
+                assert(repeated ne mounted)
+                assert(repeated.getAttribute("value") == "one")
+                assert(changed ne repeated)
+                assert(changed.getAttribute("value") == "two")
+                assert(size == 1)
+        }
+    }
+
+    "a first value is kept against the inserted markup even after the live nodes changed" in {
+        val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one' data-kyo-prop-value='one'><!--kyo-re:$One--></div>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                mounted = root.querySelector("#field")
+                _    <- Sync.defer(mounted.removeAttribute("data-kyo-prop-value"))
+                _    <- keepCurrent(regions, One, "<input id='field' value='one' data-kyo-prop-value='one'>")
+                size <- regions.size
+            yield
+                val current = root.querySelector("#field")
+                assert(current eq mounted)
+                assert(!current.hasAttribute("data-kyo-prop-value"))
+                assert(current.getAttribute("value") == "one")
+                assert(size == 1)
+        }
+    }
+
+    "a nested range registered by a parent replacement keeps its own unchanged first value" in {
+        val root = host(s"<!--kyo-rs:$Outer-->old<!--kyo-re:$Outer-->")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                _       <- regions.replace(Outer, s"<section><!--kyo-rs:$New--><input id='nested' value='a'><!--kyo-re:$New--></section>")
+                inserted = root.querySelector("#nested")
+                _    <- keepCurrent(regions, New, "<input id='nested' value='a'>")
+                size <- regions.size
+            yield
+                val current = root.querySelector("#nested")
+                assert(inserted != null)
+                assert(current eq inserted)
+                assert(current.getAttribute("value") == "a")
+                assert(size == 2)
+        }
+    }
+
+    "a synthetic table host range is replaced even when its first value repeats the inserted markup" in {
+        val root = host(
+            s"<table><tbody data-kyo-range-host='$One' class='rows'><!--kyo-rs:$One--><tr id='row'><td>row</td></tr><!--kyo-re:$One--></tbody></table>"
+        )
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                inserted = root.querySelector("#row")
+                _ <- keepCurrent(
+                    regions,
+                    One,
+                    s"<tbody data-kyo-range-host='$One' class='rows'><tr id='row'><td>row</td></tr></tbody>"
+                )
+                size <- regions.size
+            yield
+                val current = root.querySelector("#row")
+                assert(inserted != null)
+                assert(current ne inserted)
+                assert(current.textContent == "row")
+                val tbody = root.querySelector("table > tbody")
+                assert(tbody.getAttribute("data-kyo-range-host") == One)
+                assert(tbody.getAttribute("class") == "rows")
+                assert(root.querySelectorAll("table > tbody").length == 1)
+                assert(size == 1)
+        }
+    }
+
+    "a replacement not asked to keep current content replaces an identical range" in {
+        val root = host(s"<div><!--kyo-rs:$One--><input id='field' value='one'><!--kyo-re:$One--></div>")
+        Scope.run {
+            for
+                regions <- DomReactiveRegions.init(root)
+                mounted = root.querySelector("#field")
+                _ <- regions.replace(One, "<input id='field' value='one'>")
+            yield
+                assert(root.querySelector("#field") ne mounted)
+                assert(root.querySelector("#field").getAttribute("value") == "one")
         }
     }
 

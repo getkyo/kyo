@@ -18,6 +18,7 @@ private[kyo] object DomBackend:
         def dragEventHandled(event: UIEvent): Unit                     = ()
         def drainInstalled(drain: Fiber[Unit, Any]): Unit              = ()
         def drainStarted(): Unit                                       = ()
+        def regionApplied(): Unit                                      = ()
     end MountDiagnostics
 
     private object NoMountDiagnostics extends MountDiagnostics:
@@ -85,7 +86,7 @@ private[kyo] object DomBackend:
             _       <- Sync.defer(seedEnter(container, Set.empty))
             _       <- Sync.defer(seedFocusAuto(container, Set.empty))
             _       <- Sync.defer(beginAnimationsSync(container))
-            exchange = LocalExchange(regions)
+            exchange = LocalExchange(regions, diagnostics)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // A subscription interrupt is asynchronous. Stop accepting publications before the Scope begins
             // interrupting region fibers, so an already-woken observer cannot publish into the registry after its
@@ -174,7 +175,7 @@ private[kyo] object DomBackend:
     final private case class RangeFocus(path: Maybe[String], rootIndex: Int, childIndexes: Seq[Int])
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
-    private class LocalExchange(regions: DomReactiveRegions) extends UIExchange:
+    private class LocalExchange(regions: DomReactiveRegions, diagnostics: MountDiagnostics) extends UIExchange:
 
         private var open = true
 
@@ -182,7 +183,8 @@ private[kyo] object DomBackend:
 
         // In-process: the update is a DOM write, not bytes on a wire, so this replaces the region whole
         // (morphing where it can) rather than diffing it. `previous` is what the server-side exchange
-        // uses to send only what moved.
+        // uses to send only what moved; here an absent `previous` marks the region's first value, whose
+        // markup the enclosing render already wrote, so the range is left as it is when that markup is unchanged.
         def onChange(
             region: ReactiveRegion,
             path: Seq[String],
@@ -201,12 +203,14 @@ private[kyo] object DomBackend:
                         Sync.defer(open).flatMap { stillOpen =>
                             if !stillOpen then Kyo.unit
                             else
-                                region match
+                                val applied = region match
                                     case ReactiveRegion.HtmlRange(regionId) =>
-                                        regions.replaceWith(regionId, html)(tryMorphRange)(prepareRangePatch)(finishRangePatch)
+                                        regions.replaceWith(regionId, html, keepCurrent = previous.isEmpty)(tryMorphRange)(
+                                            prepareRangePatch
+                                        )(finishRangePatch)
                                     case svgRegion: ReactiveRegion.SvgElement =>
                                         replaceSvg(svgRegion, html)
-                                end match
+                                applied.andThen(Sync.defer(diagnostics.regionApplied()))
                         }
                     }
             }
