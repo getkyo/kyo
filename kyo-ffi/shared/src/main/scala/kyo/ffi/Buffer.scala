@@ -344,6 +344,8 @@ object Buffer:
       *   if the file does not exist or cannot be opened
       * @throws IllegalArgumentException
       *   if file size exceeds 2 GB on JVM
+      * @throws UnsupportedOperationException
+      *   on a JS host without Node's `fs` module, such as a browser
       */
     def mmapReadOnly(path: String, offset: Long = 0L, size: Long = -1L)(using AllowUnsafe): Buffer[Byte] =
         internal.BufferFactory.mmapReadOnly(path, offset, size)
@@ -363,6 +365,8 @@ object Buffer:
       *   if the file does not exist or cannot be opened
       * @throws IllegalArgumentException
       *   if file size exceeds 2 GB on JVM
+      * @throws UnsupportedOperationException
+      *   on a JS host without Node's `fs` module, such as a browser
       */
     def mmapReadWrite(path: String, offset: Long = 0L, size: Long = -1L)(using AllowUnsafe): Buffer[Byte] =
         internal.BufferFactory.mmapReadWrite(path, offset, size)

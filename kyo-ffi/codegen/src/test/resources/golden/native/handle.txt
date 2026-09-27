@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class HandleBindingsImpl extends HandleBindings:
     import `HandleBindings_externs` as ext
+    HandleBindingsImpl.loaded()
 
     def open(path: String)(using kyo.AllowUnsafe): Ffi.Handle[kyo.example.golden.MyHandle] =
         Zone.acquire { implicit z =>
@@ -28,6 +29,7 @@ end HandleBindingsImpl
 object HandleBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.HandleBindings")
+    private def loaded(): Unit = ()
 end HandleBindingsImpl
 
 @extern

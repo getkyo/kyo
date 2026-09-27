@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class VoidBindingsImpl extends VoidBindings:
     import VoidBindingsImpl.*
+    VoidBindingsImpl.loaded()
 
     def noop()(using kyo.AllowUnsafe): Unit =
         val __kyoScratch = Scratch.currentFor("kyo.example.VoidBindings", Scratch.configuredSize)
@@ -24,6 +25,7 @@ end VoidBindingsImpl
 
 object VoidBindingsImpl:
     AbiCheck.verify(1, "kyo.example.VoidBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_void")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

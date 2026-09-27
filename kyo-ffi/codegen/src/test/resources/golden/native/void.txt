@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 
 @EnableReflectiveInstantiation final class VoidBindingsImpl extends VoidBindings:
     import `VoidBindings_externs` as ext
+    VoidBindingsImpl.loaded()
 
     def noop()(using kyo.AllowUnsafe): Unit =
         ext.noop()
@@ -20,6 +21,7 @@ end VoidBindingsImpl
 object VoidBindingsImpl:
     import scala.scalanative.unsafe.*
     AbiCheck.verify(1, "kyo.example.VoidBindings")
+    private def loaded(): Unit = ()
 end VoidBindingsImpl
 
 @extern

@@ -31,6 +31,16 @@ class JsBufferMmapTest extends Test:
         end try
     end withTempFile
 
+    /** Runs `f` on what a browser looks like to the fallback: a `process` with no `getBuiltinModule`. */
+    private def withoutGetBuiltinModule[A](f: => A): A =
+        val process = sjs.Dynamic.global.process
+        val saved   = process.getBuiltinModule
+        process.updateDynamic("getBuiltinModule")(sjs.undefined)
+        try f
+        finally process.updateDynamic("getBuiltinModule")(saved)
+        end try
+    end withoutGetBuiltinModule
+
     "mmapReadOnly" - {
 
         "reads file content correctly" in {
@@ -87,6 +97,16 @@ class JsBufferMmapTest extends Test:
         "non-existent file throws" in {
             interceptThrown[Exception] {
                 Buffer.mmapReadOnly("/nonexistent/path/to/file.bin")
+            }
+        }
+
+        "on a host without Node's fs module throws UnsupportedOperationException" in {
+            withoutGetBuiltinModule {
+                interceptThrownMessage[UnsupportedOperationException](
+                    "Buffer.mmapReadOnly needs Node's fs module (Node, Bun or Deno), which this host does not provide"
+                ) {
+                    Buffer.mmapReadOnly("/any/path/to/file.bin")
+                }
             }
         }
 

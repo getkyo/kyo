@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class StructBindingsImpl extends StructBindings:
     import StructBindingsImpl.*
+    StructBindingsImpl.loaded()
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
         val __kyoScratch = Scratch.currentFor("kyo.example.StructBindings", Scratch.configuredSize)
@@ -28,6 +29,7 @@ end StructBindingsImpl
 
 object StructBindingsImpl:
     AbiCheck.verify(1, "kyo.example.StructBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_struct")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

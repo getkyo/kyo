@@ -187,8 +187,8 @@ object NativeLoader:
       * A platform absent from `bundledPlatforms` is a real state rather than a reason to defer: `osTargets`
       * declares a library out of a platform, and a release may not build every one. The library can still be
       * supplied out of band, so this asks whether it RESOLVES, not whether it was declared. When it does not, the
-      * caller gets this catchable error instead of an `ExceptionInInitializerError` from the companion's
-      * initializer at the first call, which is what the pre-check exists to prevent.
+      * caller gets this catchable error instead of a failure of the companion's initializer, which poisons the
+      * impl class for the rest of the process, and which is what the pre-check exists to prevent.
       *
       * The native linker's default lookup is deliberately not a resolution here: it is what
       * `loadFromResourceOrSystem` falls back to, and it defers failure to the first unresolved symbol. An id whose
