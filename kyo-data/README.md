@@ -371,6 +371,17 @@ val decoded: Result[IllegalArgumentException, Span[Byte]] =
 val unsafe: Span[Byte] = Base64.decodeOrThrow(encoded)
 ```
 
+`encodeUrl` and `decodeUrl` use the URL and filename safe alphabet (`-` and `_` in place of `+` and `/`) without padding, the form JSON Web Tokens and JSON Web Keys carry. `decodeUrl` accepts only the canonical encoding: it rejects padding, the standard alphabet's `+` and `/`, and nonzero bits after the last byte.
+
+```scala
+import kyo.*
+
+val token: String = Base64.encodeUrl(Span.from(IArray[Byte](-5, -1))) // "-_8"
+
+val bytes: Result[IllegalArgumentException, Span[Byte]] =
+    Base64.decodeUrl(token)
+```
+
 ### Identifiers and UUIDs
 
 `UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering, inspection, and deterministic name-based derivation.
