@@ -7,6 +7,7 @@ import kyo.db.Backend
 import kyo.db.Connection
 import kyo.db.Idiom
 import kyo.db.Runtime
+import kyo.internal.PinnedSession
 import kyo.internal.TransactionContext
 import kyo.internal.client.SqlConnectionPool
 import scala.annotation.publicInBinary
@@ -60,15 +61,21 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     final def useConfig[A, S](f: SqlConfig => A < S)(using Frame): A < S =
         f(self.config)
 
-    /** The session a statement on this client belongs on, or [[Absent]] when it belongs on a pooled one.
+    /** The session a statement on this client is pinned to, or [[Absent]] when it belongs on a pooled one.
       *
       * The whole routing decision, in one place, so every helper answers it the same way. A transaction wins over a lock only in the reading order;
       * the precedence is unobservable because in every reachable state both name the SAME connection. A lock taken inside a transaction is taken on
       * the transaction's connection, and a transaction opened inside a lock runs on the lock's connection, so the two locals never disagree.
       * `txLocal` is read first because it is the inner scope in the first of those cases.
+      *
+      * Internal, because a session in hand is not yet a session to write to: every statement goes through [[onSession]], which takes the mutex
+      * and refuses the statement once the scope that pinned the session has ended.
       */
-    final def pinnedSession(using Frame): Maybe[Connection] < Any =
-        self.pinnedEntry.map(_.map(_._1))
+    final private[kyo] def pinnedSession(using Frame): Maybe[PinnedSession] < Any =
+        self.enclosingTransaction.flatMap {
+            case Present(ctx) => Present(ctx.session)
+            case Absent       => self.enclosingLock.map(_.map(_.session))
+        }
 
     /** Runs `op` on a connection borrowed for one statement, under retry and the per-statement timeout.
       *
@@ -100,11 +107,11 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
         self.enclosingTransaction.flatMap {
             // `simpleQuery` and `pipeline` reach the server through here, so a failure either handles must still reach
             // the commit decision.
-            case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
+            case Present(ctx) => self.onTransaction[A, S](ctx)(op)
             case Absent       =>
-                self.pinnedEntry.flatMap {
-                    case Present((conn, meter)) => self.serialised(meter)(op(conn))
-                    case Absent                 => self.useIndependentConnection(op)
+                self.enclosingLock.flatMap {
+                    case Present(lock) => self.onSession[A, S](lock.session)(op)
+                    case Absent        => self.useIndependentConnection(op)
                 }
         }
 
@@ -227,9 +234,7 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                         // statement issued from the consuming fiber between batches still proceeds.
                         //
                         // For a stream the failure is recorded wherever in the consumption it surfaces.
-                        self.serialised(ctx.meter)(
-                            self.recordingFailure(ctx)(ctx.connection.streamQuery(rendered.sql, rendered.params, batchSize).emit)
-                        )
+                        self.onTransaction(ctx)(_.streamQuery(rendered.sql, rendered.params, batchSize).emit)
                     case Absent =>
                         self.useConfig { config =>
                             runtime.leaseScoped(config).flatMap { conn =>
@@ -456,8 +461,9 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * `body` routes to the lock's own connection rather than taking a second one from the pool. That routing is what lets a pool of
       * one connection make progress (without it the lock would hold the only slot and the first statement inside would wait forever),
       * and it means a session-scoped effect inside `body` (a `SET`, a temporary table) lands on the locked session. Routing buys
-      * progress rather than exclusion: only statements run inside `body` on the same fiber are routed; work on another fiber takes
-      * its own connection exactly as it would outside.
+      * progress rather than exclusion: a statement still has to be issued inside `body`, on this fiber or one it forked, to be routed.
+      * A forked fiber that outlives `body` keeps the locked session, and a statement it issues after the release is refused with
+      * [[kyo.SqlRequestAdvisoryLockEndedException]] rather than run without the lock it was written for.
       *
       * @param key
       *   numeric lock identifier; the `bigint` argument to `pg_advisory_lock` on PostgreSQL, and the lock name `key.toString` on MySQL
@@ -470,16 +476,16 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
     def withAdvisoryLock[A, S](key: Long, timeout: Maybe[Duration] = Maybe.Absent)(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
-        // Routed through [[pinnedEntry]] rather than [[usePinnedConnection]], because the latter would hold the
+        // Routed through [[pinnedSession]] rather than [[usePinnedConnection]], because the latter would hold the
         // session mutex for the WHOLE body: a statement the body forks would then queue behind the composite
         // itself and never run. The lock's leaf statements take the mutex individually inside [[lockedOn]].
         // Taking the lock on an enclosing transaction's connection is safe: `pg_advisory_lock` and MySQL's
         // `GET_LOCK` are both session-scoped and non-transactional, so a ROLLBACK does not free the lock.
-        self.pinnedEntry.map {
-            case Present((conn, meter)) => self.lockedOn(conn, meter, key, timeout)(body)
-            case Absent                 =>
+        self.pinnedSession.map {
+            case Present(host) => self.lockedOn(host.connection, host.meter, Present(host), key, timeout)(body)
+            case Absent        =>
                 self.useIndependentConnection { conn =>
-                    Meter.initMutexUnscoped.map(meter => self.lockedOn(conn, meter, key, timeout)(body))
+                    Meter.initMutexUnscoped.map(meter => self.lockedOn(conn, meter, Absent, key, timeout)(body))
                 }
         }
 
@@ -507,13 +513,6 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
             case _                                    => Absent
         }
 
-    /** [[pinnedSession]] paired with the session's statement mutex, for the routing helpers that serialise on it. */
-    final private[kyo] def pinnedEntry(using Frame): Maybe[(Connection, Meter)] < Any =
-        self.enclosingTransaction.flatMap {
-            case Present(ctx) => Present((ctx.connection, ctx.meter))
-            case Absent       => self.enclosingLock.map(_.map(lock => (lock.connection, lock.meter)))
-        }
-
     /** Runs `op` holding `meter`'s single permit, the serialisation point for every statement on a pinned session.
       *
       * The mutex is why concurrent fibers inside a `transaction` or `withAdvisoryLock` body queue on the session
@@ -539,6 +538,50 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
             case Result.Panic(t)       => Abort.error(Result.Panic(t))
         }
 
+    /** Runs `op` on `session`, holding its mutex, and refuses it there once the scope that pinned the session has ended.
+      *
+      * The check is inside the mutex because the end is recorded inside it too, with the control statement that ends the scope. Under one
+      * permit the two orders are the only ones: a statement that got there first ran inside the scope, and one that queued behind the COMMIT,
+      * ROLLBACK or unlock finds the refusal when it gets the permit. Checked outside, a statement could pass and then run on a connection the
+      * pool has already leased to someone else.
+      *
+      * Every statement on a pinned session passes through here, the control statements included, so a session is never written to after
+      * its scope ended. [[closing]] is the one exception, and it is the statement that records the end.
+      */
+    private def onSession[A, S](session: PinnedSession)(op: Connection => A < (S & Abort[SqlException]))(using
+        Frame
+    ): A < (S & Async & Abort[SqlException]) =
+        self.serialised(session.meter) {
+            session.endedWith.flatMap {
+                case Present(e) => Abort.fail(e)
+                case Absent     => op(session.connection)
+            }
+        }
+
+    /** [[onSession]] for a transaction's session, with the statement's failure recorded against the transaction. */
+    private def onTransaction[A, S](ctx: TransactionContext)(op: Connection => A < (S & Async & Abort[SqlException]))(using
+        Frame
+    ): A < (S & Async & Abort[SqlException]) =
+        self.onSession(ctx.session)(conn => self.recordingFailure(ctx)(op(conn)))
+
+    /** Runs `control`, the statement that ends the scope pinned to `session`, recording the end under the mutex first.
+      *
+      * Recorded before the statement rather than after, so a control statement that itself fails still ends the scope: the connection is
+      * released either way. A host scope that has ended already released the connection under this one, so nothing is written and the
+      * host's refusal is raised instead; the pool's reset resolved whatever this scope left on the session.
+      */
+    private def closing[A, S](session: PinnedSession, refusal: SqlException)(control: => A < (S & Abort[SqlException]))(using
+        Frame
+    ): A < (S & Async & Abort[SqlException]) =
+        self.serialised(session.meter) {
+            session.ended.set(Present(refusal)).andThen {
+                session.hostEndedWith.flatMap {
+                    case Present(e) => Abort.fail(e)
+                    case Absent     => control
+                }
+            }
+        }
+
     /** Runs `op` on whichever connection the statement belongs on: the transaction's, when a fiber is inside one, or a pooled one otherwise,
       * leasing under this client's own [[config]].
       *
@@ -559,11 +602,11 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
         Frame
     ): A < (Async & Abort[SqlException]) =
         self.enclosingTransaction.flatMap {
-            case Present(ctx) => self.serialised(ctx.meter)(self.recordingFailure(ctx)(op(ctx.connection)))
+            case Present(ctx) => self.onTransaction(ctx)(op)
             case Absent       =>
-                self.pinnedEntry.flatMap {
-                    case Present((conn, meter)) => self.serialised(meter)(op(conn))
-                    case Absent                 => runtime.leaseStatement(config)(op)
+                self.enclosingLock.flatMap {
+                    case Present(lock) => self.onSession(lock.session)(op)
+                    case Absent        => runtime.leaseStatement(config)(op)
                 }
         }
 
@@ -718,7 +761,6 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                 // isolation and readOnly have nowhere to go here, because neither engine supports either
                 // per savepoint; the outer transaction's values stand for the whole nest.
                 self.savepointName(ctx.depth + 1).map { spName =>
-                    val conn     = ctx.connection
                     val innerCtx = ctx.copy(depth = ctx.depth + 1, savepointStack = spName +: ctx.savepointStack)
                     // Refused over a carried failure: a savepoint taken now cannot undo one that predates it, so
                     // rolling back to it would clear a failure it never reversed. The engines disagree here on their
@@ -726,19 +768,19 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                     self.recordingFailure(ctx)(Sync.defer(())).andThen {
                         // A rollback restores the transaction to its state HERE, and carrying a failure is part of it.
                         ctx.failed.get.flatMap { failedAtSavepoint =>
-                            self.serialised(ctx.meter)(conn.savepoint(spName)).andThen {
+                            self.onSession(ctx.session)(_.savepoint(spName)).andThen {
                                 Abort.run[Any](SqlClient.txLocal.let(Present(innerCtx))(body)).map {
                                     case Result.Success(a) =>
-                                        self.serialised(ctx.meter)(conn.releaseSavepoint(spName)).andThen(a)
+                                        self.onSession(ctx.session)(_.releaseSavepoint(spName)).andThen(a)
                                     case Result.Failure(e) =>
                                         // Rolling back to the savepoint makes the transaction usable again, so the
                                         // failure it undid stops counting against the commit; without the restore, the
                                         // outer commit would refuse over something already rolled back.
-                                        self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName))
+                                        self.onSession(ctx.session)(_.rollbackToSavepoint(spName))
                                             .andThen(ctx.failed.set(failedAtSavepoint))
                                             .andThen(SqlClient.reraise[A](e))
                                     case Result.Panic(t) =>
-                                        self.serialised(ctx.meter)(conn.rollbackToSavepoint(spName))
+                                        self.onSession(ctx.session)(_.rollbackToSavepoint(spName))
                                             .andThen(ctx.failed.set(failedAtSavepoint))
                                             .andThen(Abort.error(Result.Panic(t)))
                                 }
@@ -761,10 +803,11 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
                 // opt-out is written regardless, because "already guarded upstream" is the reasoning that lets
                 // someone delete the upstream guard.
                 self.enclosingLock.map {
-                    case Present(lock) => self.beginOn(lock.connection, lock.meter, isolation, readOnly)(body)
-                    case Absent        =>
+                    case Present(lock) =>
+                        self.beginOn(lock.session.connection, lock.session.meter, Present(lock.session), isolation, readOnly)(body)
+                    case Absent =>
                         self.useIndependentConnection { conn =>
-                            Meter.initMutexUnscoped.map(meter => self.beginOn(conn, meter, isolation, readOnly)(body))
+                            Meter.initMutexUnscoped.map(meter => self.beginOn(conn, meter, Absent, isolation, readOnly)(body))
                         }
                 }
         }
@@ -774,40 +817,56 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       *
       * Shared by the lock-held and independently-leased branches. They differ only in where the connection comes from and who releases
       * it, and keeping the BEGIN, the publish, and the three exit edges in one place is what stops the two `transaction` variants drifting apart.
+      * `host` is the lock's session in the first case, so the transaction is over when the lock is.
       */
-    private def beginOn[A, S](conn: Connection, meter: Meter, isolation: Maybe[SqlClient.IsolationLevel], readOnly: Boolean)(
+    private def beginOn[A, S](
+        conn: Connection,
+        meter: Meter,
+        host: Maybe[PinnedSession],
+        isolation: Maybe[SqlClient.IsolationLevel],
+        readOnly: Boolean
+    )(
         body: A < S
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         AtomicRef.init(Maybe.empty[String]).flatMap { failed =>
-            val ctx = TransactionContext(self, conn, 0, Chunk.empty, meter, failed)
-            self.beginLogged(conn, "tx").andThen {
-                // The control statements hold the session mutex too: a fiber the body forked and never awaited can
-                // still be mid-statement when the body returns, and COMMIT must queue behind it, not interleave.
-                self.serialised(meter)(conn.beginTransaction(isolation, readOnly)).andThen {
-                    Abort.run[Any](SqlClient.txLocal.let(Present(ctx))(body)).flatMap {
-                        case Result.Success(a) =>
-                            // A body that returned normally may still be carrying a statement failure it handled.
-                            // Committing there differs by engine and says nothing: one server refuses the commit and
-                            // quietly rolls back, the other commits whatever survived. Roll back on both and tell the
-                            // caller which statement did it.
-                            //
-                            // The flag is read INSIDE the mutex, with the control statement it decides. Read outside,
-                            // a forked statement still in flight can fail after the read and before the COMMIT that
-                            // queues behind it.
-                            self.serialised(meter) {
-                                failed.get.flatMap {
-                                    case Present(detail) =>
-                                        self.rollbackLogged(conn, "tx").andThen(
-                                            Abort.fail(SqlRequestTransactionFailedStatementException(detail))
-                                        )
-                                    case Absent =>
-                                        self.commitLogged(conn, "tx").andThen(a)
-                                }
+            AtomicRef.init(Maybe.empty[SqlException]).flatMap { ended =>
+                val session = PinnedSession(conn, meter, ended, host)
+                val ctx     = TransactionContext(self, session, 0, Chunk.empty, failed)
+                val refusal = SqlRequestTransactionEndedException()
+                self.beginLogged(conn, "tx").andThen {
+                    // The control statements hold the session mutex too: a fiber the body forked and never awaited can
+                    // still be mid-statement when the body returns, and COMMIT must queue behind it, not interleave.
+                    self.onSession(session)(_.beginTransaction(isolation, readOnly)).andThen {
+                        // An interrupt reaches none of the three arms below, so the end is recorded here as well. This
+                        // runs before the enclosing lease's own release, so the connection is never back in the pool
+                        // with the transaction still reading as open.
+                        Sync.ensure(ended.set(Present(refusal))) {
+                            Abort.run[Any](SqlClient.txLocal.let(Present(ctx))(body)).flatMap {
+                                case Result.Success(a) =>
+                                    // A body that returned normally may still be carrying a statement failure it handled.
+                                    // Committing there differs by engine and says nothing: one server refuses the commit and
+                                    // quietly rolls back, the other commits whatever survived. Roll back on both and tell the
+                                    // caller which statement did it.
+                                    //
+                                    // The flag is read INSIDE the mutex, with the control statement it decides. Read outside,
+                                    // a forked statement still in flight can fail after the read and before the COMMIT that
+                                    // queues behind it.
+                                    self.closing(session, refusal) {
+                                        failed.get.flatMap {
+                                            case Present(detail) =>
+                                                self.rollbackLogged(conn, "tx").andThen(
+                                                    Abort.fail(SqlRequestTransactionFailedStatementException(detail))
+                                                )
+                                            case Absent =>
+                                                self.commitLogged(conn, "tx").andThen(a)
+                                        }
+                                    }
+                                case Result.Failure(e) =>
+                                    self.closing(session, refusal)(self.rollbackLogged(conn, "tx")).andThen(SqlClient.reraise[A](e))
+                                case Result.Panic(t) =>
+                                    self.closing(session, refusal)(self.rollbackLogged(conn, "tx")).andThen(Abort.error(Result.Panic(t)))
                             }
-                        case Result.Failure(e) =>
-                            self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(SqlClient.reraise[A](e))
-                        case Result.Panic(t) =>
-                            self.serialised(meter)(self.rollbackLogged(conn, "tx")).andThen(Abort.error(Result.Panic(t)))
+                        }
                     }
                 }
             }
@@ -842,21 +901,24 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * deadlocks: the lock holds the only slot and the first statement inside waits for a permit that cannot come back until the lock releases.
       * Routing buys progress rather than exclusion; a statement still has to be inside the body to be routed.
       */
-    private def lockedOn[A, S](conn: Connection, meter: Meter, key: Long, timeout: Maybe[Duration])(
+    private def lockedOn[A, S](conn: Connection, meter: Meter, host: Maybe[PinnedSession], key: Long, timeout: Maybe[Duration])(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
-        Scope.run {
-            // The release is a scope finalizer so it fires on every exit edge, interruption included: the
-            // pool's reclaim knows nothing about advisory locks, so an unreleased lock would ride the pooled
-            // session to its next borrower.
-            //
-            // Registered BEFORE the acquire, because an interrupt can land on the acquire's own exchange after
-            // the server granted the lock, and a grant this fiber never saw is still a grant. Unlocking a key
-            // the session does not hold is what both engines answer false to, so covering that edge costs one
-            // round trip and nothing else.
-            Scope.ensure(self.unlocking(conn, meter, key)).andThen {
-                self.serialised(meter)(conn.acquireAdvisoryLock(key, timeout)).andThen {
-                    SqlClient.lockLocal.let(Present(SqlClient.LockContext(self, conn, meter)))(body)
+        AtomicRef.init(Maybe.empty[SqlException]).flatMap { ended =>
+            val session = PinnedSession(conn, meter, ended, host)
+            Scope.run {
+                // The release is a scope finalizer so it fires on every exit edge, interruption included: the
+                // pool's reclaim knows nothing about advisory locks, so an unreleased lock would ride the pooled
+                // session to its next borrower.
+                //
+                // Registered BEFORE the acquire, because an interrupt can land on the acquire's own exchange after
+                // the server granted the lock, and a grant this fiber never saw is still a grant. Unlocking a key
+                // the session does not hold is what both engines answer false to, so covering that edge costs one
+                // round trip and nothing else.
+                Scope.ensure(self.unlocking(session, key)).andThen {
+                    self.onSession(session)(_.acquireAdvisoryLock(key, timeout)).andThen {
+                        SqlClient.lockLocal.let(Present(SqlClient.LockContext(self, session)))(body)
+                    }
                 }
             }
         }
@@ -870,14 +932,17 @@ abstract class SqlClient(private[kyo] val runtime: Runtime[?]):
       * since both engines scope an advisory lock to the session that took it, and makes [[kyo.internal.client.SqlConnectionPool]]'s exit
       * decision destroy the connection rather than reclaim it, because a session with a lock nothing can release is not one to lend out.
       *
-      * The unlock's own failure is swallowed so a failed unlock cannot replace what the locked body reported.
+      * The unlock's own failure is swallowed so a failed unlock cannot replace what the locked body reported. The section's end is recorded
+      * on both edges, so a statement from a fiber that outlived the body is refused rather than run on the closed or unlocked session.
       */
-    private def unlocking(conn: Connection, meter: Meter, key: Long)(using Frame): Unit < Async =
+    private def unlocking(session: PinnedSession, key: Long)(using Frame): Unit < Async =
+        val refusal = SqlRequestAdvisoryLockEndedException(key)
         // Unsafe: `inFlight` and `closeNow` are the non-suspending forms the connection answers from state it holds.
-        Sync.Unsafe.defer(conn.inFlight).flatMap {
-            case true  => Sync.Unsafe.defer(conn.closeNow)
-            case false => Abort.run[SqlException](self.serialised(meter)(conn.releaseAdvisoryLock(key))).unit
+        Sync.Unsafe.defer(session.connection.inFlight).flatMap {
+            case true  => session.ended.set(Present(refusal)).andThen(Sync.Unsafe.defer(session.connection.closeNow))
+            case false => Abort.run[SqlException](self.closing(session, refusal)(session.connection.releaseAdvisoryLock(key))).unit
         }
+    end unlocking
 
 end SqlClient
 
@@ -1332,8 +1397,12 @@ object SqlClient:
       * one guarantee the construct exists to provide.
       *
       * The concurrent-user problem the inheritance creates is solved by the context's statement mutex: every statement routed onto the
-      * pinned connection runs holding [[kyo.internal.TransactionContext.meter]]'s single permit, so parallel statements in a transaction
+      * pinned connection runs holding [[kyo.internal.PinnedSession.meter]]'s single permit, so parallel statements in a transaction
       * body queue on the session instead of corrupting each other.
+      *
+      * A child that outlives the body keeps the context, and the session it names records its end: a statement issued after the COMMIT is
+      * refused with [[kyo.SqlRequestTransactionEndedException]] rather than run on whichever session the pool leased that connection to
+      * next. See [[kyo.internal.PinnedSession]].
       *
       * The rule, which the sibling below also records: a local naming a CONNECTION creates a concurrency problem, and the fix is a lock rather
       * than hiding the connection from the child.
@@ -1365,7 +1434,7 @@ object SqlClient:
       * `client` is compared by reference, which is what "the same client" means here: two clients built from one URL have two pools and two sets of
       * connections, so routing between them would be as wrong as routing between two unrelated ones.
       */
-    final private[kyo] case class LockContext(client: SqlClient, connection: Connection, meter: Meter)
+    final private[kyo] case class LockContext(client: SqlClient, session: PinnedSession)
 
     /** Opens a client for `rawUrl`, bound to the enclosing [[Scope]], which closes it when the scope exits.
       *

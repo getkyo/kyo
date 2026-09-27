@@ -178,6 +178,25 @@ class SqlClientAdvisoryLockTest extends SqlBackendTest:
             end for
         }
 
+    "a statement from a fiber that outlives the locked section is refused rather than run unlocked" -
+        forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
+            // The release returns the session to the pool, and a fiber the body forked keeps the context that names it.
+            // A statement that fiber issues later would run on the session without the lock the body took it under, or
+            // on that session's next borrower, and neither is what the body wrote it for.
+            val key = 777001L
+            for
+                go    <- Latch.init(1)
+                fiber <- client.withAdvisoryLock(key) {
+                    Fiber.initUnscoped(go.await.andThen(Abort.run[SqlException](client.query(sql"SELECT 1").unit)))
+                }
+                _    <- go.release
+                late <- fiber.get
+            yield late match
+                case Result.Failure(_: SqlRequestAdvisoryLockEndedException) => succeed
+                case other => fail(s"a statement issued after the lock's release must be refused as late, got $other")
+            end for
+        }
+
     "an engine without advisory locks refuses the acquire rather than blocking" - forEachBackend(where = !_.hasAdvisoryLocks) {
         (_, client, _) =>
             // The complement of every leaf above: an engine with no per-key lock has to REFUSE, typed and immediately. Running the body
