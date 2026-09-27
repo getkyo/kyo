@@ -72,6 +72,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         // Import packed-struct byte-size constants from the companion so method bodies can reference them.
         if spec.structs.exists(_.packed) then
             sb ++= s"    import ${spec.simpleName}Impl.*\n"
+        sb ++= companionInitLine(spec.simpleName)
         spec.methods.foreach { m =>
             sb ++= "\n"
             if m.hasVarargs then
@@ -876,6 +877,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         val sb          = new StringBuilder
         val headersList = spec.headers.mkString(", ")
         sb ++= s"@EnableReflectiveInstantiation final class ${spec.simpleName}Impl extends ${spec.simpleName}:\n"
+        sb ++= companionInitLine(spec.simpleName)
         spec.methods.foreach { m =>
             sb ++= "\n"
             sb ++= methodSignature(m, includeVarargs = true)
@@ -916,6 +918,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         sb ++= "    import scala.scalanative.unsafe.*\n"
         sb ++= abiCheckLine(spec.fqcn)
         sb ++= "\n"
+        sb ++= companionLoadedDef
         // Emit a byte-size constant per packed struct. Scala Native 0.5 has no `@packed` annotation; packed structs
         // are represented as raw `Ptr[Byte]` with manual offset-based field access. The constant is used by alloc sites.
         spec.structs.foreach { s =>

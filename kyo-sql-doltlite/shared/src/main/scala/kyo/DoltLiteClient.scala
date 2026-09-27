@@ -134,28 +134,19 @@ object DoltLite:
         // this backend being unavailable HERE rather than anything about the URL. Translated into the declared
         // failure type, since the loader raises outside it and would otherwise reach the caller as a panic.
         //
-        // The binding is CALLED, not merely loaded. On the JS runtime a load resolves its dispatch table lazily, so
-        // a missing engine leaves the load silent and a caller receives a client that fails at its first statement,
-        // which is the panic this translation exists to prevent. `libversionNumber` is the cheapest call there is:
-        // no database, no handle, no allocation.
-        //
         // Absence does not announce itself as one type. Where the loader can see the native is missing it raises
-        // `FfiLoadError.LibraryNotFound`; the JS runtime instead raises a `TypeError` off the null dispatch table.
-        // Hence `Throwable` rather than `FfiLoadError` alone. The widening is bounded: `Abort.catching` admits only
-        // what `NonFatal` allows, so a `VirtualMachineError` or an interrupt still passes through untranslated.
-        // The reason states the situation before quoting the cause, because only some runtimes describe it: the
-        // loader names the platform it looked for and every path it tried, while a null dispatch table yields
-        // nothing but a property name. The sentence that survives everywhere is the one that matters to a caller.
+        // `FfiLoadError.LibraryNotFound`; a native that is present but does not open raises the platform loader's own
+        // exception. Hence `Throwable` rather than `FfiLoadError` alone. The widening is bounded: `Abort.catching`
+        // admits only what `NonFatal` allows, so a `VirtualMachineError` or an interrupt still passes through
+        // untranslated. The reason states the situation before quoting the cause, because only some loaders describe
+        // it: `LibraryNotFound` names the platform it looked for and every path it tried, while a platform loader
+        // may say no more than that the open failed. The sentence that survives everywhere is the one that matters.
         Abort.catching[Throwable](e =>
             DoltLiteEngineUnavailableException(
                 s"it is not published for this platform. ${Maybe(e.getMessage).getOrElse(e.toString)}"
             )
         ) {
-            Sync.Unsafe.defer {
-                val loaded = Ffi.load[DoltLiteBindings]
-                val _      = loaded.libversionNumber()
-                loaded
-            }
+            Sync.Unsafe.defer(Ffi.load[DoltLiteBindings])
         }.flatMap { bindings =>
             val factory = new DoltLiteConnectionFactory(new SqliteConnectionFactory(bindings))
             Runtime.init(url, config, factory).map(rt => new DoltLiteClient(rt))

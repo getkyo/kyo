@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class StructBindingsImpl extends StructBindings:
     import StructBindingsImpl.*
+    StructBindingsImpl.loaded()
 
     def move(p: kyo.example.golden.Point, dx: Int)(using kyo.AllowUnsafe): kyo.example.golden.Point =
         val pLit = js.Dynamic.literal("x" -> p.x.asInstanceOf[js.Any], "y" -> p.y.asInstanceOf[js.Any])
@@ -23,6 +24,7 @@ end StructBindingsImpl
 
 object StructBindingsImpl:
     AbiCheck.verify(1, "kyo.example.StructBindings")
+    private def loaded(): Unit = ()
     private val pointKoffiType: js.Dynamic = KoffiFacade.struct("Point", js.Dynamic.literal("x" -> "int".asInstanceOf[js.Any], "y" -> "int".asInstanceOf[js.Any]))
     StructAbiCheck.verifyByteSize("kyo.example.StructBindings", "Point", 8L, KoffiFacade.sizeof(pointKoffiType.asInstanceOf[js.Any]).toLong)
     private val facade = NativeFacade.load(

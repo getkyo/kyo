@@ -11,6 +11,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 
 final class ArrayBindingsImpl extends ArrayBindings:
     import ArrayBindingsImpl.*
+    ArrayBindingsImpl.loaded()
 
     def sum(xs: Array[Int], n: Int)(using kyo.AllowUnsafe): Int =
         val __kyoScratch = Scratch.currentFor("kyo.example.ArrayBindings", Scratch.configuredSize)
@@ -25,6 +26,7 @@ end ArrayBindingsImpl
 
 object ArrayBindingsImpl:
     AbiCheck.verify(1, "kyo.example.ArrayBindings")
+    private def loaded(): Unit = ()
     private val lib      = NativeLoader.load("kyo_arr")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")

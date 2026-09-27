@@ -20,41 +20,26 @@ import scala.scalajs.js as sjs
   */
 class NativeLoaderJsTest extends Test:
 
-    private val libId       = "kyo_test_loader"
-    private val envKey      = s"KYO_FFI_${libId.toUpperCase.replace('-', '_')}_PATH"
-    private val prefixProp  = "kyo.ffi.js.packagePrefix"
-    private val savedPrefix = sys.props.get(prefixProp)
+    private val libId      = "kyo_test_loader"
+    private val envKey     = s"KYO_FFI_${libId.toUpperCase.replace('-', '_')}_PATH"
+    private val prefixProp = "kyo.ffi.js.packagePrefix"
 
     // A path that is guaranteed to exist on the Node host: the running node binary itself.
     private def existingPath: String =
         sjs.Dynamic.global.process.execPath.asInstanceOf[String]
 
-    // Each leaf mutates the resolver env var + package-prefix sys prop; clear/save before the body and restore after,
-    // isolating leaves (the kyo-test equivalent of the old beforeEach/afterEach pair).
-    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        Sync.defer {
-            clearEnv(envKey)
-            discard(sys.props.remove(prefixProp))
-            Scope.ensure {
-                clearEnv(envKey)
-                savedPrefix match
-                    case Some(v) => sys.props.update(prefixProp, v)
-                    case None    => discard(sys.props.remove(prefixProp))
-                end match
-            }.andThen(body)
-        }
-
     "env var KYO_FFI_<ID>_PATH wins when the file it names exists" in {
         // Even with an obviously missing package prefix, an existing env-path short-circuits resolution.
-        sys.props.update(prefixProp, "@nope/never-installed")
-        setEnv(envKey, existingPath)
-        assert(NativeLoader.jsResolve(libId) == existingPath)
+        withResolverState(env = Some(existingPath), prefix = Some("@nope/never-installed")) {
+            assert(NativeLoader.jsResolve(libId) == existingPath)
+        }
     }
 
     "env var pointing at a missing file is not honored; an unresolvable id raises LibraryNotFound" in {
-        sys.props.update(prefixProp, "@nope/never-installed")
-        setEnv(envKey, "/abs/path/that/does/not/exist/libkyo_test_loader.so")
-        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        val ex =
+            withResolverState(env = Some("/abs/path/that/does/not/exist/libkyo_test_loader.so"), prefix = Some("@nope/never-installed")) {
+                intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+            }
         assert(ex.libraryId == libId)
         assert(ex.candidates.nonEmpty)
         // The tag is the one the package lookup searched under, which the message names as the package to install.
@@ -62,15 +47,29 @@ class NativeLoaderJsTest extends Test:
         assert(ex.getMessage.contains(s"package for ${ex.platformTag}"))
     }
 
+    "env var naming an existing file is not honored on a host without Node's fs module, which cannot confirm it exists" in {
+        val process = sjs.Dynamic.global.process
+        val saved   = process.getBuiltinModule
+        val ex      = withResolverState(env = Some(existingPath), prefix = Some("@nope/never-installed")) {
+            process.updateDynamic("getBuiltinModule")(sjs.undefined)
+            try intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+            finally process.updateDynamic("getBuiltinModule")(saved)
+        }
+        assert(ex.libraryId == libId)
+    }
+
     "without env var, an unresolvable package prefix raises LibraryNotFound (no blind bare-name fallback)" in {
-        sys.props.update(prefixProp, "@nope/never-installed")
-        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        val ex = withResolverState(env = None, prefix = Some("@nope/never-installed")) {
+            intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        }
         assert(ex.libraryId == libId)
     }
 
     "the default package prefix is also unresolvable in this test env and raises LibraryNotFound" in {
         // No env, no override; default is `@kyo/ffi-native`, absent from node_modules for tests.
-        val ex = intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        val ex = withResolverState(env = None, prefix = None) {
+            intercept[FfiLoadError.LibraryNotFound](NativeLoader.jsResolve(libId))
+        }
         assert(ex.libraryId == libId)
     }
 
@@ -152,6 +151,24 @@ class NativeLoaderJsTest extends Test:
     }
 
     // --- helpers ---
+
+    /** Runs `f` with the resolver's env var and package-prefix property set as given, restoring both before it returns.
+      *
+      * The restore happens inside the leaf's own synchronous body rather than in a scope finalizer: kyo-test interleaves a
+      * suite's leaves, and `process.env` and `sys.props` are process-wide, so state left until the leaf's scope closes is
+      * visible to the next leaf that runs.
+      */
+    private def withResolverState[A](env: Option[String], prefix: Option[String])(f: => A): A =
+        val savedEnv    = Option(sjs.Dynamic.global.process.env.selectDynamic(envKey)).filterNot(sjs.isUndefined).map(_.toString)
+        val savedPrefix = sys.props.get(prefixProp)
+        env.fold(clearEnv(envKey))(setEnv(envKey, _))
+        prefix.fold(discard(sys.props.remove(prefixProp)))(sys.props.update(prefixProp, _))
+        try f
+        finally
+            savedEnv.fold(clearEnv(envKey))(setEnv(envKey, _))
+            savedPrefix.fold(discard(sys.props.remove(prefixProp)))(sys.props.update(prefixProp, _))
+        end try
+    end withResolverState
 
     private def setEnv(key: String, value: String): Unit =
         sjs.Dynamic.global.process.env.updateDynamic(key)(value)

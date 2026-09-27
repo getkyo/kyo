@@ -12,6 +12,7 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeFac
 
 @EnableReflectiveInstantiation final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
     import BorrowedStringBindingsImpl.*
+    BorrowedStringBindingsImpl.loaded()
 
     def getenvLike(name: String)(using kyo.AllowUnsafe): Ffi.Borrowed[String] =
         val retVal = facade.getenvLike(name).asInstanceOf[String]
@@ -20,6 +21,7 @@ end BorrowedStringBindingsImpl
 
 object BorrowedStringBindingsImpl:
     AbiCheck.verify(1, "kyo.example.BorrowedStringBindings")
+    private def loaded(): Unit = ()
     private val facade = NativeFacade.load(
         "kyo_borrowed_str",
         Seq(

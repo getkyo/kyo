@@ -307,15 +307,12 @@ class MachineMacosTest extends kyo.test.Test[Any]:
     "shim-load failure" - {
 
         "a native-library load failure degrades every family to Absent through the production read, no throw" in {
-            // The generated MacosBindings impl loads the native library lazily on the first binding call, so
-            // a shim-load failure surfaces from read()'s first decode, not from Ffi.load. This drives that
-            // failure through MachineMacos' load probe and asserts bindings contains it: read() and
-            // readDisks() register nothing and do not throw. Unlike the off-macOS leaf above (assume-cancelled
-            // on macOS), this runs on every host: the failing probe throws before any real native load, so the
-            // outcome does not depend on whether the shim resolves or on the process-global load order the
-            // real koffi/dlopen path is subject to. It encodes the README's degrade promise directly.
-            val failing = new MachineMacos.LoadProbe:
-                def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit =
+            // Unlike the off-macOS leaf above (assume-cancelled on macOS), this runs on every host: the failing
+            // loader throws before any real native load, so the outcome does not depend on whether the shim
+            // resolves or on the process-global load order the real koffi/dlopen path is subject to. It encodes
+            // the README's degrade promise directly.
+            val failing = new MachineMacos.Loader:
+                def apply()(using AllowUnsafe): MacosBindings =
                     throw new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
             // A uniquely-scoped MachineHandles, never touched by any other leaf or suite, so every path under
             // it starts genuinely unregistered and the absolute "nothing registered" check is meaningful.
@@ -340,8 +337,8 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // That is a LinkageError, which NonFatal excludes, so it escaped the reader's guard, killed the
             // sampler's fibers and printed a stack trace into an unrelated application's stderr. The module's
             // stated contract is the opposite: a metric the host cannot produce is simply absent.
-            val failing = new MachineMacos.LoadProbe:
-                def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit =
+            val failing = new MachineMacos.Loader:
+                def apply()(using AllowUnsafe): MacosBindings =
                     throw new ExceptionInInitializerError(
                         new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
                     )

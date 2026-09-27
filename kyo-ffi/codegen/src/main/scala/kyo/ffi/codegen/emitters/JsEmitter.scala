@@ -56,6 +56,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         // registered in the companion. Wildcard-select works because the companion exposes these as
         // private vals, which are still visible to nested references inside the class body.
         sb ++= s"    import ${spec.simpleName}Impl.*\n"
+        sb ++= companionInitLine(spec.simpleName)
         spec.methods.foreach { m =>
             sb ++= "\n"
             sb ++= emitMethod(m, spec)
@@ -761,6 +762,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         sb ++= s"object ${spec.simpleName}Impl:\n"
         sb ++= abiCheckLine(spec.fqcn)
         sb ++= "\n"
+        sb ++= companionLoadedDef
         // Register all struct and union types with koffi up-front so the per-function arg/result strings (and struct
         // field types) can reference them by name. koffi resolves type-name references eagerly at registration, so the
         // emission is dependency-ordered: a union's struct member variants and a struct's struct/union field types are
