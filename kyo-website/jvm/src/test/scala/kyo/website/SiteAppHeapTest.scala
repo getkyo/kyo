@@ -51,11 +51,15 @@ class SiteAppHeapTest extends WebsiteTest:
             cancelOnUnsupportedPlatform {
                 Browser.runShared() {
                     for
-                        _     <- Browser.goto(s"$baseUrl/latest/kyo-core/")
-                        _     <- Async.sleep(settleDelay)
-                        first <- sample
-                        _     <- Async.sleep(idleWindow)
-                        last  <- sample
+                        _      <- Browser.goto(s"$baseUrl/latest/kyo-core/")
+                        series <- Kyo.foreach(Chunk.from(1 to 9)) { i =>
+                            Async.sleep(settleDelay).andThen(sample).map { s =>
+                                println(s"HEAPDIAG t=${i * 10}s used=${s.used / 1024}KB dom=${s.domNodes}")
+                                s
+                            }
+                        }
+                        first = series(0)
+                        last  = series(2)
                     yield
                         val growth = last.used - first.used
                         assert(
