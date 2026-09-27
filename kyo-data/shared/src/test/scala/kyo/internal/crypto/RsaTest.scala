@@ -121,6 +121,17 @@ class RsaTest extends kyo.test.Test[Any]:
             typeCheckFailure("""kyo.internal.crypto.Rsa.PublicKey(BigInt(3), BigInt(3)) match
                 case kyo.Result.Success(k) => k.copy(modulus = BigInt(4))
                 case _ => ()""")("copy")
+            typeCheckFailure("kyo.internal.crypto.Rsa.PublicKey.fromProduct((BigInt(4), BigInt(2)))")("fromProduct")
+        }
+
+        "two keys are equal exactly when their modulus and exponent are" in {
+            val a = keyOf(Rsa.PublicKey(oddOfBits(2048), BigInt(65537)))
+            val b = keyOf(Rsa.PublicKey(oddOfBits(2048), BigInt(65537)))
+            val c = keyOf(Rsa.PublicKey(oddOfBits(2048), BigInt(3)))
+            assert(a == b)
+            assert(a.hashCode == b.hashCode)
+            assert(a != c)
+            assert(a.toString == s"PublicKey(${a.modulus}, 65537)")
         }
     }
 

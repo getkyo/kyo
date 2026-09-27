@@ -32,9 +32,21 @@ private[kyo] object Rsa:
 
     /** An RSA public key whose modulus and exponent sit under the two cost ceilings; one built through [[PublicKey.apply]] or
       * [[publicKeyFromJwk]] also passed the verification checks of [[Rsa]].
+      *
+      * A plain class rather than a case class: a case class companion gets a public synthesized `fromProduct` that calls the private
+      * constructor, which would build a key past every check.
       */
-    final case class PublicKey private (modulus: BigInt, exponent: BigInt) derives CanEqual:
+    final class PublicKey private (val modulus: BigInt, val exponent: BigInt) derives CanEqual:
         def sizeInBytes: Int = (modulus.bitLength + 7) / 8
+
+        override def equals(other: Any): Boolean = other match
+            case that: PublicKey => modulus == that.modulus && exponent == that.exponent
+            case _               => false
+
+        override def hashCode: Int = 31 * modulus.hashCode + exponent.hashCode
+
+        override def toString: String = s"PublicKey($modulus, $exponent)"
+    end PublicKey
 
     object PublicKey:
         def apply(modulus: BigInt, exponent: BigInt): Result[KeyFailure, PublicKey] =
