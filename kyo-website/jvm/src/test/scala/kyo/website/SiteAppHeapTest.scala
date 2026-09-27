@@ -14,10 +14,6 @@ class SiteAppHeapTest extends WebsiteTest:
 
     override def timeout = 10.minutes
 
-    // The shared Chrome's CDP socket and stdio pipes are opaque-inode descriptors no allowlist can match.
-    override def config =
-        super.config.sequential.leakCheckSockets(false).leakCheckFileDescriptors(false)
-
     private val idleWindow = 20.seconds
 
     // Measured across this window: 0.06 MB on a page that does not leak, 3.0 MB on one leaking 8.8 MB/min.
@@ -46,10 +42,12 @@ class SiteAppHeapTest extends WebsiteTest:
             nodes <- Browser.evalInt("document.getElementsByTagName('*').length")
         yield Sample(heap.used, nodes)
 
+    // Not the shared Chrome: it lives until the JVM exits, and its stdio pipe would still be open at the module's end-of-run
+    // descriptor check, which the other suites here keep enabled. A Chrome of the leaf's own is gone with the leaf's scope.
     "an idle docs tab does not grow its retained heap" in {
         ServedSite.serve { baseUrl =>
             cancelOnUnsupportedPlatform {
-                Browser.runShared() {
+                Browser.run {
                     for
                         _     <- Browser.goto(s"$baseUrl/latest/kyo-core/")
                         _     <- Async.sleep(settleDelay)
