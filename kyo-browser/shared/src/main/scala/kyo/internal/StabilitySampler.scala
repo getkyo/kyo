@@ -56,8 +56,8 @@ private[kyo] object StabilitySampler:
                 const read = () => { try { return String($valueExpr); } catch (e) { return '\\u0000kyo_probe_threw'; } };
                 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
                 const first = read();
-                const deadlineAt = Date.now() + $windowMs;
-                while (Date.now() < deadlineAt) {
+                const deadlineAt = performance.now() + $windowMs;
+                while (performance.now() < deadlineAt) {
                     await sleep($tickMs);
                     const current = read();
                     if (current !== first) return JSON.stringify({tag: 'unstable', value: current});

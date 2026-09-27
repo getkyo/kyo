@@ -2380,7 +2380,7 @@ object Container:
             else
                 // Container is running, run health check with retry.
                 // Accumulate errors for diagnostic reporting on final failure.
-                Clock.now.map { startTime =>
+                Clock.stopwatch.map { stopwatch =>
                     def loop(
                         retrySchedule: Schedule,
                         attempts: Int,
@@ -2413,16 +2413,18 @@ object Container:
                                                 case Present((delay, nextSchedule)) =>
                                                     Async.sleep(delay).andThen(loop(nextSchedule, nextAttempts, updatedErrors))
                                                 case Absent =>
-                                                    val elapsed    = now.toJava.toEpochMilli - startTime.toJava.toEpochMilli
-                                                    val elapsedStr =
-                                                        if elapsed >= elapsedMillisFormatThreshold then s"${elapsed / 1000}s"
-                                                        else s"${elapsed}ms"
-                                                    Abort.fail(ContainerHealthCheckException(
-                                                        container.id,
-                                                        s"retry schedule exhausted in $elapsedStr",
-                                                        attempts = nextAttempts,
-                                                        lastError = formatRecentHealthCheckErrors(updatedErrors)
-                                                    ))
+                                                    stopwatch.elapsed.map { spent =>
+                                                        val elapsed    = spent.toMillis
+                                                        val elapsedStr =
+                                                            if elapsed >= elapsedMillisFormatThreshold then s"${elapsed / 1000}s"
+                                                            else s"${elapsed}ms"
+                                                        Abort.fail(ContainerHealthCheckException(
+                                                            container.id,
+                                                            s"retry schedule exhausted in $elapsedStr",
+                                                            attempts = nextAttempts,
+                                                            lastError = formatRecentHealthCheckErrors(updatedErrors)
+                                                        ))
+                                                    }
                                         }
                                     case Result.Success(_) =>
                                         onDeadContainer(
@@ -2503,11 +2505,12 @@ object Container:
     private def awaitPortsReady(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if container.config.ports.isEmpty then ()
         else
-            Clock.now.map { startedAt =>
-                val deadlineMs = startedAt.toJava.toEpochMilli + container.config.portMappingTimeout.toMillis
-                waitForPortMappings(container, startedAt, deadlineMs).andThen {
+            Clock.nowMonotonic.map { startedAt =>
+                val startedMs  = startedAt.toMillis
+                val deadlineMs = startedMs + container.config.portMappingTimeout.toMillis
+                waitForPortMappings(container, startedMs, deadlineMs).andThen {
                     if !container.config.requireService then ()
-                    else Clock.now.map(now => awaitPortsReachable(container, portProbeDeadline(deadlineMs, now.toJava.toEpochMilli)))
+                    else Clock.nowMonotonic.map(now => awaitPortsReachable(container, portProbeDeadline(deadlineMs, now.toMillis)))
                 }
             }
 
@@ -2519,7 +2522,8 @@ object Container:
     /** The floor on what the reachability probe gets once the mapping wait is done. */
     private val portProbeMinBudget: Duration = 5.seconds
 
-    /** The deadline the reachability probe runs under, given the shared port-readiness deadline and the time the mapping wait finished.
+    /** The deadline the reachability probe runs under, given the shared port-readiness deadline and the time the mapping wait finished,
+      * both in monotonic milliseconds.
       *
       * The two waits share one [[Container.Config.portMappingTimeout]] budget, and a mapping wait that exhausts it fails on its own terms
       * with a "ports not bound" error. What this floor prevents is the adjacent case: a binding observed a few milliseconds BEFORE the
@@ -2577,7 +2581,8 @@ object Container:
             case _ => false
         }
 
-    /** Wait until every published TCP host port of `container` accepts a host-side connection, failing at `deadlineMs`.
+    /** Wait until every published TCP host port of `container` accepts a host-side connection, failing at `deadlineMs`, a reading of
+      * [[Clock.nowMonotonic]] in milliseconds.
       *
       * [[waitForPortMappings]] proves only that the daemon recorded a binding; on rootless podman the forwarder that serves it comes up
       * asynchronously and can fail to come up at all, and on any runtime the container's process can die between its health check and the
@@ -2595,8 +2600,8 @@ object Container:
                     probeHostPort(container.host, hostPort).map {
                         case true  => Loop.done(())
                         case false =>
-                            Clock.now.map { now =>
-                                if now.toJava.toEpochMilli >= deadlineMs then
+                            Clock.nowMonotonic.map { now =>
+                                if now.toMillis >= deadlineMs then
                                     Abort.fail[ContainerException](ContainerStartFailedException(
                                         container.id,
                                         s"host port $hostPort is published by the runtime but does not hold a connection: " +
@@ -2617,13 +2622,13 @@ object Container:
     private[kyo] def awaitPortsReachableWithin(container: Container, within: Duration)(using
         Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        Clock.now.map(now => awaitPortsReachable(container, now.toJava.toEpochMilli + within.toMillis))
+        Clock.nowMonotonic.map(now => awaitPortsReachable(container, now.toMillis + within.toMillis))
 
     /** Poll `inspect` until every configured port binding reports a bound host port. Backends report container state Running before the
       * port-forwarding hook completes (rootless podman uses slirp4netns/pasta async; Docker Desktop's VM has a similar gap). Without this
       * wait, callers who ask for `mappedPort` immediately after `init` race intermittently.
       */
-    private def waitForPortMappings(container: Container, startedAt: Instant, deadlineMs: Long)(using
+    private def waitForPortMappings(container: Container, startedMs: Long, deadlineMs: Long)(using
         Frame
     ): Unit < (Async & Abort[ContainerException]) =
         val budgetMs  = container.config.portMappingTimeout.toMillis
@@ -2635,10 +2640,10 @@ object Container:
                 }
                 if allBound then Loop.done(())
                 else
-                    Clock.now.map { now =>
-                        val nowMs = now.toJava.toEpochMilli
+                    Clock.nowMonotonic.map { now =>
+                        val nowMs = now.toMillis
                         if nowMs >= deadlineMs then
-                            val elapsedMs  = nowMs - startedAt.toJava.toEpochMilli
+                            val elapsedMs  = nowMs - startedMs
                             val configured =
                                 container.config.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}").mkString(", ")
                             val observed =

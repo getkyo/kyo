@@ -783,6 +783,31 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    "Settle.NetworkIdle reads a quiet page as idle while the page's wall clock stands still" in {
+        // Degrading to Load is the only thing that tells a missed idle window apart from a met one, so the warning is the observable.
+        val warnings = AtomicRef.Unsafe.init(Chunk.empty[String])(using AllowUnsafe.embrace.danger)
+        class CapturingLog extends Log.Unsafe.ConsoleLogger("test", Log.Level.warn):
+            override def emit(event: Log.Event)(using allow: AllowUnsafe): Unit =
+                if event.level == Log.Level.warn then discard(warnings.getAndUpdate(_.append(event.message))(using allow))
+        end CapturingLog
+        // Served over localhost because a data: URL settles on Load and never reaches the idle gate.
+        val html        = "<html><body><h1>quiet</h1><script>Date.now = function() { return 1700000000000; };</script></body></html>"
+        val htmlBytes   = Span.fromUnsafe(html.getBytes("UTF-8"))
+        val htmlHandler = HttpRoute.getRaw("/").response(_.bodyBinary).handler { _ =>
+            HttpResponse.ok(htmlBytes).addHeader("Content-Type", "text/html; charset=utf-8")
+        }
+        withLocalhostServer(htmlHandler) { (host, port) =>
+            withBrowser {
+                Log.let(Log(new CapturingLog)) {
+                    Browser.goto(s"http://$host:$port/").andThen(Log.flush)
+                }.map { _ =>
+                    val seen = warnings.get()(using AllowUnsafe.embrace.danger)
+                    assert(!seen.exists(_.contains("degrading to Settle.Load")), s"the idle gate never opened: $seen")
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Same-URL Browser.goto after a typed failure (B1)
     //
@@ -1377,6 +1402,28 @@ class BrowserSettlementTest extends BrowserTest:
             </body>""") {
                 kyo.internal.MutationSettlement.waitForStable(1.hour).map { _ =>
                     succeed
+                }
+            }
+        }
+    }
+
+    // A frozen Date.now reads every mutation as zero milliseconds old, so a quiet window measured on it never elapses and the wait
+    // would run to its deadline, which the same frozen clock never reaches either.
+    "waitForStable returns once the DOM quiesces while the page's wall clock stands still" in {
+        withBrowser {
+            onPage("""<body>
+                <div id='burst'>0</div>
+                <script>
+                    Date.now = function() { return 1700000000000; };
+                    let n = 0;
+                    const id = setInterval(() => {
+                        document.getElementById('burst').textContent = String(++n);
+                        if (n >= 5) clearInterval(id);
+                    }, 20);
+                </script>
+            </body>""") {
+                Abort.run[BrowserReadException](kyo.internal.MutationSettlement.waitForStable(10.seconds)).map { outcome =>
+                    assert(outcome.isSuccess, s"expected the settled DOM to read as stable, got $outcome")
                 }
             }
         }

@@ -9,6 +9,7 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
+import kyo.scheduler.InternalClock
 import kyo.scheduler.bug
 import scala.util.control.NonFatal
 
@@ -88,7 +89,7 @@ final private[scheduler] class HandoffRetryExecutor(pool: ExecutorService, facto
                         it.remove()
                     else if (tracked.elapsedMs() >= tracked.threshold()) {
                         tracked.retried += 1
-                        tracked.submittedMs = System.currentTimeMillis()
+                        tracked.submittedMs = InternalClock.monotonicMillis()
                         try pool.execute(tracked)
                         catch {
                             case _: RejectedExecutionException if pool.isShutdown() =>
@@ -146,13 +147,13 @@ private[scheduler] object HandoffRetryExecutor {
     final class Tracked(val command: Runnable) extends Runnable {
         val started               = new AtomicBoolean(false)
         var retried               = 0
-        @volatile var submittedMs = System.currentTimeMillis()
+        @volatile var submittedMs = InternalClock.monotonicMillis()
 
         def run(): Unit =
             if (started.compareAndSet(false, true))
                 command.run()
 
-        def elapsedMs(): Long = System.currentTimeMillis() - submittedMs
+        def elapsedMs(): Long = InternalClock.monotonicMillis() - submittedMs
 
         def threshold(): Long = Math.min(firstRetryMs.toLong << retried, maxRetryMs.toLong)
     }

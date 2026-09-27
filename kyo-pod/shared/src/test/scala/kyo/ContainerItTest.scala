@@ -761,6 +761,19 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
+        "a published port with nothing listening fails init on monotonic time while the wall clock stands still" - runBackends {
+            val config = alpine.port(8080, 0)
+                .requireService(true)
+                .portMappingTimeout(5.seconds)
+            Clock.let(Clock(Clock.Unsafe.withWall(Clock.live.unsafe)(() => Instant.Epoch))) {
+                Abort.run[ContainerException](Scope.run(Container.init(config)))
+            }.map {
+                case Result.Failure(e: ContainerStartFailedException) =>
+                    assert(e.reason.contains("does not hold a connection"), s"expected a reachability reason, got ${e.reason}")
+                case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
+            }
+        }
+
         "the same unserved port is accepted without requireService" - runBackends {
             Container.init(alpine.port(8080, 0)).map { c =>
                 c.mappedPort(8080).map(hp => assert(hp > 0, s"expected a bound host port, got $hp"))
@@ -885,6 +898,25 @@ class ContainerItTest extends BasePodTest:
                     ()
                 case Result.Panic(t) => fail(s"panic: $t")
                 case other           => fail(s"expected ContainerHealthCheckException, got $other")
+            }
+        }
+
+        "retry-exhausted health check reports the monotonic time it spent while the wall clock stands still" - runBackends {
+            val cfg = alpine.healthCheck(Container.HealthCheck.exec(
+                command = Command("sh", "-c", "exit 1"),
+                expected = Absent,
+                retrySchedule = Schedule.fixed(200.millis).take(3)
+            ))
+            Clock.let(Clock(Clock.Unsafe.withWall(Clock.live.unsafe)(() => Instant.Epoch))) {
+                Abort.run[ContainerException](Container.init(cfg))
+            }.map {
+                case Result.Failure(e: ContainerHealthCheckException) =>
+                    // Three 200ms sleeps precede exhaustion, so no correct reading is below 600ms, however fast the host.
+                    val spentMs = "exhausted in (\\d+)(ms|s)".r.findFirstMatchIn(e.reason).map { m =>
+                        if m.group(2) == "s" then m.group(1).toLong * 1000 else m.group(1).toLong
+                    }
+                    assert(spentMs.exists(_ >= 600L), s"expected at least 600ms spent, got: ${e.reason}")
+                case other => fail(s"expected ContainerHealthCheckException, got $other")
             }
         }
 

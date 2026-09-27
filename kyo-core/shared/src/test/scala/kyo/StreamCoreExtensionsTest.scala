@@ -1036,7 +1036,7 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
         // finalizer lands after `run` has returned. The finalizer suspends on a fiber join first so a round cannot
         // win the race, and the rounds keep the pending marker stable.
         "the Scope finalizer of a taken stream runs after the last element it emitted".pendingUntilFixed(
-            "by decision there is no backpressure on abnormal exit: the scope's release runs on a detached drain that the end of take does not await"
+            "Open: by decision there is no backpressure on abnormal exit: the scope's release runs on a detached drain that the end of take does not await"
         ) in {
             val rounds = 50
             Loop.indexed { i =>
