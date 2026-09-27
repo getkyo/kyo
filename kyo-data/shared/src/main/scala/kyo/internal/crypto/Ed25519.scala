@@ -12,7 +12,9 @@ import scala.annotation.tailrec
   * IMPORTANT: the group equation is the cofactorless one. RFC 8032 also allows `[8][S]B = [8]R + [8][k]A`; the two differ only when `A`
   * or `R` carries a small-order component, and the cofactorless equation is the one used by the verifiers Discord documents for its
   * interactions endpoint (tweetnacl, libsodium, Tink) and by Go, BoringSSL and OpenSSL. Changing it changes which forged edge cases
-  * verify, not which honest signatures do.
+  * verify, not which honest signatures do. Small-order and mixed-order `A` and `R` are accepted whenever the equation holds, as RFC 8032
+  * has no small-order blocklist: of the ed25519-speccheck cases, 0 to 3 verify and 4 to 11 do not, the row BouncyCastle and Hacl* answer;
+  * libsodium additionally rejects cases 0 to 2 through its own blocklist.
   *
   * Note: verification handles only public values (the key, the message and the signature), so it is not constant time and does not need
   * to be.
