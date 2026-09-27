@@ -59,22 +59,20 @@ final class MysqlClient private[kyo] (runtime: Runtime[MysqlSqlConnection]) exte
       * pool with no evidence that a request was outstanding and the connection is destroyed rather than reclaimed. That is the conservative
       * answer and the right one here: `LOAD DATA LOCAL INFILE` runs its own cleanup on the channel it uploaded through.
       *
-      * Routes like the portable [[SqlClient.usePinnedConnection]] does, so an operation here reaches an enclosing transaction's or lock's session
-      * rather than a second one. Two checks stand between the fiber-local and `op`, and they do DIFFERENT jobs: the client comparison inside
-      * [[SqlClient.pinnedSession]] is the CORRECTNESS gate, deciding whether joining this session is legitimate at all, while the concrete-type
-      * narrowing below is a TYPING necessity, because `TransactionContext` holds the SPI type and this needs the MySQL one. After the client gate the
-      * narrowing cannot fail, since this client's pool opens only `MysqlSqlConnection`, so the fall-through leases rather than pretending to decide
-      * something. The sibling in `PostgresClient` states the same split at greater length.
+      * Routed by [[SqlClient.usePinnedConnection]] itself, so an operation here reaches an enclosing transaction's or lock's session under its
+      * statement mutex, records its failure against the transaction, and is refused once that scope has ended, exactly as a portable statement
+      * is. Two checks stand between the fiber-local and `op`, and they do DIFFERENT jobs: the client comparison inside the routed helper is the
+      * CORRECTNESS gate, deciding whether joining this session is legitimate at all, while the concrete-type narrowing below is a TYPING necessity,
+      * because the helper hands out the SPI type and this needs the MySQL one. After the client gate the narrowing cannot fail, since this
+      * client's pool opens only `MysqlSqlConnection`, which is why the other arm is a bug rather than a lease. The sibling in `PostgresClient`
+      * states the same split at greater length.
       */
     private def useMysqlConnection[A, S](op: kyo.internal.mysql.MysqlConnection => A < (S & Async & Abort[SqlException]))(using
         Frame
     ): A < (S & Async & Abort[SqlException]) =
-        self.pinnedSession.flatMap {
-            case Present(conn: MysqlSqlConnection) => op(conn.underlying)
-            case _                                 =>
-                self.useConfig { config =>
-                    runtime.lease(config)(conn => op(conn.underlying))
-                }
+        self.usePinnedConnection {
+            case conn: MysqlSqlConnection => op(conn.underlying)
+            case other                    => bug(s"kyo.sql: a MySQL client's pool handed out ${other.getClass.getName}")
         }
 
 end MysqlClient

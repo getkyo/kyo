@@ -4,6 +4,7 @@ import kyo.Sql.BoundValue
 import kyo.db.Connection
 import kyo.db.Idiom
 import kyo.db.Runtime
+import kyo.internal.PinnedSession
 import kyo.internal.TransactionContext
 import kyo.internal.client.SqlConnectionPool
 import kyo.internal.postgres.PostgresSqlConnection
@@ -139,10 +140,15 @@ private[kyo] object SqlClientProbe:
                                     // The failure marker a real transaction carries so a handled statement error cannot
                                     // reach its commit. Fabricated empty here: this fixture never runs one.
                                     AtomicRef.init(Maybe.empty[String]).flatMap { failed =>
-                                        SqlClient.txLocal.let(
-                                            Present(TransactionContext(client, probe, 1, Chunk.empty, meter, failed))
-                                        ) {
-                                            f(client, () => calls.get)
+                                        // Likewise the end-of-scope refusal: absent, so the session stays open for the
+                                        // whole probe.
+                                        AtomicRef.init(Maybe.empty[SqlException]).flatMap { ended =>
+                                            val session = PinnedSession(probe, meter, ended, Absent)
+                                            SqlClient.txLocal.let(
+                                                Present(TransactionContext(client, session, 1, Chunk.empty, failed))
+                                            ) {
+                                                f(client, () => calls.get)
+                                            }
                                         }
                                     }
                                 }

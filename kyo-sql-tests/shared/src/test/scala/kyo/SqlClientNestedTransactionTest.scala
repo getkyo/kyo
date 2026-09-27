@@ -124,7 +124,7 @@ class SqlClientNestedTransactionTest extends SqlBackendTest:
                                     "two levels must not share a savepoint name"
                                 )
                                 assert(
-                                    innerCtx.connection eq middleCtx.connection,
+                                    innerCtx.session eq middleCtx.session,
                                     "a nested transaction reuses the outer connection rather than leasing another"
                                 )
                             }
