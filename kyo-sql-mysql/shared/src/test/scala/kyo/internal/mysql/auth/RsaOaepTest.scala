@@ -15,6 +15,10 @@ import kyo.internal.crypto.Rsa
   *   - Every way the shared key parser can refuse a server's key surfaces as this module's leaf, with the fields it carried before the
   *     parser moved: a missing PEM header, a body that is not base64, a truncated DER structure, and a modulus or exponent above its
   *     ceiling, so the peer cannot choose how long modPow runs
+  *   - Degenerate keys under the ceilings (a modulus of 0, 1 or an even number; an exponent of 0, 1 or 2) end in a typed failure or a
+  *     ciphertext, never a panic
+  *
+  * The JVM-only [[RsaOaepJvmTest]] decrypts this module's ciphertext with the JDK's OAEP and checks the plaintext.
   *
   * Test RSA key is a pre-generated 2048-bit RSA public key (SubjectPublicKeyInfo PEM). Tests involving full RSA encryption use the
   * [[seeded]] `SecureRandom` for determinism and compare against vectors pre-computed in Java using the same `java.util.Random(42)` seed.
@@ -240,6 +244,34 @@ FwIDAQAB
         }
     }
 
+    // ─── Degenerate keys: a typed failure or a ciphertext, never a panic ─────────
+
+    "RsaOaep with a modulus of 0 or 1 fails as plaintext-length, since such a key takes no plaintext at all" in {
+        Kyo.foreach(Seq(BigInt(0), BigInt(1))) { modulus =>
+            Abort.run[SqlRequestException](RsaOaep.encrypt(keyPemOf(modulus, BigInt(65537)), hello, seeded(1))).map {
+                case Result.Failure(e: SqlRequestRsaOaepException) =>
+                    assert(e.position == "EME-OAEP", s"modulus $modulus: got position ${e.position}")
+                    assert(e.tag == "plaintext-length", s"modulus $modulus: got tag ${e.tag}")
+                case other =>
+                    fail(s"modulus $modulus: expected the plaintext-length leaf, got $other")
+            }
+        }.map(_ => succeed)
+    }
+
+    "RsaOaep with an even modulus, or an exponent of 0, 1 or 2, produces a ciphertext of the key's length" in {
+        // The server key is accepted under the two ceilings alone (F3 of the security review, the user's Q11), so these
+        // keys reach the arithmetic; what this leaf pins is that the arithmetic completes and returns k bytes.
+        val even  = (BigInt(1) << 2047) | BigInt(2)
+        val odd   = (BigInt(1) << 2047) | BigInt(1)
+        val cases = Seq((even, BigInt(65537)), (odd, BigInt(0)), (odd, BigInt(1)), (odd, BigInt(2)))
+        Kyo.foreach(cases) { (modulus, exponent) =>
+            Abort.run[SqlRequestException](RsaOaep.encrypt(keyPemOf(modulus, exponent), hello, seeded(1))).map {
+                case Result.Success(ct) => assert(ct.size == 256, s"exponent $exponent: got ${ct.size} bytes")
+                case other => fail(s"exponent $exponent over a ${modulus.bitLength}-bit modulus: expected a ciphertext, got $other")
+            }
+        }.map(_ => succeed)
+    }
+
     // ─── DER fixture builder ─────────────────────────────────────────────────────
 
     /** A syntactically valid SubjectPublicKeyInfo PEM with a modulus of exactly `modulusBits` bits and the given exponent.
@@ -247,11 +279,13 @@ FwIDAQAB
       * Built here rather than generated with a key tool because the sizes these leaves need are ones no key tool will produce.
       */
     private def syntheticKeyPem(modulusBits: Int, exponent: BigInt): String =
-        val modulus   = (BigInt(1) << (modulusBits - 1)) | BigInt(1)
+        keyPemOf((BigInt(1) << (modulusBits - 1)) | BigInt(1), exponent)
+
+    private def keyPemOf(modulus: BigInt, exponent: BigInt): String =
         val rsaKey    = tlv(0x30, derInteger(modulus) ++ derInteger(exponent))
         val bitString = tlv(0x03, Array(0x00.toByte) ++ rsaKey)
         pemOf(tlv(0x30, rsaEncryptionAlgorithmId ++ bitString))
-    end syntheticKeyPem
+    end keyPemOf
 
     private def pemOf(der: Array[Byte]): String =
         val body = java.util.Base64.getMimeEncoder(64, Array('\n'.toByte)).encodeToString(der)
