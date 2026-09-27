@@ -243,7 +243,7 @@ class WritePumpTest extends Test:
         // Anti-flakiness: resetPeer SO_LINGER {1,0} delivers a real RST to the client, and the first write that observes it returns
         // WriteResult.Error and tears the pump down. The leaf feeds the pump until that happens (floodUntilClosed), and closedLatch is the
         // real-event latch on teardown.
-        "a write Error tears down the pump (real ECONNRESET)" in {
+        "a write Error tears down the pump (real ECONNRESET)".times(300) in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
@@ -403,7 +403,7 @@ class WritePumpTest extends Test:
         // Anti-flakiness: smallBufferedPair guarantees a real Partial on the first write; drainPeer unblocks the retry. After the retry,
         // resetPeer delivers a real RST and the leaf feeds the pump until a write surfaces it as WriteResult.Error (floodUntilClosed).
         // closedLatch is the real-event latch on teardown.
-        "write error after retry also triggers teardown" in {
+        "write error after retry also triggers teardown".times(300) in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
