@@ -757,6 +757,18 @@ val fastForward: Unit < Async =
 
 `withTimeShift(factor)` runs the body with the clock advancing `factor` times faster. `withTimeControl(f)` gives `f` direct control over the clock: `f` receives a `TimeControl` it can advance manually.
 
+`Clock.withTimeOffset` displaces the wall reading and nothing else: `now` reads ahead of or behind the current clock by a signed `Clock.TimeOffset`, while monotonic time, sleeps, deadlines and timeouts stay the current clock's. Nested offsets sum.
+
+```scala
+// `now` reads an hour earlier; the sleep still takes one minute.
+val anHourAgo: Instant < Async =
+    Clock.withTimeOffset(Clock.TimeOffset.behind(1.hour)) {
+        Async.sleep(1.minute).andThen(Clock.now)
+    }
+```
+
+A `withTimeControl` opened inside an offset starts its own controlled clock at `Instant.Epoch`, since the displaced clock is not a `TimeControl`. Open the offset inside the control instead: `now` is then the controlled time plus the offset.
+
 > **Caution:** `Clock.TimeControl` is not thread-safe. All operations must be performed sequentially within a single fiber.
 
 ### `Retry`
