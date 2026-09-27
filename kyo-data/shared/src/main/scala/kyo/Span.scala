@@ -1231,17 +1231,7 @@ object Span:
           *   true if both spans have the same length and identical byte content, false otherwise
           */
         def constantTimeEquals(other: Span[Byte]): Boolean =
-            if self.length != other.length then false
-            else
-                var acc = 0
-                var i   = 0
-                while i < self.length do
-                    acc |= (self(i) ^ other(i))
-                    i += 1
-                end while
-                acc == 0
-            end if
-        end constantTimeEquals
+            kyo.internal.crypto.ConstantTime.isEqual(self.toArrayUnsafe, other.toArrayUnsafe)
     end extension
 
     extension [B](x: B)
