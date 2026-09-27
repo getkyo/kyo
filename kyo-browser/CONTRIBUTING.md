@@ -1079,18 +1079,36 @@ grouping): suites are serialized so each owns the shared Chrome WebSocket channe
 turn. JS sets the `CommonJSModule` linker kind and no Chrome-serialization knob
 (`build.sbt:1177-1186`).
 
-### Platform gates
+### Platform gates and transient failures
 
-The pre-flight platform gate lives in `Test.run`: it computes
-`chromeUnsupportedReason` from `ChromeDownloader.resolvePlatform` and, on an
-unsupported (OS, arch) tuple (linux-arm64, win-arm64), calls ScalaTest
-`cancel(reason)` instead of letting every Chrome test fail red. A test author does
-nothing extra (`shared/src/test/scala/kyo/Test.scala:69-72`).
-`BrowserTest.cancelOnUnsupportedPlatform` is the second cancel seam: it recovers a
-`BrowserSetupException` whose message contains the marker `"cannot auto-download
-chrome-headless-shell"` and routes it to `cancel(...)`; the `withBrowser*` fixtures
-wrap their bodies in it so unsupported platforms cancel with install instructions
-rather than fail (`BrowserTest.scala:103-110`).
+Every suite that opens a browser extends `BaseChromeTest`, whose `aroundLeaf` hook
+runs before any leaf body. It computes `chromeUnsupportedReason` from
+`ChromeDownloader.resolvePlatform` and, on an unsupported (OS, arch) tuple
+(linux-arm64, win-arm64), cancels the leaf with the install instructions instead of
+letting it fail red. Otherwise it pre-launches the shared Chrome outside the leaf's
+timeout, with a five-minute backstop, and then runs the leaf. A test author does
+nothing extra (`shared/src/test/scala/kyo/BaseChromeTest.scala`).
+
+The same hook retries a leaf on `BaseChromeTest.TransientBrowserFailure`: a lost CDP
+connection, a failed Chrome launch, or a navigation that failed below HTTP. Every
+other `BrowserException` and every assertion failure fails on the first attempt; an
+HTTP status failure is a separate type so it is never retried. The policy lives in
+`BaseChromeTest.retryTransient`:
+
+- The retry wraps the whole leaf, not the browser scope inside it. A leaf that binds a
+  server or advances a counter outside `withBrowser` restarts from that state too;
+  retrying only the browser scope would turn a transient failure into a deterministic
+  one on the retry.
+- Each attempt runs in its own `Scope`, so a server or tab the failed attempt
+  acquired is released before the next attempt starts.
+- Each transient failure is logged as one warn line naming the exception, its
+  position, the attempt, the suite and the process total. That line is the metric: a
+  runner's transient rate is read from the job log, not from red legs.
+
+kyo-ui's `UITest` reuses this policy through its `test->test` dependency on
+kyo-browser, applying `retryTransient` in its own `aroundLeaf`. It keeps its cancel
+lazy, inside `withUI`, because kyo-ui suites mix leaves that never open a browser
+with Chrome leaves.
 
 ### Platform-split test suites
 
