@@ -346,6 +346,12 @@ object Scope:
                     def close(ex: Maybe[Error[Any]])(using Frame): Unit < Sync =
                         Sync.Unsafe.defer {
                             closing.set(true)
+                            // Open: by decision there is no backpressure on abnormal exit yet. This spawns the drain of the
+                            // scope's async finalizers and returns, so a joiner can observe an interrupted fiber's result while a
+                            // finalizer is still running. It will be fixed here, once. Until then a change that meets the
+                            // consequence does not work around it: it adds a pendingUntilFixed leaf whose reason starts with this
+                            // marker and whose body proves the cause is this drain (a finalizer the leaf holds on a latch, then
+                            // the early result), so the leaf turns red the day the wait lands.
                             spawn {
                                 Sync.Unsafe.defer(queue.close().safe.get).map {
                                     case Absent         => Kyo.unit

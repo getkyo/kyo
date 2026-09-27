@@ -367,9 +367,10 @@ object Fiber:
 
         /** Interrupts the Fiber and waits until it has released what it held.
           *
-          * A fiber's result is available once its finalizers have run, so this returns after them. Whether this call
-          * interrupted the fiber, an earlier one did, or it finished on its own, the wait ends the same way: with the
-          * fiber released.
+          * A fiber's result follows its synchronous releases, so this returns after them. A scope's async finalizers run
+          * on a detached drain that is not awaited, so they may still be running when this returns (see the `Open:`
+          * marker on `Finalizer.close` in Scope.scala). Whether this call interrupted the fiber, an earlier one did, or it
+          * finished on its own, the wait ends the same way: with the fiber released.
           */
         def interruptAwait(using frame: Frame): Unit < Async =
             interruptAwait(Result.Panic(Interrupted(frame)))

@@ -432,10 +432,10 @@ object JsonRpcEndpointImpl:
                                                                                     if config.progressResetsTimeout then
                                                                                         Maybe(tokenToDeadline.get(token)).foreach {
                                                                                             deadlineLong =>
-                                                                                                // ambient wall-clock read inside the enclosing unsafe deferred block
-                                                                                                val nowMs = clock.unsafe.now()(using
-                                                                                                    AllowUnsafe.embrace.danger
-                                                                                                ).toDuration.toMillis
+                                                                                                val nowMs =
+                                                                                                    CallEngine.deadlineNowMillis(
+                                                                                                        clock
+                                                                                                    )(using AllowUnsafe.embrace.danger)
                                                                                                 val newDeadline =
                                                                                                     nowMs + config.requestTimeout.toMillis
                                                                                                 deadlineLong.set(newDeadline)(using
@@ -683,8 +683,8 @@ object JsonRpcEndpointImpl:
                                                                                         writerChannel,
                                                                                         WriterMsg.SendEnvelope(responseEnvelope)
                                                                                     )(using frame, AllowUnsafe.embrace.danger)
-                                                                                    discard(pendingInbound.remove(id))
                                                                                 end if
+                                                                                discard(pendingInbound.remove(id))
                                                                             case _ => ()
                                                                         end match
                                                                     }(using AllowUnsafe.embrace.danger)

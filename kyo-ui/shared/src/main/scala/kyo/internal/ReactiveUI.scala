@@ -175,7 +175,8 @@ private[kyo] object ReactiveUI:
     final private case class DragSession(
         event: Drag.Event,
         terminalResolved: Boolean,
-        expiresAt: Instant,
+        /** A reading of [[Clock.nowMonotonic]]. */
+        expiresAt: Duration,
         resolver: DragResolver
     )
 
@@ -943,7 +944,7 @@ private[kyo] object ReactiveUI:
                                 data.modifiers,
                                 Absent
                             )
-                            Clock.now.map { now =>
+                            Clock.nowMonotonic.map { now =>
                                 sessions.set(current +
                                     (data.sessionId -> DragSession(
                                         domain,
@@ -1023,19 +1024,19 @@ private[kyo] object ReactiveUI:
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Loop.foreach {
             sessions.get.map { current =>
-                current.valuesIterator.map(_.expiresAt).minOption match
+                current.valuesIterator.map(_.expiresAt).reduceOption(_.min(_)) match
                     case None =>
                         Abort.runPartial[Closed](expiryWake.take).map {
                             case Result.Success(_) => Loop.continue
                             case Result.Failure(_) => Loop.done
                         }
                     case Some(expiresAt) =>
-                        Clock.now.map { now =>
+                        Clock.nowMonotonic.map { now =>
                             val wait                = expiresAt - now
                             val sleep: Unit < Async = if wait > Duration.Zero then Clock.sleep(wait).map(_.get) else ()
                             Abort.runPartial[Closed](Async.race(sleep, expiryWake.take.unit)).map {
                                 case Result.Success(_) =>
-                                    Clock.now.map(expireNow => mutex.run(expireSessions(expireNow, sessions)))
+                                    Clock.nowMonotonic.map(expireNow => mutex.run(expireSessions(expireNow, sessions)))
                                         .andThen(Loop.continue)
                                 case Result.Failure(_) => Loop.done
                             }
@@ -1043,7 +1044,7 @@ private[kyo] object ReactiveUI:
             }
         }
 
-    private def expireSessions(now: Instant, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Unit < Async =
+    private def expireSessions(now: Duration, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Unit < Async =
         sessions.get.map { current =>
             val (expired, retained) = current.partition((_, session) => session.expiresAt <= now)
             sessions.set(retained).andThen(Kyo.foreach(expired.toSeq) { case (sessionId, session) =>

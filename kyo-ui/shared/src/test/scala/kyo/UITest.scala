@@ -1,5 +1,12 @@
 package kyo
 
+/** Base for kyo-ui suites that drive the shared Chrome against the shared UI server.
+  *
+  * It does not extend kyo-browser's [[BaseChromeTest]]: kyo-ui suites mix leaves that never open a browser with Chrome leaves, so the
+  * unsupported-platform cancel and the Chrome launch stay inside [[withUI]] and [[cancelOnUnsupportedPlatform]], where the browser is
+  * actually needed. The transient-failure retry is the one [[BaseChromeTest.retryTransient]] defines, applied to every leaf by
+  * [[aroundLeaf]]; for a leaf that never raises those failures it is a no-op.
+  */
 abstract class UITest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
@@ -19,39 +26,18 @@ abstract class UITest extends kyo.test.Test[Any]:
     override def config =
         super.config.sequential.failOnNoAssertion(false).leakCheckSockets(false).leakCheckFileDescriptors(false)
 
-    /** Retry budget for transient Chrome-infrastructure failures: 2 retries (3 attempts total) with exponential backoff. Per-test fresh
-      * Chrome occasionally drops its CDP connection or fails to launch under sustained full-suite load; a fresh attempt rides that out.
-      * Backoff starts at 1s so OS resources from the failed attempt settle before the next launch. Transient flakes are independent at
-      * ~1.3%, so 2 retries clear >99.98% of them while bounding a genuinely-broken test's worst case to ~3 attempts.
-      */
-    private val retrySchedule: Schedule =
-        Schedule.exponentialBackoff(initial = 1.second, factor = 2, maxBackoff = 8.seconds).take(2)
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        BaseChromeTest.retryTransient(getClass.getName, BaseChromeTest.transientRetrySchedule, BaseChromeTest.transientFailures, Kyo.unit)(
+            body
+        )
 
-    /** The transient-browser-infrastructure failures a fresh attempt rides out. Retry selects by this union, so assertion failures and every
-      * other BrowserException propagate immediately and are never masked.
-      *
-      * `BrowserNavigationTransportFailedException` means Chrome never reached the server: the page request failed below HTTP, which on a
-      * Windows runner is a WSAENOBUFS (error 10055) socket failure under load. It belongs here for the same reason a dropped CDP connection
-      * does, and it is a separate type from `BrowserNavigationFailedException` precisely so naming it here cannot also retry an HTTP 404.
-      */
-    private[kyo] type TransientBrowserFailure =
-        BrowserConnectionLostException | BrowserSetupFailedException | BrowserNavigationTransportFailedException
-
-    /** The transient-browser-failure retry that [[withUI]] applies, for leaves that must bind their own server and so cannot go through it.
-      * Without this a hand-rolled-server leaf turns a dropped CDP connection into a red where every sibling suite rides it out.
-      */
-    private[kyo] def withBrowserRetry[A, S](f: A < (Async & Abort[BrowserException] & S))(using
-        Frame
-    ): A < (Async & Abort[BrowserException] & S) =
-        Retry[TransientBrowserFailure](retrySchedule)(f)
-
-    /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). Keep in sync with kyo-browser's BrowserTest. */
+    /** Marker substring in the unsupported-platform setup failure (kyo.internal.ChromeDownloader). */
     private val unsupportedPlatformMarker = "cannot auto-download chrome-headless-shell"
 
     /** On platforms with no chrome-headless-shell (linux-arm64, win-arm64), Chrome launch fails with a BrowserSetupFailedException carrying
-      * install guidance. Translate that one case into a ScalaTest `cancel(...)` so those platforms report the browser-backed UI tests as
-      * canceled (skipped) rather than red failures that each burn the retry budget and push the job past its timeout. Mirrors kyo-browser's
-      * BrowserTest.cancelOnUnsupportedPlatform; every other failure propagates unchanged.
+      * install guidance. Translate that one case into a kyo-test `cancel(...)` so those platforms report the browser-backed UI tests as
+      * canceled (skipped) rather than red failures that each burn the retry budget and push the job past its timeout. Every other failure
+      * propagates unchanged.
       */
     private[kyo] def cancelOnUnsupportedPlatform[A, S](
         f: A < (Async & Scope & Abort[BrowserSetupException] & S)
@@ -80,21 +66,15 @@ abstract class UITest extends kyo.test.Test[Any]:
         // shared tabs suppress focus events. That blocker was resolved by BrowserTab.scala calling
         // Emulation.setFocusEmulationEnabled(true) on each tab attach, which forces Chrome to dispatch focus events
         // regardless of tab foregrounding.
-        //
-        // Retry is scoped to TransientBrowserFailure. Retry[E] only retries E-typed failures, so assertion failures and
-        // every other BrowserException propagate immediately and are never masked. Shared with withBrowserRetry so a
-        // type added to the union cannot reach one path and miss the other.
-        Retry[TransientBrowserFailure](retrySchedule) {
-            cancelOnUnsupportedPlatform {
-                for
-                    uiTree <- ui
-                    _      <- SharedUIServer.set(uiTree)
-                    url    <- SharedUIServer.url
-                    result <- Browser.runShared() {
-                        Browser.goto(url).andThen(f)
-                    }
-                yield result
-            }
+        cancelOnUnsupportedPlatform {
+            for
+                uiTree <- ui
+                _      <- SharedUIServer.set(uiTree)
+                url    <- SharedUIServer.url
+                result <- Browser.runShared() {
+                    Browser.goto(url).andThen(f)
+                }
+            yield result
         }
     end withUI
 

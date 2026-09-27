@@ -18,14 +18,14 @@ abstract class WarmupJITProfile:
             println("JIT profile warmup disabled")
         else
             println("Warming up JIT profile for " + warmupSeconds.seconds)
-            val deadline = System.currentTimeMillis() + warmupSeconds.seconds.toMillis
+            val deadline = java.lang.System.nanoTime() + warmupSeconds.seconds.toNanos
             val exec     = Executors.newFixedThreadPool(warmupThreads)
             try
                 val cdl = new CountDownLatch(warmupThreads)
                 (0 until warmupThreads).foreach { _ =>
                     exec.execute(() =>
                         try
-                            while System.currentTimeMillis() < deadline do
+                            while java.lang.System.nanoTime() - deadline < 0 do
                                 warmupBenchs.foreach(run(_))
                             end while
                         catch
