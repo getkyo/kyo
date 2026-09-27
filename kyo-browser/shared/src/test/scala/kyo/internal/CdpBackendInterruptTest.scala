@@ -12,7 +12,12 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
 
     final private class Wire(val seen: AtomicRef[Chunk[String]], val replies: AtomicInt)
 
-    private def serve(browserEnd: JsonRpcTransport, wire: Wire, gates: Map[String, Latch])(using Frame): Fiber[Unit, Any] < Sync =
+    /** Plays the browser side: records each request on `wire`, holds a reply behind its `gates` entry, and releases a
+      * method's `seenGates` entry the moment its request arrives, before any reply.
+      */
+    private def serve(browserEnd: JsonRpcTransport, wire: Wire, gates: Map[String, Latch], seenGates: Map[String, Latch])(using
+        Frame
+    ): Fiber[Unit, Any] < Sync =
         def result(method: String): Structure.Value = method match
             case "Browser.getVersion" =>
                 summon[Schema[BrowserVersionResult]].toStructureValue(BrowserVersionResult("1.3", "Chrome/1", "1", "ua", "v8"))
@@ -31,6 +36,10 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                 browserEnd.incoming.foreach {
                     case req: JsonRpcRequest =>
                         wire.seen.updateAndGet(_.append(req.method)).andThen {
+                            seenGates.get(req.method) match
+                                case Some(seen) => seen.release
+                                case None       => Kyo.unit
+                        }.andThen {
                             gates.get(req.method) match
                                 case Some(gate) => gate.await
                                 case None       => Kyo.unit
@@ -42,7 +51,9 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
         }
     end serve
 
-    private def wired[A](gates: Map[String, Latch])(f: (JsonRpcTransport, JsonRpcTransport, Wire) => A < (Async & Abort[Any] & Scope))(using
+    private def wired[A](gates: Map[String, Latch], seenGates: Map[String, Latch] = Map.empty)(
+        f: (JsonRpcTransport, JsonRpcTransport, Wire) => A < (Async & Abort[Any] & Scope)
+    )(using
         Frame
     ): A < (Async & Abort[Any] & Scope) =
         for
@@ -51,7 +62,7 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
             wire = new Wire(seen, replies)
             pair <- JsonRpcTransport.inMemory
             (client, browser) = pair
-            server <- serve(browser, wire, gates)
+            server <- serve(browser, wire, gates, seenGates)
             _      <- Scope.ensure(server.interrupt.andThen(client.close).andThen(browser.close))
             a      <- f(client, browser, wire)
         yield a
@@ -241,6 +252,48 @@ class CdpBackendInterruptTest extends BaseBrowserTest:
                 }
             }
         }
+    }
+
+    "an interrupt landing anywhere between the viewport override's send and its reply still restores the viewport" in {
+        // The leaf above interrupts once the wire has seen the request, by which time the caller is parked on the
+        // reply. The interrupt can also land while the caller is still running, between issuing the call and
+        // parking, where nothing yet links it to the reply. That window is a few instructions wide, so this fires the
+        // interrupt the instant the request arrives, before any reply, and repeats until the landing spots have
+        // been sampled on both sides of the park.
+        Kyo.foreachDiscard(1 to 80) { round =>
+            Latch.init(1).map { gate =>
+                Latch.init(1).map { sent =>
+                    wired(Map("Emulation.setDeviceMetricsOverride" -> gate), Map("Emulation.setDeviceMetricsOverride" -> sent)) {
+                        (client, _, wire) =>
+                            Scope.run {
+                                CdpBackend.initUnscoped(client, cfg).map { backend =>
+                                    BrowserTabSetup.mkBrowserTab(TargetId("target-1"), SessionId("session-1"), backend, Absent).map {
+                                        tab =>
+                                            for
+                                                fiber <- Fiber.initUnscoped(Abort.run[BrowserReadException](
+                                                    Browser.runOn(tab)(
+                                                        Browser.withConfig(_.mutationQuiescenceWindow(Duration.Zero))(
+                                                            Browser.withViewport(800, 600)(Async.never)
+                                                        )
+                                                    )
+                                                ))
+                                                _        <- sent.await
+                                                _        <- fiber.interrupt
+                                                _        <- gate.release
+                                                _        <- fiber.getResult
+                                                restored <- sawEventually(wire, "Emulation.clearDeviceMetricsOverride")
+                                            yield assert(
+                                                restored,
+                                                s"round $round: the override the reply confirmed was never cleared after the caller was stopped"
+                                            )
+                                            end for
+                                    }
+                                }
+                            }
+                    }
+                }
+            }
+        }.andThen(succeed)
     }
 
     "an interrupt landing at the background-color override reply still clears it" in {
