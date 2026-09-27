@@ -29,6 +29,9 @@ object Instant:
     /** The Instant representing the epoch, 'java.time.Instant.EPOCH'. */
     val Epoch: Instant = JInstant.EPOCH
 
+    private inline val NanosPerSecond = 1000000000L
+    private val MaxWholeSeconds       = Long.MaxValue / NanosPerSecond
+
     /** Creates an Instant from two Durations: one representing seconds and another representing nanoseconds.
       *
       * @param seconds
@@ -96,19 +99,32 @@ object Instant:
                     case (_: DateTimeException | _: ArithmeticException) =>
                         Min
 
-        /** Calculates the duration between this Instant and another.
+        /** The time from `other` to this Instant, or `Absent` when `other` is later.
+          *
+          * A later `other` has no duration to answer, since a duration is a magnitude: the caller decides what that means, or asks
+          * [[minusOrZero]] for the clamp. A gap beyond what a Duration holds (about 292 years) is `Duration.Infinity`.
           *
           * @param other
-          *   The other Instant to calculate the duration to.
-          * @return
-          *   The duration between this Instant and the other.
+          *   The earlier Instant to measure from.
           */
-        infix def -(other: Instant): Duration =
-            val seconds = instant.getEpochSecond - other.getEpochSecond
-            val nanos   = instant.getNano - other.getNano
-            if seconds == Long.MaxValue || seconds == Long.MinValue then Duration.Infinity
-            else Duration.fromNanos(seconds.seconds.toNanos + nanos)
-        end -
+        def minus(other: Instant): Maybe[Duration] =
+            if instant.isBefore(other) then Absent
+            else
+                // Epoch seconds span about ±3.2e16, so their difference fits a Long; only the scale to nanoseconds can overflow.
+                val seconds = instant.getEpochSecond - other.getEpochSecond
+                val nanos   = (instant.getNano - other.getNano).toLong
+                if seconds > MaxWholeSeconds then Present(Duration.Infinity)
+                else
+                    val secondsNanos = seconds * NanosPerSecond
+                    if nanos > Long.MaxValue - secondsNanos then Present(Duration.Infinity)
+                    else Present(Duration.fromNanos(secondsNanos + nanos))
+                end if
+
+        /** The time from `other` to this Instant, or `Duration.Zero` when `other` is later: [[minus]] with the clamp named at the call
+          * site.
+          */
+        def minusOrZero(other: Instant): Duration =
+            minus(other).getOrElse(Duration.Zero)
 
         /** Checks if this Instant is after another.
           *
@@ -214,12 +230,12 @@ object Instant:
         /** Converts this Instant to a Duration representing the time elapsed since the epoch (1970-01-01T00:00:00Z).
           *
           * @return
-          *   The Duration since the epoch.
+          *   The Duration since the epoch, `Duration.Zero` for an Instant before it.
           */
         def toDuration: Duration =
             if instant == Max then Duration.Infinity
             else if instant == Min then Duration.Zero
-            else instant - Epoch
+            else instant.minusOrZero(Epoch)
 
     end extension
 

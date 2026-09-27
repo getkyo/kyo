@@ -331,7 +331,7 @@ private[kyo] class MemoryFlowStore(
                         Clock.nowWith { now =>
                             if !(now < deadline) then Seq.empty
                             else
-                                awaitChange(deadline - now).map {
+                                awaitChange(deadline.minusOrZero(now)).map {
                                     // A write about an execution may have made one ready for this caller, so the poll
                                     // re-asks and keeps waiting until its own deadline.
                                     case Woke.Write => poll

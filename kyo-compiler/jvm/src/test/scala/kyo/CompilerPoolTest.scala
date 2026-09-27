@@ -657,7 +657,7 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                                                 start    <- Clock.now
                                                 cStuck   <- pool.compiler(cfg)
                                                 resStuck <- Abort.run[CompilerException](cStuck.compile(uri, "object Stuck"))
-                                                elapsed  <- Clock.now.map(_ - start)
+                                                elapsed  <- Clock.now.map(_.minusOrZero(start))
                                                 _        <- advancer.interrupt
                                                 _ = resStuck match
                                                     case Result.Failure(_: CompilerUnresponsiveException) =>
