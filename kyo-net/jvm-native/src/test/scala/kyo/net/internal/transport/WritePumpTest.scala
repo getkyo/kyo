@@ -33,6 +33,13 @@ class WritePumpTest extends Test:
 
     private def mkBytes(s: String): Span[Byte] = Span.fromUnsafe(s.getBytes("UTF-8"))
 
+    /** Feeds `channel` until the pump closes it, which its teardown does. A fixed burst can be written in full before the client's
+      * kernel has processed the peer's RST, and then no write is left to observe it: measured on linux-arm64 Native, where a burst of 32
+      * spans hung one iteration in 300.
+      */
+    private def floodUntilClosed(channel: Channel.Unsafe[Span[Byte]]): Unit < Async =
+        Abort.run[Closed](Loop.forever(channel.safe.put(Span.fromUnsafe(Array.fill[Byte](8)(7.toByte))))).unit
+
     "WritePump" - {
 
         // Anti-flakiness: the channel is pre-loaded with N small spans before start(). On a real loopback pair with adequate kernel
@@ -233,10 +240,9 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: resetPeer SO_LINGER {1,0} delivers a real RST to the client. The RST surfaces on a write within a few kernel send
-        // cycles (loopback delivers it promptly); feeding the pump a burst of spans drives those writes and the first WriteResult.Error tears
-        // the pump down. closedLatch is the real-event latch on teardown; the burst is the established flood-until-error idiom
-        // (PollerIoDriverTest partial-write leaf), not a timing wait.
+        // Anti-flakiness: resetPeer SO_LINGER {1,0} delivers a real RST to the client, and the first write that observes it returns
+        // WriteResult.Error and tears the pump down. The leaf feeds the pump until that happens (floodUntilClosed), and closedLatch is the
+        // real-event latch on teardown.
         "a write Error tears down the pump (real ECONNRESET)" in {
             assumePoller()
             val real        = PollerIoDriver.init()
@@ -273,16 +279,7 @@ class WritePumpTest extends Test:
                     // Now reset the peer, causing ECONNRESET on a subsequent write.
                     PosixTestSockets.resetPeer(sock, peerFd)
 
-                    // Feed the pump a burst of spans; each drives one write, and the first write that observes the RST returns Error and
-                    // tears the pump down. The kernel surfaces the RST within a few sends on loopback; the burst bounds the scenario the same
-                    // way the driver-level flood-until-error test does.
-                    var i = 0
-                    while i < 32 do
-                        discard(channel.offer(Span.fromUnsafe(Array.fill[Byte](8)((i + 2).toByte))))
-                        i += 1
-                    end while
-
-                    closedLatch.safe.get.map { _ =>
+                    floodUntilClosed(channel).andThen(closedLatch.safe.get).map { _ =>
                         assert(closed.nonEmpty, "pump must have torn down after ECONNRESET write error")
                         spy.close()
                         discard(sock.close(clientFd))
@@ -404,8 +401,8 @@ class WritePumpTest extends Test:
         }
 
         // Anti-flakiness: smallBufferedPair guarantees a real Partial on the first write; drainPeer unblocks the retry. After the retry,
-        // resetPeer delivers a real RST; feeding the pump a burst of spans drives the writes that surface the RST as WriteResult.Error.
-        // closedLatch is the real-event latch on teardown; the burst is the flood-until-error idiom, not a timing wait.
+        // resetPeer delivers a real RST and the leaf feeds the pump until a write surfaces it as WriteResult.Error (floodUntilClosed).
+        // closedLatch is the real-event latch on teardown.
         "write error after retry also triggers teardown" in {
             assumePoller()
             val real        = PollerIoDriver.init()
@@ -439,15 +436,10 @@ class WritePumpTest extends Test:
                     peerFd,
                     payload.length
                 ).map { _ =>
-                    // Retry is done. Now reset the peer and feed a burst; the first write that observes the RST tears the pump down.
+                    // Retry is done. Now reset the peer; the first write that observes the RST tears the pump down.
                     PosixTestSockets.resetPeer(sock, peerFd)
-                    var i = 0
-                    while i < 32 do
-                        discard(channel.offer(Span.fromUnsafe(Array.fill[Byte](8)((i + 1).toByte))))
-                        i += 1
-                    end while
 
-                    closedLatch.safe.get.map { _ =>
+                    floodUntilClosed(channel).andThen(closedLatch.safe.get).map { _ =>
                         assert(closed.nonEmpty, "pump must have torn down after retry-path ECONNRESET")
                         spy.close()
                         discard(sock.close(clientFd))
