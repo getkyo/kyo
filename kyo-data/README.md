@@ -436,13 +436,17 @@ val parsed: Result[Duration.InvalidDuration, Duration] = Duration.parse("30s")
 
 Arithmetic saturates on overflow rather than wrapping. `Duration.Infinity` is encoded as `Long.MaxValue`, and any operation that would overflow clamps to `Infinity`.
 
+A `Duration` is a magnitude and is never negative, so subtraction is the one operation that can have no answer. `minus` returns `Absent` when the subtrahend is longer, leaving the caller to decide what that means; `minusOrZero` is the same subtraction with the clamp to `Zero` spelled out at the call site.
+
 ```scala
 import kyo.*
 
-val a: Duration       = 5.seconds + 30.seconds    // 35 seconds
-val b: Duration       = 1.hour - 30.minutes       // 30 minutes
-val c: Duration       = 1.second * 60             // 60 seconds
-val clamped: Duration = Duration.Infinity + 1.day // still Infinity
+val a: Duration                = 5.seconds + 30.seconds          // 35 seconds
+val b: Maybe[Duration]         = 1.hour.minus(30.minutes)        // Present(30 minutes)
+val none: Maybe[Duration]      = 30.minutes.minus(1.hour)        // Absent
+val remaining: Duration        = 30.minutes.minusOrZero(1.hour)  // Zero
+val c: Duration                = 1.second * 60                   // 60 seconds
+val clamped: Duration          = Duration.Infinity + 1.day       // still Infinity
 ```
 
 `Duration` also offers unit accessors (`toNanos`, `toMillis`, `toSeconds`, ...) and conversion to `java.time.Duration` and `scala.concurrent.duration.Duration`.
@@ -457,11 +461,11 @@ import kyo.*
 val now: Instant     = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
 val later: Instant   = now + 1.hour
 val earlier: Instant = now - 30.minutes
-val gap: Duration    = later - earlier // 1 hour 30 minutes
+val gap: Maybe[Duration] = later.minus(earlier) // Present(1 hour 30 minutes)
 val hour: Instant    = now.truncatedTo(Duration.Units.Hours)
 ```
 
-> **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); the inverse subtraction returns `Instant.Min`. Arithmetic does not throw on overflow.
+> **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); `instant - Duration.Infinity` returns `Instant.Min`. Arithmetic does not throw on overflow. The time between two instants follows `Duration`'s subtraction: `later.minus(earlier)` is `Absent` when `earlier` is in fact later, and `minusOrZero` clamps.
 
 `Instant` has an `Ordering`, so it works with sort/min/max from the standard library. `Instant.truncatedTo` accepts only `Duration.Units` marked with `Duration.Truncatable`, keeping larger calendar units out of truncation at compile time.
 

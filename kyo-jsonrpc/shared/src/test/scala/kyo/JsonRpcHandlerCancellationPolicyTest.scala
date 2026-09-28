@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.internal.engine.JsonRpcEndpointImpl
 
 class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
 
@@ -107,6 +108,29 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end GatedTransport
 
+    /** Returns once the peer has read every message `a` sent before it: a call to a method the peer does not know is answered
+      * directly by the peer's reader, so its reply proves the reader got past everything sent earlier. Any other outcome means
+      * the barrier did not hold, so it fails the test. The method name is not checked: the reply crosses the engine's JSON codec,
+      * which rebuilds a -32601 error without it. The reply reaches this call only through the call's own id.
+      */
+    private def flush(a: JsonRpcHandler)(using Frame, kyo.test.AssertScope): Unit < Async =
+        Abort.run[JsonRpcError | Closed](a.call[EchoReq, EchoResp]("no-such-method", EchoReq("flush"))).map {
+            case Result.Failure(e: JsonRpcMethodNotFoundError) if e.code == -32601 => ()
+            case other => fail(s"flush expected the peer's -32601 reply for 'no-such-method', got $other")
+        }
+
+    /** The no-reply policy sets no cancelledError, so its cancel settles the call locally with the default -32800. */
+    private def assertCancelledLocally(result: Result[JsonRpcError | Closed, EchoResp])(using Frame, kyo.test.AssertScope): Unit =
+        result match
+            case Result.Failure(e: JsonRpcError) if e.code == -32800 => ()
+            case other                                               => fail(s"expected the call to fail with -32800, got $other")
+
+    private def repliedTo(transport: CapturingTransport, id: JsonRpcId): Boolean =
+        transport.sentList.exists {
+            case JsonRpcResponse(rid, _, _, _) => rid == id
+            case _                             => false
+        }
+
     "cancellation with expectReply: handler observes cancelled and caller gets -32800" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
@@ -189,51 +213,110 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     "cancellation without expectReply: no reply is sent on the transport" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        // handlerProceeded fires after the handler's cancelled latch resolves, i.e. once B has received and
-        // processed the cancel and reached the point where (expectReply=false) the engine suppresses the
-        // reply. Awaiting it is a deterministic latch for "the cancel reached the suppression path",
-        // replacing a fixed sleep before asserting no reply was written.
-        Fiber.Promise.init[Unit, Abort[Closed]].map { handlerProceeded =>
-            val echoOnB = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
-                (_, ctx) =>
-                    // A no-expectReply cancel interrupts the handler, so completing the latch after
-                    // ctx.cancelled.get would never run. Complete it in an ensure finalizer, which fires on
-                    // both normal completion and interruption; the latch then signals "the handler fiber has
-                    // settled", after which the engine sends no reply.
-                    Sync.ensure(handlerProceeded.completeUnitDiscard) {
-                        ctx.cancelled.get.andThen(EchoResp("done"))
+        val echoOnB    = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+            (_, ctx) => ctx.cancelled.get.andThen(EchoResp("done"))
+        }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            val capB = new CapturingTransport(tb)
+            JsonRpcHandler.init(ta, Seq.empty, noReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(capB, Seq(echoOnB), noReplyConfig).map { endpointB =>
+                    val implB     = endpointB.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+                    val idEncoder = JsonRpcExtrasEncoder(id =>
+                        Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
+                    )
+                    Fiber.initUnscoped(
+                        Abort.run[JsonRpcError | Closed](
+                            endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"), idEncoder)
+                        )
+                    ).map { callFib =>
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
+                                case Present(id) =>
+                                    endpointA.cancel(id, Absent)
+                                        .andThen(callFib.get.map(result => assertCancelledLocally(result)))
+                                        .andThen(flush(endpointA))
+                                        .andThen {
+                                            // The cancel can interrupt the handler before its body runs, so no signal from the
+                                            // route body can mark the handler settled. The entry leaving pendingInbound can: the
+                                            // engine removes it once the handler fiber completes, however it completed. The flush
+                                            // proves B read the request first, so an absent entry is never one not yet registered.
+                                            assertEventually(Sync.defer(!implB.pendingInbound.containsKey(id))).andThen {
+                                                Sync.defer {
+                                                    assert(
+                                                        !repliedTo(capB, id),
+                                                        "policy without expectReply should not send a reply for cancelled request"
+                                                    )
+                                                    assert(implB.pendingInbound.isEmpty, "a cancelled request left an inbound entry")
+                                                }
+                                            }
+                                        }
+                                case Absent => fail("id not captured")
+                            }
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    "cancellation without expectReply landing before the handler starts sends no reply and leaves no entry" in {
+        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicBoolean.Unsafe.init to observe from the test whether the echo route body ran
+        val bodyRan = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+        Fiber.Promise.init[Unit, Any].map { holdReleased =>
+            // B starts a request only after every notification read before it has been handled, so the echo
+            // handler stays parked behind this one until the test completes holdReleased.
+            val holdOnB = JsonRpcRoute.notification[EchoReq]("hold") {
+                (_, _) => holdReleased.get
+            }
+            val echoOnB = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+                (req, _) =>
+                    Sync.defer(bodyRan.set(true)(using AllowUnsafe.embrace.danger)).andThen(EchoResp(req.text))
             }
             JsonRpcTransport.inMemory.map { (ta, tb) =>
                 val capB = new CapturingTransport(tb)
                 JsonRpcHandler.init(ta, Seq.empty, noReplyConfig).map { endpointA =>
-                    JsonRpcHandler.init(capB, Seq(echoOnB), noReplyConfig).map { _ =>
+                    JsonRpcHandler.init(capB, Seq(holdOnB, echoOnB), noReplyConfig).map { endpointB =>
+                        val implB     = endpointB.unsafe.asInstanceOf[JsonRpcEndpointImpl]
                         val idEncoder = JsonRpcExtrasEncoder(id =>
                             Sync.defer { capturedId.set(Present(id))(using AllowUnsafe.embrace.danger); Absent }
                         )
-                        Fiber.initUnscoped(
-                            Abort.run[JsonRpcError | Closed](
-                                endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"), idEncoder)
-                            )
-                        ).map { callFib =>
-                            assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
-                                Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
-                                    case Present(id) =>
-                                        endpointA.cancel(id, Absent).andThen {
-                                            callFib.get.andThen(handlerProceeded.get).andThen {
-                                                Sync.defer {
-                                                    val noReply = capB.sentList.forall {
-                                                        case JsonRpcResponse(rid, _, _, _) => rid != id
-                                                        case _                             => true
+                        endpointA.notify[EchoReq]("hold", EchoReq("hold")).andThen {
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"), idEncoder)
+                                )
+                            ).map { callFib =>
+                                assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                                    Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
+                                        case Present(id) =>
+                                            endpointA.cancel(id, Absent)
+                                                .andThen(callFib.get.map(result => assertCancelledLocally(result)))
+                                                .andThen(flush(endpointA))
+                                                .andThen(holdReleased.completeUnit.map(released =>
+                                                    assert(released, "the hold promise was completed before the test released it")
+                                                ))
+                                                .andThen {
+                                                    assertEventually(Sync.defer(!implB.pendingInbound.containsKey(id))).andThen {
+                                                        Sync.defer {
+                                                            assert(
+                                                                !bodyRan.get()(using AllowUnsafe.embrace.danger),
+                                                                "the echo route body ran although its request was cancelled before it started"
+                                                            )
+                                                            assert(
+                                                                !repliedTo(capB, id),
+                                                                "policy without expectReply should not send a reply for cancelled request"
+                                                            )
+                                                            assert(
+                                                                implB.pendingInbound.isEmpty,
+                                                                "a cancelled request left an inbound entry"
+                                                            )
+                                                        }
                                                     }
-                                                    assert(
-                                                        noReply,
-                                                        "policy without expectReply should not send a reply for cancelled request"
-                                                    )
                                                 }
-                                            }
-                                        }
-                                    case Absent => fail("id not captured")
+                                        case Absent => fail("id not captured")
+                                    }
                                 }
                             }
                         }

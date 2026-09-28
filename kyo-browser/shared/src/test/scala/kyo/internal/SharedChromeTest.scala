@@ -27,6 +27,24 @@ class SharedChromeTest extends BaseBrowserTest:
     private def instance(fake: FakeLaunches): SharedChrome.Instance =
         new SharedChrome.Instance(fake.launch, frame => Kyo.unit)
 
+    "a launch failure seen by init is replaced, so the next init launches again" in {
+        val fake   = new FakeLaunches(failFirst = 1)
+        val shared = instance(fake)
+        for
+            first       <- Abort.run[BrowserSetupException](shared.init)
+            afterFirst  <- fake.launches
+            second      <- Abort.run[BrowserSetupException](shared.init)
+            afterSecond <- fake.launches
+        yield
+            first match
+                case Result.Failure(e: BrowserSetupFailedException) => assert(e.getMessage.contains("launch 1 failed"))
+                case other                                          => fail(s"expected the first launch's failure, got $other")
+            assert(afterFirst == 1)
+            assert(second == Result.succeed("ws://fake-2"), s"the next init should launch again and succeed, got $second")
+            assert(afterSecond == 2)
+        end for
+    }
+
     "a launch failure is retried by the next caller instead of failing every later call" in {
         val fake    = new FakeLaunches(failFirst = 2)
         val shared  = instance(fake)

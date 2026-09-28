@@ -21,7 +21,13 @@ That is the whole value proposition of the module, and it is stronger than it so
 | naming | a `SqlNaming` casing resolves the same way |
 | writes | a generated key comes back the same way |
 
-`kyo-sql-tests` carries a conformance battery per surface, and each one is a specification a new backend must satisfy. When you touch any of them, the question is not "does my engine still pass" but "do all of them still agree".
+`kyo-sql-conformance` carries a conformance battery per surface, published so a backend written outside kyo runs it too, and each one is a specification a new backend must satisfy. When you touch any of them, the question is not "does my engine still pass" but "do all of them still agree".
+
+The battery is one abstract class, `SqlConformanceTest`, mixing a trait per surface. A backend's tests subclass it and list their `SqlConformanceBackend` descriptors; every client is opened through the descriptor's own `kyo.db.Backend`, so the battery consults no registry. kyo's server engines and SQLite run it from `kyo-sql-tests`, whose descriptors live there. DoltLite runs it from its own module: its engine exports the same `sqlite3_*` symbols as SQLite, so one Native binary cannot link both. SQLite and DoltLite share their answers through `SqliteLineageConformanceBackend` in the driver's tests.
+
+A leaf whose subject is `SqlClient.init*` stays in `kyo-sql-tests`: those resolve the backend at the call site from the compile classpath, which the published module does not have.
+
+The same absence decides which SQL a leaf runs. `.run` renders at compile time for the dialects on the compile classpath and at run time when there are none, so the published battery always takes the run-time path. `kyo-sql-tests` therefore compiles a second copy of the leaf traits into `kyo.folded`, generated from the module's sources, and runs kyo's four engines through that copy: it is what executes compile-time SQL against every engine. The published classes run from `SqlExternalPackageTest` and from DoltLite. A leaf is written once, in `kyo-sql-conformance`, and reaches both.
 
 An engine that *cannot* do something is a separate matter from an engine that does it *differently*, and telling those apart is the discipline this guide is mostly about.
 
@@ -50,7 +56,7 @@ So the discriminator is the type in the caller's hand:
 
 ### `Dolt` is neutral across its two engines
 
-`Dolt` is engine-specific next to `SqlClient` and neutral between `kyo-sql-dolt` and `kyo-sql-doltlite`: a caller holding it cannot tell which engine answers, so the two must answer every version-control operation alike, and a difference an engine forces is declared on the operation and asserted from both sides. A new operation lands in `kyo-sql-dolt-api`, in both engines' statements, and as the same leaves in both suites (`SqlDoltOnlyTest` against a real server, `DoltLiteClientTest` against the embedded engine).
+`Dolt` is engine-specific next to `SqlClient` and neutral between `kyo-sql-dolt` and `kyo-sql-doltlite`: a caller holding it cannot tell which engine answers, so the two must answer every version-control operation alike, and a difference an engine forces is declared on the operation and asserted from both sides. A new operation lands in `kyo-sql-dolt-api`, in both engines' statements, and as leaves in `DoltConformanceTest`, the one suite in `kyo-sql-dolt-api`'s tests that `DoltServerConformanceTest` (kyo-sql-tests, a real server) and `DoltLiteConformanceTest` (the embedded engine) both run. A forced difference is a capability member on that suite, answered by each subclass. `DoltLiteClientTest` holds only what is the embedded engine's own.
 
 **Each operation's answer holds exactly the outcomes it can produce.** `merge` and `pull` answer `Dolt.Merge`; `stageMerge`, a merge that commits nothing, answers `Dolt.StagedMerge`. The two are sealed traits whose shared outcomes are single leaves mixing in both, `Merge.UpToDate` and `Merge.Conflicted`, the arrangement the root guide's [Failure Tracking](../CONTRIBUTING.md#failure-tracking) uses for error rows. A staged merge is its own method rather than a flag on `merge` or another `Merge` case, because either of those would put a `Staged` case on every `merge` caller's match that `merge` never produces, and a `FastForward` case on every staged caller's that a staged merge never produces.
 
@@ -124,7 +130,7 @@ The wrong form appeared in the battery in fifteen places across three files, and
 
 **A skip reason nobody re-reads is wrong for as long as it exists.** Both of those had been sitting in the battery reading as considered judgements. That is the failure this rule exists to prevent, and it is why the gate is applied per branch rather than to the group.
 
-A source scan enforces this now: `SqlBackendNeutralitySourceTest` fails on any engine name reaching a conformance body, with the banned list derived from the registered descriptors so a new backend extends it by existing.
+A source scan enforces this now: `SqlBackendNeutralitySourceTest` fails on any engine name reaching any file of `kyo-sql-conformance`, with the banned list derived from the descriptors so a new backend extends it by existing.
 
 This matters more than which file the test lives in. An inline `if` on an engine name is written in a second and read by nobody. A capability is declared in one place, carries a scaladoc saying **why this is a capability difference**, and every existing backend has to answer it when it is added. That review is the gate.
 
@@ -133,7 +139,7 @@ Rules for capabilities:
 - A capability describes what an engine **can or cannot do**. "The driver does it differently" is never a justification; that is a bug report.
 - Add one only when a conformance body actually branches on it.
 - Its scaladoc says what the difference *is*, not which engine has it.
-- DDL differences go through `SqlTestBackend.columnType(kind)` and friends rather than inline literals. If a kind you need is missing, add it; reaching around it is how the engine name gets back in.
+- DDL differences go through `SqlConformanceBackend.columnType(kind)` and friends rather than inline literals. If a kind you need is missing, add it; reaching around it is how the engine name gets back in.
 
 Backend-module test trees carry everything listed under [what legitimately lives in a backend module](#what-legitimately-lives-in-a-backend-module), and that is a large and growing surface. The single thing they are not is a route around a neutral-API divergence.
 
@@ -170,8 +176,8 @@ The inversion also removed a passthrough that had been an exception to the parse
 
 Two further mechanisms belong with it, both now built as well:
 
-- **`SqlTestBackend.id` is out of every conformance body.** Fifteen such branches existed; each became a named capability or a descriptor hook, and two turned out to need no branch at all.
-- **The shared battery is scanned for engine identifiers** by `SqlBackendNeutralitySourceTest`, with the banned list derived from the registered descriptors rather than hardcoded, so a new backend extends it automatically and the check cannot go stale.
+- **`SqlConformanceBackend.id` is out of every conformance body.** Fifteen such branches existed; each became a named capability or a descriptor hook, and two turned out to need no branch at all.
+- **The shared battery is scanned for engine identifiers** by `SqlBackendNeutralitySourceTest`, with the banned list derived from the descriptors rather than hardcoded, so a new backend extends it automatically and the check cannot go stale.
 
 Note what the second one concedes: construction cannot catch an inline DDL literal, so a scan covers the gap. Prefer construction, fall back to a check, and treat a check as a sign that the shape could be better.
 
@@ -276,7 +282,7 @@ A statement can qualify a table with a schema, and every engine renders that the
 | MySQL | `kyo-sql-mysql`, `kyo-sql-dolt` | a database on the server | `CREATE DATABASE`; every session sees it |
 | SQLite | `kyo-sql-sqlite`, `kyo-sql-doltlite` | `main`, `temp`, or an attached database | `ATTACH`, which is **per connection** |
 
-The last row is the one that shapes code. A server holds its schemas in the database, so one statement provisions them for a whole pool. The SQLite lineage attaches per connection, so a statement run through the pool configures the one connection that served it and leaves the rest answering "no such table" for a name that just worked. That is why attachment is a connect-time extension (`SqliteAttach`) rather than something a caller runs, and why `SqlTestBackend.secondSchema` answers `Absent` on that lineage: the conformance leaves that need two schemas cannot provision them there through a statement.
+The last row is the one that shapes code. A server holds its schemas in the database, so one statement provisions them for a whole pool. The SQLite lineage attaches per connection, so a statement run through the pool configures the one connection that served it and leaves the rest answering "no such table" for a name that just worked. That is why attachment is a connect-time extension (`SqliteAttach`) rather than something a caller runs, and why `SqlConformanceBackend.secondSchema` answers `Absent` on that lineage: the conformance leaves that need two schemas cannot provision them there through a statement.
 
 The two Dolt backends sit in different rows. `DoltDialect extends MysqlDialect` and `DoltLiteDialect extends SqliteDialect`: they share the `Dolt` version-control API and nothing about schemas, so a claim that holds for one of them says nothing about the other.
 

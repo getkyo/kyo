@@ -220,7 +220,7 @@ object Completion:
             ).toMaybe
         def until(at: Instant): Duration =
             val reference = headers.get("date").flatMap(httpDate).getOrElse(now)
-            if at <= reference then Duration.Zero else at - reference
+            at.minusOrZero(reference)
         headers.get("retry-after-ms").flatMap(millis)
             .orElse(headers.get("retry-after").flatMap(v => seconds(v).orElse(httpDate(v).map(until))))
     end retryAfterOf

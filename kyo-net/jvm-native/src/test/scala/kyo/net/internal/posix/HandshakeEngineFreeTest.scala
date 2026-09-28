@@ -117,7 +117,7 @@ class HandshakeEngineFreeTest extends Test:
                     if b <= base then Loop.done(b)
                     else
                         Clock.nowMonotonic.map { now =>
-                            if now - start >= 30.seconds then Loop.done(b)
+                            if now.minusOrZero(start) >= 30.seconds then Loop.done(b)
                             else Async.sleep(40.millis).andThen(Loop.continue(b))
                         }
                     end if

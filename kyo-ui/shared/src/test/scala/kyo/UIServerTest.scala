@@ -99,14 +99,12 @@ class UIServerTest extends UITest:
 
     /** Serves `page` under `/app` on its own server and runs `f` in the shared Chrome against the server's origin. */
     private def withPages[A](f: String => A < (Browser & Abort[BrowserException]))(using Frame) =
-        withBrowserRetry {
-            cancelOnUnsupportedPlatform {
-                for
-                    handlers <- UI.runHandlers("/app", head)(page)
-                    server   <- HttpServer.init(0, "localhost")(handlers*)
-                    result   <- Browser.runShared()(f(s"http://localhost:${server.port}"))
-                yield result
-            }
+        cancelOnUnsupportedPlatform {
+            for
+                handlers <- UI.runHandlers("/app", head)(page)
+                server   <- HttpServer.init(0, "localhost")(handlers*)
+                result   <- Browser.runShared()(f(s"http://localhost:${server.port}"))
+            yield result
         }
 
     "request handlers serve each path under the base as its own page, with the session evaluating the same path" in {

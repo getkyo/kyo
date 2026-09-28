@@ -437,9 +437,12 @@ lazy val kyoJVM: Project = project
         `kyo-sql-sqlite-driver`.jvm,
         `kyo-sql-sqlite`.jvm,
         `kyo-sql-tests`.jvm,
+        `kyo-sql-conformance`.jvm,
         `kyo-system`.jvm,
+        `kyo-system-conformance`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-flow-conformance`.jvm,
         `kyo-ai`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
@@ -526,10 +529,13 @@ lazy val kyoJS = project
         `kyo-sql-sqlite-driver`.js,
         `kyo-sql-sqlite`.js,
         `kyo-sql-tests`.js,
+        `kyo-sql-conformance`.js,
         `kyo-system`.js,
+        `kyo-system-conformance`.js,
         `kyo-http`.js,
         `kyo-aeron`.js,
         `kyo-flow`.js,
+        `kyo-flow-conformance`.js,
         `kyo-ai`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
@@ -594,10 +600,13 @@ lazy val kyoNative = project
         `kyo-sql-sqlite-driver`.native,
         `kyo-sql-sqlite`.native,
         `kyo-sql-tests`.native,
+        `kyo-sql-conformance`.native,
         `kyo-system`.native,
+        `kyo-system-conformance`.native,
         `kyo-http`.native,
         `kyo-aeron`.native,
         `kyo-flow`.native,
+        `kyo-flow-conformance`.native,
         `kyo-ai`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
@@ -654,7 +663,9 @@ lazy val kyoWasm = project
         `kyo-sql-sqlite-driver`.wasm,
         `kyo-sql-sqlite`.wasm,
         `kyo-sql-tests`.wasm,
+        `kyo-sql-conformance`.wasm,
         `kyo-system`.wasm,
+        `kyo-system-conformance`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-ffi`.wasm,
@@ -675,6 +686,7 @@ lazy val kyoWasm = project
         `kyo-stats-machine`.wasm,
         `kyo-aeron`.wasm,
         `kyo-flow`.wasm,
+        `kyo-flow-conformance`.wasm,
         `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
@@ -903,6 +915,23 @@ lazy val `kyo-system` =
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
+// FileSystem's conformance suites, one class per tier (read, write, watch), published so a backend written outside kyo runs
+// the leaves the host passes. The host's runs live in this module's tests because kyo-system cannot depend on a module that
+// depends on it.
+lazy val `kyo-system-conformance` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system-conformance"))
+        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-test-api`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-schema-json` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1042,6 +1071,23 @@ lazy val `kyo-sql` =
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
 
+// The SQL conformance battery, published so a backend written outside kyo runs the leaves kyo's engines pass. Every client
+// is opened through the descriptor's own `kyo.db.Backend`, so a consumer needs no registration. kyo's engines run it from
+// kyo-sql-tests, and DoltLite from its own module.
+lazy val `kyo-sql-conformance` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-sql-conformance"))
+        .dependsOn(`kyo-sql`)
+        .dependsOn(`kyo-test-api`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+
 // The two network backends below are deliberately symmetric (same platforms, edges, settings); a difference is
 // a bug unless it names a wire feature only one engine has. `kyo-sql-sqlite` is not held to this symmetry: it
 // speaks no protocol, so it takes `kyo-ffi` and the C toolchain settings instead of `kyo-net`. Both take
@@ -1145,6 +1191,8 @@ lazy val `kyo-sql-sqlite-driver` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        // The conformance answers every engine on this driver shares live in its tests, for both engines' descriptors.
+        .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-ffi`)
         .in(file("kyo-sql-sqlite-driver"))
         .withKyoTest
@@ -1172,9 +1220,6 @@ lazy val `kyo-sql-sqlite` =
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
         .dependsOn(`kyo-ffi`)
-        // Declared rather than left to transitivity through kyo-sql's own test->compile, matching the other two
-        // backend modules: SqlTestBackend names Container.Config, so the descriptor needs it on the test classpath.
-        .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-sqlite"))
         .withKyoTest
         .settings(
@@ -1311,6 +1356,7 @@ lazy val `kyo-sql-doltlite` =
         // module's Native binary alongside the prebuilt DoltLite archive, and the sqlite3_* calls would bind to
         // the wrong one.
         .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-ffi`)
         .in(file("kyo-sql-doltlite"))
         .withKyoTest
@@ -1400,7 +1446,8 @@ lazy val `kyo-sql-doltlite` =
 lazy val `kyo-system-doltfs` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-system` % "test->test;compile->compile")
+        .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-system-conformance` % Test)
         .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
         // Test-only, and only one of the two engines: the conformance fixtures need a real engine and the embedded one
         // needs no container. The store speaks portable SQL, so what passes here is what a server runs. Compile scope
@@ -1469,10 +1516,29 @@ lazy val `kyo-sql-tests` =
         .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-tests"))
         .withKyoTest
-        .settings(`kyo-settings`, publish / skip := true)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            // `.run` renders its SQL at compile time for the dialects on the compile classpath and falls back to rendering
+            // at run time when there are none. The published battery compiles with no dialect, so its queries always take
+            // the run-time path. Compiling the same leaf traits again here, where all four dialects are, is what runs the
+            // compile-time SQL against every engine. The copy lives in `kyo.folded`, a chained package clause, so it
+            // resolves the shared descriptor types from `kyo` and does not collide with the published classes.
+            Test / sourceGenerators += Def.task {
+                val battery = baseDirectory.value / ".." / ".." / "kyo-sql-conformance" / "shared" / "src" / "main" / "scala" / "kyo"
+                val out     = (Test / sourceManaged).value / "kyo" / "folded"
+                val shared  = Set("SqlBackendTest.scala", "SqlConformanceBackend.scala")
+                (battery * "*.scala").get.filterNot(f => shared(f.getName)).map { source =>
+                    val copy = out / source.getName
+                    IO.write(copy, IO.read(source).replaceFirst("(?m)^package kyo$", "package kyo\npackage folded"))
+                    copy
+                }
+            }.taskValue
+        )
         .jvmSettings(mimaCheck(false))
         // No README, so nothing to validate. Left unset the plugin would look for one that does not exist.
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
@@ -3019,6 +3085,25 @@ lazy val `kyo-flow` =
         )
         .wasmSettings(`wasm-settings`)
 
+// FlowStore's conformance suite, published so a store written outside kyo runs the leaves the in-memory store passes.
+// The in-memory store's run lives in this module's tests because kyo-flow cannot depend on a module that depends on it.
+lazy val `kyo-flow-conformance` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-flow-conformance"))
+        .dependsOn(`kyo-flow`)
+        .dependsOn(`kyo-test-api`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(doctestSources := Seq.empty))
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-jsonrpc` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -3622,7 +3707,7 @@ lazy val `kyo-ui` =
         .crossType(CrossType.Full)
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
-        .dependsOn(`kyo-browser` % Test)
+        .dependsOn(`kyo-browser` % "test->test")
         .withKyoTest
         .settings(
             `kyo-settings`

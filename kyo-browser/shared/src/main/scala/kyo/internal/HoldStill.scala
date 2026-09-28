@@ -117,7 +117,7 @@ private[kyo] object HoldStill:
                 capture.map { first =>
                     Loop(first, frameHash(first)) { (prev, prevHash) =>
                         Clock.nowMonotonic.map { now =>
-                            if now - start >= timeout then Loop.done(prev)
+                            if now.minusOrZero(start) >= timeout then Loop.done(prev)
                             else
                                 Clock.sleep(interval).andThen {
                                     capture.map { next =>

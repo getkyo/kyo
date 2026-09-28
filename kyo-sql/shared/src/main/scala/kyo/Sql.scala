@@ -706,7 +706,7 @@ object Sql:
             SqlNumeric[A],
             SqlComparableLiteral[this.type, A, B],
             SqlSchema.Column[B]
-        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Add, liftedAs[B](other))
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Add, liftedAs[A, B](other))
 
         final inline def -(inline other: Term[A])(using SqlNumeric[A]): Term[A] = Arithmetic[A](this, Arithmetic.Op.Sub, other)
 
@@ -719,7 +719,7 @@ object Sql:
             SqlNumeric[A],
             SqlComparableLiteral[this.type, A, B],
             SqlSchema.Column[B]
-        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Sub, liftedAs[B](other))
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Sub, liftedAs[A, B](other))
 
         final inline def *(inline other: Term[A])(using SqlNumeric[A]): Term[A] = Arithmetic[A](this, Arithmetic.Op.Mul, other)
 
@@ -732,7 +732,7 @@ object Sql:
             SqlNumeric[A],
             SqlComparableLiteral[this.type, A, B],
             SqlSchema.Column[B]
-        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Mul, liftedAs[B](other))
+        ): Term[A] = Arithmetic[A](this, Arithmetic.Op.Mul, liftedAs[A, B](other))
 
         /** `this / other`, the fractional quotient.
           *
@@ -786,69 +786,66 @@ object Sql:
         // asStr must remain inline so that callers used in staticSql expressions are macro-liftable.
         private inline def asStr(using ev: A =:= String): Term[String] = ev.substituteCo[[T] =>> Term[T]](this)
 
-        /** Lifts `other` at the receiver's own parameter. The cast is erasure-only: the evidence has decided the two denote one SQL type, and
-          * a `Term` is a description nothing reads the parameter of at run time.
-          */
-        private inline def liftedAs[B](inline other: B)(using c: SqlSchema.Column[B]): Term[A] =
-            lit(other, c).asInstanceOf[Term[A]]
+        final def upper(using A =:= String): Term[String] = StringFn(asStr, StringFn.Op.Upper)
+        final def lower(using A =:= String): Term[String] = StringFn(asStr, StringFn.Op.Lower)
+        final def length(using A =:= String): Term[Int]   = StringLength(asStr)
+        final def trim(using A =:= String): Term[String]  = StringFn(asStr, StringFn.Op.Trim)
 
-        /** The same term seen as text, for a column whose type is `String` or `Maybe[String]`.
-          *
-          * The pattern operators answer `Term[Boolean]` whatever the operand's nullability, because a NULL operand makes the predicate
-          * UNKNOWN and a WHERE drops the row. The cast is erasure-only. `asStr` above stays for the operators that RETURN text, where the
-          * operand's nullability belongs in the result type and this substitution would lose it.
-          */
-        private inline def asTextual: Term[String]                                        = this.asInstanceOf[Term[String]]
-        final def upper(using A =:= String): Term[String]                                 = StringFn(asStr, StringFn.Op.Upper)
-        final def lower(using A =:= String): Term[String]                                 = StringFn(asStr, StringFn.Op.Lower)
-        final def length(using A =:= String): Term[Int]                                   = StringLength(asStr)
-        final def trim(using A =:= String): Term[String]                                  = StringFn(asStr, StringFn.Op.Trim)
-        final inline def ++(inline other: Term[String])(using A =:= String): Term[String] = Concat(Chunk(asStr, other))
+        // The inline operators below spell the text cast out rather than calling asStr or a helper on `this`. An inline
+        // member reached through `this` from another inline body binds a second `this` proxy whose type tree has no
+        // position, and `.run` with no dialect on the classpath splices the caller's tree into its `.runDynamic`
+        // fallback, where -Xcheck-macros rejects it. The cast is erasure-only.
+        //
+        // The pattern operators answer `Term[Boolean]` whatever the operand's nullability, because a NULL operand makes
+        // the predicate UNKNOWN and a WHERE drops the row.
+        final inline def ++(inline other: Term[String])(using A =:= String): Term[String] =
+            Concat(Chunk(this.asInstanceOf[Term[String]], other))
 
         @targetName("concatRaw")
         final inline def ++(inline other: String)(using A =:= String): Term[String] =
-            Concat(Chunk(asStr, lit(other, SqlSchema.string)))
+            Concat(Chunk(this.asInstanceOf[Term[String]], lit(other, SqlSchema.string)))
 
         final inline def like(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.Like, pattern)
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.Like, pattern)
 
         @targetName("likeRaw")
         final inline def like(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.Like, lit(pattern, SqlSchema.string))
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.Like, lit(pattern, SqlSchema.string))
 
         final inline def notLike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.NotLike, pattern)
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.NotLike, pattern)
 
         @targetName("notLikeRaw")
         final inline def notLike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.NotLike, lit(pattern, SqlSchema.string))
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.NotLike, lit(pattern, SqlSchema.string))
 
         final inline def ilike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.ILike, pattern)
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.ILike, pattern)
 
         @targetName("ilikeRaw")
         final inline def ilike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.ILike, lit(pattern, SqlSchema.string))
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.ILike, lit(pattern, SqlSchema.string))
 
         final inline def notIlike(inline pattern: Term[String])(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.NotILike, pattern)
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.NotILike, pattern)
 
         @targetName("notIlikeRaw")
         final inline def notIlike(inline pattern: String)(using SqlTextual[this.type, A]): Term[Boolean] =
-            StringMatch(asTextual, StringMatch.Op.NotILike, lit(pattern, SqlSchema.string))
+            StringMatch(this.asInstanceOf[Term[String]], StringMatch.Op.NotILike, lit(pattern, SqlSchema.string))
 
-        final inline def substring(inline start: Term[Int])(using A =:= String): Term[String] = Substring(asStr, start, Maybe.empty)
+        final inline def substring(inline start: Term[Int])(using A =:= String): Term[String] =
+            Substring(this.asInstanceOf[Term[String]], start, Maybe.empty)
 
         @targetName("substringRaw1")
         final inline def substring(inline start: Int)(using A =:= String): Term[String] =
-            Substring(asStr, lit(start, SqlSchema.int), Maybe.empty)
+            Substring(this.asInstanceOf[Term[String]], lit(start, SqlSchema.int), Maybe.empty)
 
         final inline def substring(inline start: Term[Int], inline length: Term[Int])(using A =:= String): Term[String] =
-            Substring(asStr, start, Maybe(length))
+            Substring(this.asInstanceOf[Term[String]], start, Maybe(length))
 
         @targetName("substringRaw2")
         final inline def substring(inline start: Int, inline length: Int)(using A =:= String): Term[String] =
-            Substring(asStr, lit(start, SqlSchema.int), Maybe(lit(length, SqlSchema.int)))
+            Substring(this.asInstanceOf[Term[String]], lit(start, SqlSchema.int), Maybe(lit(length, SqlSchema.int)))
     end Term
 
     // --- Concrete Term subtypes ---
@@ -3151,6 +3148,12 @@ object Sql:
       */
     private[kyo] inline def lit[A](value: A, s: SqlSchema.Column[A]): Literal[A] =
         Literal(value, s, kyo.internal.SqlMacros.typeNameOf[A])
+
+    /** Lifts `other` at the receiver's own parameter `A`. The cast is erasure-only: the evidence has decided the two denote one SQL type, and
+      * a `Term` is a description nothing reads the parameter of at run time.
+      */
+    private[kyo] inline def liftedAs[A, B](inline other: B)(using c: SqlSchema.Column[B]): Term[A] =
+        lit(other, c).asInstanceOf[Term[A]]
 
     /** The label is the variant name, stored through `w.string` as a plain `TEXT` column. The unknown-label read aborts with
       * [[SqlDecodeSumTypeUnknownLabelException]].

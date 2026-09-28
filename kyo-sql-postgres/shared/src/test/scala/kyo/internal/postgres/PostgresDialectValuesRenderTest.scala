@@ -12,7 +12,7 @@ import kyo.Test
   *
   * The alias column list is the other half of every expected string here, and it is what makes these statements executable. PostgreSQL names
   * the columns of a `VALUES` list `column1`, `column2`, and so on, so a projection of `"v"."x"` resolves only against an alias that renames
-  * them. `SqlEndToEndTest` runs such a query against a live server; these leaves pin the text it sends.
+  * them. `SqlEndToEndConformanceTest` runs such a query against a live server; these leaves pin the text it sends.
   */
 class PostgresDialectValuesRenderTest extends Test:
 

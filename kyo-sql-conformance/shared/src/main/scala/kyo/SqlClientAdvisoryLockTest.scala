@@ -1,0 +1,213 @@
+package kyo
+
+import kyo.Sql.*
+
+/** Cross-backend conformance for [[SqlClient.withAdvisoryLock]]: on every backend that HAS advisory locks, the lock excludes a concurrent
+  * session while a body holds it, releases when that body returns, keys distinct locks apart, and routes the body's own statements to the
+  * locked session.
+  *
+  * Keyed advisory locks are a capability: an engine whose concurrency is one writer over the whole database has no per-key lock to hand out.
+  * The leaves split on `hasAdvisoryLocks` and the final leaf claims the other side, asserting a typed refusal, so every backend is covered
+  * by exactly one of the two.
+  *
+  * The suite observes the lock ONLY through the typed `withAdvisoryLock` surface, never a raw engine-specific lock probe. That is a
+  * deliberate constraint, and it shapes the design: the one acquire semantics every engine shares is the blocking one, so exclusion and
+  * release are proven by a blocking handoff between two sessions rather than by a non-blocking try, which only some engines offer. A held
+  * lock forces the contender to wait, and the order in which the two record their entries is what the assertion reads.
+  *
+  * Two behaviors are NOT cross-engine through the typed surface and are therefore absent here: one engine's typed abort when a bounded wait
+  * expires (another ignores the timeout and blocks instead, so there is no capability flag to branch on), and one engine's exact wire-lock
+  * name, which is a module-internal detail. The cross-engine essence of the latter, that a key names one lock deterministically, is the
+  * different-key leaf below.
+  */
+trait SqlClientAdvisoryLockTest extends SqlBackendTest:
+
+    private case class LockProbe(body: String) derives SqlSchema, CanEqual
+
+    /** A pool of exactly one connection, so the lock holds the only session there is.
+      *
+      * `acquireTimeout` is short on purpose. A statement that failed to route would reach for the pool, wait for the permit the lock itself
+      * is holding, and end at that timeout, so the regression surfaces as a fast typed failure rather than a hang. That distinction is why
+      * the routing leaf is safe to run in a shared suite at all.
+      */
+    private def oneConnection: SqlConfig =
+        SqlConfig(maxConnections = 1, acquireTimeout = 3.seconds, queryTimeout = 20.seconds)
+
+    /** Bounds for the mid-statement leaf, where a regression is a session that answers nothing rather than one that answers wrongly. Both
+      * bounds only turn a hang into a red leaf; what the leaf asserts on is the rows it read and the lock it took.
+      */
+    private def midStatement: SqlConfig =
+        SqlConfig(maxConnections = 4, acquireTimeout = 10.seconds, queryTimeout = 20.seconds)
+
+    "a held lock excludes a concurrent session until the body releases it" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
+        // Both engines make `withAdvisoryLock` block until the lock is granted, so exclusion shows up as an ordering.
+        // The contender attempts only once the holder is inside, and it cannot acquire until the holder releases, which
+        // happens as the holder's body returns. The holder records "holder-exit" as the last step INSIDE the body, so
+        // that marker is causally before the release and therefore before the contender's post-acquire "contender-enter";
+        // recorded after `withAdvisoryLock` returned it would instead race the contender, since both then run only once
+        // the same release has happened. The two sessions are two connections of one pool, which the server keeps apart,
+        // so the lock is genuinely contended across sessions rather than re-entered on one.
+        val key = 918273L
+        for
+            events        <- AtomicRef.init(Chunk.empty[String])
+            holderInside  <- Latch.init(1)
+            releaseHolder <- Latch.init(1)
+            holder        <- Fiber.init {
+                client.withAdvisoryLock(key) {
+                    events.updateAndGet(_.append("holder-enter"))
+                        .andThen(holderInside.release)
+                        .andThen(releaseHolder.await)
+                        .andThen(events.updateAndGet(_.append("holder-exit")).unit)
+                }
+            }
+            contender <- Fiber.init {
+                holderInside.await.andThen {
+                    client.withAdvisoryLock(key) {
+                        events.updateAndGet(_.append("contender-enter")).unit
+                    }
+                }
+            }
+            _   <- holderInside.await
+            _   <- releaseHolder.release
+            _   <- holder.get
+            _   <- contender.get
+            log <- events.get
+        yield assert(
+            log == Chunk("holder-enter", "holder-exit", "contender-enter"),
+            s"the contender must not enter the locked section until the holder releases the lock, saw $log"
+        )
+        end for
+    }
+
+    "a lock on a different key does not contend with a held key" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
+        // The key names the lock: two acquires of the same key contend, two of different keys do not. This is the
+        // cross-engine, typed-surface form of the name-mapping guarantee, observed without reading the engine's own
+        // lock table. If the two keys wrongly mapped to one lock, the second acquire would block on the held first and
+        // this leaf would time out; it completing at all is the proof of non-contention.
+        val heldKey  = 4242L
+        val otherKey = 4243L
+        for
+            holderInside  <- Latch.init(1)
+            releaseHolder <- Latch.init(1)
+            ranOther      <- AtomicBoolean.init(false)
+            holder        <- Fiber.init {
+                client.withAdvisoryLock(heldKey) {
+                    holderInside.release.andThen(releaseHolder.await)
+                }
+            }
+            _   <- holderInside.await
+            _   <- client.withAdvisoryLock(otherKey)(ranOther.set(true))
+            ran <- ranOther.get
+            _   <- releaseHolder.release
+            _   <- holder.get
+        yield assert(ran, "a lock on a different key must acquire while another key is held, but it did not run its body")
+        end for
+    }
+
+    "the body's statements run on the locked session" - forEachBackend(oneConnection, where = _.hasAdvisoryLocks) { (_, client, _) =>
+        // On a pool of exactly one connection the lock holds the only session there is, so a statement inside the body
+        // can answer at all only if it lands on the locked connection. A statement that failed to route would reach
+        // for the pool, find the one permit held by the lock, and fail at `acquireTimeout`; a green leaf is the proof
+        // it routed. The round-trip is expressed through the typed insert/select surface, so it carries no
+        // engine-specific SQL.
+        val key = 55123L
+        for
+            _   <- client.executeRaw("CREATE TABLE lockprobe (body VARCHAR(64) NOT NULL)")
+            _   <- Sql.insert[LockProbe].values(LockProbe("routed")).run
+            got <- client.withAdvisoryLock(key) {
+                Sql.from[LockProbe]("p").select(c => c.p.body).run
+            }
+        yield assert(got == Chunk("routed"), s"the body's statement must run on the locked session, saw $got")
+        end for
+    }
+
+    "an interrupted holder still releases the lock" - forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
+        // The release is a scope finalizer, so a holder interrupted mid-body must still free the lock. Without
+        // that, the holder's pooled session would carry the held lock to its next borrower, and the contender
+        // below would block on the server side instead of completing: the contender's return IS the proof.
+        val key = 424242L
+        for
+            holderInside <- Latch.init(1)
+            holder       <- Fiber.init {
+                client.withAdvisoryLock(key) {
+                    holderInside.release.andThen(Async.never)
+                }
+            }
+            _       <- holderInside.await
+            _       <- holder.interrupt
+            _       <- holder.getResult
+            outcome <- client.withAdvisoryLock(key)(42)
+        yield assert(outcome == 42, "the contender must acquire a lock an interrupted holder released")
+        end for
+    }
+
+    "a holder interrupted with a statement in flight frees the lock and leaves the session clean" -
+        forEachBackend(midStatement, where = _.hasAdvisoryLocks, timeout = Present(90.seconds)) { (_, client, _) =>
+            // The interrupt the leaf above delivers lands on an idle wire, which is the easy half. Here it lands
+            // with the session in the middle of an exchange, and the unlock must not be written there: its own read
+            // would take the abandoned statement's response and leave its real one queued, so the next borrower of
+            // that pooled session decodes a leftover packet or waits for bytes that already arrived. The two
+            // assertions name the two shapes that has: a statement on a later session that fails or hangs, and a
+            // lock no one can take again.
+            //
+            // The interrupted statement is a cross join, so the response is large enough that the interrupt has a
+            // whole multi-packet read to land inside rather than a single small frame.
+            val key = 606060L
+            for
+                _      <- client.executeRaw("CREATE TABLE lockprobe (body VARCHAR(64) NOT NULL)")
+                _      <- Kyo.foreachDiscard(1 to 60)(i => Sql.insert[LockProbe].values(LockProbe(s"row-$i")).run)
+                counts <- Kyo.foreach(1 to 10) { _ =>
+                    for
+                        inside <- Latch.init(1)
+                        holder <- Fiber.init {
+                            client.withAdvisoryLock(key) {
+                                inside.release.andThen(client.query(sql"SELECT a.body, b.body FROM lockprobe a, lockprobe b"))
+                            }
+                        }
+                        _    <- inside.await
+                        _    <- holder.interrupt
+                        _    <- holder.getResult
+                        rows <- Sql.from[LockProbe]("p").select(c => c.p.body).run
+                        _    <- client.withAdvisoryLock(key)(())
+                    yield rows.size
+                }
+            yield assert(
+                counts == Chunk.fill(10)(60),
+                s"every round must read the table back and take the lock again after the interrupted holder, saw $counts"
+            )
+            end for
+        }
+
+    "a statement from a fiber that outlives the locked section is refused rather than run unlocked" -
+        forEachBackend(where = _.hasAdvisoryLocks) { (_, client, _) =>
+            // The release returns the session to the pool, and a fiber the body forked keeps the context that names it.
+            // A statement that fiber issues later would run on the session without the lock the body took it under, or
+            // on that session's next borrower, and neither is what the body wrote it for.
+            val key = 777001L
+            for
+                go    <- Latch.init(1)
+                fiber <- client.withAdvisoryLock(key) {
+                    Fiber.initUnscoped(go.await.andThen(Abort.run[SqlException](client.query(sql"SELECT 1").unit)))
+                }
+                _    <- go.release
+                late <- fiber.get
+            yield late match
+                case Result.Failure(_: SqlRequestAdvisoryLockEndedException) => succeed
+                case other => fail(s"a statement issued after the lock's release must be refused as late, got $other")
+            end for
+        }
+
+    "an engine without advisory locks refuses the acquire rather than blocking" - forEachBackend(where = !_.hasAdvisoryLocks) {
+        (_, client, _) =>
+            // The complement of every leaf above: an engine with no per-key lock has to REFUSE, typed and immediately. Running the body
+            // anyway would hand back a lock excluding nobody, and blocking would stall a caller waiting on what the body releases.
+            val key = 5150L
+            Abort.run[SqlException](client.withAdvisoryLock(key)(42)).map { outcome =>
+                assert(
+                    outcome.isFailure,
+                    s"an engine with no advisory locks must refuse withAdvisoryLock with a typed failure, got $outcome"
+                )
+            }
+    }
+
+end SqlClientAdvisoryLockTest

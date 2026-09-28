@@ -28,19 +28,6 @@ object TestBackendRegistration:
             DoltServer.register()
             SqliteClient.register()
             Backend.register(new StubBackend())
-            registerTestBackends()
     end ensure
-
-    /** Registers the [[kyo.internal.SqlTestBackend]] conformance descriptors a `META-INF/services/kyo.internal.SqlTestBackend` scan cannot
-      * reach on this platform: Scala Native embeds only one such services file, so every descriptor registers explicitly here, the same
-      * shape as the production-backend registration above. The registry's read side dedupes by class, so a descriptor the scan also
-      * reaches does not double.
-      */
-    private def registerTestBackends(): Unit =
-        SqlTestBackendRegistry.register(new PostgresTestBackend())
-        SqlTestBackendRegistry.register(new MysqlTestBackend())
-        SqlTestBackendRegistry.register(new SqliteTestBackend())
-        SqlTestBackendRegistry.register(new DoltTestBackend())
-    end registerTestBackends
 
 end TestBackendRegistration

@@ -1059,6 +1059,8 @@ Groups are registered with `-` (always a group; body runs at registration time t
 }
 ```
 
+A leaf runs by its full name path, so every path in a suite must be unique. kyo-test fails a path registered twice rather than run one body for both.
+
 ### Assertion Model
 
 `assert(cond)` is a power-assert macro: on failure it prints a diagram of subexpression values. Every leaf must evaluate at least one assertion; a leaf that completes without any assertion is failed by default (the `failOnNoAssertion` check). To explicitly mark a leaf as asserting no runtime value, write `succeed` (or `succeed("why")`) in the body.
@@ -1195,6 +1197,20 @@ Override `aroundLeaf` to wrap every leaf with shared setup or teardown:
 override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame) =
     HttpClient.withConfig(_.timeout(60.seconds))(body)
 ```
+
+### Conformance Suites
+
+A contract that more than one implementation must satisfy, and that code outside kyo can implement, ships its suite in a published `<module>-conformance` module (`kyo-flow-conformance`). The suite is an abstract class in that module's main sources; an implementation, in kyo or elsewhere, extends it in its test sources and supplies the fixture. Three facts fix the shape:
+
+- **A consumer runs only classes it compiles.** Test discovery never picks up a concrete suite inside a dependency jar, so the published class is abstract and each implementation declares a subclass.
+- **One class per capability tier.** A contract exposes one abstract class for each tier an implementation can be at (`FileSystem.Read` against `FileSystem.Write`), never one class per topic. A suite added to a tier is a trait mixed into that tier's class, so it reaches every existing consumer without a new declaration. Leaf paths must be unique across all of a tier's traits, because kyo-test fails a suite that registers the same path twice; a trait whose leaves are not already named apart from the others roots them under a group of its own.
+- **Frames derive in `-conformance/<platform>/src/main/`.** `FindEnclosing` exempts `*Test.scala` and `*Spec.scala` files there, as it does under `src/test/`.
+
+A published conformance module depends only on its contract module and `kyo-test-api`. Implementations that live in the contract module run from the conformance module's tests, since the contract module cannot depend on its own conformance module; implementations elsewhere depend on it in `Test` scope. Every tier has one subclass declared outside package `kyo`, in the module that runs kyo's implementation of it (`kyo-sql-tests` for SQL), which proves a consumer needs no package-private access.
+
+Two contracts take other shapes. kyo-compat ships its suite as sources inside `kyo-compat-plugin`, because each binding defines `CIO` as its own opaque type and the suite must be compiled per binding. A contract no external code can implement, such as `Dolt` with its `private[kyo]` constructor, keeps a shared abstract suite in its own test sources.
+
+The unpublished `-tests` modules (`kyo-sql-tests`, `kyo-schema-tests`, `kyo-compat-tests`) are aggregators: they depend on every implementation and host tests that need several at once.
 
 ---
 

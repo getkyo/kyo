@@ -176,13 +176,15 @@ Do not add an operation to the unsafe tier without completing every layer above 
 Shared behavior belongs in `shared/src/test`. A test file must share a prefix with its production
 source. Platform tests are reserved for genuine host integration differences.
 
-Use the reusable suites for backend laws:
+Backend laws live in `kyo-system-conformance`, published so a backend outside kyo runs them too, one abstract class per tier:
 
-- `FileSystemReadTest`
-- `FileSystemWriteTest`
-- `FileSystemChannelTest`
-- `FileSystemLockTest`
-- `FileSystemWatchTestSuite`
+- `FileSystemReadConformanceTest`, which mixes in `FileSystemLockTest`, since locking is declared on `FileSystem.Read`
+- `FileSystemWriteConformanceTest`, which mixes in `FileSystemWriteTest` and `FileSystemChannelTest`
+- `FileSystemWatchConformanceTest`
+
+A new law for an existing tier goes into that tier's suite, or into a new trait mixed into the tier class, so every backend
+already extending the tier runs it. The host's runs of the tiers live in `kyo-system-conformance`'s tests, since this module
+cannot depend on it; host-only behavior stays here.
 
 Test capability rows with `typeCheck` and `typeCheckErrors`. Use deterministic `Async` coordination
 for watcher and lock tests. Never use sleeps or blocking primitives to make scheduling tests pass.

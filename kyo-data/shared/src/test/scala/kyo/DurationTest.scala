@@ -275,25 +275,43 @@ class DurationTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Duration subtraction" - {
-        "subtracting smaller from larger" in {
-            assert(5.seconds - 2.seconds == 3.seconds)
+    "Duration.minus" - {
+        "present when the subtrahend is not longer" in {
+            assert(5.seconds.minus(2.seconds) == Present(3.seconds))
+            assert(3.minutes.minus(3.minutes) == Present(Duration.Zero))
+            assert(10.hours.minus(Duration.Zero) == Present(10.hours))
         }
 
-        "subtracting larger from smaller" in {
-            assert(2.seconds - 5.seconds == Duration.Zero)
+        "absent when the subtrahend is longer" in {
+            assert(2.seconds.minus(5.seconds) == Absent)
+            assert(Duration.Zero.minus(1.nano) == Absent)
+            assert(1.day.minus(Duration.Infinity) == Absent)
         }
 
-        "subtracting equal durations" in {
-            assert(3.minutes - 3.minutes == Duration.Zero)
+        "Infinity less a finite duration stays Infinity" in {
+            assert(Duration.Infinity.minus(1.second) == Present(Duration.Infinity))
+            assert(Duration.Infinity.minus(Duration.Infinity) == Present(Duration.Zero))
+        }
+    }
+
+    "Duration.minusOrZero" - {
+        "the difference when the subtrahend is not longer" in {
+            assert(5.seconds.minusOrZero(2.seconds) == 3.seconds)
+            assert(10.hours.minusOrZero(Duration.Zero) == 10.hours)
         }
 
-        "subtracting from zero" in {
-            assert(Duration.Zero - 1.second == Duration.Zero)
+        "Zero when the subtrahend is longer" in {
+            assert(2.seconds.minusOrZero(5.seconds) == Duration.Zero)
+            assert(Duration.Zero.minusOrZero(1.second) == Duration.Zero)
         }
 
-        "subtracting zero" in {
-            assert(10.hours - Duration.Zero == 10.hours)
+        "agrees with minus whenever minus is present" in {
+            val durations = Chunk(Duration.Zero, 1.nano, 999.millis, 1.second, 3.hours, Duration.Infinity)
+            for
+                a <- durations
+                b <- durations
+            do assert(a.minusOrZero(b) == a.minus(b).getOrElse(Duration.Zero))
+            end for
         }
     }
 

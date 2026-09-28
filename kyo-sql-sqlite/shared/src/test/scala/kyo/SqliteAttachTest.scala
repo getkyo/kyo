@@ -10,21 +10,13 @@ import kyo.internal.SqliteTempDatabase
   * moment earlier.
   *
   * File-backed databases, not `:memory:`: SQLite gives every CONNECTION its own private in-memory database, so a pool of them would share
-  * no tables and these leaves would be measuring the wrong thing. That is also what confines them to the platforms with a filesystem.
+  * no tables and these leaves would be measuring the wrong thing.
   */
 class SqliteAttachTest extends Test:
 
     case class Invoice(note: String) derives SqlSchema
 
-    /** A throwaway database file, deleted with its WAL sidecars when the scope exits.
-      *
-      * Cancels where there is no filesystem to hold one, which is the same reachability the SQLite conformance descriptor reports, rather
-      * than failing as though the attachment were broken.
-      */
-    private def tempDatabase(using Frame): String < (Sync & Scope) =
-        assume(SqliteTempDatabase.available, "this platform has no filesystem, so an attached database has nowhere to live")
-        Scope.acquireRelease(Sync.defer(SqliteTempDatabase.create()))(path => Sync.defer(SqliteTempDatabase.delete(path)))
-    end tempDatabase
+    private def tempDatabase(using Frame): String < (Sync & Scope) = SqliteTempDatabase.create
 
     "a qualified read resolves on every pooled connection" in {
         Scope.run {
