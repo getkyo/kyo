@@ -1883,9 +1883,7 @@ lazy val `kyo-ffi-plugin` =
                     Def.task(streams.value.log.info("scripted skipped on Windows (sbt#6777 boot-server named-pipe flake)"))
                 else
                     Def.task((scripted.toTask("")).value)
-            }).value,
-            publish   := {},
-            publishM2 := {}
+            }).value
         )
 
 // JMH benchmarks for kyo-ffi. Separate from kyo-bench because Panama requires
