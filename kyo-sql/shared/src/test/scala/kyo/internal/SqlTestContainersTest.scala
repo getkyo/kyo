@@ -2,79 +2,8 @@ package kyo.internal
 
 import kyo.*
 
-/** A test-only [[SqlTestBackend]] that provisions no container: its [[withFreshSchema]] runs `create` through the shared id-keyed holder
-  * [[SqlTestContainers.getOrInit]] and hands back a [[SqlTestBackend.Schema]] whose `port` carries the singleton resource the holder created,
-  * so a mechanism test can observe single-init, id-keying, and slot-reset without a live engine.
-  */
-final private class StubTestBackend(
-    val id: String,
-    ref: AtomicRef[Map[String, Promise[Int, Abort[ContainerException]]]],
-    create: () => Int < (Async & Abort[ContainerException])
-) extends SqlTestBackend:
-    def label: String                            = id
-    def urlScheme: String                        = "stub"
-    def containerConfig: Maybe[Container.Config] = Present(Container.Config(ContainerImage("stub:latest")))
-    def quoteIdent(name: String): String         = "\"" + name + "\""
-    def supportsReturning: Boolean               = false
-    def supportsRecursiveCte: Boolean            = false
-    def textColumnType: String                   = "TEXT"
-    def autoIncrementPrimaryKey: String          = "id INT PRIMARY KEY"
-
-    // This stub never provisions an engine, so these DDL and diagnostic strings are never rendered against one.
-    def columnType(key: SqlTestBackend.ColumnType): String   = "TEXT"
-    def typeNameFor(kind: SqlTestBackend.ColumnType): String = "text"
-    def bytesLiteral(hexDigits: String): String              = s"'$hexDigits'"
-    def instantLiteral(wallClockUtc: String): String         = s"'$wallClockUtc'"
-
-    def jsonPreservesKeyOrder: Boolean = true
-
-    def computesRangeOffsetFrames: Boolean = true
-
-    def defaultPreventsLostUpdate: Boolean                       = true
-    def conflictClauseEnforcesForeignKeys: Boolean               = true
-    def outputAffectingSettings: Chunk[String]                   = Chunk.empty
-    def sessionZoneStatements: Maybe[SqlTestBackend.SessionZone] = Absent
-    def tableNotFoundSqlState: String                            = "42000"
-    def uniqueViolationSqlState: String                          = "23000"
-    def sessionIdSql: Maybe[String]                              = Absent
-    def isolationIntrospectionSql: Maybe[String]                 = Absent
-    def honouredIsolationLevels: Set[SqlClient.IsolationLevel]   = Set.empty
-    def defaultIsolationLevel: SqlClient.IsolationLevel          = SqlClient.IsolationLevel.ReadCommitted
-
-    // Likewise never consulted: no conformance body runs against this stub, so every capability answers the value that
-    // claims the least rather than one describing a real engine.
-    def booleanColumnKind: SqlRow.ColumnKind                   = SqlRow.ColumnKind.Unknown
-    def instantWireCarriesOffset: Boolean                      = false
-    def hasNativeArrayColumns: Boolean                         = false
-    def caseFoldingReachesPastAscii: Boolean                   = false
-    def likeFollowsColumnCollation: Boolean                    = false
-    def boundedTextColumn(name: String, maxChars: Int): String = s"$name VARCHAR($maxChars) NOT NULL"
-    def allowsConcurrentWriteTransactions: Boolean             = false
-    def hasAdvisoryLocks: Boolean                              = false
-    def timeColumnIsSignedSpan: Boolean                        = false
-    def hasCalendarIntervalColumn: Boolean                     = false
-    def hasNetworkAddressColumn: Boolean                       = false
-    def hasTimeWithOffsetColumn: Boolean                       = false
-    def hasNonFiniteSpecialValues: Boolean                     = false
-
-    def windowRangeOffsetHonoursAbsentPlacement: Boolean = false
-
-    def unrenderableColumns: Chunk[(String, String)] = Chunk.empty
-
-    def arrayRenderCases: Chunk[(String, String, String)] = Chunk.empty
-
-    def protocolAgreementCases: Chunk[(String, String, String)] = Chunk.empty
-
-    def withFreshSchema[A, S](f: SqlTestBackend.Schema => A < S)(using
-        Frame
-    ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
-        SqlTestContainers.getOrInit(ref, id)(create()).map { resource =>
-            f(SqlTestBackend.Schema("stub-host", resource, id, "", id, s"stub://$id/$resource"))
-        }
-end StubTestBackend
-
-/** Mechanism tests for [[SqlTestContainers]], driven by a stub [[SqlTestBackend]] and a temp-directory registry so none of them needs a
-  * live engine or a container runtime. They cover:
+/** Mechanism tests for [[SqlTestContainers]], driven by stub resources and a temp-directory registry so none of them needs a live engine or
+  * a container runtime. They cover:
   *
   *   - the generic id-keyed singleton holder [[SqlTestContainers.getOrInit]]: concurrent callers for one id share a single init (CAS +
   *     promise) with no double-init, two different ids get two resources while the same id shares one, and a failed init removes that id's
@@ -89,11 +18,10 @@ class SqlTestContainersTest extends kyo.Test:
 
     "concurrent callers for one id share a single init" in {
         for
-            ref   <- freshRef
-            count <- AtomicInt.init(0)
-            stub = new StubTestBackend("k", ref, () => count.incrementAndGet)
+            ref     <- freshRef
+            count   <- AtomicInt.init(0)
             results <- Async.fill(8, concurrency = 8) {
-                Scope.run(stub.withFreshSchema(schema => schema.port))
+                SqlTestContainers.getOrInit(ref, "k")(count.incrementAndGet)
             }
             inits <- count.get
         yield
@@ -106,11 +34,9 @@ class SqlTestContainersTest extends kyo.Test:
         for
             ref   <- freshRef
             count <- AtomicInt.init(0)
-            stubA = new StubTestBackend("a", ref, () => count.incrementAndGet)
-            stubB = new StubTestBackend("b", ref, () => count.incrementAndGet)
-            a1    <- Scope.run(stubA.withFreshSchema(schema => schema.port))
-            b1    <- Scope.run(stubB.withFreshSchema(schema => schema.port))
-            a2    <- Scope.run(stubA.withFreshSchema(schema => schema.port))
+            a1    <- SqlTestContainers.getOrInit(ref, "a")(count.incrementAndGet)
+            b1    <- SqlTestContainers.getOrInit(ref, "b")(count.incrementAndGet)
+            a2    <- SqlTestContainers.getOrInit(ref, "a")(count.incrementAndGet)
             inits <- count.get
         yield
             assert(a1 == 1, s"first id should init first, got $a1")
@@ -123,17 +49,15 @@ class SqlTestContainersTest extends kyo.Test:
         for
             ref          <- freshRef
             firstAttempt <- AtomicBoolean.init(true)
-            flaky = new StubTestBackend(
-                "k",
-                ref,
-                () =>
+            flaky =
+                SqlTestContainers.getOrInit(ref, "k") {
                     firstAttempt.compareAndSet(true, false).map {
                         case true  => Abort.fail(new ContainerBackendException("intentional stub init failure"))
                         case false => 42
                     }
-            )
-            firstResult  <- Abort.run[SqlException | ContainerException](Scope.run(flaky.withFreshSchema(schema => schema.port)))
-            secondResult <- Abort.run[SqlException | ContainerException](Scope.run(flaky.withFreshSchema(schema => schema.port)))
+                }
+            firstResult  <- Abort.run[ContainerException](flaky)
+            secondResult <- Abort.run[ContainerException](flaky)
         yield
             assert(firstResult.isFailure, s"the first init should fail, got $firstResult")
             secondResult match

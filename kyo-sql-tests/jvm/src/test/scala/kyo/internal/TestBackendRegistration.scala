@@ -28,13 +28,6 @@ object TestBackendRegistration:
             DoltServer.register()
             SqliteClient.register()
             Backend.register(new StubBackend())
-            registerTestBackends()
     end ensure
-
-    /** Registers the [[kyo.internal.SqlTestBackend]] conformance descriptors a `META-INF/services/kyo.internal.SqlTestBackend` scan cannot
-      * reach on this platform. Empty here: on the JVM the services scan reaches every classpath descriptor, so nothing registers explicitly.
-      * Each backend module's descriptor plugs its own registration in through this mechanism.
-      */
-    private def registerTestBackends(): Unit = ()
 
 end TestBackendRegistration

@@ -127,10 +127,28 @@ object TestRunner:
                 }
             else
                 walkNode(suite, Chunk.empty).map { rawLeaves =>
+                    // A leaf executes by its name path, so a path registered twice would run one body for both
+                    // registrations and never the other. Neither runs; the path fails once, naming the count.
+                    val registrations: Map[Chunk[String], Int] =
+                        rawLeaves.groupMapReduce { case (path, _, _) => path }(_ => 1)(_ + _)
                     val allLeaves: Chunk[(Chunk[String], Maybe[TestBuilder])] =
                         rawLeaves.map { case (path, _, builderOpt) => (path, builderOpt) }
+                    val duplicated = applyFilter(
+                        allLeaves.filter { case (path, _) => registrations(path) > 1 }.distinctBy(_._1),
+                        effectiveConfig.filter
+                    ).map { case (path, _) =>
+                        (
+                            path,
+                            TestResult.Failed(
+                                s"leaf path '${path.mkString(" > ")}' is registered ${registrations(path)} times; " +
+                                    "a leaf runs by its path, so every path in a suite must be unique",
+                                Maybe.empty,
+                                Duration.Zero
+                            )
+                        )
+                    }
 
-                    val filtered = applyFilter(allLeaves, effectiveConfig.filter)
+                    val filtered = applyFilter(allLeaves.filter { case (path, _) => registrations(path) == 1 }, effectiveConfig.filter)
 
                     val ordered = effectiveConfig.randomize match
                         case Maybe.Present(seed) =>
@@ -142,8 +160,8 @@ object TestRunner:
                     val cursorMap: Map[Chunk[String], Chunk[Int]] =
                         rawLeaves.map { case (path, cursor, _) => path -> cursor }.toMap
 
-                    (ordered, hasFocus, cursorMap)
-                }.flatMap { case (ordered, hasFocus, cursorMap) =>
+                    (ordered, hasFocus, cursorMap, duplicated)
+                }.flatMap { case (ordered, hasFocus, cursorMap, duplicated) =>
                     // Build one submittable leaf-computation per leaf. The reporter callbacks fire INSIDE this
                     // computation (on the pool worker) at REAL leaf start/finish (more accurate than fire-at-fork).
                     def leafComp(path: Chunk[String], builderOpt: Maybe[TestBuilder]): Chunk[(Chunk[String], TestResult)] < Async =
@@ -216,7 +234,7 @@ object TestRunner:
                         }
                         val sr = SuiteReport(
                             suiteInfo.name,
-                            leaf ++ synthetic,
+                            leaf ++ duplicated ++ synthetic,
                             duration,
                             leakCheck = effectiveConfig.leakCheck,
                             leakCheckSockets = effectiveConfig.leakCheckSockets,

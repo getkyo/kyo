@@ -12,20 +12,21 @@ import scala.jdk.CollectionConverters.*
   * to live, since the test is green and reads as thorough. A named capability states the same thing where it can be checked.
   *
   * A source scan rather than a runtime assertion because what it forbids is a shape in the text. The banned list is DERIVED from the
-  * registered descriptors, so a backend extends this check by existing and there is no second list to keep current.
+  * descriptors, so a backend extends this check by existing and there is no second list to keep current. Every file of the published
+  * battery is scanned whatever its name, the descriptor contract included.
   *
   * JVM-only because it reads the source tree; what it guards is shared source, so it guards every platform.
   */
 class SqlBackendNeutralitySourceTest extends kyo.Test:
 
-    /** The shared conformance source, found by probing UPWARD from the test JVM's working directory.
+    /** The published battery's source, found by probing UPWARD from the test JVM's working directory.
       *
       * Upward rather than anchored: a cross-built module's JVM project can be forked at the module directory, at the platform subdirectory, or
       * at the repository root, and assuming one silently reads nothing under the other two. The leaf below asserts it was found, which is the
       * failure mode a source scan has and a runtime assertion does not.
       */
     private val conformanceRoot: Path =
-        val suffix = Paths.get("kyo-sql-tests/shared/src/test/scala/kyo")
+        val suffix = Paths.get("kyo-sql-conformance/shared/src/main/scala/kyo")
         @annotation.tailrec
         def probe(dir: Path): Path =
             if dir == null then Paths.get("").toAbsolutePath.resolve(suffix)
@@ -35,12 +36,12 @@ class SqlBackendNeutralitySourceTest extends kyo.Test:
         probe(Paths.get("").toAbsolutePath)
     end conformanceRoot
 
-    /** Every engine name a registered descriptor answers to, lowercased.
+    /** Every engine name a descriptor answers to, lowercased.
       *
       * Both the id and the label, because either is a name a body could branch on, and the two are free to differ.
       */
     private val engineNames: Set[String] =
-        SqlTestBackends.registered.flatMap(b => Chunk(b.id, b.label)).map(_.toLowerCase).toSet
+        SqlConformanceBackends.all.flatMap(b => Chunk(b.id, b.label)).map(_.toLowerCase).toSet
 
     private def conformanceFiles: Seq[Path] =
         if !Files.isDirectory(conformanceRoot) then Seq.empty
@@ -50,7 +51,7 @@ class SqlBackendNeutralitySourceTest extends kyo.Test:
             val listing = Files.list(conformanceRoot)
             try
                 listing.iterator().asScala
-                    .filter(p => p.getFileName.toString.endsWith("ConformanceTest.scala"))
+                    .filter(p => p.getFileName.toString.endsWith(".scala"))
                     .toSeq
                     .sortBy(_.getFileName.toString)
             finally listing.close()
@@ -93,7 +94,7 @@ class SqlBackendNeutralitySourceTest extends kyo.Test:
         // every cross-engine leaf vacuous.
         assert(
             engineNames.nonEmpty,
-            "the banned list is derived from the registered descriptors, and none registered, so this check would pass on anything"
+            "the banned list is derived from the descriptors, and there are none, so this check would pass on anything"
         )
     }
 
@@ -102,7 +103,7 @@ class SqlBackendNeutralitySourceTest extends kyo.Test:
         assert(
             offenders.isEmpty,
             s"a conformance body names an engine, which asserts that a divergence is forced. Name a capability on " +
-                s"SqlTestBackend instead, with a scaladoc saying what the difference IS, so every backend has to answer it. " +
+                s"SqlConformanceBackend instead, with a scaladoc saying what the difference IS, so every backend has to answer it. " +
                 s"Engine names in scope: ${engineNames.toSeq.sorted.mkString(", ")}. Offending lines:\n" +
                 offenders.map(l => s"  ${l.file}:${l.number}  ${l.text}").mkString("\n")
         )

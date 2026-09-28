@@ -5802,7 +5802,7 @@ class FlowEngineTest extends FlowEngineSupport:
           * us", and decides that from the previous snapshot's `executor` without asking whether that claim was still live
           * (`internal/MemoryFlowStore.scala:66-75`). So each poll re-claims the row, renews its lease by a full period, and then
           * filters it out of its own answer. The executor never receives it and no competitor can take it, because from outside the
-          * lease never lapses. `FlowStoreTest` pins both halves deterministically ("Running whose own claim expired → returned to
+          * lease never lapses. `FlowStoreConformanceTest` pins both halves deterministically ("Running whose own claim expired → returned to
           * the same executor", "a poll that returns nothing leaves the execution claimable by another executor"); this leaf shows
           * what the pair costs a user, which is one execution that never runs again.
           *
@@ -8010,7 +8010,7 @@ class FlowEngineTest extends FlowEngineSupport:
           *
           * **Both halves are closed by one rule.** A verdict is not a free write: the ending goes through the claim
           * (`FlowEngine.scala`'s `finish`, which appends `ExecutionReleased` and then calls `claimed.finish`), so a stale executor's
-          * `Failed` is judged by the acceptance rule like everything else and lands nowhere at all. `FlowStoreTest` pins the
+          * `Failed` is judged by the acceptance rule like everything else and lands nowhere at all. `FlowStoreConformanceTest` pins the
           * store-level half: a terminal status is refused WHOLE, status, history and rows together, rather than the status being
           * refused and the event appended anyway. That half is worth its own leaf because history is what the operator surfaces
           * read, and a failed step has to be identifiable from history alone.

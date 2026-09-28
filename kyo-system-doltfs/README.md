@@ -111,8 +111,9 @@ the backend's effect, and they are what a large file wants.
 
 ## Conformance
 
-This backend answers kyo-system's own reusable contracts: `FileSystemReadTest`, `FileSystemWriteTest`,
-`FileSystemChannelTest` and `FileSystemLockTest`, the same four the host filesystem answers. Passing them is the
+This backend answers kyo-system's published conformance suites for the read and write tiers,
+`FileSystemReadConformanceTest` and `FileSystemWriteConformanceTest` from `kyo-system-conformance`, the same ones the host
+filesystem answers. Passing them is the
 claim that a program written against `Path` behaves the same whether its bytes are on a disk or in a table.
 Symbolic links are stored, so the link assertions run rather than being skipped.
 

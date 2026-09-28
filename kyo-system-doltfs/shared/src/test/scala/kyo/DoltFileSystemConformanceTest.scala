@@ -2,7 +2,7 @@ package kyo
 
 import kyo.internal.doltlite.DoltLiteEngineProbe
 
-/** The Dolt filesystem put through the same four suites the host answers.
+/** The Dolt filesystem put through the read and write tiers the host answers. It does not implement `FileSystem.Watch`.
   *
   * Every fixture runs against a real DoltLite engine over `:memory:` with a single connection, without which
   * `:memory:` names one database per connection rather than one shared database.
@@ -46,7 +46,7 @@ private object DoltFileSystemFixtures:
 
 end DoltFileSystemFixtures
 
-class DoltFileSystemReadConformanceTest extends FileSystemReadTest[Async]:
+class DoltFileSystemReadConformanceTest extends FileSystemReadConformanceTest[Async]:
 
     override protected def realPathRequiresExistence: Boolean = true
 
@@ -65,9 +65,16 @@ class DoltFileSystemReadConformanceTest extends FileSystemReadTest[Async]:
         assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
         DoltFileSystemFixtures.withReadable(use)
     end withFileSystem
+
+    protected def withLockTarget(
+        use: (FileSystem.Read[Async], Path) => Unit < (Async & Scope & Abort[FileSystemException])
+    )(using Frame): Unit < (Async & Scope & Abort[FileSystemException]) =
+        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
+        DoltFileSystemFixtures.withVfs("lock-suite")((files, root) => use(files, root / "target.bin"))
+    end withLockTarget
 end DoltFileSystemReadConformanceTest
 
-class DoltFileSystemWriteConformanceTest extends FileSystemWriteTest[Async]:
+class DoltFileSystemWriteConformanceTest extends FileSystemWriteConformanceTest[Async]:
     protected def withFileSystem[A](
         use: (FileSystem.Write[Async], Path) => A < (Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
@@ -75,21 +82,3 @@ class DoltFileSystemWriteConformanceTest extends FileSystemWriteTest[Async]:
         DoltFileSystemFixtures.withVfs("write-suite")(use)
     end withFileSystem
 end DoltFileSystemWriteConformanceTest
-
-class DoltFileSystemChannelConformanceTest extends FileSystemChannelTest[Async]:
-    protected def withFileSystem[A](
-        use: (FileSystem.Write[Async], Path) => A < (Async & Scope & Abort[FileSystemException])
-    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
-        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
-        DoltFileSystemFixtures.withVfs("channel-suite")(use)
-    end withFileSystem
-end DoltFileSystemChannelConformanceTest
-
-class DoltFileSystemLockConformanceTest extends FileSystemLockTest[Async]:
-    protected def withFileSystem(
-        use: (FileSystem.Read[Async], Path) => Unit < (Async & Sync & Scope & Abort[FileSystemException])
-    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
-        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
-        DoltFileSystemFixtures.withVfs("lock-suite")((files, root) => use(files, root / "target.bin"))
-    end withFileSystem
-end DoltFileSystemLockConformanceTest

@@ -1,12 +1,6 @@
 package kyo
 
-class HostPathLockTest extends FileSystemLockTest[Sync]:
-    protected def withFileSystem(
-        use: (FileSystem.Read[Sync], Path) => Unit < (Sync & Async & Scope & Abort[FileSystemException])
-    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
-        Scope.acquireRelease(FileSystem.host.tempDir("kyo-path-lock"))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
-            use(FileSystem.host, handle.path / "target.bin")
-        }
+class HostPathLockTest extends kyo.test.Test[Any]:
 
     "Path lock operations dispatch through PathRead" in {
         Scope.acquireRelease(FileSystem.host.tempDir("kyo-path-lock-dispatch"))(handle => Sync.Unsafe.defer(handle.remove())).map {

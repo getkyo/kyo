@@ -39,6 +39,24 @@ Backends advertise the authority they actually provide. `FileSystem.Read[S]` can
 `Path.runReadOnlyWith`; `FileSystem.Write[S]` supports both runners. This distinction prevents a
 caller from accidentally gaining mutation authority through a read-only service.
 
+A backend proves it behaves like the host by passing the conformance suites published as `kyo-system-conformance`, one
+abstract class per tier it implements: `FileSystemReadConformanceTest`, `FileSystemWriteConformanceTest` and
+`FileSystemWatchConformanceTest`. Its tests add the artifact in test scope, wire kyo-test's runner, and extend each class
+with a fixture that hands the suite a fresh backend. On JS the test link needs `ModuleKind.CommonJSModule`, since
+kyo-system reaches Node builtins through `require`.
+
+```scala doctest:expect=skipped
+// build.sbt
+libraryDependencies += "io.getkyo" %%% "kyo-system-conformance" % "<version>" % Test
+
+// src/test/scala
+class S3FileSystemWriteTest extends FileSystemWriteConformanceTest[Async]:
+    protected def withFileSystem[A](
+        use: (FileSystem.Write[Async], Path) => A < (Async & Scope & Abort[FileSystemException])
+    )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
+        S3FileSystem.init(testBucket).map(files => use(files, Path("conformance")))
+```
+
 Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
 
 ```scala

@@ -6,7 +6,7 @@ import kyo.Path.WatchDepth
 import kyo.Path.WatchOptions
 import scala.compiletime.testing.typeCheckErrors
 
-class PathWatchTest extends FileSystemWatchTestSuite:
+class PathWatchTest extends kyo.test.Test[Any]:
 
     /** Counts the scans the polling watcher performs, so its pacing can be asserted rather than
       * assumed.
@@ -168,16 +168,6 @@ class PathWatchTest extends FileSystemWatchTestSuite:
       */
     private def pollOnce(clock: Clock.TimeControl, ended: Promise[Unit, Any])(using Frame): Unit < Async =
         clock.advance(10.millis).andThen(Async.race(clock.awaitPendingSleepers(1), ended.get))
-
-    protected def withFileSystem(
-        use: (FileSystem.Write[Sync] & FileSystem.Watch, Path) => Unit <
-            (Async & Sync & Scope & Abort[FileSystemException])
-    )(using Frame): Unit < (Async & Sync & Scope & Abort[FileSystemException]) =
-        val fileSystem = FileSystem.host
-        Scope.acquireRelease(fileSystem.tempDir("kyo-path-watch-test"))(handle => Sync.Unsafe.defer(handle.remove())).map { handle =>
-            use(fileSystem, handle.path)
-        }
-    end withFileSystem
 
     private def hostRoot(prefix: String)(using Frame): Path < (Sync & Scope & Abort[FileSystemException]) =
         Scope.acquireRelease(FileSystem.host.tempDir(prefix))(handle => Sync.Unsafe.defer(handle.remove())).map(_.path)
