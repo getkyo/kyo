@@ -325,7 +325,7 @@ Global / onLoad := {
         // rather than from the lazy vals so the check sees exactly what ci-release will iterate.
         val extracted    = Project.extract(state)
         val aggregateIds = Map("JVM" -> "kyoJVM", "JS" -> "kyoJS", "Native" -> "kyoNative", "Wasm" -> "kyoWasm")
-        val aggregated = aggregateIds.map { case (platform, id) =>
+        val aggregated   = aggregateIds.map { case (platform, id) =>
             platform -> extracted.structure.allProjects.filter(_.id == id).flatMap(_.aggregate).map(_.project).toSet
         }
         // A crossProject's platform is its id suffix; an id with none (an sbt plugin, a JVM tool)
