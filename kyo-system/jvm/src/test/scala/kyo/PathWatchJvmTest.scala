@@ -28,15 +28,16 @@ class PathWatchJvmTest extends kyo.test.Test[Any]:
                                     root,
                                     WatchOptions(depth = WatchDepth.Recursive, followLinks = true)
                                 ).map { follow =>
-                                    fileSystem.write(outside / "created.txt", "linked", Path.WriteOptions()).andThen {
-                                        clock.advance(Duration.Zero, 10.millis).andThen(clock.advance(10.millis, 10.millis)).andThen {
-                                            fileSystem.write(directFile, "direct", Path.WriteOptions()).andThen {
-                                                clock.advance(10.millis, 10.millis).andThen {
-                                                    Scope.run(follow.events.take(1).run).map { followed =>
-                                                        Scope.run(noFollow.events.take(1).run).map { notFollowed =>
-                                                            assert(followed == Chunk(PathChange.Created(linkedFile)))
-                                                            assert(notFollowed == Chunk(PathChange.Created(directFile)))
-                                                        }
+                                    // The scans run on the controlled clock, so an advancer drives them while an event is awaited: a
+                                    // fixed number of ticks assumes the write is visible to a scan within them, which the platform
+                                    // does not guarantee.
+                                    Fiber.init(Loop.forever(clock.advance(10.millis))).andThen {
+                                        fileSystem.write(outside / "created.txt", "linked", Path.WriteOptions()).andThen {
+                                            Scope.run(follow.events.take(1).run).map { followed =>
+                                                fileSystem.write(directFile, "direct", Path.WriteOptions()).andThen {
+                                                    Scope.run(noFollow.events.take(1).run).map { notFollowed =>
+                                                        assert(followed == Chunk(PathChange.Created(linkedFile)))
+                                                        assert(notFollowed == Chunk(PathChange.Created(directFile)))
                                                     }
                                                 }
                                             }
@@ -62,8 +63,8 @@ class PathWatchJvmTest extends kyo.test.Test[Any]:
                     Clock.withTimeControl { clock =>
                         fileSystem.openWatcher(root, WatchOptions(depth = WatchDepth.Recursive, followLinks = true)).map { watcher =>
                             fileSystem.write(file, "created", Path.WriteOptions()).andThen {
-                                Fiber.initUnscoped(Scope.run(watcher.events.take(1).run)).map { fiber =>
-                                    clock.advance(10.millis).andThen(fiber.get).map { events =>
+                                Fiber.init(Loop.forever(clock.advance(10.millis))).andThen {
+                                    Scope.run(watcher.events.take(1).run).map { events =>
                                         assert(events == Chunk(PathChange.Created(file)))
                                     }
                                 }
