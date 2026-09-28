@@ -305,6 +305,7 @@ What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you 
 | [kyo-core](kyo-core/README.md)†              | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`          |
 | [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileSystemException`  |
 | [kyo-system-doltfs](kyo-system-doltfs/README.md) | ✅  | ✅  | ✅     | ✅   | A `FileSystem` stored in a version-controlled database: a file is a row, so a tree branches and merges     |
+| [kyo-system-conformance](kyo-system/README.md#path-capabilities) | ✅ | ✅ | ✅ | ✅ | `FileSystemReadConformanceTest`, `FileSystemWriteConformanceTest` and `FileSystemWatchConformanceTest`: what a `FileSystem` backend passes in its own test scope, one per tier it implements |
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
@@ -323,6 +324,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-sql-sqlite](kyo-sql-sqlite/README.md)   | ✅  | ✅  | ✅     | ✅   | SQLite driver over the C library through kyo-ffi, an embedded file or in-memory database, no server        |
 | [kyo-sql-dolt](kyo-sql-dolt/README.md)       | ✅  | ✅  | ✅     | ✅   | Dolt driver on the MySQL wire, plus branches, commits, merges and diffs over the data itself                |
 | [kyo-sql-doltlite](kyo-sql-doltlite/README.md)† | ✅  | ✅  | ✅     | ✅   | Dolt's version control embedded: one file carrying branches, commits, merges and diffs, no server           |
+| [kyo-sql-conformance](kyo-sql/README.md#running-the-conformance-battery) | ✅ | ✅ | ✅ | ✅ | `SqlConformanceTest`: the battery kyo's own engines pass, for a third-party engine to run in its test scope |
 | [kyo-schema](kyo-schema/README.md)           | ✅  | ✅  | ✅     | ✅   | One `derives Schema` powers validation, lenses, diffs, builders, and structural conversion; codecs plug in |
 | [kyo-schema-json](kyo-schema-json/README.md) | ✅  | ✅  | ✅     | ✅   | JSON codec, JSON Schema generation, pure `Json.Lines` framing, and effectful `Jsonl` streams and files    |
 | [kyo-schema-protobuf](kyo-schema-protobuf/README.md) | ✅  | ✅  | ✅     | ✅   | Protocol Buffers codec for kyo-schema: `Protobuf.encode`/`decode` binary plus `.proto` schema export       |
@@ -332,6 +334,7 @@ The vertical an application developer assembles: HTTP services and clients, SQL 
 | [kyo-schema-yaml](kyo-schema-yaml/README.md) | ✅  | ✅  | ✅     | ✅   | YAML 1.2 codec for kyo-schema: `Yaml.encode`/`decode` plus CST and event-stream APIs                       |
 | [kyo-config](kyo-config/README.md)           | ✅  | ✅  | ✅     | ✅   | Type-safe config + feature flags with a percentage-rollout DSL, optional kyo-http admin and live sync      |
 | [kyo-flow](kyo-flow/README.md)               | ✅  | ✅  | ✅     | ✅   | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
+| [kyo-flow-conformance](kyo-flow/README.md#the-conformance-suite) | ✅ | ✅ | ✅ | ✅ | `FlowStoreConformanceTest`: the suite every `FlowStore` must pass, for a third-party store to run in its test scope |
 | [kyo-ui](kyo-ui/README.md)                   | ✅  | ✅  | ✅     | ✅   | Web UIs as pure values: Scala.js DOM app, server HTML-over-SSE or SSR stream with first-class reactivity   |
 | [kyo-markdown](kyo-markdown/README.md)       | ✅  | ✅  | ✅     | ✅   | Markdown to a kyo-ui article tree plus a heading outline; pure, total, no third-party Markdown dependency  |
 | [kyo-i18n](kyo-i18n/README.md)               | ✅  | ✅  | ✅     | ✅   | Translate from `.ftl` bundles; active locale as a `Signal` drives reactive `t` leaves; pure Fluent subset  |
@@ -377,6 +380,7 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
 | [kyo-browser](kyo-browser/README.md)†   | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
 | [kyo-jsonrpc](kyo-jsonrpc/README.md)    | ✅  | ✅  | ✅     | ✅   | JSON-RPC 2.0 peers over pluggable transports with typed routes, calls, notifications, progress, and cancel |
+| [kyo-jsonrpc-http](kyo-jsonrpc/README.md#websocket-kyo-jsonrpc-http) | ✅ | ✅ | ✅ | ✅ | WebSocket transport for kyo-jsonrpc peers, `JsonRpcHttpTransport`, on kyo-http                    |
 | [kyo-mcp](kyo-mcp/README.md)            | ✅  | ✅  | ✅     | ✅   | Model Context Protocol client and server built on kyo-jsonrpc with typed tools, prompts, and resources     |
 | [kyo-lsp](kyo-lsp/README.md)            | ✅  | ✅  | ✅     | ✅   | Language Server Protocol 3.17 servers and clients with typed handlers, documents, progress, and cancel     |
 | [kyo-compiler](kyo-compiler/README.md)  | ✅  |     |        |      | Scala 3 presentation compiler pool for diagnostics, completions, hover, signatures, and symbols            |
@@ -411,7 +415,7 @@ Whatever you keep from your current stack, there is a bridge. Bidirectional brid
 
 ### Dev tools
 
-CLI-parser bridge, README example validation, runnable end-to-end programs, and the cross-runtime benchmark suite.
+CLI-parser bridge, README example validation, runnable end-to-end programs, and the cross-runtime benchmark suite. kyo-examples and kyo-bench build and run from the repository only; they publish no artifact.
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
