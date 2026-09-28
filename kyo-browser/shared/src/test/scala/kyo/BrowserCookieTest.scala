@@ -270,7 +270,7 @@ class BrowserCookieTest extends BrowserTest:
                                 case Some(c) =>
                                     c.expires match
                                         case Present(actual) =>
-                                            val deltaMillis = math.abs(((actual - expected): Duration).toMillis)
+                                            val deltaMillis = actual.max(expected).minusOrZero(actual.min(expected)).toMillis
                                             assert(
                                                 deltaMillis < 1000,
                                                 s"expected expires within 1s of $expected but got $actual (delta=${deltaMillis}ms)"
@@ -480,6 +480,23 @@ class BrowserCookieTest extends BrowserTest:
                         result == Absent,
                         s"expected Absent for text-only button (heuristic must not falsely fire on text content); got $result"
                     )
+                }
+            }
+        }
+    }
+
+    // The banner stays after the click, so only the deadline ends the wait; a deadline measured on the frozen Date.now never arrives.
+    "tryAcceptCookies times out on a banner that stays while the page's wall clock stands still" in {
+        withBrowser {
+            onPage(
+                """<div id="banner"><button id="cookie-accept">Accept</button></div>
+                  |<script>Date.now = function() { return 1700000000000; };</script>""".stripMargin
+            ) {
+                Browser.withConfig(_.loadSchedule(Schedule.fixed(100.millis).maxDuration(1.second))) {
+                    Abort.run[BrowserReadException](Browser.tryAcceptCookies)
+                }.map {
+                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case other                                                => fail(s"expected the banner wait to time out, got $other")
                 }
             }
         }

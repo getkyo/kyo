@@ -163,9 +163,19 @@ object Duration:
             val sum: Long = self.toLong + that.toLong
             if sum >= 0 then sum else Duration.Infinity
 
-        infix def -(that: Duration): Duration =
-            val diff: Long = self.toLong - that.toLong
-            if diff > 0 then diff else Duration.Zero
+        /** `self` less `that`, or `Absent` when `that` is longer.
+          *
+          * A duration is a magnitude, so a longer `that` has no answer: the caller decides what that means, or asks [[minusOrZero]] for the
+          * clamp. `Infinity` less any finite duration is `Infinity`.
+          */
+        def minus(that: Duration): Maybe[Duration] =
+            if that > self then Absent
+            else if self == Duration.Infinity && that != Duration.Infinity then Present(Duration.Infinity)
+            else Present(self.toLong - that.toLong)
+
+        /** `self` less `that`, or `Zero` when `that` is longer: [[minus]] with the clamp named at the call site. */
+        def minusOrZero(that: Duration): Duration =
+            minus(that).getOrElse(Duration.Zero)
 
         infix def *(factor: Double): Duration =
             if factor <= 0 || self.toLong <= 0L then Duration.Zero

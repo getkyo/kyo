@@ -2221,11 +2221,16 @@ object Browser:
     def setViewport(width: Int, height: Int, deviceScaleFactor: Double = 1.0)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         MutationSettlement.afterAction {
             Env.use[BrowserTab] { tab =>
-                // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
-                // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
-                tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
-                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
-                )
+                // Cache write FIRST, then issue the CDP call: writing after the reply leaves the cache stale when an interrupt
+                // lands between a reply the browser already acted on and the write. A failed call rolls the cache back, since
+                // the next scoped call restores whatever the cache holds on its exit.
+                tab.viewportOverride.getAndSet(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).map { prior =>
+                    Abort.run[BrowserReadException](
+                        CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
+                    ).map { result =>
+                        (if result.isSuccess then Kyo.unit else tab.viewportOverride.set(prior)).andThen(Abort.get(result))
+                    }
+                }
             }
         }(Absent)
 
@@ -2249,9 +2254,10 @@ object Browser:
       * Use this instead of `setViewport(w, h).andThen(...)` when you want the override bounded to a specific block. Composes naturally with
       * the rest of the API: viewport-dependent assertions inside `body` see the override, code after `body` does not.
       *
-      * The prior override (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior override was active at entry, it
-      * is re-applied via `setDeviceMetricsOverride` carrying that prior override's own `deviceScaleFactor`; otherwise the override is cleared
-      * via `clearDeviceMetricsOverride`. This lets nested `withViewport` calls compose correctly in LIFO order. The apply settles via
+      * The prior override (if any) is read at entry from the cache on the BrowserTab. On exit, if a prior override was active it is
+      * re-applied via `setDeviceMetricsOverride` carrying that prior override's own `deviceScaleFactor`; otherwise the override is cleared
+      * via `clearDeviceMetricsOverride`. The cache returns to the prior value on exit even when the override command failed. This lets
+      * nested `withViewport` calls compose correctly in LIFO order. The apply settles via
       * `MutationSettlement.afterAction` before `body` runs; the restore on teardown does not add settlement.
       */
     def withViewport[A, S](width: Int, height: Int, deviceScaleFactor: Double = 1.0)(body: A < (Browser & S))(using
@@ -2261,25 +2267,28 @@ object Browser:
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
                     val restore =
-                        tab.viewportOverride.set(prior).andThen(
-                            prior match
-                                case Present(vo) =>
-                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height, vo.dpr))
-                                case Absent =>
-                                    CdpBackend.clearDeviceMetricsOverride(tab.session)
-                        )
-                    // The override is owed its restore on this scope; the restore registers as the override's reply
-                    // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
-                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-                        MutationSettlement.afterAction {
-                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
-                                tab.session.acquire[ViewportParams, Unit](
-                                    finalizer,
-                                    "Emulation.setDeviceMetricsOverride",
-                                    ViewportParams(width, height, deviceScaleFactor)
-                                )(_ => restore)
-                            )
-                        }(Absent)
+                        prior match
+                            case Present(vo) =>
+                                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height, vo.dpr))
+                            case Absent =>
+                                CdpBackend.clearDeviceMetricsOverride(tab.session)
+                    // The cache rollback is registered before the cache write and does not depend on the override's
+                    // reply: the next scoped call reads the cache as its prior, so a cache left claiming an override the
+                    // browser rejected or never received makes that call's exit restore a viewport nobody set.
+                    Scope.ensure(tab.viewportOverride.set(prior)).andThen {
+                        // The override is owed its restore on this scope; the restore registers as the override's reply
+                        // arrives, so `finalizer` is named here rather than read from the settlement wait's inner scope.
+                        ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                            MutationSettlement.afterAction {
+                                tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                                    tab.session.acquire[ViewportParams, Unit](
+                                        finalizer,
+                                        "Emulation.setDeviceMetricsOverride",
+                                        ViewportParams(width, height, deviceScaleFactor)
+                                    )(_ => restore)
+                                )
+                            }(Absent)
+                        }
                     }.andThen(body)
                 }
             }
@@ -2309,30 +2318,32 @@ object Browser:
             Scope.run {
                 tab.emulationOverride.get.map { prior =>
                     val restore =
-                        tab.emulationOverride.set(prior).andThen(
-                            prior match
-                                case Present(s) =>
-                                    CdpBackend.setEmulatedMedia(
-                                        tab.session,
-                                        emulatedMediaParams(s.media, s.colorScheme, s.reducedMotion)
-                                    )
-                                case Absent =>
-                                    // No prior override: clear all media emulation so the host's real values return. An empty
-                                    // features list with empty media drops every prefers-* override back to the environment value.
-                                    CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
-                        )
-                    ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
-                        MutationSettlement.afterAction {
-                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
-                                colorScheme.map(_.wire),
-                                media.map(_.wire),
-                                reducedMotion
-                            ))).andThen(
-                                tab.session.acquire[SetEmulatedMediaParams, Unit](finalizer, "Emulation.setEmulatedMedia", params)(_ =>
-                                    restore
+                        prior match
+                            case Present(s) =>
+                                CdpBackend.setEmulatedMedia(
+                                    tab.session,
+                                    emulatedMediaParams(s.media, s.colorScheme, s.reducedMotion)
                                 )
-                            )
-                        }(Absent)
+                            case Absent =>
+                                // No prior override: clear all media emulation so the host's real values return. An empty
+                                // features list with empty media drops every prefers-* override back to the environment value.
+                                CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
+                    // Registered before the cache write and independent of the override's reply: the next scoped call reads
+                    // the cache as its prior, so a stale entry makes that call's exit restore media nobody set.
+                    Scope.ensure(tab.emulationOverride.set(prior)).andThen {
+                        ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                            MutationSettlement.afterAction {
+                                tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
+                                    colorScheme.map(_.wire),
+                                    media.map(_.wire),
+                                    reducedMotion
+                                ))).andThen(
+                                    tab.session.acquire[SetEmulatedMediaParams, Unit](finalizer, "Emulation.setEmulatedMedia", params)(_ =>
+                                        restore
+                                    )
+                                )
+                            }(Absent)
+                        }
                     }.andThen(body)
                 }
             }
@@ -2748,17 +2759,10 @@ object Browser:
                 val client = tab.session
                 // Key the handler map by CDP session ID so concurrent tabs don't clobber each other's entries.
                 val sidKey = tab.sessionId.value
-                client.dialogHandlers.getAndUpdate(m => m.update(sidKey, (accept, promptText))).map { previousMap =>
-                    val restore = client.dialogHandlers.getAndUpdate { m =>
-                        previousMap.get(sidKey) match
-                            case Present(prev) => m.update(sidKey, prev)
-                            case Absent        => m.remove(sidKey)
-                    }.unit
-                    // `Scope.run + Scope.ensure` (not `Sync.ensure`): `Sync.ensure` doesn't fire on Abort short-circuits and would
-                    // leak the per-session handler. The inner `Scope.run` bounds the cleanup to this call so nested `withDialogs`
-                    // calls keep their LIFO restore semantics.
-                    Scope.run(Scope.ensure(restore).andThen(v))
-                }
+                // `Scope.run + Scope.ensure` (not `Sync.ensure`): `Sync.ensure` doesn't fire on Abort short-circuits and would
+                // leak the per-session handler. The inner `Scope.run` bounds the cleanup to this call so nested `withDialogs`
+                // calls keep their LIFO restore semantics.
+                Scope.run(installSessionEntry(client.dialogHandlers, sidKey, (accept, promptText)).andThen(v))
             }
 
         /** Captures every JavaScript dialog event (`alert`, `confirm`, `prompt`, `beforeunload`) observed during `body` into an in-memory
@@ -2784,21 +2788,35 @@ object Browser:
                 val client = tab.session
                 val sidKey = tab.sessionId.value
                 AtomicRef.init(Chunk.empty[Browser.DialogEvent]).map { recorder =>
-                    client.dialogRecorders.getAndUpdate(_.update(sidKey, recorder)).map { previousMap =>
-                        val restore = client.dialogRecorders.getAndUpdate { m =>
-                            previousMap.get(sidKey) match
-                                case Present(prev) => m.update(sidKey, prev)
-                                case Absent        => m.remove(sidKey)
-                        }.unit
-                        Scope.run {
-                            Scope.ensure(restore).andThen(body).map { result =>
-                                recorder.get.map(events => (events, result))
-                            }
+                    Scope.run {
+                        installSessionEntry(client.dialogRecorders, sidKey, recorder).andThen(body).map { result =>
+                            recorder.get.map(events => (events, result))
                         }
                     }
                 }
             }
     end withDialogs
+
+    /** Sets `key` to `value` in a per-session registry until the enclosing scope ends, then puts back the entry `key` had before.
+      *
+      * The write captures the previous entry atomically and its restore is registered in the step that delivers it, so no interrupt
+      * separates a written entry from its restore.
+      */
+    private def installSessionEntry[V](registry: AtomicRef[Dict[String, V]], key: String, value: V)(using
+        Frame
+    ): Unit < (Sync & Scope) =
+        Scope.acquireRelease(registry.getAndUpdate(_.update(key, value)))(previous =>
+            restoreSessionEntry(registry, key, previous.get(key))
+        ).unit
+
+    private def restoreSessionEntry[V](registry: AtomicRef[Dict[String, V]], key: String, previous: Maybe[V])(using
+        Frame
+    ): Unit < Sync =
+        registry.updateAndGet { m =>
+            previous match
+                case Present(prev) => m.update(key, prev)
+                case Absent        => m.remove(key)
+        }.unit
 
     // --- Frames ---
 
@@ -3023,9 +3041,9 @@ object Browser:
       * Use this for blocks that need to capture downloads without leaving the policy "allow" after the block returns. Composes with
       * [[onDownload]]: subscribe before this block, then trigger downloads inside.
       *
-      * The prior download policy (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior policy was active at
-      * entry, it is re-applied via `setDownloadBehavior`; otherwise the policy is reset to `Deny` (Chrome's launch-time default). This
-      * lets nested `withDownloads` calls compose correctly.
+      * The prior download policy (if any) is read at entry from the cache on the BrowserTab. On exit, if a prior policy was active it is
+      * re-applied via `setDownloadBehavior`; otherwise the policy is reset to `Deny` (Chrome's launch-time default). The cache returns to
+      * the prior value on exit even when the policy command failed. This lets nested `withDownloads` calls compose correctly.
       */
     def withDownloads[A, S](toPath: String)(body: A < (Browser & S))(using
         Frame
@@ -3034,14 +3052,16 @@ object Browser:
             Scope.run {
                 tab.downloadPolicy.get.map { prior =>
                     val restore =
-                        tab.downloadPolicy.set(prior).andThen(
-                            prior match
-                                case Present((behavior, p)) =>
-                                    PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, p)
-                                case Absent =>
-                                    PageDownload.setDownloadBehavior(tab.session, Browser.DownloadBehavior.Deny.toInternal, Absent)
-                        )
-                    recordDownloadPolicy(tab, Browser.DownloadBehavior.Allow, Present(toPath)).andThen(
+                        prior match
+                            case Present((behavior, p)) =>
+                                PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, p)
+                            case Absent =>
+                                PageDownload.setDownloadBehavior(tab.session, Browser.DownloadBehavior.Deny.toInternal, Absent)
+                    // Registered before the cache write and independent of the policy's reply: the next scoped call reads
+                    // the cache as its prior, so a stale entry makes that call's exit restore a policy nobody set.
+                    Scope.ensure(tab.downloadPolicy.set(prior)).andThen(
+                        recordDownloadPolicy(tab, Browser.DownloadBehavior.Allow, Present(toPath))
+                    ).andThen(
                         PageDownload.acquireDownloadBehavior(
                             tab.session,
                             Browser.DownloadBehavior.Allow.toInternal,
@@ -3066,9 +3086,15 @@ object Browser:
         Frame
     ): Unit < (Browser & Abort[BrowserReadException]) =
         Env.use[BrowserTab] { tab =>
-            recordDownloadPolicy(tab, behavior, toPath).andThen(
-                PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath)
-            )
+            tab.downloadPolicy.get.map { prior =>
+                // A failed call rolls the cache back, since the next scoped call restores whatever the cache holds on its exit.
+                recordDownloadPolicy(tab, behavior, toPath).andThen(
+                    Abort.run[BrowserReadException](PageDownload.setDownloadBehavior(tab.session, behavior.toInternal, toPath)).map {
+                        result =>
+                            (if result.isSuccess then Kyo.unit else tab.downloadPolicy.set(prior)).andThen(Abort.get(result))
+                    }
+                )
+            }
         }
 
     private def recordDownloadPolicy(tab: BrowserTab, behavior: Browser.DownloadBehavior, toPath: Maybe[String])(using
@@ -3135,22 +3161,19 @@ object Browser:
                 // the subscription. The trailing `Scope.run + Scope.ensure` (mirroring [[withDialogs.install]]) unregisters the dispatcher
                 // and closes the channel on body completion (success, failure, OR interruption). The drainer fiber is `Scope`-bound via
                 // `Fiber.init`, so it is interrupted on scope exit.
-                client.downloadEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                    val restoreDispatcher = client.downloadEventDispatchers.getAndUpdate { m =>
-                        previousMap.get(sidKey) match
-                            case Present(prev) => m.update(sidKey, prev)
-                            case Absent        => m.remove(sidKey)
-                    }.unit
-                    Scope.run {
-                        Scope.ensure(restoreDispatcher).andThen(Scope.ensure(channel.close.unit)).andThen {
-                            Fiber.init {
-                                // Discharge `Env[BrowserTab]` per element so handlers that observe `Browser`
-                                // (e.g. screenshot the page that triggered the download) resolve through the
-                                // parent tab's session. The drainer fiber's effect row does NOT inherit the
-                                // outer Env, so we wrap each invocation.
-                                Abort.run[Closed](channel.stream().foreach(de => Env.run(tab)(f(de)))).unit
-                            }.andThen(action)
-                        }
+                Scope.run {
+                    Scope.ensure(channel.close.unit).andThen(installSessionEntry(
+                        client.downloadEventDispatchers,
+                        sidKey,
+                        handler
+                    )).andThen {
+                        Fiber.init {
+                            // Discharge `Env[BrowserTab]` per element so handlers that observe `Browser`
+                            // (e.g. screenshot the page that triggered the download) resolve through the
+                            // parent tab's session. The drainer fiber's effect row does NOT inherit the
+                            // outer Env, so we wrap each invocation.
+                            Abort.run[Closed](channel.stream().foreach(de => Env.run(tab)(f(de)))).unit
+                        }.andThen(action)
                     }
                 }
             }
@@ -3252,18 +3275,15 @@ object Browser:
                                 Abort.run[Closed](channel.offer(msg)).unit
                             case Absent => Kyo.unit
                         }
-                    client.consoleEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                        val restoreDispatcher = client.consoleEventDispatchers.getAndUpdate { m =>
-                            previousMap.get(sidKey) match
-                                case Present(prev) => m.update(sidKey, prev)
-                                case Absent        => m.remove(sidKey)
-                        }.unit
-                        Scope.run {
-                            Scope.ensure(restoreDispatcher).andThen(Scope.ensure(channel.close.unit)).andThen {
-                                Fiber.init {
-                                    Abort.run[Closed](channel.stream().foreach(msg => Env.run(tab)(f(msg)))).unit
-                                }.andThen(action)
-                            }
+                    Scope.run {
+                        Scope.ensure(channel.close.unit).andThen(installSessionEntry(
+                            client.consoleEventDispatchers,
+                            sidKey,
+                            handler
+                        )).andThen {
+                            Fiber.init {
+                                Abort.run[Closed](channel.stream().foreach(msg => Env.run(tab)(f(msg)))).unit
+                            }.andThen(action)
                         }
                     }
                 }
@@ -3367,44 +3387,41 @@ object Browser:
                 case Browser.ScreenshotFormat.Png  => "png"
                 case Browser.ScreenshotFormat.Jpeg => "jpeg"
                 case Browser.ScreenshotFormat.Webp => "jpeg"
+            // Two readings of the start: frame offsets are measured against Chrome's own wall-clock frame timestamps, so they take the
+            // wall reading, while the duration cap is a duration and takes the stopwatch.
             Clock.now.map { t0 =>
-                AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
-                    // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
-                    // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
-                    // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
-                    AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
-                        // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
-                        // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
-                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
-                        // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
-                        // elapsed ms), so the two reported numbers always share the same unit.
-                        val handler: CdpEvent.Generic => Unit < Sync = ev =>
-                            parseScreencastFrame(ev, t0).map {
-                                case Present((frame, sessionId)) =>
-                                    Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
-                                        Abort.run[BrowserReadException](
-                                            CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
-                                        ).unit
-                                    ).andThen(collected.updateAndGet(appendScreencastFrame(_, frame))).map { cur =>
-                                        def poison(cap: (Int, Int)): Unit < Sync =
-                                            poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
-                                        if cur.size > maxFrames then poison((maxFrames, cur.size))
-                                        else
-                                            Clock.now.map { now =>
-                                                val elapsedMs = now.toJava.toEpochMilli - t0.toJava.toEpochMilli
-                                                if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
-                                                else Kyo.unit
-                                            }
-                                        end if
-                                    }
-                                case Absent => Kyo.unit
-                            }
-                        session.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                            val restore = session.screencastEventDispatchers.getAndUpdate { m =>
-                                previousMap.get(sidKey) match
-                                    case Present(prev) => m.update(sidKey, prev)
-                                    case Absent        => m.remove(sidKey)
-                            }.unit
+                Clock.stopwatch.map { capWatch =>
+                    AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
+                        // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
+                        // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
+                        // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
+                        AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
+                            // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
+                            // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
+                            // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
+                            // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
+                            // elapsed ms), so the two reported numbers always share the same unit.
+                            val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                                parseScreencastFrame(ev, t0).map {
+                                    case Present((frame, sessionId)) =>
+                                        Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
+                                            Abort.run[BrowserReadException](
+                                                CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
+                                            ).unit
+                                        ).andThen(collected.updateAndGet(appendScreencastFrame(_, frame))).map { cur =>
+                                            def poison(cap: (Int, Int)): Unit < Sync =
+                                                poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
+                                            if cur.size > maxFrames then poison((maxFrames, cur.size))
+                                            else
+                                                capWatch.elapsed.map { elapsed =>
+                                                    val elapsedMs = elapsed.toMillis
+                                                    if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
+                                                    else Kyo.unit
+                                                }
+                                            end if
+                                        }
+                                    case Absent => Kyo.unit
+                                }
                             // Best-effort stop on teardown: await the send so the cast is actually ended on normal completion,
                             // but swallow any read failure so a connection already tearing down (interruption) does not re-raise
                             // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
@@ -3417,9 +3434,20 @@ object Browser:
                                 // orphaned to the bounded event channel, then drop the dispatcher. On failure or
                                 // interruption drop the dispatcher first so local cleanup is prompt and independent of
                                 // the best-effort stop (the connection is tearing down anyway).
-                                Scope.ensure {
-                                    case Absent     => stop.andThen(restore)
-                                    case Present(_) => restore.andThen(stop)
+                                ContextEffect.suspendWith(Tag[Scope]) { finalizer =>
+                                    session.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).ensureMap { previousMap =>
+                                        // Unsafe: the release orders its two cleanups by the scope's outcome, which
+                                        // `Scope.acquireRelease` does not pass, so it is registered the way that method registers:
+                                        // in the step that delivers the previous registry, where no interrupt can separate the
+                                        // written dispatcher from its restore.
+                                        import AllowUnsafe.embrace.danger
+                                        val restore =
+                                            restoreSessionEntry(session.screencastEventDispatchers, sidKey, previousMap.get(sidKey))
+                                        finalizer.ensureUnsafe {
+                                            case Absent     => stop.andThen(restore)
+                                            case Present(_) => restore.andThen(stop)
+                                        }
+                                    }
                                 }.andThen {
                                     CdpBackend.startScreencast(
                                         session,

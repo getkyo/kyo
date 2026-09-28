@@ -149,7 +149,10 @@ have run (`scheduler/IOTask.scala`, the `Status` states and `abandon`).
 detached fiber and does not wait for it: by decision there is no backpressure on
 abnormal exit, so a joiner can observe an interrupted fiber's result while an async
 finalizer is still running (`ScopeTest`, the pending "a scope short-circuited by an
-outer handler awaits its async release before the next effect"). A test that needs
+outer handler awaits its async release before the next effect"). The decision is
+marked `Open:` at `Finalizer.close`; a change that meets its consequence adds a
+`pendingUntilFixed` leaf whose reason carries the marker and whose body proves the
+cause, rather than working around it. A test that needs
 an async finalizer finished waits on a latch that finalizer releases. An interrupt
 is a CAS on the task's status word, and the parent's link to a child is registered
 before the child is scheduled, so an interrupt cannot miss a child.

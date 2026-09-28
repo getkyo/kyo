@@ -15,9 +15,11 @@ object Scheduler {
   * reports the snapshot's age, which is how a blocked event loop shows from outside the process. The counters are kept only while a status
   * file is configured, so the default path does no extra work per slice.
   */
-class Scheduler(statusFile: String, statusFileMs: Int, nowMs: () => Long) {
+class Scheduler(statusFile: String, statusFileMs: Int, nowMs: () => Long, sliceMs: () => Long) {
 
-    def this() = this(topStatusFile(), topStatusFileMs(), () => System.currentTimeMillis())
+    // Two sources: `ts` is a calendar time ci-monitor compares with its own clock to age the snapshot, while a slice is a duration and
+    // must not move with a wall-clock step.
+    def this() = this(topStatusFile(), topStatusFileMs(), () => System.currentTimeMillis(), () => InternalClock.monotonicMillis())
 
     private val timeSlice = timeSliceMs()
     private val clock     = new InternalClock()
@@ -47,9 +49,9 @@ class Scheduler(statusFile: String, statusFileMs: Int, nowMs: () => Long) {
         MacrotaskExecutor.execute { () =>
             ran += 1
             val now    = clock.currentMillis()
-            val start  = nowMs()
+            val start  = sliceMs()
             val result = t.run(now, clock, now + timeSlice)
-            val slice  = nowMs() - start
+            val slice  = sliceMs() - start
             if (slice > maxSliceMs) maxSliceMs = slice
             if (result == Task.Preempted) {
                 preempted += 1

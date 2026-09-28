@@ -191,6 +191,64 @@ absent_sockets_out=$(
 )
 expect_eq "missing netstat" "$absent_sockets_out" ""
 
+# Commit pressure: `typeperf` prints a CSV header naming the counters, then one row per sample with a quoted
+# timestamp and the values in bytes, then its status lines. The header starts with a quote too, so the parse
+# must key on numeric values rather than on the leading quote.
+cat > "$test_dir/bin/typeperf" <<'STUB'
+#!/usr/bin/env bash
+printf '"(PDH-CSV 4.0)","\\\\RUNNER\\Memory\\Committed Bytes","\\\\RUNNER\\Memory\\Commit Limit","\\\\RUNNER\\Memory\\Pool Nonpaged Bytes"\r\n'
+printf '"09/27/2026 14:02:10.123","8589934592.000000","17179869184.000000","209715200.000000"\r\n'
+printf 'Exiting, please wait...\r\nThe command completed successfully.\r\n'
+STUB
+chmod +x "$test_dir/bin/typeperf"
+
+commit_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 "$bash_bin" -c "
+        $(sed -n '/^commit_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        commit_headline
+    "
+)
+expect_eq "windows commit" "$commit_out" 'commitMB=8192 commitLimitMB=16384 nonpagedMB=200'
+
+# A typeperf that printed its header and then failed must read as unsampled: the header's counter names would
+# otherwise parse as zero, which says the commit charge is fine on exactly the leg that cannot be sampled.
+cat > "$test_dir/bin/typeperf" <<'STUB'
+#!/usr/bin/env bash
+printf '"(PDH-CSV 4.0)","\\\\RUNNER\\Memory\\Committed Bytes","\\\\RUNNER\\Memory\\Commit Limit","\\\\RUNNER\\Memory\\Pool Nonpaged Bytes"\r\n'
+echo "Error: The specified object was not found on the computer." >&2
+exit 1
+STUB
+chmod +x "$test_dir/bin/typeperf"
+
+unsampled_commit_out=$(
+    PATH="$test_dir/bin:$PATH" OS=MINGW64_NT-10.0 "$bash_bin" -c "
+        $(sed -n '/^commit_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        commit_headline
+    " || fail "a failing typeperf made commit_headline exit non-zero"
+)
+expect_eq "unsampled commit" "$unsampled_commit_out" 'commitMB=? commitLimitMB=? nonpagedMB=?'
+case "$unsampled_commit_out" in
+    *'commitMB=0'*) fail "a failing typeperf reported a zero commit charge instead of an unsampled field" ;;
+esac
+
+# Absent typeperf must print nothing and exit zero, like the other Windows-only headlines.
+absent_commit_out=$(
+    PATH="$test_dir/empty" OS=MINGW64_NT-10.0 "$bash_bin" -c "
+        $(sed -n '/^commit_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        commit_headline
+    " || fail "a missing typeperf made commit_headline exit non-zero"
+)
+expect_eq "missing typeperf" "$absent_commit_out" ""
+
+# Off Windows the headline is empty whatever is on the PATH.
+posix_commit_out=$(
+    PATH="$test_dir/bin:$PATH" OS=Linux "$bash_bin" -c "
+        $(sed -n '/^commit_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        commit_headline
+    "
+)
+expect_eq "posix commit" "$posix_commit_out" ""
+
 # The scheduler snapshot carries its write time as ts= (epoch millis). The age is what exposes a writer
 # that stopped: on JS the writer is a timer on the event loop, so a blocked loop stops refreshing the file.
 cat > "$test_dir/bin/date" <<'STUB'

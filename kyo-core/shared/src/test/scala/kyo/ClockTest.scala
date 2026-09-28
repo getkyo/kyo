@@ -14,20 +14,20 @@ class ClockTest extends kyo.test.Test[Any]:
 
         "now" in {
             Clock.now.map { now =>
-                assert(now - javaNow() < 1.milli)
+                assert(now.minusOrZero(javaNow()) < 1.milli)
             }
         }
 
         "nowWith" in {
             Clock.nowWith { now =>
-                assert(now - javaNow() < 1.milli)
+                assert(now.minusOrZero(javaNow()) < 1.milli)
             }
         }
 
         "unsafe now" in {
             import AllowUnsafe.embrace.danger
             val now = Clock.live.unsafe.now()
-            assert(now - javaNow() < 1.milli)
+            assert(now.minusOrZero(javaNow()) < 1.milli)
         }
 
         "now at epoch" in {
@@ -217,6 +217,83 @@ class ClockTest extends kyo.test.Test[Any]:
                 }
             }
         }
+
+        "a wall-clock step" - {
+            import AllowUnsafe.embrace.danger
+
+            val start = Instant.Epoch + 1000.days
+
+            def stepped[A](f: (Clock.TimeControl, Clock, java.util.concurrent.atomic.AtomicReference[Instant]) => A < (Async & Abort[Any]))(
+                using Frame
+            ): A < (Async & Abort[Any]) =
+                Clock.withTimeControl { control =>
+                    Clock.get.map { controlled =>
+                        val wall = new java.util.concurrent.atomic.AtomicReference(start)
+                        f(control, Clock(Clock.Unsafe.withWall(controlled.unsafe)(() => wall.get())), wall)
+                    }
+                }
+
+            "forward leaves timeLeft and isOverdue alone" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start + 1.hour))
+                        left     <- deadline.timeLeft
+                        overdue  <- deadline.isOverdue
+                    yield
+                        assert(left == 10.seconds)
+                        assert(!overdue)
+                }
+            }
+
+            "backward leaves timeLeft alone" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start - 1.hour))
+                        left     <- deadline.timeLeft
+                    yield assert(left == 10.seconds)
+                }
+            }
+
+            "backward leaves an overdue deadline overdue" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(5.seconds)
+                        _        <- control.advance(6.seconds)
+                        _        <- Sync.defer(wall.set(start - 1.hour))
+                        overdue  <- deadline.isOverdue
+                        left     <- deadline.timeLeft
+                    yield
+                        assert(overdue)
+                        assert(left == Duration.Zero)
+                }
+            }
+
+            "monotonic progress still drains the deadline" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(10.seconds)
+                        _        <- Sync.defer(wall.set(start + 1.day))
+                        _        <- control.advance(4.seconds)
+                        left     <- deadline.timeLeft
+                    yield assert(left == 6.seconds)
+                }
+            }
+
+            "an infinite deadline is never overdue" in {
+                stepped { (control, clock, wall) =>
+                    for
+                        deadline <- clock.deadline(Duration.Infinity)
+                        _        <- Sync.defer(wall.set(Instant.Max))
+                        overdue  <- deadline.isOverdue
+                        left     <- deadline.timeLeft
+                    yield
+                        assert(!overdue)
+                        assert(left == Duration.Infinity)
+                }
+            }
+        }
     }
 
     "Integration" - {
@@ -335,7 +412,7 @@ class ClockTest extends kyo.test.Test[Any]:
                         _     <- control.advance(40.millis)
                         _     <- fiber.get
                         end   <- Clock.now
-                    yield assert(end - start == 80.millis)
+                    yield assert(end.minus(start) == Present(80.millis))
                 }
             }
         }
@@ -349,7 +426,7 @@ class ClockTest extends kyo.test.Test[Any]:
                         _     <- control.advance(20.millis)
                         _     <- fiber.get
                         end   <- Clock.now
-                    yield assert(end - start == 2.millis)
+                    yield assert(end.minus(start) == Present(2.millis))
                 }
             }
         }
@@ -361,10 +438,255 @@ class ClockTest extends kyo.test.Test[Any]:
                         start <- Clock.now
                         _     <- control.advance(5.seconds)
                         end   <- Clock.now
-                    yield
-                        val elapsed = end - start
-                        assert(elapsed == 10.seconds)
+                    yield assert(end.minus(start) == Present(10.seconds))
                 }
+            }
+        }
+    }
+
+    "TimeOffset" - {
+        import Clock.TimeOffset
+
+        val start = Instant.Epoch + 1000.days
+
+        "ahead and behind are signed nanoseconds" in {
+            assert(TimeOffset.ahead(5.seconds).toNanos == 5.seconds.toNanos)
+            assert(TimeOffset.behind(5.seconds).toNanos == -(5.seconds.toNanos))
+            assert(TimeOffset.ahead(Duration.Zero) == TimeOffset.Zero)
+            assert(TimeOffset.behind(Duration.Zero) == TimeOffset.Zero)
+        }
+
+        "between is to minus from" in {
+            assert(TimeOffset.between(start, start + 3.seconds) == TimeOffset.ahead(3.seconds))
+            assert(TimeOffset.between(start + 3.seconds, start) == TimeOffset.behind(3.seconds))
+            assert(TimeOffset.between(start, start) == TimeOffset.Zero)
+        }
+
+        "fromNanos round-trips toNanos" in {
+            val nanos = Seq(0L, 1L, -1L, 7.days.toNanos, -(7.days.toNanos), Long.MaxValue, -Long.MaxValue)
+            assert(nanos.map(n => TimeOffset.fromNanos(n).toNanos) == nanos)
+        }
+
+        "fromNanos clamps Long.MinValue so the offset has a negation" in {
+            assert(TimeOffset.fromNanos(Long.MinValue).toNanos == -Long.MaxValue)
+        }
+    }
+
+    "withTimeOffset" - {
+        import Clock.TimeOffset
+
+        val start = Instant.Epoch + 1000.days
+
+        "zero offset keeps the current clock" in {
+            for
+                outer <- Clock.get
+                inner <- Clock.withTimeOffset(TimeOffset.Zero)(Clock.get)
+            yield assert(inner eq outer)
+        }
+
+        "ahead displaces now forward" in {
+            Clock.withTimeControl { control =>
+                for
+                    _   <- control.set(start)
+                    now <- Clock.withTimeOffset(TimeOffset.ahead(5.minutes))(Clock.now)
+                yield assert(now == start + 5.minutes)
+            }
+        }
+
+        "behind displaces now backward" in {
+            Clock.withTimeControl { control =>
+                for
+                    _   <- control.set(start)
+                    now <- Clock.withTimeOffset(TimeOffset.behind(5.minutes))(Clock.now)
+                yield assert(now == start - 5.minutes)
+            }
+        }
+
+        "now follows the control plus the offset" in {
+            Clock.withTimeControl { control =>
+                for
+                    _        <- control.set(start)
+                    readings <- Clock.withTimeOffset(TimeOffset.behind(1.hour)) {
+                        for
+                            before <- Clock.now
+                            _      <- control.advance(10.seconds)
+                            after  <- Clock.now
+                        yield (before, after)
+                    }
+                yield assert(readings == (start - 1.hour, start - 1.hour + 10.seconds))
+            }
+        }
+
+        "nowMonotonic is the underlying clock's" in {
+            Clock.withTimeControl { control =>
+                for
+                    _       <- control.set(start)
+                    outside <- Clock.nowMonotonic
+                    inside  <- Clock.withTimeOffset(TimeOffset.ahead(1.day))(Clock.nowMonotonic)
+                    behind  <- Clock.withTimeOffset(TimeOffset.behind(1.day))(Clock.nowMonotonic)
+                yield
+                    assert(inside == outside)
+                    assert(behind == outside)
+            }
+        }
+
+        "nested offsets sum" in {
+            Clock.withTimeControl { control =>
+                for
+                    _      <- control.set(start)
+                    nested <- Clock.withTimeOffset(TimeOffset.behind(3.seconds)) {
+                        Clock.withTimeOffset(TimeOffset.ahead(5.seconds))(Clock.now)
+                    }
+                    cancelled <- Clock.withTimeOffset(TimeOffset.ahead(2.hours)) {
+                        Clock.withTimeOffset(TimeOffset.behind(2.hours))(Clock.now)
+                    }
+                yield
+                    assert(nested == start + 2.seconds)
+                    assert(cancelled == start)
+            }
+        }
+
+        "nested offsets sum before saturating" in {
+            Clock.withTimeControl { control =>
+                for
+                    _   <- control.set(start)
+                    now <- Clock.withTimeOffset(TimeOffset.behind(Duration.Infinity)) {
+                        Clock.withTimeOffset(TimeOffset.ahead(Duration.Infinity))(Clock.now)
+                    }
+                yield assert(now == start)
+            }
+        }
+
+        "an infinite offset pins now at the instant bounds" in {
+            Clock.withTimeControl { control =>
+                for
+                    _      <- control.set(start)
+                    ahead  <- Clock.withTimeOffset(TimeOffset.ahead(Duration.Infinity))(Clock.now)
+                    behind <- Clock.withTimeOffset(TimeOffset.behind(Duration.Infinity))(Clock.now)
+                yield
+                    assert(ahead == Instant.Max)
+                    assert(behind == Instant.Min)
+            }
+        }
+
+        "a sleep fires when the control advances past its duration" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.behind(1.hour)) {
+                    for
+                        fiber <- Fiber.initUnscoped(Async.sleep(5.seconds))
+                        _     <- control.awaitPendingSleepers(1)
+                        _     <- control.advance(4.seconds)
+                        early <- fiber.done
+                        _     <- control.advance(1.second)
+                        _     <- fiber.get
+                    yield assert(!early)
+                }
+            }
+        }
+
+        "a sleep is not scaled by the offset" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.ahead(1.day)) {
+                    for
+                        clock     <- Clock.get
+                        stopwatch <- Clock.stopwatch
+                        fiber     <- clock.sleep(5.millis)
+                        _         <- control.advance(5.millis)
+                        _         <- fiber.get
+                        elapsed   <- stopwatch.elapsed
+                    yield assert(elapsed == 5.millis)
+                }
+            }
+        }
+
+        "stopwatch measures the underlying duration" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.behind(1.day)) {
+                    for
+                        stopwatch <- Clock.stopwatch
+                        _         <- control.advance(3.seconds)
+                        elapsed   <- stopwatch.elapsed
+                    yield assert(elapsed == 3.seconds)
+                }
+            }
+        }
+
+        "deadline measures the underlying duration" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.ahead(1.day)) {
+                    for
+                        deadline <- Clock.deadline(10.seconds)
+                        _        <- control.advance(3.seconds)
+                        left     <- deadline.timeLeft
+                        pending  <- deadline.isOverdue
+                        _        <- control.advance(8.seconds)
+                        overdue  <- deadline.isOverdue
+                    yield
+                        assert(left == 7.seconds)
+                        assert(!pending)
+                        assert(overdue)
+                }
+            }
+        }
+
+        "Async.timeout fires by duration" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.behind(1.day)) {
+                    for
+                        fiber   <- Fiber.initUnscoped(Abort.run[Timeout](Async.timeout(5.seconds)(Async.never[Int])))
+                        _       <- control.awaitPendingSleepers(1)
+                        _       <- control.advance(4.seconds)
+                        early   <- fiber.done
+                        _       <- control.advance(1.second)
+                        outcome <- fiber.get
+                    yield
+                        assert(!early)
+                        assert(outcome.isFailure)
+                }
+            }
+        }
+
+        "Async.timeout lets a body that finishes in time complete" in {
+            Clock.withTimeControl { control =>
+                Clock.withTimeOffset(TimeOffset.ahead(1.day)) {
+                    for
+                        fiber   <- Fiber.initUnscoped(Abort.run[Timeout](Async.timeout(5.seconds)(Async.delay(2.seconds)(42))))
+                        _       <- control.awaitPendingSleepers(2)
+                        _       <- control.advance(2.seconds)
+                        outcome <- fiber.get
+                    yield assert(outcome == Result.succeed(42))
+                }
+            }
+        }
+
+        "forked fibers read the displaced clock" in {
+            Clock.withTimeControl { control =>
+                for
+                    _   <- control.set(start)
+                    now <- Clock.withTimeOffset(TimeOffset.behind(2.hours)) {
+                        Fiber.initUnscoped(Clock.now).map(_.get)
+                    }
+                yield assert(now == start - 2.hours)
+            }
+        }
+
+        "withTimeControl inside the offset starts a new control" in {
+            Clock.withTimeControl { outer =>
+                for
+                    _      <- outer.set(start)
+                    result <- Clock.withTimeOffset(TimeOffset.ahead(1.hour)) {
+                        Clock.withTimeControl { inner =>
+                            for
+                                initial <- Clock.now
+                                _       <- inner.advance(1.second)
+                                after   <- Clock.now
+                            yield (outer.asInstanceOf[AnyRef] eq inner.asInstanceOf[AnyRef], initial, after)
+                        }
+                    }
+                    outerNow <- Clock.now
+                yield
+                    assert(result == (false, Instant.Epoch, Instant.Epoch + 1.second))
+                    assert(outerNow == start)
             }
         }
     }
@@ -394,7 +716,7 @@ class ClockTest extends kyo.test.Test[Any]:
     }
 
     def intervals(instants: Seq[Instant]): Seq[Duration] =
-        instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
+        instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1).minusOrZero(seq(0))).toSeq
 
     "repeatAtInterval" - {
         "with time control".notJs in {
@@ -505,7 +827,7 @@ class ClockTest extends kyo.test.Test[Any]:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 > time1)
-                    assert(time2 - time1 == 5.millis)
+                    assert(time2.minus(time1) == Present(5.millis))
             }
         }
 
@@ -515,7 +837,7 @@ class ClockTest extends kyo.test.Test[Any]:
                     time1 <- Clock.nowMonotonic
                     _     <- control.advance(5.seconds)
                     time2 <- Clock.nowMonotonic
-                yield assert(time2 - time1 == 5.seconds)
+                yield assert(time2.minus(time1) == Present(5.seconds))
             }
         }
 
@@ -528,7 +850,7 @@ class ClockTest extends kyo.test.Test[Any]:
                         _     <- control.advance(5.millis)
                         _     <- fiber.get
                         time2 <- Clock.nowMonotonic
-                    yield assert(time2 - time1 == 10.millis)
+                    yield assert(time2.minus(time1) == Present(10.millis))
                 }
             }
         }

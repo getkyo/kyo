@@ -1321,4 +1321,15 @@ class DomDragRuntimeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "browser timing is unmoved by a wall-clock step back" in {
+        val date     = scalajs.Dynamic.global.Date
+        val original = date.now
+        val before   = DomDragRuntime.BrowserTiming.nowMillis()
+        date.updateDynamic("now")((() => 0d): scalajs.Function0[Double])
+        val after =
+            try DomDragRuntime.BrowserTiming.nowMillis()
+            finally date.updateDynamic("now")(original)
+        assert(after >= before, s"the pending-drop clock went from $before back to $after with the wall clock")
+    }
+
 end DomDragRuntimeTest

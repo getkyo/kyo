@@ -1318,14 +1318,14 @@ class HttpClientTest extends BaseHttpTest:
                             Fiber.initUnscoped(client.sendWith(route, request)(_.status)).map { call =>
                                 pollUntil(attempts.get() >= 1).map { started =>
                                     assert(started, "the client must make the first attempt")
-                                    tc.advance(base - 1.milli).andThen {
+                                    tc.advance(base.minusOrZero(1.milli)).andThen {
                                         assert(
                                             attempts.get() == 1,
                                             s"a retry fired before the first ${base.show} delay elapsed: ${attempts.get()}"
                                         )
                                         releaseInto(2).map { retried =>
                                             assert(retried, "the first retry must fire once its delay elapses")
-                                            tc.advance(base * 2.0 - 1.milli).andThen {
+                                            tc.advance((base * 2.0).minusOrZero(1.milli)).andThen {
                                                 assert(
                                                     attempts.get() == 2,
                                                     s"the second retry fired before its ${(base * 2.0).show} delay elapsed: ${attempts.get()}"

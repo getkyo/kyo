@@ -50,6 +50,18 @@ class BrowserAssertionStabilityTest extends BrowserTest:
         }
     }
 
+    "assertCount with default stabilityWindow=100ms - the window elapses while the page's wall clock stands still" in {
+        withBrowser {
+            onPage(
+                "<ul><li class='x'>a</li><li class='x'>b</li></ul><script>Date.now = function() { return 1700000000000; };</script>"
+            ) {
+                Abort.run[BrowserReadException](Browser.assertCount(Browser.Selector.css("li.x"), 2)).map { outcome =>
+                    assert(outcome.isSuccess, s"a steady count never finished its stability window: $outcome")
+                }
+            }
+        }
+    }
+
     "assertCount with stabilityWindow=0 - explicit opt-out preserves first-match behaviour" in {
         withBrowser {
             onPage(

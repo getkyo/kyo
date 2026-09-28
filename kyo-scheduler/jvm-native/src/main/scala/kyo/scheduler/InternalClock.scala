@@ -4,24 +4,27 @@ import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 import scala.annotation.nowarn
 
-/** Low-resolution clock optimized for frequent access in the scheduler.
+/** Low-resolution monotonic clock optimized for frequent access in the scheduler.
   *
-  * While System.currentTimeMillis is accurate, calling it frequently creates significant overhead due to system calls. This clock uses a
-  * dedicated thread to update a volatile timestamp every millisecond, allowing other threads to read the current time without system calls.
+  * Reading the system time on every check creates significant overhead. This clock uses a dedicated thread to update a volatile reading
+  * every millisecond, allowing other threads to read the current time without that cost.
   *
   * The tradeoff of potentially being off by up to a millisecond is acceptable for scheduler operations like measuring task runtime and
   * detecting stalled workers. The performance benefit of avoiding system calls on every time check is substantial when processing thousands
   * of tasks per second.
+  *
+  * Every reading is a duration from an arbitrary origin, never a calendar time: the scheduler only subtracts readings, and a wall-clock
+  * step would make every running worker look stalled or hide a real stall.
   *
   * The clock self-corrects any drift by measuring the actual elapsed time between updates.
   *
   * @param executor
   *   Executor for running the update thread
   * @param now
-  *   Time source sampled on every update (default the system clock), overridable so a test drives the published value:
+  *   Time source sampled on every update (default monotonic milliseconds), overridable so a test drives the published value:
   *   `currentMillis()` then reports whatever this source last returned, independent of real time.
   */
-final case class InternalClock(executor: Executor, now: () => Long = () => System.currentTimeMillis()) {
+final case class InternalClock(executor: Executor, now: () => Long = () => InternalClock.monotonicMillis()) {
 
     @volatile private var _stop = false
 
@@ -37,11 +40,11 @@ final case class InternalClock(executor: Executor, now: () => Long = () => Syste
 
     /** Get the current time in milliseconds without making a system call.
       *
-      * This method is designed for frequent calls, returning the latest cached timestamp from the update thread. The returned time has
-      * millisecond resolution but may be up to one millisecond behind the system time.
+      * This method is designed for frequent calls, returning the latest cached reading from the update thread. The returned time has
+      * millisecond resolution but may be up to one millisecond behind the monotonic time.
       *
       * @return
-      *   Current time in milliseconds since epoch, accurate to within one millisecond
+      *   Monotonic milliseconds from an arbitrary origin, accurate to within one millisecond
       */
     def currentMillis(): Long = millis
 
@@ -69,4 +72,10 @@ final case class InternalClock(executor: Executor, now: () => Long = () => Syste
     @nowarn("msg=unused")
     private val gauge =
         statsScope.scope("clock").gauge("skew")((now() - millis).toDouble)
+}
+
+object InternalClock {
+
+    /** The scheduler's one source of elapsed time: monotonic milliseconds from an arbitrary origin, never a calendar time. */
+    def monotonicMillis(): Long = System.nanoTime() / 1000000L
 }

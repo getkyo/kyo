@@ -33,9 +33,17 @@ private[kyo] object SharedChrome:
             AtomicRef.Unsafe.init(Generation())
         end current
 
-        /** Returns the WebSocket debug URL of the shared Chrome process, launching it on first call. */
+        /** Returns the WebSocket debug URL of the shared Chrome process, launching it on first call.
+          *
+          * A launch that fails with [[BrowserSetupFailedException]] replaces the generation before the failure propagates, so the next
+          * call launches a fresh Chrome instead of returning the same failure. The call itself is not retried.
+          */
         def init(using Frame): String < (Async & Abort[BrowserSetupException]) =
-            Sync.Unsafe.defer(current.get()).map(generation => start(generation).andThen(generation.url.safe.get))
+            Sync.Unsafe.defer(current.get()).map { generation =>
+                Abort.recover[BrowserSetupFailedException](e => replace(generation).andThen(Abort.fail(e))) {
+                    start(generation).andThen(generation.url.safe.get)
+                }
+            }
 
         /** Runs `body` in a fresh tab of the shared Chrome, relaunching the Chrome once if it is gone before `body` has started.
           *
@@ -141,7 +149,7 @@ private[kyo] object SharedChrome:
             BrowserLauncher.killOrphans(pattern = BrowserLauncher.userDataDirPrefix, command = "pgrep")
     )
 
-    /** Returns the WebSocket debug URL of the shared Chrome process, launching it on first call. */
+    /** See [[Instance.init]]. */
     def init(using Frame): String < (Async & Abort[BrowserSetupException]) =
         shared.init
 

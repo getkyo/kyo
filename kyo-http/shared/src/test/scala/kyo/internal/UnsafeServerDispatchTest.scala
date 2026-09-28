@@ -1649,7 +1649,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         awaitIdleTimerArmed(inbound).map { armed =>
                             assert(armed, "the keep-alive restart must arm the idle timer")
                             // One millisecond short of the configured period, so the connection must still be open.
-                            tc.advance(idleTimeout - 1.milli).andThen {
+                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
                                 assert(!inbound.closed(), s"connection closed before the configured $idleTimeout elapsed")
                                 // The remaining millisecond reaches the deadline.
                                 tc.advance(1.milli).andThen {

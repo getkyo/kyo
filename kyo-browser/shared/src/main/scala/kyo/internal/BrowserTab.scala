@@ -118,9 +118,9 @@ private[kyo] object BrowserTabSetup:
             if ev.method == "Runtime.executionContextCreated" || ev.method == "Runtime.executionContextDestroyed" then
                 updateFrameContexts(tab, ev)
             else Kyo.unit
-        tab.backend.frameEventDispatchers.updateAndGet(_.update(key, handler)).andThen(
-            Scope.ensure(tab.backend.frameEventDispatchers.updateAndGet(_.remove(key)).unit)
-        )
+        Scope.acquireRelease(tab.backend.frameEventDispatchers.updateAndGet(_.update(key, handler)))(_ =>
+            tab.backend.frameEventDispatchers.updateAndGet(_.remove(key)).unit
+        ).unit
     end installFrameContextTracker
 
     /** Updates the per-tab frame-context map from a `Runtime.executionContext{Created,Destroyed}` event.

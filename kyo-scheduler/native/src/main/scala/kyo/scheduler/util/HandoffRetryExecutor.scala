@@ -8,14 +8,24 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.LongAdder
+import kyo.scheduler.InternalClock
 import kyo.scheduler.bug
 import scala.util.control.NonFatal
 
-/** Executor wrapper that re-submits a runnable the delegate accepted but never ran.
+/** Executor wrapper that re-submits a runnable the delegate lost or refused while alive.
   *
-  * scala-native 0.5.12's `ThreadPoolExecutor` can lose a `SynchronousQueue` handoff: `execute` returns normally, yet no pool thread ever
-  * picks the runnable up. The scheduler treats an accepted dispatch as a promise that the runnable will run, so a lost handoff leaves a
-  * worker dispatched with queued work and nothing to mount it.
+  * The scheduler treats a dispatch that `execute` returned from as a promise that the runnable will run, and `Worker.wakeup` has no
+  * fallback for an `execute` that throws: either failure leaves a worker dispatched with queued work and nothing to mount it. On
+  * scala-native 0.5.12 both happen:
+  *   - A lost handoff: `ThreadPoolExecutor` can lose a `SynchronousQueue` handoff, so `execute` returns normally yet no pool thread ever
+  *     picks the runnable up.
+  *   - A refused submission: when no pool thread is parked, `execute` creates a thread on the submitting thread, and that path can throw,
+  *     for instance an `InterruptedException` on a carrier whose interrupt flag is set while it settles an interrupted fiber.
+  *
+  * So `execute` never lets a submission failure reach the caller while the pool is alive. A refused submission is tracked exactly like an
+  * accepted one, and an `InterruptedException` has the caller's interrupt re-armed, since the interrupted fiber's own handling reads it.
+  * Only a shut-down pool's rejection propagates, because the caller owns the shutdown.
   *
   * Each submission is tracked until it starts. A watchdog re-submits one that has not started within a growing delay, so a wedged pool
   * sees a bounded trickle rather than a stream. Re-submission is safe at any multiplicity: every arrival shares one started flag, so the
@@ -30,17 +40,44 @@ final private[scheduler] class HandoffRetryExecutor(pool: ExecutorService, facto
 
     private val pending = new ConcurrentLinkedQueue[Tracked]
 
+    private val refusals                  = new LongAdder
+    @volatile private var refusalReported = false
+
     def execute(command: Runnable): Unit = {
         val tracked = new Tracked(command)
-        // Submit before tracking: a rejection propagates to the caller (the pool is shut down, which the caller
-        // owns) without leaving an entry behind, and an entry added just after a lost handoff is still seen
-        // unstarted by the watchdog, which acts on age rather than on arrival order.
-        pool.execute(tracked)
+        // Submit before tracking: a shut-down pool's rejection propagates without leaving an entry behind, and an
+        // entry added just after a lost handoff or a refusal is still seen unstarted by the watchdog, which acts on
+        // age rather than on arrival order.
+        try {
+            pool.execute(tracked)
+            if (refusalReported) refusalReported = false
+        } catch {
+            case ex: RejectedExecutionException if pool.isShutdown() =>
+                throw ex
+            case ex: InterruptedException =>
+                refused(ex)
+                Thread.currentThread().interrupt()
+            case ex if NonFatal(ex) =>
+                refused(ex)
+        }
         val _ = pending.add(tracked)
+    }
+
+    private def refused(ex: Throwable): Unit = {
+        refusals.increment()
+        // Once per streak of refusals, ended by an accepted submission: a pool that keeps refusing would otherwise log
+        // on every dispatch.
+        if (!refusalReported) {
+            refusalReported = true
+            bug("Worker dispatch was refused by the pool. The watchdog re-submits it.", ex)
+        }
     }
 
     /** Submissions awaiting their first run. Test-visible so the tracking set can be asserted to drain. */
     private[scheduler] def pendingSize: Int = pending.size()
+
+    /** Submissions the live pool refused, each then left to the watchdog. */
+    private[scheduler] def submitFailures: Long = refusals.sum()
 
     private val watchdog = factory.newThread { () =>
         while (!pool.isShutdown()) {
@@ -52,7 +89,7 @@ final private[scheduler] class HandoffRetryExecutor(pool: ExecutorService, facto
                         it.remove()
                     else if (tracked.elapsedMs() >= tracked.threshold()) {
                         tracked.retried += 1
-                        tracked.submittedMs = System.currentTimeMillis()
+                        tracked.submittedMs = InternalClock.monotonicMillis()
                         try pool.execute(tracked)
                         catch {
                             case _: RejectedExecutionException if pool.isShutdown() =>
@@ -110,13 +147,13 @@ private[scheduler] object HandoffRetryExecutor {
     final class Tracked(val command: Runnable) extends Runnable {
         val started               = new AtomicBoolean(false)
         var retried               = 0
-        @volatile var submittedMs = System.currentTimeMillis()
+        @volatile var submittedMs = InternalClock.monotonicMillis()
 
         def run(): Unit =
             if (started.compareAndSet(false, true))
                 command.run()
 
-        def elapsedMs(): Long = System.currentTimeMillis() - submittedMs
+        def elapsedMs(): Long = InternalClock.monotonicMillis() - submittedMs
 
         def threshold(): Long = Math.min(firstRetryMs.toLong << retried, maxRetryMs.toLong)
     }
