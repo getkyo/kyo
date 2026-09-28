@@ -418,6 +418,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-finagle`.jvm,
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
+        `kyo-charset`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
@@ -515,6 +516,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-data`.js,
+        `kyo-charset`.js,
         `kyo-kernel`.js,
         `kyo-prelude`.js,
         `kyo-parse`.js,
@@ -593,6 +595,7 @@ lazy val kyoNative = project
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-data`.native,
+        `kyo-charset`.native,
         `kyo-prelude`.native,
         `kyo-parse`.native,
         `kyo-kernel`.native,
@@ -675,6 +678,7 @@ lazy val kyoWasm = project
         `kyo-config`.wasm,
         `kyo-stats-registry`.wasm,
         `kyo-data`.wasm,
+        `kyo-charset`.wasm,
         `kyo-kernel`.wasm,
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
@@ -846,6 +850,39 @@ lazy val `kyo-data` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi" %%% "pprint" % "0.9.6"
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-charset` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
+        .in(file("kyo-charset"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Compile / sourceGenerators += Def.task {
+                CharsetTablesGen.generateMain(
+                    baseDirectory.value / ".." / "data",
+                    baseDirectory.value / ".." / "shared" / "src" / "main" / "resources" / "META-INF" / "kyo-charset" / "NOTICE",
+                    (Compile / sourceManaged).value
+                )
+            }.taskValue,
+            Test / sourceGenerators += Def.task {
+                CharsetTablesGen.generateTest(baseDirectory.value / ".." / "data", (Test / sourceManaged).value)
+            }.taskValue,
+            Test / sourceGenerators += Def.task {
+                VectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.charset.vectors",
+                    "kyo-charset"
+                )
+            }.taskValue
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)

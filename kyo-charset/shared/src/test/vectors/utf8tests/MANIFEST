@@ -1,0 +1,14 @@
+# UTF-8 decoder test cases from https://github.com/flenniken/utf8tests at commit 52cbdf830f3603047036070b086a1e5196df94d1,
+# copied byte for byte with curl on 2026-09-27, each from the source URL followed by its path. The build verifies each file against
+# its SHA-256 and fails on a mismatch, a missing file or an unlisted one (project/VendoredFiles.scala).
+#
+# utf8tests.txt gives, for each invalid byte sequence, the output expected when every maximal subpart of an ill-formed sequence
+# is replaced by U+FFFD (Unicode Standard section 3.9), which is what the WHATWG UTF-8 decoder produces.
+#
+# Licence: stated in LICENSE beside this file, which begins:
+#   "MIT License"
+#   "Copyright (c) 2021 flenniken"
+source https://raw.githubusercontent.com/flenniken/utf8tests/52cbdf830f3603047036070b086a1e5196df94d1/
+license MIT
+file utf8tests.txt bfcd61414aaa0400aafab17ff45ec521aba83533d831e9ec15ed7bf35023800e utf8tests.txt
+file LICENSE 9baf450e888b1c469b42bddc7a5b852ee30a68709d8e7b290b0846028bb5998a LICENSE

@@ -1,0 +1,26 @@
+# Decoder tests from web-platform-tests at commit 647d3bdf133159739b57cfb7afa0be3f5d76b9db, copied byte for byte on 2026-09-27,
+# each from the source URL followed by its path. The build verifies each file against its SHA-256 and fails on a mismatch, a missing
+# file or an unlisted one (project/VendoredFiles.scala).
+#
+# gb18030-decoder.any.js and iso-2022-jp-decoder.any.js list `decode([bytes], "expected", "description")` cases. Each other pair is
+# one encoding's error cases: `<name>_errors.html` holds the input bytes, one `<span>` per case, and `<name>-decode-errors.html` holds
+# the expected text of each span, in the same order, as `assert_equals(nodes[...].textContent, "expected")`.
+#
+# Licence: stated in LICENSE.md beside this file, the repository's licence, which begins:
+#   "# The 3-Clause BSD License"
+#   "Copyright © web-platform-tests contributors"
+source https://raw.githubusercontent.com/web-platform-tests/wpt/647d3bdf133159739b57cfb7afa0be3f5d76b9db/
+license BSD-3-Clause
+file LICENSE.md 5fac07febb0e2a97fb0d7b0def149ec08b642e1ba4b9c345283ab1cbd2af6570 LICENSE.md
+file gb18030-decoder.any.js c7871d3d6fcf91b59519ae299ca620d912760f4d47d4656026f73d4a207ec11d encoding/legacy-mb-schinese/gb18030/gb18030-decoder.any.js
+file big5_errors.html 43510258c146da1be1c38d66ea9788ad19ed69b7b2f4f07f984fa5f71aa09ec4 encoding/legacy-mb-tchinese/big5/big5_errors.html
+file big5-decode-errors.html a85ac2e7a3cb95957e9af04c30ddc42f252804b182414090115284d5cb075475 encoding/legacy-mb-tchinese/big5/big5-decode-errors.html
+file euckr_errors.html bd3f3d69755753290ebf11bb5d89615e8a3d72ba012385ae8fad777d8b24e702 encoding/legacy-mb-korean/euc-kr/euckr_errors.html
+file euckr-decode-errors.html 11bbc1c1592d648a5a323b2ff22fe665231056f1e6de2faf017ae4c5c7f8adb5 encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html
+file sjis_errors.html c500d92164fed90690eb0a1a2fa5014a8167194be7c6a67c80c26d09238c21a6 encoding/legacy-mb-japanese/shift_jis/sjis_errors.html
+file sjis-decode-errors.html f2168c8c1c59d88d050ba96ffe850c5d3c27b281d20225833d192f88b9311534 encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html
+file eucjp_errors.html d952219e16fe6cc1f34d3b769340e61bba6ad9ccac3d4e274fad1557835ccce9 encoding/legacy-mb-japanese/euc-jp/eucjp_errors.html
+file eucjp-decode-errors.html 880608fb3dc599aa07e0e4db2172b5ac288a6f4b0d88a914f2cd9f576e37b6c0 encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html
+file iso-2022-jp-decoder.any.js e9d05ede7253463f021107c2fd96f053739adb35011b61a59d5883b5238d0a31 encoding/iso-2022-jp-decoder.any.js
+file iso2022jp_errors.html 729ecc124e7bfb61b2cbd9e4431cad4d2f66470897dbf64041b82f78735716b0 encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_errors.html
+file iso2022jp-decode-errors.html dcadda80e553a2226f16e758ac17667690807559d822bc1b6adfb75abc779066 encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html
