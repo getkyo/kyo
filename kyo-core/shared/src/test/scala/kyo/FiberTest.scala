@@ -101,13 +101,13 @@ class FiberTest extends kyo.test.Test[Any]:
             }
 
             "a parked fiber that forked children wakes after a promise became it" in {
-                // The race links its two children into the fiber before the fiber parks on the race, so the fiber's
-                // chain holds two links plus the parked one when the promise becomes it.
+                // The race links itself into the fiber before the fiber parks on it, so the fiber's chain holds the
+                // race's link plus the parked one when the promise becomes it.
                 for
                     child <- Promise.init[Int, Any]
                     gate  <- Promise.init[Int, Any]
                     inner <- Fiber.init(Async.race(child.get, gate.get))
-                    _     <- assertEventually(inner.waiters.map(_ == 3))
+                    _     <- assertEventually(inner.waiters.map(_ == 2))
                     outer <- Promise.init[Int, Any]
                     a     <- outer.become(inner)
                     _     <- gate.complete(Result.succeed(1))
@@ -1294,6 +1294,41 @@ class FiberTest extends kyo.test.Test[Any]:
             }
         }
     }
+    "a parent interrupted with a combinator in flight interrupts every child" - {
+        // The combinator's fiber is left unjoined, so the parent reaches the children only through its one link to it.
+        // Each child parks on its own blocker, and a child's interrupt completes that blocker through the child's join link.
+        def interruptsEveryChild(launch: Seq[Int < Async] => Any < Sync)(using kyo.test.AssertScope): Unit < Async =
+            for
+                blockers <- Kyo.fill(3)(Promise.init[Int, Any])
+                hold     <- Promise.init[Unit, Any]
+                parent   <- Fiber.initUnscoped(launch(blockers.map(_.get)).andThen(hold.get))
+                _        <- assertEventually(Kyo.foreach(blockers)(_.waiters).map(_.forall(_ == 1)))
+                _        <- assertEventually(hold.waiters.map(_ == 1))
+                _        <- parent.interrupt
+                result   <- parent.getResult
+                _        <- assertEventually(Kyo.foreach(blockers)(_.done).map(_.forall(identity)))
+                polls    <- Kyo.foreach(blockers)(_.poll)
+            yield
+                assert(result.isPanic, s"the parent was not interrupted: $result")
+                polls.zipWithIndex.foreach { (poll, i) =>
+                    assert(poll.exists(_.isPanic), s"child $i did not see the interrupt: $poll")
+                }
+            end for
+        end interruptsEveryChild
+
+        "through a race" in {
+            interruptsEveryChild(arms => Fiber.internal.race(arms))
+        }
+
+        "through a gather" in {
+            interruptsEveryChild(arms => Fiber.internal.gather(arms.size)(arms))
+        }
+
+        "through a concurrent foreachIndexed" in {
+            interruptsEveryChild(arms => Fiber.internal.foreachIndexed(Chunk.Indexed.from(arms), arms.size)((_, arm) => arm))
+        }
+    }
+
     "resource safety regressions" - {
         "interrupt callbacks cleaned after child completes (#1125)".onlyJvm in {
             for

@@ -61,16 +61,10 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Serializable with 
         state.isInstanceOf[Pending[?, ?]]
 
     final def interrupts(other: IOPromise[?, ?])(using frame: Frame): Unit =
-        interrupts(other, Absent)
-
-    /** `release` is the awaiter's callback on `other`. If `other` refuses the interrupt (masked), the link removes the
-      * callback from it and fires it with the interrupt.
-      */
-    final def interrupts[E2, A2](other: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any])(using frame: Frame): Unit =
         @tailrec def interruptsLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
-                    if !promise.compareAndSet(p, p.interrupts(other, release)) then
+                    if !promise.compareAndSet(p, p.interrupts(other)) then
                         interruptsLoop(promise)
                 case l: Linked[E, A] @unchecked =>
                     interruptsLoop(l.p)
@@ -341,80 +335,47 @@ private[kyo] object IOPromise:
         def waiters: Int
         def interrupt(v: Error[E]): Pending[E, A]
 
-        /** Costs a frame per node walked, so it stops at the first match; the registration being dropped is normally
-          * the newest, at the head. Returns `this`, not a copy, when nothing matched.
+        /** Drops the first registration made under `key` and rebuilds the nodes above it. Returns `this`, not a copy,
+          * when nothing matched.
           */
         def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A]
         def run(v: Result[E, A]): Pending[E, A]
 
-        /** This node, or the nodes below it when this one is an interrupt link whose target has completed, since such a link
-          * has nothing left to interrupt. The promise holding the chain is still pending; only the target is done.
-          */
-        def dropIfDead: Pending[E, A] = this
-
         final def onComplete(f: Result[E, A] => Any): Pending[E, A] =
-            new Pending[E, A]:
-                def waiters: Int               = self.waiters + 1
-                def interrupt(error: Error[E]) =
+            new Node[E, A](self):
+                def matches(key: IOPromise[?, ?] | Function1[?, ?]) = key eq f
+                def readd(chain: Pending[E, A])                     = chain.onComplete(f)
+                def interrupt(error: Error[E])                      =
                     eval(discard(f(error)))
                     self
-                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if key eq f then self
-                    else
-                        val rest = self.remove(key)
-                        if rest eq self then this else rest.onComplete(f)
                 def run(v: Result[E, A]) =
                     eval(discard(f(v.asInstanceOf[Result[E, A]])))
                     self
                 end run
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
-            interrupts(p, Absent)
-
-        final def interrupts[E2, A2](p: IOPromise[E2, A2], release: Maybe[Result[E2, A2] => Any]): Pending[E, A] =
-            // Without this a long-lived fiber keeps a link per child it ever forked.
-            @tailrec def live(chain: Pending[E, A]): Pending[E, A] =
-                val next = chain.dropIfDead
-                if next eq chain then chain else live(next)
-            val base = live(this)
-            if base ne this then base.interrupts(p, release)
-            else
-                new Pending[E, A]:
-                    def interrupt(error: Error[E]) =
-                        val ex =
-                            error match
-                                case error: Result.Panic => error
-                                case _                   => interruptPanic
-
-                        // A masked `p` refuses the interrupt and fires nothing, so the awaiter is woken here.
-                        // `remove` is false if completion already fired `release`.
-                        if !p.interrupt(ex) then
-                            release.foreach(r => if p.remove(r) then eval(discard(r(ex))))
-                        self
-                    end interrupt
-                    def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
-                        if (key eq p) || release.exists(_ eq key) then self
-                        else
-                            val rest = self.remove(key)
-                            if rest eq self then this else rest.interrupts(p, release)
-                    override def dropIfDead  = if p.done() then self else this
-                    def waiters: Int         = self.waiters + 1
-                    def run(v: Result[E, A]) =
-                        self
-            end if
+            new Node[E, A](self):
+                def matches(key: IOPromise[?, ?] | Function1[?, ?]) = key eq p
+                def readd(chain: Pending[E, A])                     = chain.interrupts(p)
+                def interrupt(error: Error[E])                      =
+                    val ex =
+                        error match
+                            case error: Result.Panic => error
+                            case _                   => interruptPanic
+                    discard(p.interrupt(ex))
+                    self
+                end interrupt
+                def run(v: Result[E, A]) =
+                    self
         end interrupts
 
         def onInterrupt(f: Error[E] => Any): Pending[E, A] =
-            new Pending[E, A]:
-                def interrupt(error: Error[E]) =
+            new Node[E, A](self):
+                def matches(key: IOPromise[?, ?] | Function1[?, ?]) = key eq f
+                def readd(chain: Pending[E, A])                     = chain.onInterrupt(f)
+                def interrupt(error: Error[E])                      =
                     eval(discard(f(error)))
                     self
-                def remove(key: IOPromise[?, ?] | Function1[?, ?]) =
-                    if key eq f then self
-                    else
-                        val rest = self.remove(key)
-                        if rest eq self then this else rest.onInterrupt(f)
-                def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
 
@@ -467,6 +428,56 @@ private[kyo] object IOPromise:
         end flush
 
     end Pending
+
+    /** One registration on top of `rest`, the chain it was registered on. `remove` and `waiters` walk a run of these in
+      * a loop rather than a frame per node: a chain can be long, and the registration being dropped can sit at its bottom.
+      */
+    sealed abstract class Node[E, A](val rest: Pending[E, A]) extends Pending[E, A]:
+
+        def matches(key: IOPromise[?, ?] | Function1[?, ?]): Boolean
+
+        /** The same registration made on `chain`. */
+        def readd(chain: Pending[E, A]): Pending[E, A]
+
+        final def waiters: Int =
+            @tailrec def loop(p: Pending[E, A], n: Int): Int =
+                p match
+                    case node: Node[E, A] @unchecked => loop(node.rest, n + 1)
+                    case other                       => n + other.waiters
+            loop(this, 0)
+        end waiters
+
+        final def remove(key: IOPromise[?, ?] | Function1[?, ?]): Pending[E, A] =
+            // The walk stops at the match or at the end of this run of nodes (Empty, or a merge, which searches both
+            // of its chains). Nothing is allocated until a match is known.
+            @tailrec def depth(p: Pending[E, A], n: Int): Int =
+                p match
+                    case node: Node[E, A] @unchecked if !node.matches(key) => depth(node.rest, n + 1)
+                    case _                                                 => n
+            @tailrec def at(p: Pending[E, A], i: Int): Pending[E, A] =
+                if i == 0 then p else at(p.asInstanceOf[Node[E, A]].rest, i - 1)
+            val n    = depth(this, 0)
+            val stop = at(this, n)
+            val base =
+                stop match
+                    case node: Node[E, A] @unchecked => node.rest
+                    case other                       => other.remove(key)
+            if base eq stop then this
+            else
+                val above                                            = new Array[Node[E, A]](n)
+                @tailrec def collect(p: Pending[E, A], i: Int): Unit =
+                    if i < n then
+                        val node = p.asInstanceOf[Node[E, A]]
+                        above(i) = node
+                        collect(node.rest, i + 1)
+                // deepest first, so the rebuilt chain keeps the original order
+                @tailrec def rebuild(chain: Pending[E, A], i: Int): Pending[E, A] =
+                    if i < 0 then chain else rebuild(above(i).readd(chain), i - 1)
+                collect(this, 0)
+                rebuild(base, n - 1)
+            end if
+        end remove
+    end Node
 
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]

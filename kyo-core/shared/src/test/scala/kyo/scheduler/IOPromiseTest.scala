@@ -874,35 +874,21 @@ class IOPromiseTest extends kyo.test.Test[Any]:
         }
 
         "a wide fan-out costs no stack to unlink from" in {
-            // One link per forked child, then the join link on top. Sized past any platform's thread stack.
+            // The deepest link removed from under every other one. Sized past any platform's thread stack.
             val width    = 100000
             val p        = new IOPromise[Nothing, Int]()
+            val deepest  = new IOPromise[Nothing, Int]()
             val children = Array.fill(width)(new IOPromise[Nothing, Int]())
+            p.interrupts(deepest)
             children.foreach(p.interrupts(_))
 
-            val awaited = new IOPromise[Nothing, Int]()
-            p.interrupts(awaited)
-            assert(p.remove(awaited))
-
-            children.foreach(c => assert(c.complete(Result.succeed(1))))
-            val next = new IOPromise[Nothing, Int]()
-            p.interrupts(next)
-            assert(p.waiters() == 1)
+            assert(!p.remove(new IOPromise[Nothing, Int]()), "a promise never linked was reported removed")
+            assert(p.remove(deepest), "the deepest link was not found")
+            assert(p.waiters() == width, s"expected $width links after the removal, found ${p.waiters()}")
 
             assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(next.done())
-        }
-
-        "links to completed promises are dropped as new links are made" in {
-            val p = new IOPromise[Nothing, Int]()
-            (1 to 100).foreach { _ =>
-                val child = new IOPromise[Nothing, Int]()
-                p.interrupts(child)
-                assert(child.complete(Result.succeed(1)))
-            }
-            val live = new IOPromise[Nothing, Int]()
-            p.interrupts(live)
-            assert(p.waiters() == 1)
+            assert(!deepest.done(), "the removed link still interrupted its target")
+            assert(children.forall(_.done()), "a link above the removed one was lost")
         }
 
         "remove with become" in {
@@ -986,28 +972,6 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(!other.done())
         }
 
-        "an interrupt on a masked await wakes the awaiter itself" in {
-            val awaited = new IOPromise[Nothing, Int]()
-            val masked  = awaited.uninterruptible()
-            val awaiter = new IOPromise[Nothing, Int]()
-
-            var fired                                = 0
-            var seen: Maybe[Result[Nothing, Int]]    = Absent
-            val resume: Result[Nothing, Int] => Unit = r =>
-                fired += 1
-                seen = Present(r)
-            masked.onComplete(resume)
-            awaiter.interrupts(masked, Present(resume))
-
-            assert(awaiter.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(!masked.done(), "the mask held: the awaited promise is still pending")
-            assert(fired == 1 && seen.exists(_.isPanic), "the awaiter was woken with the interrupt")
-            assert(masked.waiters() == 0, "and holds no registration on the promise it stopped waiting for")
-
-            awaited.complete(Result.succeed(1))
-            assert(fired == 1, "completion found no callback to fire a second time")
-        }
-
         "an interrupt on an unmasked await fires the callback once, through completion" in {
             val awaited = new IOPromise[Nothing, Int]()
             val awaiter = new IOPromise[Nothing, Int]()
@@ -1015,11 +979,11 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             var fired                                = 0
             val resume: Result[Nothing, Int] => Unit = _ => fired += 1
             awaited.onComplete(resume)
-            awaiter.interrupts(awaited, Present(resume))
+            awaiter.interrupts(awaited)
 
             assert(awaiter.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(awaited.done())
-            assert(fired == 1)
+            assert(awaited.done(), "the link did not interrupt the awaited promise")
+            assert(fired == 1, s"the callback fired $fired times")
         }
 
         "remove reports whether the registration was there" in {
@@ -1043,6 +1007,99 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             assert(p2.waiters() == 1)
             assert(p1.remove(f))
             assert(p2.waiters() == 0)
+        }
+
+        "remove by function identity drops only that onComplete callback" in {
+            val p                               = new IOPromise[Nothing, Int]()
+            var seen                            = List.empty[String]
+            val f: Result[Nothing, Int] => Unit = _ => seen = "f" :: seen
+            val g: Result[Nothing, Int] => Unit = _ => seen = "g" :: seen
+            p.onComplete(f)
+            p.onComplete(g)
+            assert(p.remove(f), "the onComplete callback was not found")
+            assert(p.waiters() == 1, s"expected 1 waiter after the removal, found ${p.waiters()}")
+            assert(p.complete(Result.succeed(1)))
+            assert(seen == List("g"), s"completion fired $seen")
+        }
+
+        "remove by function identity drops an onInterrupt callback" in {
+            val p                                = new IOPromise[Nothing, Int]()
+            var seen                             = List.empty[String]
+            val f: Result.Error[Nothing] => Unit = _ => seen = "f" :: seen
+            val g: Result.Error[Nothing] => Unit = _ => seen = "g" :: seen
+            p.onInterrupt(f)
+            p.onInterrupt(g)
+            assert(p.remove(f), "the onInterrupt callback was not found")
+            assert(p.waiters() == 1, s"expected 1 waiter after the removal, found ${p.waiters()}")
+            assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(seen == List("g"), s"the interrupt fired $seen")
+        }
+
+        "remove by function identity through a Linked promise" in {
+            val p1                              = new IOPromise[Nothing, Int]()
+            val p2                              = new IOPromise[Nothing, Int]()
+            var fired                           = 0
+            val f: Result[Nothing, Int] => Unit = _ => fired += 1
+            assert(p1.become(p2))
+            p1.onComplete(f)
+            assert(p2.waiters() == 1, s"the callback did not reach the target: ${p2.waiters()} waiters")
+            assert(p1.remove(f), "the callback was not found through the link")
+            assert(p2.waiters() == 0, s"expected no waiters on the target, found ${p2.waiters()}")
+            assert(p2.complete(Result.succeed(1)))
+            assert(fired == 0, s"the removed callback fired $fired times")
+        }
+
+        "remove by function identity on either side of a merged chain" in {
+            val target                                               = new IOPromise[Nothing, Int]()
+            val source                                               = new IOPromise[Nothing, Int]()
+            var seen                                                 = List.empty[String]
+            def callback(name: String): Result[Nothing, Int] => Unit = _ => seen = name :: seen
+            val ownRemoved                                           = callback("ownRemoved")
+            val ownKept                                              = callback("ownKept")
+            val mergedRemoved                                        = callback("mergedRemoved")
+            val mergedKept                                           = callback("mergedKept")
+            target.onComplete(ownKept)
+            target.onComplete(ownRemoved)
+            source.onComplete(mergedKept)
+            source.onComplete(mergedRemoved)
+            assert(source.become(target))
+            assert(target.waiters() == 4, s"expected 4 waiters on the merged chain, found ${target.waiters()}")
+            assert(target.remove(mergedRemoved), "the callback merged in by become was not found")
+            assert(target.remove(ownRemoved), "the target's own callback was not found")
+            assert(target.waiters() == 2, s"expected 2 waiters after both removals, found ${target.waiters()}")
+            assert(target.complete(Result.succeed(1)))
+            assert(seen.sorted == List("mergedKept", "ownKept"), s"completion fired $seen")
+        }
+
+        "a remove that matches nothing leaves the chain as it was" in {
+            val p                                    = new IOPromise[Nothing, Int]()
+            val linked                               = new IOPromise[Nothing, Int]()
+            var seen                                 = List.empty[String]
+            val f: Result[Nothing, Int] => Unit      = _ => seen = "f" :: seen
+            val i: Result.Error[Nothing] => Unit     = _ => seen = "i" :: seen
+            val absent: Result[Nothing, Int] => Unit = _ => seen = "absent" :: seen
+            p.onComplete(f)
+            p.interrupts(linked)
+            p.onInterrupt(i)
+            assert(p.waiters() == 3, s"expected 3 waiters, found ${p.waiters()}")
+            assert(!p.remove(absent), "a callback never registered was reported removed")
+            assert(!p.remove(new IOPromise[Nothing, Int]()), "a promise never linked was reported removed")
+            assert(p.waiters() == 3, s"a miss changed the chain: ${p.waiters()} waiters")
+            assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(linked.done(), "the link did not survive the miss")
+            assert(seen.sorted == List("f", "i"), s"the interrupt fired $seen")
+        }
+
+        "a remove that matches nothing on a merged chain leaves it as it was" in {
+            val target                          = new IOPromise[Nothing, Int]()
+            val source                          = new IOPromise[Nothing, Int]()
+            val f: Result[Nothing, Int] => Unit = _ => ()
+            val g: Result[Nothing, Int] => Unit = _ => ()
+            target.onComplete(f)
+            source.onComplete(f)
+            assert(source.become(target))
+            assert(!target.remove(g), "a callback never registered was reported removed")
+            assert(target.waiters() == 2, s"a miss changed the merged chain: ${target.waiters()} waiters")
         }
 
         "remove preserves other callbacks" in {

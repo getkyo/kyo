@@ -811,10 +811,7 @@ object Async extends AsyncPlatformSpecific:
         useResult(v)(_.fold(f, Abort.fail, Abort.panic))
 
     abstract class JoinInput[A]:
-        /** Returns the awaited promise, already linked to be interrupted with `task`. `release` is the callback `task`
-          * will register on it, carried by the link so an interrupt can take it back.
-          */
-        def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A]
+        def apply(task: IOTask[?, ?, ?]): IOPromise[?, A]
 
         /** The scheduler raises this operation again when the promise is not ready, and
           * a clause is never handed the frame of what it answers, so without this the raise would carry the
@@ -830,8 +827,8 @@ object Async extends AsyncPlatformSpecific:
     @scala.annotation.nowarn("msg=anonymous")
     private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using _frame: Frame): B < (S & Async) =
         val input = new JoinInput[A]:
-            def apply(task: IOTask[?, ?, ?], release: Maybe[Result[Any, A] => Any]): IOPromise[?, A] =
-                task.interrupts(v, release)(using _frame)
+            def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
+                task.interrupts(v)(using _frame)
                 v
             def frame = _frame
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)

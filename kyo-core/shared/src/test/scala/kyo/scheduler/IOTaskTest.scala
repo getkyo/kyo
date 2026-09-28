@@ -118,6 +118,59 @@ class IOTaskTest extends kyo.test.Test[Any]:
 
     }
 
+    "registrations" - {
+
+        "a completed combinator leaves no link on its parent" in {
+            val before = new IOPromise[Nothing, Int]()
+            val hold   = new IOPromise[Nothing, Unit]()
+            val loser  = new IOPromise[Nothing, Int]()
+            val arms   = Seq[Int < Async](Sync.defer(1), Async.get(loser))
+            val items  = Chunk.Indexed.from(1 to 8)
+            // Reports the count and then parks on `hold`, so its chain stays readable and gains exactly the join link to `hold`.
+            val body: Unit < Async =
+                Sync.defer(IOTask.currentTask().get).map { task =>
+                    val initial = task.waiters()
+                    Fiber.internal.race(arms).map(_.get)
+                        .andThen(Fiber.internal.gather(8)(Seq.fill(8)(Sync.defer(1))).map(_.get))
+                        .andThen(Fiber.internal.foreachIndexed(items, 8)((_, i) => Sync.defer(i)).map(_.get))
+                        .andThen(Sync.defer(before.completeDiscard(Result.succeed(initial))))
+                        .andThen(Async.get(hold))
+                }
+            for
+                parent  <- Sync.defer(IOTask.detached(body))
+                initial <- Async.get(before)
+                // The wakeup on `hold` is registered at the parent's slice end, after its join link to `hold`.
+                _ <- assertEventually(Sync.defer(hold.waiters() == 1))
+                // A condition wait, not a snapshot: a join that polls a combinator complete can run before that
+                // combinator's completion reaches its unlink on the completing thread.
+                _ <- assertEventually(Sync.defer {
+                    val count = parent.waiters()
+                    assert(count == initial + 1, s"expected ${initial + 1} waiters on the parent, the join link to hold, found $count")
+                    true
+                })
+                _      <- Sync.defer(hold.completeDiscard(Result.succeed(())))
+                result <- Async.getResult(parent.asInstanceOf[IOPromise[Nothing, Unit]])
+            yield assert(result == Result.succeed(()), s"the parent did not finish cleanly: $result")
+            end for
+        }
+
+        "an interrupted parked fiber leaves no wakeup on the promise it parked on" in {
+            val masked = new IOPromise[Nothing, Int]().uninterruptible()
+            val child  = IOTask.detached(Async.get(masked))
+            for
+                // The park is armed at the child's slice end, so this waits for that condition rather than for time.
+                _      <- assertEventually(Sync.defer(masked.waiters() == 1))
+                _      <- Sync.defer(child.interruptDiscard(Result.Panic(Interrupted(summon[Frame]))))
+                result <- Async.getResult(child.asInstanceOf[IOPromise[Nothing, Int]])
+                remaining = masked.waiters()
+            yield
+                assert(result.isPanic, s"the child was not interrupted: $result")
+                assert(!masked.done(), "the mask did not hold: the awaited promise completed")
+                assert(remaining == 0, s"expected no waiters on the masked promise, found $remaining")
+            end for
+        }
+    }
+
     "fatal error in a guarded body" - {
         // InternalError because the scheduler gates on `IsFatal`, which counts only `VirtualMachineError` and
         // `ControlThrowable`. JVM-only: it relies on one worker taking the fatal while the timeout fires on
