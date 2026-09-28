@@ -895,8 +895,9 @@ object Fiber:
         private object Race:
 
             // One captured state for the whole race, each computation isolated against it here rather than at the caller, so
-            // its restore travels inside the fiber.
-            private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
+            // its restore travels inside the fiber. `newRace` is bound inside the deferred step, so each run of the computation
+            // value gets a promise of its own.
+            private inline def apply[E, A, S, S2](inline newRace: => Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
                 isolate: Isolate[S, Abort[E] & Async, S2],
                 frame: Frame
@@ -904,6 +905,7 @@ object Fiber:
                 val crossing = isolate.crossing
                 crossing.capture { state =>
                     Sync.Unsafe.defer {
+                        val race = newRace
                         // The parent links the race once, before any arm is scheduled (see Fiber.internal.foreachIndexed).
                         val parent = IOTask.currentTask()
                         race.parent = parent

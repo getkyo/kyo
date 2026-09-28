@@ -146,6 +146,24 @@ class FiberTest extends kyo.test.Test[Any]:
                 assert(r == 1)
             }
         }
+        "a race value run twice races twice" in {
+            var runs = 0
+            val race = Fiber.internal.race(Seq(Sync.defer { runs += 1; runs }))
+            for
+                first  <- race.map(_.get)
+                second <- race.map(_.get)
+            yield assert(first == 1 && second == 2, s"the second run answered $second after the first answered $first")
+            end for
+        }
+        "a raceFirst value run twice races twice" in {
+            var runs = 0
+            val race = Fiber.internal.raceFirst(Seq(Sync.defer { runs += 1; runs }))
+            for
+                first  <- race.map(_.get)
+                second <- race.map(_.get)
+            yield assert(first == 1 && second == 2, s"the second run answered $second after the first answered $first")
+            end for
+        }
         "n" in {
             def loop(i: Int, s: String): String < (Abort[String] & Sync) =
                 Sync.defer {
