@@ -16,11 +16,16 @@ class FileSystemSnapshotTest extends kyo.test.Test[Any]:
             case Result.Success(value) => value
             case other                 => throw AssertionError(s"invalid fixture glob: $other")
 
+    /** Runs two polls, since a removal is published one poll after it is first seen, and waits for each to re-arm so no scan is
+      * still in flight when the caller mutates the tree next.
+      */
     private def take(clock: Clock.TimeControl, watcher: Path.Watcher)(using
         Frame
     ): Chunk[PathChange] < (Async & Abort[FileWatchException]) =
         Fiber.initUnscoped(Scope.run(watcher.events.take(1).run)).map { fiber =>
-            clock.advance(10.millis).andThen(clock.advance(10.millis)).andThen(fiber.get)
+            clock.advance(10.millis).andThen(clock.awaitPendingSleepers(1)).andThen {
+                clock.advance(10.millis).andThen(clock.awaitPendingSleepers(1)).andThen(fiber.get)
+            }
         }
 
     "glob matrix snapshot represents matcher behavior" in {
