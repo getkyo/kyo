@@ -308,22 +308,6 @@ Global / onLoad := {
         )
     }
 
-    // Guards publishability of the sbt plugins, which ship only by virtue of being aggregated here.
-    // A scripted suite cannot cover this: scriptedDependencies publishLocals the plugin project
-    // directly and passes whether or not any aggregate contains it.
-    locally {
-        // The expected type picks ProjectDefinition.aggregate over Project.aggregate(refs*).
-        val refs: Seq[ProjectReference] = kyoJVM.aggregate
-        val aggregated                  = refs.collect { case LocalProject(id) => id }.toSet
-        val missing                     = Set("kyo-test-sbt", "kyo-test-sbt-publish").diff(aggregated)
-        if (missing.nonEmpty) {
-            throw new IllegalStateException(
-                s"kyoJVM must aggregate ${missing.toList.sorted.mkString(", ")}; " +
-                    "projects outside the aggregate are never published by ci-release."
-            )
-        }
-    }
-
     val project =
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
@@ -334,6 +318,39 @@ Global / onLoad := {
         }
 
     (Global / onLoad).value andThen { state =>
+        // ci-release publishes from the platform aggregates, so a project that does not skip
+        // publishing and is missing from its platform's aggregate builds, tests, and never ships,
+        // with nothing failing: testKyo discovers modules from the whole build, and a scripted
+        // suite publishLocals its plugin directly. The aggregate is read from the loaded build
+        // rather than from the lazy vals so the check sees exactly what ci-release will iterate.
+        val extracted    = Project.extract(state)
+        val aggregateIds = Map("JVM" -> "kyoJVM", "JS" -> "kyoJS", "Native" -> "kyoNative", "Wasm" -> "kyoWasm")
+        val aggregated = aggregateIds.map { case (platform, id) =>
+            platform -> extracted.structure.allProjects.filter(_.id == id).flatMap(_.aggregate).map(_.project).toSet
+        }
+        // A crossProject's platform is its id suffix; an id with none (an sbt plugin, a JVM tool)
+        // ships from the JVM aggregate.
+        def platformOf(id: String): String =
+            aggregateIds.keys.find(id.endsWith).getOrElse("JVM")
+        val rootId = extracted.structure.rootProject(extracted.structure.root)
+        // `skip` is a task, so it is run rather than read; every skip in this build is a constant
+        // or a function of scalaVersion, so the run costs nothing.
+        def skipsPublish(ref: ProjectRef): Boolean =
+            Project.runTask(ref / publish / skip, state) match {
+                case Some((_, sbt.Value(skipped))) => skipped
+                case _                             => false
+            }
+        val unpublished = extracted.structure.allProjectRefs
+            .filterNot(ref => aggregateIds.values.exists(_ == ref.project) || ref.project == rootId)
+            .filterNot(skipsPublish)
+            .collect { case ref if !aggregated(platformOf(ref.project)).contains(ref.project) => ref.project }
+            .sorted
+        if (unpublished.nonEmpty) {
+            throw new IllegalStateException(
+                s"Projects that publish but are outside their platform aggregate: ${unpublished.mkString(", ")}. " +
+                    "Add each to kyoJVM/kyoJS/kyoNative/kyoWasm, or set publish / skip := true if it must not ship."
+            )
+        }
         "project " + project.id :: state
     }
 }
