@@ -368,13 +368,14 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Specialized tools
 
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack bots, native C bindings, and TASTy reflection.
+Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack and WhatsApp bots, native C bindings, and TASTy reflection.
 
 | Module                                  | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | --------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-parse](kyo-parse/README.md)        | ✅  | ✅  | ✅     | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)   |
 | [kyo-pod](kyo-pod/README.md)†           | ✅  | ✅  | ✅     | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup |
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
+| [kyo-whatsapp](kyo-whatsapp/README.md)  | ✅  | ✅  | ✅     | ✅   | WhatsApp Cloud API client: signed webhook handler, typed messages and media, failures typed per call       |
 | [kyo-browser](kyo-browser/README.md)†   | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
 | [kyo-jsonrpc](kyo-jsonrpc/README.md)    | ✅  | ✅  | ✅     | ✅   | JSON-RPC 2.0 peers over pluggable transports with typed routes, calls, notifications, progress, and cancel |
 | [kyo-mcp](kyo-mcp/README.md)            | ✅  | ✅  | ✅     | ✅   | Model Context Protocol client and server built on kyo-jsonrpc with typed tools, prompts, and resources     |
