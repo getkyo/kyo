@@ -117,17 +117,21 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
     // awaiting a fiber's result does not await the finalizers that fiber is still unwinding, so a scope closing under
     // interrupt can reach its own finalizer while a nested one is still in flight. The ordering asserted below has to
     // come from the scope machinery rather than from this module.
-    "root scope waits for an active reactive change and its nested finalizers".ignore(
-        "scope close does not await a nested Scope.ensure finalizer when the fiber owning it is interrupted, so the outer "
-            + "finalizer can run while the nested one is still blocked (#1991)"
-    ) in {
+    //
+    // The nested finalizer runs only when the interrupt cascade closes its scope, and it holds on a latch the test
+    // releases only after the root finalizer has run or a bounded wait expires. The root finalizer records whether the
+    // nested one had finished, so a root that runs first records false with no race. The bounded wait is unavoidable:
+    // it is the only way out of the hold for a scope that does wait for the nested finalizer, and its length decides
+    // nothing for such a scope, which records true whenever the latch opens.
+    "root scope waits for an active reactive change and its nested finalizers" in {
         for
-            ref              <- Signal.initRef("value")
-            exchangeEntered  <- Promise.init[Unit, Any]
-            releaseExchange  <- Promise.init[Unit, Any]
-            finalizerStarted <- Promise.init[Unit, Any]
-            releaseFinalizer <- Promise.init[Unit, Any]
-            rootFinalized    <- Promise.init[Unit, Any]
+            ref           <- Signal.initRef("value")
+            entered       <- Promise.init[Unit, Any]
+            started       <- Promise.init[Unit, Any]
+            release       <- Promise.init[Unit, Any]
+            nestedDone    <- Promise.init[Unit, Any]
+            rootFinalized <- Promise.init[Unit, Any]
+            nestedAtRoot  <- AtomicRef.init(Maybe.empty[Boolean])
             exchange = new UIExchange:
                 def onChange(
                     region: ReactiveRegion,
@@ -138,27 +142,32 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
                     ui: UI
                 )(using Frame): Unit < Async =
                     Scope.run {
-                        Scope.ensure(finalizerStarted.completeUnitDiscard.andThen(releaseFinalizer.get))
-                            .andThen(exchangeEntered.completeUnitDiscard)
-                            .andThen(releaseExchange.get)
+                        Scope.ensure(
+                            started.completeUnitDiscard.andThen(release.get).andThen(nestedDone.completeUnitDiscard)
+                        ).andThen(entered.completeUnitDiscard).andThen(Async.never[Unit])
                     }
             fiber <- Fiber.initUnscoped(Scope.run {
                 for
-                    _    <- Scope.ensure(rootFinalized.completeUnitDiscard)
+                    _ <- Scope.ensure(
+                        nestedDone.done.map(d => nestedAtRoot.set(Present(d))).andThen(rootFinalized.completeUnitDiscard)
+                    )
                     root <- ReactiveUI.normalize(ref.map(UI.span(_)), Seq.empty)
                     _    <- ReactiveUI.subscribe(root, exchange)
                     _    <- Async.never
                 yield ()
             })
-            _          <- exchangeEntered.get
-            _          <- releaseExchange.completeUnit
-            _          <- finalizerStarted.get
-            _          <- fiber.interrupt
-            doneBefore <- rootFinalized.done
-            _          <- releaseFinalizer.completeUnit
-            _          <- rootFinalized.get
-            _          <- fiber.getResult
-        yield assert(!doneBefore)
+            _        <- entered.get
+            _        <- fiber.interrupt
+            _        <- started.get
+            _        <- Abort.run[Timeout](Async.timeout(5.seconds)(rootFinalized.get))
+            _        <- release.completeUnit
+            _        <- rootFinalized.get
+            _        <- fiber.getResult
+            recorded <- nestedAtRoot.get
+        yield assert(
+            recorded.contains(true),
+            s"the root finalizer ran before the nested finalizer finished (recorded $recorded)"
+        )
         end for
     }
 
@@ -381,6 +390,64 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             _ <- assertEventually(grandRef.waiters.map(_ == 0))
             w <- grandRef.waiters
         yield assert(w == 0)
+        end for
+    }
+
+    // The depth-3 form of "root scope waits for an active reactive change and its nested finalizers", with the same
+    // ordering argument and the same bounded wait: the grandchild's nested finalizer runs only when the cascade reaches
+    // depth 3, and the root finalizer records whether it had finished.
+    "root scope waits for a grandchild's nested finalizer (transitive cascade)" in {
+        for
+            outer         <- Signal.initRef(true)
+            inner         <- Signal.initRef(true)
+            grandRef      <- Signal.initRef("v")
+            entered       <- Promise.init[Unit, Any]
+            started       <- Promise.init[Unit, Any]
+            release       <- Promise.init[Unit, Any]
+            nestedDone    <- Promise.init[Unit, Any]
+            rootFinalized <- Promise.init[Unit, Any]
+            nestedAtRoot  <- AtomicRef.init(Maybe.empty[Boolean])
+            tree = UI.when(outer)(UI.when(inner)(UI.div(grandRef.map(s => UI.span(s)))))
+            // Only the grandchild region renders a span; the outer and inner regions render a reactive node and a div.
+            exchange = new UIExchange:
+                def onChange(
+                    region: ReactiveRegion,
+                    path: Seq[String],
+                    context: ReactiveRegion.RegionIdentity,
+                    parentContext: ReactiveRegion.ParentContext,
+                    previous: Maybe[UI],
+                    ui: UI
+                )(using Frame): Unit < Async =
+                    ui match
+                        case _: UI.Ast.SpanElement =>
+                            Scope.run {
+                                Scope.ensure(
+                                    started.completeUnitDiscard.andThen(release.get).andThen(nestedDone.completeUnitDiscard)
+                                ).andThen(entered.completeUnitDiscard).andThen(Async.never[Unit])
+                            }
+                        case _ => ()
+            fiber <- Fiber.initUnscoped(Scope.run {
+                for
+                    _ <- Scope.ensure(
+                        nestedDone.done.map(d => nestedAtRoot.set(Present(d))).andThen(rootFinalized.completeUnitDiscard)
+                    )
+                    root <- ReactiveUI.normalize(tree, Seq.empty)
+                    _    <- ReactiveUI.subscribe(root, exchange)
+                    _    <- Async.never
+                yield ()
+            })
+            _        <- entered.get
+            _        <- fiber.interrupt
+            _        <- started.get
+            _        <- Abort.run[Timeout](Async.timeout(5.seconds)(rootFinalized.get))
+            _        <- release.completeUnit
+            _        <- rootFinalized.get
+            _        <- fiber.getResult
+            recorded <- nestedAtRoot.get
+        yield assert(
+            recorded.contains(true),
+            s"the root finalizer ran before the grandchild's nested finalizer finished (recorded $recorded)"
+        )
         end for
     }
 
