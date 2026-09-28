@@ -58,3 +58,41 @@ jobs:
       targets: ${{ matrix.pole.targets }}
       # pull_request runs testDiff, push to main runs the full test.
       mode: ${{ github.event_name == 'pull_request' && 'diff' || 'full' }}
+
+  # The README badge is published from here, from the result this run knows, rather than read from
+  # GitHub's badge for the workflow: that badge has reported runs days old as the latest while newer
+  # runs were green. A rerun of failed jobs reruns this job too, so the badge follows the rerun.
+  # `continue-on-error`: the badge can never make a green run red.
+  badge:
+    name: badge
+    needs: build
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Publish ci-main.json to the badges branch
+        env:
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -eu
+          if [ "$RESULT" = success ]; then message=passing; color=brightgreen; else message=failing; color=red; fi
+          printf '{"schemaVersion":1,"label":"build","message":"%s","color":"%s"}\n' "$message" "$color" > "$RUNNER_TEMP/ci-main.json"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git fetch --depth 1 origin badges; then
+            git checkout -q -B badges FETCH_HEAD
+          else
+            git checkout -q --orphan badges
+            git rm -rfq .
+          fi
+          cp "$RUNNER_TEMP/ci-main.json" ci-main.json
+          git add ci-main.json
+          if git diff --cached --quiet; then
+            echo "badge unchanged: $message"
+          else
+            git commit -qm "ci: main is $message at $GITHUB_SHA"
+            git push origin badges
+          fi

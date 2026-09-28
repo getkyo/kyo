@@ -1,6 +1,6 @@
 <img src="https://raw.githubusercontent.com/getkyo/kyo/main/kyo.png" width="200" alt="Kyo">
 
-[![Build](https://img.shields.io/github/actions/workflow/status/getkyo/kyo/ci.yml?branch=main&logo=github&label=build)](https://github.com/getkyo/kyo/actions/workflows/ci.yml)
+[![Build](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fgetkyo%2Fkyo%2Fbadges%2Fci-main.json&logo=github)](https://github.com/getkyo/kyo/actions/workflows/ci.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3?logo=apachemaven&label=maven%20central)](https://search.maven.org/search?q=g:io.getkyo)
 [![Scala 3](https://img.shields.io/badge/scala-3-DC322F?logo=scala&logoColor=white)](https://www.scala-lang.org)
 [![Scaladoc](https://img.shields.io/badge/scaladoc-latest-blue)](https://javadoc.io/doc/io.getkyo/kyo-core_3)
