@@ -1612,12 +1612,14 @@ object Container:
         case AutoDetect(
             meter: Meter = Meter.Noop,
             apiVersion: String = internal.HttpContainerBackend.defaultApiVersion,
-            streamBufferSize: Int = internal.ShellBackend.defaultStreamBufferSize
+            streamBufferSize: Int = internal.ShellBackend.defaultStreamBufferSize,
+            daemonTimeout: Duration = internal.HttpContainerBackend.defaultDaemonTimeout
         )
         case UnixSocket(
             path: Path,
             meter: Meter = Meter.Noop,
-            apiVersion: String = internal.HttpContainerBackend.defaultApiVersion
+            apiVersion: String = internal.HttpContainerBackend.defaultApiVersion,
+            daemonTimeout: Duration = internal.HttpContainerBackend.defaultDaemonTimeout
         )
         case Shell(
             command: String,
@@ -2321,12 +2323,12 @@ object Container:
 
     private def resolveBackend(config: BackendConfig)(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
         config match
-            case BackendConfig.AutoDetect(meter, apiVersion, streamBufferSize) =>
-                ContainerBackend.detect(meter, apiVersion, streamBufferSize)
-            case BackendConfig.UnixSocket(path, meter, apiVersion) =>
+            case BackendConfig.AutoDetect(meter, apiVersion, streamBufferSize, daemonTimeout) =>
+                ContainerBackend.detect(meter, apiVersion, streamBufferSize, daemonTimeout)
+            case BackendConfig.UnixSocket(path, meter, apiVersion, daemonTimeout) =>
                 // Explicit socket, same runtime question: ask the daemon rather than reading its family off the
                 // path, so the diagnostic and the libpod feature gating are right here too.
-                val backend = new HttpContainerBackend(path.toString, apiVersion, meter)
+                val backend = new HttpContainerBackend(path.toString, apiVersion, meter, daemonTimeout = daemonTimeout)
                 // Explicit socket, same runtime question: ask the daemon rather than reading its family off
                 // the path, so the diagnostic and the libpod feature gating are right here too. Recorded on
                 // this backend rather than returned in a new one, which leaks containers (see

@@ -30,7 +30,8 @@ final private[kyo] class HttpContainerBackend(
     socketPath: String,
     private[internal] val apiVersion: String = HttpContainerBackend.defaultApiVersion,
     meter: Meter = Meter.Noop,
-    probedRuntime: Maybe[String] = Absent
+    probedRuntime: Maybe[String] = Absent,
+    daemonTimeout: Duration = HttpContainerBackend.defaultDaemonTimeout
 ) extends ContainerBackend(meter):
 
     import Container.*
@@ -359,7 +360,9 @@ final private[kyo] class HttpContainerBackend(
             // withErrorMapping's missingExceptionFor/conflictExceptionFor don't produce these types.
             Abort.runWith[Closed](meter.run {
                 Abort.runWith[HttpException](
-                    HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
+                    withDaemonDeadline(Duration.Zero) {
+                        HttpClient.postJson[CreateContainerResponse](url("/containers/create", params*), body)
+                    }
                 ) {
                     case Result.Success(resp)                   => Container.Id(resp.Id)
                     case Result.Failure(e: HttpStatusException) =>
@@ -448,10 +451,11 @@ final private[kyo] class HttpContainerBackend(
 
     private def ctxContainer(id: Container.Id): ResourceContext = ResourceContext.Container(id)
 
+    private def withDaemonDeadline[A, S](grace: Duration)(v: A < S)(using Frame): A < S =
+        HttpClient.withConfig(c => c.timeout(HttpContainerBackend.daemonDeadline(daemonTimeout, c.timeout, grace)))(v)
+
     def start(id: Container.Id)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        // Container start can stall under daemon load; the default 5s timeout is too tight for cold start. Raise to at
-        // least 30s so the daemon can ack /start; `c.timeout.max(...)` preserves any longer caller override.
-        HttpClient.withConfig(c => c.timeout(c.timeout.max(30.seconds))) {
+        withDaemonDeadline(Duration.Zero) {
             postUnitAccept304(s"/containers/${id.value}/start", ctxContainer(id))
         }
 
@@ -466,9 +470,8 @@ final private[kyo] class HttpContainerBackend(
             // the shared HttpClient pool. No-op if the fiber already completed via the join below.
             Sync.ensure(waitFiber.interrupt.unit) {
                 // `/stop?t=$seconds` grants that grace before SIGKILL and replies only once stopped, so the
-                // HTTP deadline must cover grace + SIGKILL + overhead (`timeout + 30s`), not just `timeout`
-                // (which would trip a spurious HttpTimeoutException). `max` keeps a longer caller override.
-                HttpClient.withConfig(c => c.timeout(c.timeout.max(timeout + 30.seconds))) {
+                // HTTP deadline must cover the grace on top of the daemon's own time.
+                withDaemonDeadline(timeout) {
                     postUnitAccept304(s"/containers/${id.value}/stop?t=$seconds", ctxContainer(id))
                 }.andThen {
                     // Docker HTTP API returns before the container fully transitions to "exited".
@@ -2837,6 +2840,15 @@ end HttpContainerBackend
 
 private[kyo] object HttpContainerBackend:
 
+    /** The floor of the HTTP deadline for a daemon call that creates, starts or stops a container. The daemon stalls
+      * under load and on a cold start, and the client's default deadline is too tight for these calls.
+      */
+    val defaultDaemonTimeout: Duration = 30.seconds
+
+    /** `current`, the caller's timeout, raised to at least `floor` plus `grace`. */
+    private[kyo] def daemonDeadline(floor: Duration, current: Duration, grace: Duration): Duration =
+        current.max(floor + grace)
+
     /** Default Docker/Podman Engine API version targeted by the HTTP backend. Override via
       * `BackendConfig.UnixSocket(path, apiVersion = ...)` if you need to pin a different revision.
       */
@@ -2970,7 +2982,11 @@ private[kyo] object HttpContainerBackend:
       *
       * Tries `_ping` on each candidate, returns first that responds with `OK`.
       */
-    def detect(meter: Meter = Meter.Noop, apiVersion: String = defaultApiVersion)(using
+    def detect(
+        meter: Meter = Meter.Noop,
+        apiVersion: String = defaultApiVersion,
+        daemonTimeout: Duration = defaultDaemonTimeout
+    )(using
         Frame
     ): HttpContainerBackend < (Async & Abort[ContainerException]) =
         candidateSocketPaths.map { candidates =>
@@ -2983,7 +2999,7 @@ private[kyo] object HttpContainerBackend:
                     ))
                 else
                     val path    = remaining.head
-                    val backend = new HttpContainerBackend(path, apiVersion, meter)
+                    val backend = new HttpContainerBackend(path, apiVersion, meter, daemonTimeout = daemonTimeout)
                     Abort.run[ContainerException](backend.detect()).map {
                         case Result.Success(_) =>
                             // Ask the daemon what it is, rather than reading it off the socket path. The answer
