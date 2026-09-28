@@ -8,7 +8,7 @@ import kyo.internal.mysql.MysqlDialect
   *
   * Dolt runs go-mysql-server rather than MySQL, so being wire-compatible does not by itself make it SQL-compatible. Each divergence below
   * was measured by the cross-engine conformance battery, where Dolt is registered as a backend. The version gate needs nothing special: a
-  * 2.3.4 server answers `8.0.31` to `version()`, exactly [[MysqlDialect.capabilityFloor]]. Dolt's own release number is not a SQL version
+  * 2.3.4 server answers `8.0.31` to `version()`, exactly the inherited [[capabilityFloor]]. Dolt's own release number is not a SQL version
   * and no gate reads it.
   *
   * The id is its own rather than MySQL's, so a `mysql` extension payload is not silently acceptable here and the static renderer has one
