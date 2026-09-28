@@ -1,6 +1,12 @@
 package kyo.scheduler
 
+import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually
 import org.scalatest.freespec.AnyFreeSpec
@@ -378,6 +384,63 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
         }
     }
 
+    "window shrink" - {
+        // A worker the window shrinks away from keeps running the task it holds, and that task can be parked indefinitely, like an I/O
+        // driver's carrier. Placement and steal stop at currentWorkers, and the worker's own loop polls its queue only once that task
+        // returns, so the scheduler itself has to hand off what is queued behind it.
+
+        "a shrink hands off the queue of the worker it excludes" in withParkedCarriers { (s, carriers) =>
+            val excluded     = carriers.last
+            val windowBefore = windowLoad(s, excluded.workerId)
+            s.updateWorkers(-1)
+            assert(s.status().currentWorkers == excluded.workerId, s"the shrink did not exclude worker ${excluded.workerId}")
+            val load = s.status().workers(excluded.workerId).load
+            assert(
+                load == 1,
+                s"STRANDED: worker ${excluded.workerId} left the window (currentWorkers=${s.status().currentWorkers}) while its carrier " +
+                    s"was parked (parked=${excluded.finished.getCount() == 1}), and its queued canary was never handed off: load=$load " +
+                    s"instead of 1"
+            )
+            val windowAfter = windowLoad(s, excluded.workerId)
+            assert(
+                windowAfter == windowBefore + 1,
+                s"the canary drained off worker ${excluded.workerId} was not placed inside the window: in-window load went from " +
+                    s"$windowBefore to $windowAfter"
+            )
+        }
+
+        "the cycle drains a blocked worker outside the window" in withParkedCarriers { (s, carriers) =>
+            val excluded = carriers.last
+            s.updateWorkers(-1)
+            assert(s.status().currentWorkers == excluded.workerId, s"the shrink did not exclude worker ${excluded.workerId}")
+            val beforeEnqueue = s.status().workers(excluded.workerId).load
+            excluded.enqueueRequested = true
+            excluded.enqueue.countDown()
+            excluded.enqueued.await()
+            val queued = s.status().workers(excluded.workerId).load
+            assert(
+                queued == beforeEnqueue + 1,
+                s"the excluded carrier's own task did not queue behind it on worker ${excluded.workerId}: load went from $beforeEnqueue " +
+                    s"to $queued"
+            )
+            val windowBefore = windowLoad(s, excluded.workerId)
+            excluded.worker.blocked = true
+            s.cycleWorkers()
+            val load = s.status().workers(excluded.workerId).load
+            assert(
+                load == 1,
+                s"STRANDED: worker ${excluded.workerId} is blocked outside the window (currentWorkers=${s.status().currentWorkers}) " +
+                    s"with ${queued - 1} task(s) queued behind its parked carrier, and the cycle did not drain them: load=$load instead of 1"
+            )
+            val windowAfter = windowLoad(s, excluded.workerId)
+            assert(
+                windowAfter == windowBefore + (queued - 1),
+                s"the ${queued - 1} task(s) drained off worker ${excluded.workerId} were not placed inside the window: in-window load " +
+                    s"went from $windowBefore to $windowAfter"
+            )
+        }
+    }
+
     "regulator harness liveness" - {
         // Each Scheduler permanently pins TWO timer-pool threads with infinite loops: the blocking-monitor scan loop
         // (BlockingMonitor's submitted task) and the worker-cycle loop (Scheduler.cycleTask). The concurrency and admission
@@ -422,5 +485,97 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
         val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, cfg)
         try testCode(scheduler)
         finally { scheduler.shutdown(); timer.shutdownNow(): Unit }
+    }
+
+    /** A carrier that, once started, can be asked to schedule one more task from its own worker thread before it parks on `release`:
+      * `enqueue` opens that step, `enqueueRequested` says whether to schedule, and `enqueued` opens once the task is queued.
+      */
+    final private class ParkedCarrier {
+        @volatile var workerId         = -1
+        @volatile var worker: Worker   = null
+        @volatile var enqueueRequested = false
+        val started                    = new CountDownLatch(1)
+        val enqueue                    = new CountDownLatch(1)
+        val enqueued                   = new CountDownLatch(1)
+        val release                    = new CountDownLatch(1)
+        val finished                   = new CountDownLatch(1)
+    }
+
+    private def windowLoad(s: Scheduler, currentWorkers: Int): Int =
+        s.status().workers.take(currentWorkers).map(_.load).sum
+
+    /** Parks one carrier on each of four workers, each with a canary it scheduled from its own thread queued behind it (the
+      * `Worker.current()` fast path), and hands them to `testCode` ordered by worker index.
+      *
+      * Nothing may move the window or drain a worker except the leaf's own `updateWorkers` and `cycleWorkers` calls, so every assertion
+      * holds synchronously after the call it follows. The regulators are made inert by a timer that runs no periodic task (both drive
+      * `updateWorkers` from `scheduleWithFixedDelay`), and the timer never runs a submitted task, which keeps the cycle loop and the
+      * blocking monitor's scan from starting: the monitor would flag the parked carriers, draining them early and raising the shrink
+      * floor above the window. The scheduler's clock is frozen: its clock executor discards the update loop, so every reading is the one
+      * taken at construction, no task's runtime ever exceeds the time slice, and the stall path is unreachable whatever the wall time.
+      * Carriers are placed one at a time, each after the previous one is running, with a full placement scan, so each lands on a
+      * distinct idle worker. The only waits are handoffs from the carriers, which complete on any version of the drain logic.
+      */
+    private def withParkedCarriers[A](testCode: (Scheduler, IndexedSeq[ParkedCarrier]) => A): A = {
+        val cfg = Scheduler.Config.default.copy(
+            cores = 4,
+            coreWorkers = 4,
+            minWorkers = 1,
+            maxWorkers = 8,
+            scheduleStride = 4
+        )
+        val timer = new ScheduledThreadPoolExecutor(8, kyo.scheduler.util.Threads("test-timer")) {
+            override def scheduleWithFixedDelay(command: Runnable, initialDelay: Long, delay: Long, unit: TimeUnit): ScheduledFuture[?] =
+                super.scheduleWithFixedDelay((() => ()): Runnable, initialDelay, delay, unit)
+            override def submit[T](task: Callable[T]): Future[T] =
+                new FutureTask[T](task)
+        }
+        val frozenClock: java.util.concurrent.Executor = _ => ()
+        val scheduler                                  = new Scheduler(TestExecutors.cached, frozenClock, timer, cfg)
+        val carriers                                   = IndexedSeq.fill(cfg.coreWorkers)(new ParkedCarrier)
+        try {
+            carriers.foreach { c =>
+                scheduler.schedule(TestTask(_run = () => {
+                    try {
+                        c.worker = Worker.current()
+                        c.workerId = c.worker.status().id
+                        scheduler.schedule(TestTask(_run = () => Task.Done))
+                        c.started.countDown()
+                        c.enqueue.await()
+                        if (c.enqueueRequested) {
+                            scheduler.schedule(TestTask(_run = () => Task.Done))
+                            c.enqueued.countDown()
+                        }
+                        c.release.await()
+                    } finally c.finished.countDown()
+                    Task.Done
+                }))
+                c.started.await()
+            }
+            val byWorker = carriers.sortBy(_.workerId)
+            assert(
+                byWorker.map(_.workerId) == (0 until cfg.coreWorkers),
+                s"carriers did not land one per worker: ${carriers.map(_.workerId)}"
+            )
+            val st = scheduler.status()
+            assert(st.currentWorkers == cfg.coreWorkers, s"the window moved before the shrink: currentWorkers=${st.currentWorkers}")
+            assert(
+                st.workers.forall(w => w.load == 2 && !w.isStalled),
+                s"every worker must hold its parked carrier plus its canary, unstalled: " +
+                    st.workers.map(w => s"worker ${w.id} load=${w.load} stalled=${w.isStalled}").mkString(", ")
+            )
+            testCode(scheduler, byWorker)
+        } finally {
+            carriers.foreach { c =>
+                c.enqueue.countDown()
+                c.release.countDown()
+            }
+            carriers.foreach { c =>
+                if (c.started.getCount() == 0)
+                    c.finished.await()
+            }
+            scheduler.shutdown()
+            timer.shutdownNow(): Unit
+        }
     }
 }
