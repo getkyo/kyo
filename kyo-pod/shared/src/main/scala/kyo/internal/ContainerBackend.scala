@@ -528,9 +528,10 @@ private[kyo] object ContainerBackend:
     def detect(
         meter: Meter = Meter.Noop,
         apiVersion: String = HttpContainerBackend.defaultApiVersion,
-        streamBufferSize: Int = ShellBackend.defaultStreamBufferSize
+        streamBufferSize: Int = ShellBackend.defaultStreamBufferSize,
+        daemonTimeout: Duration = HttpContainerBackend.defaultDaemonTimeout
     )(using Frame): ContainerBackend < (Async & Abort[ContainerException]) =
-        Abort.run[ContainerException](HttpContainerBackend.detect(meter, apiVersion)).map {
+        Abort.run[ContainerException](HttpContainerBackend.detect(meter, apiVersion, daemonTimeout)).map {
             case Result.Success(backend) => backend: ContainerBackend
             case Result.Failure(_)       => detectShell(meter, streamBufferSize)
             case Result.Panic(ex)        =>

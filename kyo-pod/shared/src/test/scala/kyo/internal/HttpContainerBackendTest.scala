@@ -4,6 +4,31 @@ import kyo.*
 
 class HttpContainerBackendTest extends BasePodTest:
 
+    "daemon deadline" - {
+        val floor = HttpContainerBackend.defaultDaemonTimeout
+
+        "raises the client's default to the configured floor" in {
+            val deadline = HttpContainerBackend.daemonDeadline(floor, 5.seconds, Duration.Zero)
+            assert(deadline == floor, s"expected the floor $floor, got $deadline")
+        }
+
+        "keeps a caller's longer timeout" in {
+            val longer   = floor + 1.minute
+            val deadline = HttpContainerBackend.daemonDeadline(floor, longer, Duration.Zero)
+            assert(deadline == longer, s"expected the caller's $longer, got $deadline")
+        }
+
+        "adds a stop's grace window on top of the floor" in {
+            val deadline = HttpContainerBackend.daemonDeadline(floor, 5.seconds, 10.seconds)
+            assert(deadline == floor + 10.seconds, s"expected ${floor + 10.seconds}, got $deadline")
+        }
+
+        "a backend config carries its own floor" in {
+            val deadline = HttpContainerBackend.daemonDeadline(2.minutes, 5.seconds, Duration.Zero)
+            assert(deadline == 2.minutes, s"expected the configured 2 minutes, got $deadline")
+        }
+    }
+
     "runtime identity and CLI equivalent" - {
 
         "the CLI equivalent names the env var the runtime actually reads" in {
