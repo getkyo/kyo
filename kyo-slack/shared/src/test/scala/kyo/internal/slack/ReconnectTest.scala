@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.slack
 
 import kyo.*
 
@@ -12,12 +12,12 @@ import kyo.*
   * deterministically (a routine disconnect ends a leg, the delivery channel drains a
   * known count, link_disabled aborts).
   */
-class SlackReconnectTest extends kyo.test.Test[Any]:
+class ReconnectTest extends kyo.test.Test[Any]:
 
-    private val url = "wss://test/socket"
+    private val url = HttpUrl(Present("wss"), "test", 443, "/socket", Absent)
 
     private def eventFrame(id: String) =
-        s"""{"type":"events_api","envelope_id":"$id","payload":{"type":"event_callback","event":{"type":"message","channel":"C1","user":"U1","text":"hi","ts":"1.2"}}}"""
+        s"""{"type":"events_api","envelope_id":"$id","payload":{"type":"event_callback","event_id":"Ev$id","event":{"type":"message","channel":"C1","user":"U1","text":"hi","ts":"1.2"}}}"""
     private val helloFrame =
         """{"type":"hello","num_connections":1,"connection_info":{"app_id":"A1"}}"""
     private val disconnectWarning  = """{"type":"disconnect","reason":"warning"}"""
@@ -39,16 +39,16 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         val closed: Latch,
         val feed: Channel[String],
         tap: Maybe[(String, Latch)]
-    ) extends SlackTransport:
-        private[kyo] def connect[A, S](u: String, c: HttpWebSocket.Config)(
-            f: SlackTransport.Conn => A < (S & Async & Abort[SlackException])
-        )(using Frame): A < (S & Async & Abort[SlackException]) =
+    ) extends Transport:
+        private[kyo] def connect[A, S](u: HttpUrl, c: HttpWebSocket.Config)(
+            f: Transport.Conn => A < (S & Async)
+        )(using Frame): A < (S & Async & Abort[SlackTransportException]) =
             // Prime the scripted frames into the feed, then enter the body so the engine's
             // relay copies them into inbound. The feed stays open until close so the loop
             // keeps reading until a disconnect frame or teardown.
             Kyo.foreach(scripted)(fr => Abort.run[Closed](feed.put(fr))).andThen {
                 ready.release.andThen {
-                    val conn = new SlackTransport.Conn:
+                    val conn = new Transport.Conn:
                         private[kyo] def put(text: String)(using Frame): Unit < (Async & Abort[Closed]) = recorded.put(text)
                         private[kyo] def stream(using Frame): Stream[String, Async]                     =
                             tap match
@@ -91,15 +91,15 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
       */
     private def opener(conduits: Conduit*)(config: SlackConfig)(using
         Frame
-    ): (() => SlackSocketEngine < (Async & Abort[SlackException])) < Sync =
+    ): (() => SocketEngine < (Async & Abort[SlackException.Connect])) < Sync =
         AtomicInt.init(0).map { idx => () =>
             idx.getAndIncrement.map { i =>
-                if i < conduits.size then SlackSocketEngine.initUnscoped(conduits(i), url, config)
-                else Abort.fail(new SlackTransportException(s"opener exhausted at call $i"))
+                if i < conduits.size then SocketEngine.initUnscoped(conduits(i), url, config)
+                else Abort.panic(new IllegalStateException(s"opener exhausted at call $i"))
             }
         }
 
-    private def envIdOf(env: SlackEnvelope): Maybe[String] =
+    private def envIdOf(env: SlackEnvelope[?]): Maybe[String] =
         env match
             case e: SlackEnvelope.EventsApi => Present(e.meta.envelopeId.value)
             case _                          => Absent
@@ -107,27 +107,27 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
     /** A handler that records each delivered event's envelope_id onto `delivered` and
       * acks. Non-event envelopes (hello) are acked without recording.
       */
-    private def recordingHandler(delivered: Channel[String]): SlackEnvelope => SlackAck < (Async & Abort[SlackException]) =
-        (env: SlackEnvelope) =>
+    private def recordingHandler(delivered: Channel[String]): SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException]) =
+        (env: SlackEnvelope[?]) =>
             envIdOf(env) match
                 case Present(id) => Abort.run[Closed](delivered.put(id)).andThen(SlackAck.Ack: SlackAck)
                 case Absent      => SlackAck.Ack: SlackAck
 
-    private val ackHandler: SlackEnvelope => SlackAck < (Async & Abort[SlackException]) =
-        (_: SlackEnvelope) => SlackAck.Ack: SlackAck
+    private val ackHandler: SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException]) =
+        (_: SlackEnvelope[?]) => SlackAck.Ack: SlackAck
 
     /** Drive the exact production composition `Slack.run` uses: open the controller,
       * then run its loop. The tests exercise the real `open`/`start` pair rather than a
       * test-only convenience entry.
       */
-    private def runController[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+    private def runController[E, S](
+        using Isolate[S, Abort[E] & Async, S]
     )(
-        open: () => SlackSocketEngine < (Async & Abort[SlackException]),
+        open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
         config: SlackConfig,
-        handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-    )(using Frame): Unit < (S & Async & Abort[SlackException]) =
-        SlackReconnect.open(open, config).map(_.start(handler))
+        handler: SlackEnvelope[?] => SlackAck < (S & Async & Abort[E])
+    )(using Frame): Unit < (S & Async & Abort[SlackException.Connect | SlackLinkDisabledException | E]) =
+        Reconnect.open(open, config).map(_.start(handler))
 
     "Overlap rollover delivers the full sequence exactly once, in order" in {
         for
@@ -164,7 +164,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
             fresh     <- conduit(Seq(helloFrame, eventFrame("B")))
             open      <- opener(old, fresh)(cfgOverlap)
             delivered <- Channel.init[String](16)
-            handler: (SlackEnvelope => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope) =>
+            handler: (SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope[?]) =>
                 env match
                     case SlackEnvelope.Disconnect(_) =>
                         // Hold the loop at the disconnect until the residue (B) is buffered, so the
@@ -189,8 +189,37 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         yield
             assert(firstId == Chunk("A"), s"A delivered on engineOld before the disconnect; got: $firstId")
             assert(secondId == Chunk("B"), s"B (the residue behind the disconnect) delivered, not lost; got: $secondId")
-            val oldAckIds = oldAcks.map(a => Json.decode[SlackWire.AckFrame](a).getOrThrow.envelope_id)
+            val oldAckIds = oldAcks.map(a => Json.decode[Wire.AckFrame](a).getOrThrow.envelope_id)
             assert(oldAckIds == Chunk("A", "B"), s"engineOld acked A then B (residue ack flushed before close); got: $oldAckIds")
+        end for
+    }
+
+    "Overlap closes engineOld when the handler fails on a residue frame during the drain" in {
+        // After the rotation points `active` at engineNew, engineOld is closed by the rotation
+        // alone: the controller's teardown closes only the active engine. The handler fails on
+        // B, the residue behind the disconnect, so the drain aborts before its closeTransport.
+        val sentinel = """{"type":"workflow_step_execute","payload":{}}"""
+        val failure  = SlackOtherApiException("test", "handler_failed", Chunk.empty)
+        for
+            residueBuffered <- Latch.init(1)
+            old             <- conduit(
+                Seq(helloFrame, eventFrame("A"), disconnectWarning, eventFrame("B"), sentinel),
+                tap = Present((sentinel, residueBuffered))
+            )
+            fresh <- conduit(Seq(helloFrame))
+            open  <- opener(old, fresh)(cfgOverlap)
+            handler: (SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope[?]) =>
+                env match
+                    case SlackEnvelope.Disconnect(_) => residueBuffered.await.andThen(SlackAck.Ack: SlackAck)
+                    case _                           =>
+                        envIdOf(env) match
+                            case Present("B") => Abort.fail(failure)
+                            case _            => SlackAck.Ack: SlackAck
+            result        <- Abort.run[SlackException](runController(open, cfgOverlap, handler))
+            closedPending <- old.closed.pending
+        yield
+            assert(result == Result.fail(failure))
+            assert(closedPending == 0, s"engineOld closed after the failed drain; old.closed still pending: $closedPending")
         end for
     }
 
@@ -210,7 +239,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
             _       <- loop.interrupt
         yield
             assert(ids == Chunk("E1", "E2"), s"E1 delivered once, E2 once, no re-delivery; got: $ids")
-            val allAcks = (oldAcks ++ newAcks).map(a => Json.decode[SlackWire.AckFrame](a).getOrThrow.envelope_id)
+            val allAcks = (oldAcks ++ newAcks).map(a => Json.decode[Wire.AckFrame](a).getOrThrow.envelope_id)
             assert(allAcks.count(_ == "E1") == 2, s"both E1 pushes acked, got acks: $allAcks")
             assert(allAcks.count(_ == "E2") == 1, s"E2 acked once, got acks: $allAcks")
         end for
@@ -297,7 +326,7 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
             open      <- opener(old, fresh)(cfgOverlap)
             delivered <- Channel.init[String](16)
             firstSeen <- AtomicBoolean.init(false)
-            handler: (SlackEnvelope => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope) =>
+            handler: (SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope[?]) =>
                 envIdOf(env) match
                     case Present(id) =>
                         // Park only the FIRST delivered event (A) until B is buffered behind it,
@@ -354,19 +383,45 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "link_disabled aborts SlackTerminalException under Overlap; no reconnect" in {
+    "Off delivers the residue behind a routine disconnect and flushes every ack before the teardown closes the socket" in {
+        val sentinel = """{"type":"workflow_step_execute","payload":{}}"""
+        for
+            residueBuffered <- Latch.init(1)
+            old             <- conduit(
+                Seq(helloFrame, eventFrame("A"), disconnectWarning, eventFrame("B"), sentinel),
+                tap = Present((sentinel, residueBuffered))
+            )
+            open      <- opener(old)(cfgOff)
+            delivered <- Channel.init[String](8)
+            handler: (SlackEnvelope[?] => SlackAck < (Async & Abort[SlackException])) = (env: SlackEnvelope[?]) =>
+                env match
+                    case SlackEnvelope.Disconnect(_) => residueBuffered.await.andThen(SlackAck.Ack: SlackAck)
+                    case _                           => recordingHandler(delivered)(env)
+            // The controller's teardown runs as soon as the loop ends, as Slack.receive's scope does.
+            result <- Abort.run[SlackException](
+                Reconnect.open(open, cfgOff).map(controller => controller.start(handler).andThen(controller.closeActive))
+            )
+            ids  <- delivered.drain
+            acks <- old.recorded.drain
+        yield
+            assert(result == Result.Success(()), s"Off ends cleanly on a routine disconnect, got: $result")
+            assert(ids == Chunk("A", "B"), s"A, then B from the residue behind the disconnect; got: $ids")
+            val ackIds = acks.map(a => Json.decode[Wire.AckFrame](a).getOrThrow.envelope_id)
+            assert(ackIds == Chunk("A", "B"), s"both acks reach the socket before it closes; got: $ackIds")
+        end for
+    }
+
+    "link_disabled aborts SlackLinkDisabledException under Overlap; no reconnect" in {
         for
             old    <- conduit(Seq(helloFrame, disconnectDisabled))
             open   <- opener(old)(cfgOverlap)
             loop   <- Fiber.initUnscoped(Abort.run[SlackException](runController(open, cfgOverlap, ackHandler)))
             result <- loop.get
-        yield result match
-            case Result.Failure(_: SlackTerminalException) => assert(true)
-            case other                                     => assert(false, s"expected SlackTerminalException under Overlap, got: $other")
+        yield assert(result == Result.fail(SlackLinkDisabledException()))
         end for
     }
 
-    "link_disabled aborts SlackTerminalException under Immediate and Off" in {
+    "link_disabled aborts SlackLinkDisabledException under Immediate and Off" in {
         def runDisabled(config: SlackConfig)(using Frame): Result[SlackException, Unit] < (Async & Scope) =
             for
                 old    <- conduit(Seq(helloFrame, disconnectDisabled))
@@ -378,14 +433,8 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
             immediate <- runDisabled(cfgImmediate)
             off       <- runDisabled(cfgOff)
         yield
-            assert(immediate.isFailure, s"Immediate: terminal, got: $immediate")
-            assert(off.isFailure, s"Off: terminal, got: $off")
-            immediate match
-                case Result.Failure(_: SlackTerminalException) => assert(true)
-                case other                                     => assert(false, s"Immediate expected SlackTerminalException, got: $other")
-            off match
-                case Result.Failure(_: SlackTerminalException) => assert(true)
-                case other                                     => assert(false, s"Off expected SlackTerminalException, got: $other")
+            assert(immediate == Result.fail(SlackLinkDisabledException()))
+            assert(off == Result.fail(SlackLinkDisabledException()))
         end for
     }
 
@@ -408,4 +457,4 @@ class SlackReconnectTest extends kyo.test.Test[Any]:
         end for
     }
 
-end SlackReconnectTest
+end ReconnectTest

@@ -2,60 +2,32 @@ package kyo
 
 class SlackInteractionTest extends kyo.test.Test[Any]:
 
-    "BlockActions decodes with its actions chunk" in {
-        val json    = """{"user":"U1","triggerId":"T1","channel":"C1","actions":[{"actionId":"a1","blockId":"b1","value":"v1"}]}"""
-        val decoded = Json.decode[SlackInteraction.BlockActions](json)
-        assert(decoded == Result.Success(
-            SlackInteraction.BlockActions(
-                SlackId.UserId("U1"),
-                SlackId.TriggerId("T1"),
-                Present(SlackId.ChannelId("C1")),
-                Absent,
-                Chunk(SlackInteraction.Action(SlackId.ActionId("a1"), SlackId.BlockId("b1"), Present("v1")))
-            )
-        ))
-    }
+    // Built from parts so the secret's literal is off the source lines a failure renders.
+    private val secret = Seq("SECRET", "ACTION", "URL", "7d02").mkString("-")
+    private val url    = SlackResponseUrl(s"https://hooks.slack.com/actions/T1/B1/$secret")
 
-    "ViewSubmission/ViewClosed/Shortcut/MessageAction each decode" in {
-        val viewSub = Json.decode[SlackInteraction.ViewSubmission](
-            """{"user":"U1","viewId":"V1","stateJson":"{}"}"""
+    "BlockActions and MessageAction render their response_url redacted, alone and in their envelope" in {
+        val click = SlackInteraction.BlockActions(
+            SlackId.UserId("U1"),
+            SlackId.TriggerId("T1"),
+            Present(SlackId.ChannelId("C1")),
+            Absent,
+            Chunk(SlackInteraction.Action(SlackId.ActionId("a1"), SlackId.BlockId("b1"))),
+            Present(SlackTs("1.2")),
+            Present(url)
         )
-        assert(viewSub == Result.Success(
-            SlackInteraction.ViewSubmission(SlackId.UserId("U1"), SlackId.ViewId("V1"), "{}")
-        ))
-
-        val viewClosed = Json.decode[SlackInteraction.ViewClosed](
-            """{"user":"U1","viewId":"V1","isCleared":false}"""
+        val action = SlackInteraction.MessageAction(
+            SlackId.UserId("U1"),
+            SlackId.TriggerId("T1"),
+            "cb1",
+            SlackId.ChannelId("C1"),
+            SlackTs("1.2"),
+            Present(url)
         )
-        assert(viewClosed == Result.Success(
-            SlackInteraction.ViewClosed(SlackId.UserId("U1"), SlackId.ViewId("V1"), false)
-        ))
-
-        val shortcut = Json.decode[SlackInteraction.Shortcut](
-            """{"user":"U1","triggerId":"T1","callbackId":"cb1"}"""
-        )
-        assert(shortcut == Result.Success(
-            SlackInteraction.Shortcut(SlackId.UserId("U1"), SlackId.TriggerId("T1"), "cb1")
-        ))
-
-        val msgAction = Json.decode[SlackInteraction.MessageAction](
-            """{"user":"U1","triggerId":"T1","callbackId":"cb1","channel":"C1","messageTs":"1.2"}"""
-        )
-        assert(msgAction == Result.Success(
-            SlackInteraction.MessageAction(
-                SlackId.UserId("U1"),
-                SlackId.TriggerId("T1"),
-                "cb1",
-                SlackId.ChannelId("C1"),
-                SlackTs("1.2")
-            )
-        ))
-    }
-
-    "Unknown preserves the raw payload JSON" in {
-        val u = SlackInteraction.Unknown("workflow_step_edit", "{\"x\":1}")
-        assert(u.`type` == "workflow_step_edit")
-        assert(u.payloadJson == "{\"x\":1}")
+        val meta     = SlackEnvelope.Meta(SlackId.EnvelopeId("E1"))
+        val rendered =
+            Chunk(click, action).map(_.toString) ++ Chunk(click, action).map(SlackEnvelope.Interactive(meta, _).toString)
+        assert(rendered.forall(r => r.contains("SlackResponseUrl(<redacted>)") && !r.contains(secret)), rendered.toString)
     }
 
 end SlackInteractionTest

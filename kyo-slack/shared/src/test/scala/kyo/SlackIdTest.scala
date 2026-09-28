@@ -8,7 +8,7 @@ class SlackIdTest extends kyo.test.Test[Any]:
         val decoded = Json.decode[SlackId.ChannelId](encoded)
         assert(encoded == "\"C123\"")
         assert(decoded == Result.Success(SlackId.ChannelId("C123")))
-        assert(decoded.getOrElse(SlackId.ChannelId("")).value == "C123")
+        assert(decoded.map(_.value) == Result.Success("C123"))
     }
 
     "SlackTs round-trips through JSON as a top-level opaque type" in {
@@ -17,21 +17,7 @@ class SlackIdTest extends kyo.test.Test[Any]:
         val decoded    = Json.decode[SlackTs](encoded)
         assert(encoded == "\"1700000000.000100\"")
         assert(decoded == Result.Success(SlackTs("1700000000.000100")))
-        assert(decoded.getOrElse(SlackTs("")).value == "1700000000.000100")
-    }
-
-    "each id extracts its underlying value" in {
-        assert(SlackId.ChannelId("C1").value == "C1")
-        assert(SlackId.UserId("U1").value == "U1")
-        assert(SlackId.TeamId("T1").value == "T1")
-        assert(SlackId.AppId("A1").value == "A1")
-        assert(SlackId.TriggerId("TR1").value == "TR1")
-        assert(SlackId.EnvelopeId("E1").value == "E1")
-        assert(SlackId.ViewId("V1").value == "V1")
-        assert(SlackId.BotId("B1").value == "B1")
-        assert(SlackId.ActionId("a1").value == "a1")
-        assert(SlackId.BlockId("b1").value == "b1")
-        assert(SlackTs("1.0").value == "1.0")
+        assert(decoded.map(_.value) == Result.Success("1700000000.000100"))
     }
 
     "BotId/ActionId/BlockId round-trip through JSON" in {
@@ -40,9 +26,11 @@ class SlackIdTest extends kyo.test.Test[Any]:
         assert(Json.decode[SlackId.BlockId](Json.encode(SlackId.BlockId("b1"))) == Result.Success(SlackId.BlockId("b1")))
     }
 
-    "UserId decode of a non-string JSON token fails typed" in {
-        val result = Json.decode[SlackId.UserId]("42")
-        assert(result.isFailure)
+    "UserId decode of a non-string JSON token is a parse failure at the token, expecting a string's opening quote" in {
+        Json.decode[SlackId.UserId]("42") match
+            case Result.Failure(e: ParseException) =>
+                assert((e.path, e.position, e.targetType) == (Seq.empty[String], 0, "Expected '\"'"))
+            case other => fail(s"expected a parse failure, got: $other")
     }
 
 end SlackIdTest

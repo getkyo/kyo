@@ -5,9 +5,9 @@ import kyo.*
 /** Handling a typed event and calling an unmodeled Web API method.
   *
   * When someone adds an emoji reaction, the bot reacts back with `:eyes:` using
-  * `Slack.custom`, the escape hatch for any Web API method kyo-slack does not wrap. The
-  * request body is your own case class deriving `Schema`; the response is decoded to the
-  * type you ask for.
+  * `Slack.custom`, the escape hatch for any Web API method kyo-slack does not wrap. The method
+  * name is a `SlackMethod`, checked when it is built; the request body is your own case class
+  * deriving `Schema`; the response is decoded to the type you ask for.
   *
   * Slack app setup: Socket Mode on; bot scopes `reactions:read` + `reactions:write`;
   * subscribe to the `reaction_added` bot event.
@@ -24,12 +24,18 @@ object ReactionDemo extends KyoApp:
 
     run {
         Demos.connect { config =>
-            Slack.run(config) {
-                case SlackEnvelope.EventsApi(_, SlackEvent.ReactionAdded(_, reaction, itemChannel, itemTs)) if reaction != "eyes" =>
-                    Slack.custom[AddReaction, ApiOk]("reactions.add", AddReaction(itemChannel, itemTs, "eyes"))
-                        .andThen(SlackAck.Ack)
-                case _ => SlackAck.Ack
-            }
+            val reactionsAdd = SlackMethod("reactions.add")
+            val loop         = Slack.run(config)([A] =>
+                (env: SlackEnvelope[A]) =>
+                    env match
+                        case SlackEnvelope.EventsApi(_, SlackEvent.ReactionAdded(_, reaction, itemChannel, itemTs), _)
+                            if reaction != "eyes" =>
+                            Slack.custom[AddReaction, ApiOk](reactionsAdd, AddReaction(itemChannel, itemTs, "eyes"))
+                                .andThen(SlackAck.Ack)
+                        case _: SlackEnvelope.Acknowledged => SlackAck.Ack
+                        case _: SlackEnvelope.Plain        => Kyo.unit
+            )
+            loop
         }
     }
 end ReactionDemo

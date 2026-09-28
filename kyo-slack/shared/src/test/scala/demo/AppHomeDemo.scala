@@ -26,11 +26,15 @@ object AppHomeDemo extends KyoApp:
 
     run {
         Demos.connect { config =>
-            Slack.run(config) {
-                case SlackEnvelope.EventsApi(_, SlackEvent.AppHomeOpened(user, _, _)) =>
-                    Slack.viewsPublish(user, home(user)).andThen(SlackAck.Ack)
-                case _ => SlackAck.Ack
-            }
+            val loop = Slack.run(config)([A] =>
+                (env: SlackEnvelope[A]) =>
+                    env match
+                        case SlackEnvelope.EventsApi(_, SlackEvent.AppHomeOpened(user, _, _), _) =>
+                            Slack.viewsPublish(user, home(user)).andThen(SlackAck.Ack)
+                        case _: SlackEnvelope.Acknowledged => SlackAck.Ack
+                        case _: SlackEnvelope.Plain        => Kyo.unit
+            )
+            loop
         }
     }
 end AppHomeDemo

@@ -1,30 +1,83 @@
 package kyo
 
-/** Slack token capability namespace: two distinct opaque token types over
-  * `String`. `AppLevel` (an `xapp-` token with `connections:write`) opens the
-  * Socket Mode connection; `Bot` (an `xoxb-` token) authenticates the Web API. The
-  * two are NOT interchangeable: a `Bot` token cannot be passed where an `AppLevel`
-  * is required, so a Web API token can never open the socket (a compile error).
+/** Slack token capability namespace: two distinct secret types. `AppLevel` (an `xapp-`
+  * token with `connections:write`) opens the Socket Mode connection; `Bot` (an `xoxb-`
+  * token, or `xoxe.xoxb-` when rotated) authenticates the Web API. The two are NOT interchangeable: a `Bot` token cannot
+  * be passed where an `AppLevel` is required, and a plain `String` is neither, so a Web API
+  * token can never open the socket (a compile error).
   *
-  * Tokens carry no `Schema` and no `toString` that renders the secret: they ride
-  * the `Authorization` header and the connect body, never a decoded frame or a log
-  * line.
+  * Each token is a class whose `toString` renders `SlackToken.AppLevel(<redacted>)` or
+  * `SlackToken.Bot(<redacted>)`, so a `SlackConfig`, a log line, or an assertion message that
+  * renders a token never shows the secret. `value` is the only way to read it. Tokens compare
+  * by value, carry no `Schema`, and ride only the `Authorization` header.
+  *
+  * IMPORTANT: construction checks the token's shape and panics with a
+  * [[kyo.SlackInvalidTokenException]] when it cannot be one: empty, not starting with its kind's
+  * prefix followed by at least one character, longer than 255 characters, or holding a character
+  * other than printable ASCII without space. Slack documents the prefixes and says to "anticipate a
+  * string as long as 255 characters" (token lengthening, 2016-08-23), and no alphabet, so nothing
+  * narrower is checked; a CR, an LF or a space would end or split the `Authorization` header the
+  * token is put in. A token of the right shape that Slack does not know is that call's
+  * [[kyo.SlackInvalidAuthException]].
   */
 object SlackToken:
 
-    opaque type AppLevel = String
-    opaque type Bot      = String
-
-    object AppLevel:
-        def apply(s: String): AppLevel            = s
-        extension (t: AppLevel) def value: String = t
-        given CanEqual[AppLevel, AppLevel]        = CanEqual.derived
+    /** The `xapp-` app-level token that opens the Socket Mode connection. */
+    final class AppLevel private (val value: String):
+        override def equals(other: Any): Boolean =
+            other match
+                case that: AppLevel => value == that.value
+                case _              => false
+        override def hashCode: Int    = value.hashCode
+        override def toString: String = "SlackToken.AppLevel(<redacted>)"
     end AppLevel
 
-    object Bot:
-        def apply(s: String): Bot            = s
-        extension (t: Bot) def value: String = t
-        given CanEqual[Bot, Bot]             = CanEqual.derived
+    object AppLevel:
+        /** Builds a token, panicking with a [[kyo.SlackInvalidTokenException]] when the text cannot be an `xapp-` token. */
+        def apply(value: String)(using Frame): AppLevel =
+            problemOf(value, Chunk("xapp-")) match
+                case Present(problem) => throw SlackInvalidTokenException(SlackInvalidTokenException.Token.AppLevel, problem)
+                case Absent           => new AppLevel(value)
+        given CanEqual[AppLevel, AppLevel] = CanEqual.derived
+    end AppLevel
+
+    /** The bot token that authenticates Web API calls: `xoxb-`, or `xoxe.xoxb-` for an app with token rotation on ("Using token
+      * rotation", docs.slack.dev/authentication/using-token-rotation). The rotation guide covers bot and user tokens only, so an
+      * app-level token keeps its one `xapp-` prefix.
+      */
+    final class Bot private (val value: String):
+        override def equals(other: Any): Boolean =
+            other match
+                case that: Bot => value == that.value
+                case _         => false
+        override def hashCode: Int    = value.hashCode
+        override def toString: String = "SlackToken.Bot(<redacted>)"
     end Bot
+
+    object Bot:
+        /** Builds a token, panicking with a [[kyo.SlackInvalidTokenException]] when the text cannot be an `xoxb-` or `xoxe.xoxb-` token. */
+        def apply(value: String)(using Frame): Bot =
+            problemOf(value, Chunk("xoxb-", "xoxe.xoxb-")) match
+                case Present(problem) => throw SlackInvalidTokenException(SlackInvalidTokenException.Token.Bot, problem)
+                case Absent           => new Bot(value)
+        given CanEqual[Bot, Bot] = CanEqual.derived
+    end Bot
+
+    /** Slack asks clients to allow tokens of up to this many characters. */
+    inline val MaxLength = 255
+
+    private def problemOf(value: String, prefixes: Chunk[String]): Maybe[SlackInvalidTokenException.Problem] =
+        import SlackInvalidTokenException.Problem
+        if value.isEmpty then Present(Problem.Empty)
+        else if value.length > MaxLength then Present(Problem.TooLong(value.length, MaxLength))
+        else
+            val bad = value.indexWhere(c => !isTokenChar(c))
+            if bad >= 0 then Present(Problem.InvalidCharacter(bad))
+            else if !prefixes.exists(p => value.startsWith(p) && value.length > p.length) then Present(Problem.Prefix(prefixes))
+            else Absent
+        end if
+    end problemOf
+
+    private def isTokenChar(c: Char): Boolean = c >= '!' && c <= '~'
 
 end SlackToken
