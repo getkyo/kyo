@@ -833,14 +833,20 @@ object Fiber:
                             end complete
                             def apply(result: Result[E, Unit < S2]): Unit =
                                 result.foldError(_ => (), e => this.interruptDiscard(e))
+                            var parent: Maybe[IOPromise[?, ?]] = Absent
+                            override def onComplete(): Unit    =
+                                super.onComplete()
+                                parent.foreach(p => discard(p.remove(this)))
                         end State
                         val state = new State
                         // One captured state for all workers, crossed once per item inside workerLoop; the worker task crosses
                         // nothing, so a task-level crossing would install the state twice and produce a transform the completion
-                        // discards. The interrupt parent is read once and passed to each child before any is scheduled, so an
-                        // interrupt arriving while they launch cannot orphan one.
+                        // discards. The parent links `state` once, before any worker is scheduled, so an interrupt arriving while
+                        // they launch reaches each of them through `state`; `state` takes the link back when it completes.
                         crossing.capture { captured =>
-                            val parent                      = IOTask.currentTask()
+                            val parent = IOTask.currentTask()
+                            state.parent = parent
+                            parent.foreach(_.interrupts(state))
                             @tailrec def loop(i: Int): Unit =
                                 if i < numWorkers then
                                     def workerLoop(): Unit < (Abort[E] & Async) =
@@ -853,7 +859,7 @@ object Fiber:
                                             }
                                         end if
                                     end workerLoop
-                                    val fiber = IOTask.detached(workerLoop(), parent)
+                                    val fiber = IOTask.detached(workerLoop())
                                     state.interrupts(fiber)
                                     fiber.onComplete(state)
                                     loop(i + 1)
@@ -879,13 +885,19 @@ object Fiber:
         )(using Frame): Fiber[A, Abort[E] & S2] < (Sync & S) =
             Race.first[E, A, S, S2](iterable)
 
-        sealed abstract private class Race[E, A, S2](frame: Frame) extends IOPromise[E, A < S2] with (Result[E, A < S2] => Unit)
+        sealed abstract private class Race[E, A, S2](frame: Frame) extends IOPromise[E, A < S2] with (Result[E, A < S2] => Unit):
+            var parent: Maybe[IOPromise[?, ?]] = Absent
+            override def onComplete(): Unit    =
+                super.onComplete()
+                parent.foreach(p => discard(p.remove(this)))
+        end Race
 
         private object Race:
 
             // One captured state for the whole race, each computation isolated against it here rather than at the caller, so
-            // its restore travels inside the fiber.
-            private inline def apply[E, A, S, S2](race: Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
+            // its restore travels inside the fiber. `newRace` is bound inside the deferred step, so each run of the computation
+            // value gets a promise of its own.
+            private inline def apply[E, A, S, S2](inline newRace: => Race[E, A, S2], iterable: Iterable[A < (Abort[E] & Async & S)])(
                 using
                 isolate: Isolate[S, Abort[E] & Async, S2],
                 frame: Frame
@@ -893,9 +905,13 @@ object Fiber:
                 val crossing = isolate.crossing
                 crossing.capture { state =>
                     Sync.Unsafe.defer {
+                        val race = newRace
+                        // The parent links the race once, before any arm is scheduled (see Fiber.internal.foreachIndexed).
                         val parent = IOTask.currentTask()
+                        race.parent = parent
+                        parent.foreach(_.interrupts(race))
                         foreach(iterable) { (_, v) =>
-                            val fiber = IOTask(crossing)(state, v, parent)
+                            val fiber = IOTask(crossing)(state, v)
                             race.onComplete(_ => fiber.interruptDiscard(Result.Panic(Interrupted(frame))))
                             fiber.onComplete(race)
                         }
@@ -963,6 +979,11 @@ object Fiber:
                         // - higher 32 bits => failed results count (nok)
                         val packed = AtomicLong.Unsafe.init(0)
 
+                        var parent: Maybe[IOPromise[?, ?]] = Absent
+                        override def onComplete(): Unit    =
+                            super.onComplete()
+                            parent.foreach(p => discard(p.remove(this)))
+
                         def apply(idx: Int, result: Result[E, A < S2]): Unit =
                             @tailrec def loop(): Unit =
                                 // Atomically update both ok/nok counters using CAS
@@ -1018,10 +1039,12 @@ object Fiber:
                     crossing.capture { captured =>
                         import AllowUnsafe.embrace.danger
                         inline def interruptPanic = Result.Panic(Interrupted(frame))
-                        // Read the interrupt parent once and pass it to each child (see Fiber.internal.foreachIndexed).
+                        // The parent links `state` once, before any child is scheduled (see Fiber.internal.foreachIndexed).
                         val parent = IOTask.currentTask()
+                        state.parent = parent
+                        parent.foreach(_.interrupts(state))
                         foreach(iterable) { (idx, v) =>
-                            val fiber = IOTask(crossing)(captured, v, parent)
+                            val fiber = IOTask(crossing)(captured, v)
                             state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
                             fiber.onComplete(state(idx, _))
                         }

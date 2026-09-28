@@ -317,9 +317,10 @@ class PathWatchTest extends kyo.test.Test[Any]:
 
     "invalidation is terminal and cannot resume after root recreation" in {
         // On the clock-driven poll loop, removeAll and the recreation below both land between two
-        // scans unless the removal's own scan is forced through first: the advance after removeAll
-        // is what lets the loop observe the root missing and close the stream before recreation ever
-        // happens, rather than folding straight from "existed" to "exists again" and never noticing.
+        // scans unless the removal's own scan is forced through first: the poll after removeAll,
+        // awaited until the stream ends, is what lets the loop observe the root missing and close
+        // the stream before recreation ever happens, rather than folding straight from "existed" to
+        // "exists again" and never noticing.
         Clock.withTimeControl { clock =>
             hostRoot("kyo-path-watch-terminal").map { dir =>
                 val fileSystem = FileSystem.host
@@ -329,12 +330,14 @@ class PathWatchTest extends kyo.test.Test[Any]:
                     fileSystem.mkDir(root).andThen {
                         fileSystem.openWatcher(root, WatchOptions()).map { watcher =>
                             Fiber.initUnscoped(Scope.run(watcher.events.run)).map { fiber =>
-                                fileSystem.removeAll(root).andThen {
-                                    clock.advance(10.millis).andThen {
-                                        fileSystem.mkDir(root).andThen {
-                                            fileSystem.write(later, "later", Path.WriteOptions()).andThen {
-                                                clock.advance(10.millis).andThen {
-                                                    fiber.get.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
+                                Promise.init[Unit, Any].map { ended =>
+                                    fiber.onComplete(_ => ended.completeUnitDiscard).andThen {
+                                        fileSystem.removeAll(root).andThen(pollOnce(clock, ended)).andThen {
+                                            fileSystem.mkDir(root).andThen {
+                                                fileSystem.write(later, "later", Path.WriteOptions()).andThen {
+                                                    clock.advance(10.millis).andThen {
+                                                        fiber.get.map(events => assert(events == Chunk(PathChange.Invalidated(root))))
+                                                    }
                                                 }
                                             }
                                         }

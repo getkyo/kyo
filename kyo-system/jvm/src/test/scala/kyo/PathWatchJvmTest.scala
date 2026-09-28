@@ -28,10 +28,12 @@ class PathWatchJvmTest extends kyo.test.Test[Any]:
                                     root,
                                     WatchOptions(depth = WatchDepth.Recursive, followLinks = true)
                                 ).map { follow =>
+                                    // Each advance fires both polls; waiting for both to re-arm proves each scan has published
+                                    // before the next mutation lands, and before the read begins.
                                     fileSystem.write(outside / "created.txt", "linked", Path.WriteOptions()).andThen {
-                                        clock.advance(Duration.Zero, 10.millis).andThen(clock.advance(10.millis, 10.millis)).andThen {
+                                        clock.advance(10.millis).andThen(clock.awaitPendingSleepers(2)).andThen {
                                             fileSystem.write(directFile, "direct", Path.WriteOptions()).andThen {
-                                                clock.advance(10.millis, 10.millis).andThen {
+                                                clock.advance(10.millis).andThen(clock.awaitPendingSleepers(2)).andThen {
                                                     Scope.run(follow.events.take(1).run).map { followed =>
                                                         Scope.run(noFollow.events.take(1).run).map { notFollowed =>
                                                             assert(followed == Chunk(PathChange.Created(linkedFile)))

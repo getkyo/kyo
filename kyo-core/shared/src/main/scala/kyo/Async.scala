@@ -828,7 +828,7 @@ object Async extends AsyncPlatformSpecific:
     private[kyo] inline def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using _frame: Frame): B < (S & Async) =
         val input = new JoinInput[A]:
             def apply(task: IOTask[?, ?, ?]): IOPromise[?, A] =
-                task.interrupts(v)
+                task.interrupts(v)(using _frame)
                 v
             def frame = _frame
         ArrowEffect.suspendWith[A](Tag[Join], input)(f)

@@ -360,7 +360,7 @@ BackendConfig.Shell("docker")                          // force CLI subprocess
 
 The HTTP backend (UnixSocket) speaks the Docker Engine API directly, so no `docker`/`podman` binary is required on PATH. It still needs `tar` on PATH for `copyTo`/`copyFrom` and `ContainerImage.buildFromPath` (to pack/unpack the archives the API expects).
 
-`BackendConfig.UnixSocket` and `BackendConfig.AutoDetect` accept an optional `apiVersion` (default `"v1.43"`) for targeting specific Docker Engine API revisions. `BackendConfig.Shell` accepts an optional `streamBufferSize` (default 256) that controls the channel capacity used to merge `proc.stdout` and `proc.stderr` into a tagged `LogEntry` stream.
+`BackendConfig.UnixSocket` and `BackendConfig.AutoDetect` accept an optional `apiVersion` (default `"v1.43"`) for targeting specific Docker Engine API revisions, and an optional `daemonTimeout` (default 30 seconds), the floor of the HTTP deadline for the create, start and stop calls, which stall under daemon load; a longer `HttpClient` timeout in scope still wins. `BackendConfig.Shell` accepts an optional `streamBufferSize` (default 256) that controls the channel capacity used to merge `proc.stdout` and `proc.stderr` into a tagged `LogEntry` stream.
 
 All three variants also accept a `Meter` for concurrency limiting. See [Concurrency Control](#concurrency-control).
 

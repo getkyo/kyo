@@ -473,14 +473,25 @@ final class Scheduler(
       *   - Decreases workers when detecting scheduling delays
       *   - Maintains count between minWorkers and maxWorkers
       */
-    private def updateWorkers(delta: Int) = {
+    private[scheduler] def updateWorkers(delta: Int) = {
         // Blocked-carrier floor: never let the worker count sit below the number of blocked carriers plus minWorkers, so
         // blocked carriers (parked I/O drivers, blocking fibers) cannot starve runnable work even when the concurrency
         // regulator, reading host jitter, would otherwise fail to grow or shrink the pool below the blocked count. When
         // nothing is blocked the floor is minWorkers (the unchanged idle sizing).
-        val floor = Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
-        currentWorkers = Math.max(floor, Math.min(maxWorkers, currentWorkers + delta))
+        val floor    = Math.min(maxWorkers, blockedWorkerCount() + minWorkers)
+        val previous = currentWorkers
+        val next     = Math.max(floor, Math.min(maxWorkers, previous + delta))
+        currentWorkers = next
         ensureWorkers()
+        // An excluded worker polls its queue only once its current task returns, so without this drain a task queued behind a parked
+        // carrier stays there with no consumer. It runs after the new count is published, so the drained tasks are placed inside it.
+        var position = next
+        while (position < previous) {
+            val worker = workers(position)
+            if (worker ne null)
+                worker.drain()
+            position += 1
+        }
     }
 
     /** Counts the active workers currently flagged blocked (parked in a syscall or on a lock), as maintained by the
@@ -537,11 +548,13 @@ final class Scheduler(
       *
       * Critical for work stealing and load balancing decisions.
       */
-    private def cycleWorkers(): Unit = {
+    private[scheduler] def cycleWorkers(): Unit = {
         try {
             val nowMs    = clock.currentMillis()
             var position = 0
-            while (position < currentWorkers) {
+            // Every allocated worker, while placement and steal stop at the window: a worker outside it can still hold a parked task
+            // with work queued behind it, and this drain is the one path that moves that work back into the window.
+            while (position < allocatedWorkers) {
                 val worker = workers(position)
                 if (worker ne null) {
                     val _ = worker.checkAvailability(nowMs)
