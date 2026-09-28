@@ -419,6 +419,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-charset`.jvm,
+        `kyo-mime`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
@@ -517,6 +518,7 @@ lazy val kyoJS = project
         `kyo-scheduler`.js,
         `kyo-data`.js,
         `kyo-charset`.js,
+        `kyo-mime`.js,
         `kyo-kernel`.js,
         `kyo-prelude`.js,
         `kyo-parse`.js,
@@ -596,6 +598,7 @@ lazy val kyoNative = project
     .aggregate(
         `kyo-data`.native,
         `kyo-charset`.native,
+        `kyo-mime`.native,
         `kyo-prelude`.native,
         `kyo-parse`.native,
         `kyo-kernel`.native,
@@ -679,6 +682,7 @@ lazy val kyoWasm = project
         `kyo-stats-registry`.wasm,
         `kyo-data`.wasm,
         `kyo-charset`.wasm,
+        `kyo-mime`.wasm,
         `kyo-kernel`.wasm,
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
@@ -884,6 +888,19 @@ lazy val `kyo-charset` =
                 )
             }.taskValue
         )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-mime` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
+        .in(file("kyo-mime"))
+        .withKyoTest
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
