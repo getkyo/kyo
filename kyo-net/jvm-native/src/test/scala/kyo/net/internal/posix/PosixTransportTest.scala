@@ -266,6 +266,13 @@ class PosixTransportTest extends Test:
         }
     end loopbackPair
 
+    "the posix transport declares that it reports the TLS close reason" in {
+        assumePoller()
+        val driver    = PollerIoDriver.init()
+        val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
+        assert(transport.reportsTlsCloseReason, "the posix transport drives the TLS record layer itself and sees the close_notify")
+    }
+
     // readChunkSize seeds the handle's read buffer at connect time (PosixHandle.socket), and the handle carries it for the rest of the
     // connection's life. Two connects on ONE transport asking for different sizes must produce handles with different buffers; a
     // construction-captured or dropped value would give both the same. Read before any traffic, since the buffer adapts once reads start.

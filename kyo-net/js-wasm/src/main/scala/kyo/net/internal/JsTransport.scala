@@ -60,7 +60,7 @@ final private[kyo] class JsTransport private (
       * at construction; the OS does not change under a running process.
       */
     override private[net] val capabilities: TransportCapabilities =
-        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows)
+        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows, tlsCloseReason = false)
 
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
       * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
@@ -562,15 +562,19 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectSocket
 
-    /** Install the certHashFn on `connection` by reading the leaf peer certificate from the post-handshake TLS socket and SHA-256-hashing
-      * its DER bytes (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
+    /** Install the certHashFn on `connection` from the leaf peer certificate of the post-handshake TLS socket, SHA-256 over its DER bytes
+      * (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
+      *
+      * The hash is read ONCE here, at handshake completion, and served from that value gated on `connection.isOpen`, as the posix and NIO
+      * transports do. The leaf certificate is fixed for the connection's lifetime, and the socket outlives `close()` by the graceful close's
+      * flush, so the socket's own state is not what "closed" means to a caller.
       *
       * Node's `tls.TLSSocket.getPeerCertificate(true)` returns an object with a `.raw` Buffer holding the DER bytes; Node's `crypto`
       * `createHash("sha256").update(buf).digest()` returns a 32-byte Buffer.
       */
-    private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic): Unit =
-        connection.certHashFn = Present { () =>
-            val cert = tlsSocket.getPeerCertificate(true)
+    private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic)(using AllowUnsafe): Unit =
+        val cert   = tlsSocket.getPeerCertificate(true)
+        val cached =
             if js.isUndefined(cert) || cert == null || js.isUndefined(cert.raw) then Absent
             else
                 val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
@@ -586,8 +590,7 @@ final private[kyo] class JsTransport private (
                     out(i) = typed(i).toByte
                     i += 1
                 Present(Span.from(out))
-            end if
-        }
+        connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
     end installCertHashFn
 
     private def listenServer(
@@ -773,8 +776,8 @@ final private[kyo] class JsTransport private (
     end stdio
 
     /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
-      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` is always false and `destroy` is a
-      * no-op so neither process fd is ever closed.
+      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` and `writableFinished` are always
+      * false and `end` and `destroy` are no-ops so neither process fd is ever closed or ended.
       */
     private def stdioShim()(using AllowUnsafe): js.Dynamic =
         val process = js.Dynamic.global.process
@@ -790,6 +793,7 @@ final private[kyo] class JsTransport private (
             isReadEvent(event) || name == "close" || name == "error"
         val shim = js.Dynamic.literal()
         shim.destroyed = false
+        shim.writableFinished = false
         shim.on = ({ (event: js.Any, fn: js.Any) =>
             if isReadLifecycle(event) then discard(stdin.on(event, fn))
             else discard(stdout.on(event, fn))
@@ -814,6 +818,10 @@ final private[kyo] class JsTransport private (
         shim.write = ({ (chunk: js.Any) =>
             stdout.write(chunk)
         }: js.Function1[js.Any, js.Any])
+        shim.end = ({ () =>
+            // The process owns fds 0/1; never end stdout. A stdio close tears down only the channels and the registration.
+            shim
+        }: js.Function0[js.Any])
         shim.destroy = ({ () =>
             // The process owns fds 0/1; never close them. Tearing down stdio closes only the channels/registration.
             shim

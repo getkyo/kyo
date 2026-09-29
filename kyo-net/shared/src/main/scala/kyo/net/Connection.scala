@@ -71,7 +71,10 @@ abstract class Connection:
       * truncation. While the connection is still active this is [[Connection.Status.Active]].
       *
       * A non-TLS connection, which has no close_notify exchange, and a platform without TLS introspection support never report a truncation
-      * distinction and return [[Connection.Status.Active]]; a TLS connection reports the observed close reason.
+      * distinction and return [[Connection.Status.Active]]; a TLS connection reports the observed close reason. The status is the close
+      * reason, and a plaintext close has none, so a plaintext connection reports [[Connection.Status.Active]] after the close as well, its own
+      * and its peer's. Whether the transport observes the reason at all is [[Transport.reportsTlsCloseReason]]: on one that does not, an
+      * `Active` status at the close means nothing was observed, not that the peer sent a close_notify.
       */
     def status: Connection.Status
 end Connection
@@ -87,6 +90,8 @@ object Connection:
       * posture established stacks use (Go's `io.EOF` vs `io.ErrUnexpectedEOF`, OpenSSL's `ZERO_RETURN` vs `unexpected eof while reading`).
       *
       * This is the stream's close-reason, observable after [[Connection.status]] reports it: it is not a live open/closed connection status.
+      * Only a TLS connection of a transport whose [[Transport.reportsTlsCloseReason]] holds ever reports a value other than
+      * [[Status.Active]].
       */
     enum Status derives CanEqual:
         /** The connection is still open: no close has been observed yet. */

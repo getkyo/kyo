@@ -32,13 +32,11 @@ class HalfCloseStateTest extends Test:
     private def drainInbound(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
 
-    /** Whether this cell's transport reports the TLS close reason through [[Connection.status]]. The Node transport terminates TLS in Node and
-      * never observes the close_notify, so it wires no `statusFn` and its connections always read [[Connection.Status.Active]]; the in-process
-      * engine transports (posix on every platform including JS, NIO on JVM) see the close_notify in the decrypt path and report the true reason.
-      * The Node transport is exactly the one driving the `node` TLS provider.
+    /** Whether this cell's transport reports the TLS close reason through [[Connection.status]], read from the capability the transport
+      * declares so the matrix and production agree by construction.
       */
     private def reportsCloseReason(transport: Transport): Boolean =
-        !transport.supportedTlsProviders.contains("node")
+        transport.reportsTlsCloseReason
 
     /** Expected [[Connection.Status]] for a scenario reason on this cell: the true reason on a transport that reports it, else Active. */
     private def expected(transport: Transport, reason: Connection.Status): Connection.Status =

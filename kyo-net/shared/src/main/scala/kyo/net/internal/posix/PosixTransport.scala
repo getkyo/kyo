@@ -643,7 +643,7 @@ final private[net] class PosixTransport private[posix] (
       * one read at build time is the same answer every later read would give.
       */
     override private[net] val capabilities: TransportCapabilities =
-        TransportCapabilities(TlsProviderPlatform.engineProviderNames, unixSockets = true)
+        TransportCapabilities(TlsProviderPlatform.engineProviderNames, unixSockets = true, tlsCloseReason = true)
 
     /** After the TCP connect is established: for a plaintext connect complete immediately; for a TLS connect drive a client handshake over the
       * same fd (reusing [[driveHandshake]]) and complete once it succeeds. The `addr` buffer is closed here (the connect is done with it). The
@@ -849,13 +849,17 @@ final private[net] class PosixTransport private[posix] (
     private def installCertHash(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
         val cached = handle.tls.flatMap(_.certSha256())
         connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
-        installStatus(connection, handle)
+        if handle.tls.isDefined then installStatus(connection, handle)
     end installCertHash
 
     /** Install `connection.statusFn` so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. It reads the handle's
       * observed read-side close signal (the `halfClose` state on the handle). While the connection is open with no half-close, it reports
       * Active; once closed with the state still Open, it was a local close. The function touches no engine, only the handle's `@volatile`
       * `halfClose` field, so it is safe to call on the caller's carrier after close.
+      *
+      * Installed only over a TLS handle. The driver records a plaintext peer's FIN as `PeerEof` too, and a plaintext connection has no
+      * close_notify that could make that FIN a truncation, so it keeps the default `Active` for its whole life, as `Connection.status` states
+      * and as the NIO transport does; a STARTTLS upgrade reaches here again with the TLS handle and installs it then.
       */
     private def installStatus(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
         connection.statusFn = Present(() =>
