@@ -942,6 +942,20 @@ object Username:
 end Username
 ```
 
+When the conversion can reject, use `transformVia` with a smart constructor. Its outcome may be the type itself or a `Result`, `Maybe`, `Option`, `Either` or `Try` of it, and a rejection is a `ConstructorRejectedException` naming the type, a decode failure like any other malformed input:
+
+```scala
+opaque type Port = Int
+
+object Port:
+    def parse(i: Int): Either[String, Port] = if i >= 0 && i <= 65535 then Right(i) else Left(s"port out of range: $i")
+    given Schema[Port]                      = summon[Schema[Int]].transformVia(parse)(identity)
+end Port
+
+Json.decode[Port]("-1")
+// Result.Failure(ConstructorRejectedException(typeName = "Port", rejection = "port out of range: -1", ...))
+```
+
 ### Validating smart constructors
 
 `derives Schema` emits a decoder that calls the type's primary constructor. For a type whose invariant lives in a smart constructor that is the wrong route: decoding would construct a value the constructor would have rejected. `Schema.derivedVia` takes the constructor and routes decoding through it. Encoding is untouched, so the wire shape stays the one the same fields would have on a plain case class.

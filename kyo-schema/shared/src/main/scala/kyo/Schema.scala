@@ -1402,6 +1402,24 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         )
     end transform
 
+    /** Transforms this Schema[A] into Schema[B] through a smart constructor that may reject.
+      *
+      * The counterpart of [[Schema.derivedVia]] for a type over one value, such as an opaque type: decode reads an A and hands it to
+      * `construct`, and a rejection is a `ConstructorRejectedException` naming B, a decode failure like any other malformed input,
+      * so B's invariant holds for every decoded value. `construct` may return B itself, or a `Result`, `Maybe`, `Option`, `Either`
+      * or `Try` of B (see [[Schema.Constructed]]); the outcome decides B before `from` is typed, so `from` needs no annotation.
+      * Encode writes `from(b)`.
+      *
+      * {{{
+      * opaque type Port = Int
+      * object Port:
+      *     def parse(i: Int): Either[String, Port] = if i >= 0 && i <= 65535 then Right(i) else Left(s"port out of range: $i")
+      *     given Schema[Port]                      = summon[Schema[Int]].transformVia(parse)(identity)
+      * }}}
+      */
+    inline def transformVia[R, B](construct: A => R)(using constructed: Schema.Constructed[R, B])(from: B => A): Schema[B] =
+        Schema.transformViaWith(this, construct, from, constructed, internal.SchemaTransformMacro.typeName[B])
+
     /** Returns a copy of this schema that carries the same codec but reports `structure` as its wire
       * shape. Pairs with the open-shape `Schema[Structure.Value]`: overriding its structure with a runtime
       * `Structure.Type` yields a shape-dynamic schema that encodes and decodes through the generic
@@ -2144,7 +2162,7 @@ object Schema:
       *   the constructed type
       */
     @implicitNotFound(
-        "Schema.derivedVia cannot read a constructed ${A} out of '${R}'. Supported outcomes are ${A} itself, " +
+        "Schema.derivedVia and transformVia cannot read a constructed ${A} out of '${R}'. Supported outcomes are ${A} itself, " +
             "Result[E, ${A}], Maybe[${A}], Option[${A}], Either[E, ${A}], and Try[${A}]. " +
             "For any other shape, provide a given Schema.Constructed[${R}, ${A}]."
     )
@@ -2425,6 +2443,22 @@ object Schema:
                 throw VariantNameCollisionException(wire, Chunk.from(sources.toSeq.sorted))
         }
     end checkVariantTargets
+
+    /** The schema [[Schema.transformVia]] builds; `typeName` is B's name as the rejection reports it. */
+    @publicInBinary private[kyo] def transformViaWith[A, B, R](
+        self: Schema[A],
+        construct: A => R,
+        from: B => A,
+        constructed: Constructed[R, B],
+        typeName: String
+    ): Schema[B] =
+        Schema.init[B](
+            writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
+            readFn = (r: Reader) =>
+                internal.constructedOrThrow(constructed.asResult(construct(self.serializeRead(r))), typeName)(using r.frame),
+            structure = self.structure
+        )
+    end transformViaWith
 
     /** Rejects a representation chain that contains a duplicate entry, at the builder call site. */
     private[kyo] def checkRepresentationChain(chain: Chunk[Schema.UnionRepresentation])(using Frame): Unit =

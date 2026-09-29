@@ -28,6 +28,43 @@ object SchemaTransformMacro:
         end if
     end assertNotSealedTrait
 
+    /** The name of the type a `transformVia` schema is for, as a constant, as the user wrote it.
+      *
+      * Inside an opaque type's scope the opaque type and its underlying type are the same, and inference instantiates `T` with the
+      * underlying one: `given Schema[Port] = summon[Schema[Int]].transformVia(Port.parse)(_.value)` infers `Int`. The definition the
+      * call initializes still declares `Schema[Port]`, so its type argument names `T` when it is the same type.
+      */
+    transparent inline def typeName[T]: String = ${ typeNameImpl[T] }
+
+    def typeNameImpl[T: Type](using Quotes): Expr[String] =
+        import quotes.reflect.*
+        val tpe                            = TypeRepr.of[T]
+        def nameOf(repr: TypeRepr): String =
+            repr match
+                case ref: TypeRef                         => ref.name
+                case AppliedType(constructor: TypeRef, _) => constructor.name
+                case other                                => other.typeSymbol.name
+        def resultType(repr: TypeRepr): TypeRepr =
+            repr match
+                case ByNameType(result) => result
+                case method: LambdaType => resultType(method.resType)
+                case other              => other
+        val schemaClass = Symbol.requiredClass("kyo.Schema")
+        @scala.annotation.tailrec
+        def declared(owner: Symbol): Option[TypeRepr] =
+            if owner.isNoSymbol || owner.isClassDef then None
+            else
+                // The expansion's own synthetic owner and any enclosing lambda declare no Schema, so the walk goes past them.
+                val found =
+                    if !owner.isValDef && !owner.isDefDef then None
+                    else
+                        resultType(owner.termRef.widenTermRefByName).baseType(schemaClass) match
+                            case AppliedType(_, List(arg)) if arg.dealias =:= tpe.dealias => Some(arg)
+                            case _                                                        => None
+                if found.nonEmpty then found else declared(owner.maybeOwner)
+        Expr(nameOf(declared(Symbol.spliceOwner).getOrElse(tpe)).stripSuffix("$"))
+    end typeNameImpl
+
     /** Implements Schema[A].drop("fieldName").
       *
       * Validates that fieldName exists in F's expanded type, then returns Schema[A] { type Focused = F' } where F' = F minus the named
