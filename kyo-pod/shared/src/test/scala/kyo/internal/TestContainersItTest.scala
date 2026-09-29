@@ -24,12 +24,14 @@ class TestContainersItTest extends BasePodTest:
         Container.list(all = true, filters = Dict("label" -> Chunk(s"$key=$value")))
 
     /** A labelled container whose owner is dead, removed at the end of the leaf in case the sweep under test left it behind. */
-    private def orphan(tagKey: String, tag: String, ownerKey: String)(using
+    private def orphan(tagKey: String, tag: String, ownerKey: String, extraLabels: (String, String)*)(using
         Frame
     ): Container < (Async & Abort[ContainerException] & Scope) =
-        Container.initUnscoped(idle.label(tagKey, tag).label(ownerKey, deadPid)).map { c =>
+        val labelled = extraLabels.foldLeft(idle.label(tagKey, tag).label(ownerKey, deadPid))((cfg, label) => cfg.label(label._1, label._2))
+        Container.initUnscoped(labelled).map { c =>
             Scope.ensure(Abort.run[ContainerException](c.remove(force = true, removeVolumes = true)).unit).andThen(c)
         }
+    end orphan
 
     "a dead-owner container is removed by the next creation" - runBackends {
         val tag = uniqueName("kyo-pod-it-dead")
@@ -54,6 +56,47 @@ class TestContainersItTest extends BasePodTest:
         yield
             assert(state == Container.State.Stopped, s"the orphan should have stopped before the sweep, was $state")
             assert(left.isEmpty, s"the exited orphan survived the sweep: ${left.map(_.id.value.take(12))}")
+        end for
+    }
+
+    // A build container shares this machine's daemon but not its process table, so its test process's pid means
+    // nothing here: a pid probe from this namespace would find it dead and remove a container that run is using.
+    "a dead-owner container from another pid namespace is spared" - runBackends {
+        val tag = uniqueName("kyo-pod-it-foreign")
+        for
+            c <- orphan(
+                TestContainers.tagLabelKey,
+                tag,
+                TestContainers.ownerLabelKey,
+                TestContainers.namespaceLabelKey -> "another-host/pid:[1]"
+            )
+            _    <- TestContainers.initScoped(idle, uniqueName("kyo-pod-it-sweeper"))
+            left <- listByLabel(TestContainers.tagLabelKey, tag)
+        yield assert(left.map(_.id) == Chunk(c.id), s"a foreign namespace's container was reaped: ${left.map(_.id.value.take(12))}")
+        end for
+    }
+
+    "a dead-owner container from this pid namespace is removed" - runBackends {
+        val tag = uniqueName("kyo-pod-it-same-ns")
+        for
+            _ <- orphan(
+                TestContainers.tagLabelKey,
+                tag,
+                TestContainers.ownerLabelKey,
+                TestContainers.namespaceLabelKey -> TestProcessId.namespace
+            )
+            _    <- TestContainers.initScoped(idle, uniqueName("kyo-pod-it-sweeper"))
+            left <- listByLabel(TestContainers.tagLabelKey, tag)
+        yield assert(left.isEmpty, s"the same-namespace orphan survived the sweep: ${left.map(_.id.value.take(12))}")
+        end for
+    }
+
+    "a container this process creates carries its namespace" - runBackends {
+        val tag = uniqueName("kyo-pod-it-ns-label")
+        for
+            _    <- TestContainers.initScoped(idle, tag)
+            left <- listByLabel(TestContainers.tagLabelKey, tag)
+        yield assert(left.map(_.labels.get(TestContainers.namespaceLabelKey)) == Chunk(Present(TestProcessId.namespace)))
         end for
     }
 

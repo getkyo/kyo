@@ -12,6 +12,24 @@ private[kyo] object TestProcessId:
     /** This process's pid, stamped into the `kyo-test-owner-pid` label of every container it creates. */
     val pid: Long = ProcessHandle.current().pid()
 
+    /** The process table [[pid]] belongs to, stamped into the `kyo-test-owner-ns` label: the host name, then on Linux the pid namespace.
+      *
+      * Both parts are needed. A build container shares the host's daemon but not its process table, and its host name alone does not tell
+      * two of them apart under `--network host`; the pid namespace does. Two Linux hosts sharing one daemon both sit in the initial pid
+      * namespace, whose id is the same on every host; the host name tells those apart. On Linux both come from `/proc`, which does no DNS
+      * lookup; elsewhere the host name comes from `InetAddress`, and a host whose own name does not resolve gets a fixed name, which judges
+      * its containers by pid exactly as a namespace-less label would.
+      */
+    val namespace: String =
+        val proc = java.nio.file.Paths.get("/proc/self/ns/pid")
+        // The link names `pid:[<inode>]`, no file, so only a check that does not follow it finds it.
+        if java.nio.file.Files.exists(proc, java.nio.file.LinkOption.NOFOLLOW_LINKS) then
+            val host = java.nio.file.Files.readString(java.nio.file.Paths.get("/proc/sys/kernel/hostname")).trim
+            s"$host/${java.nio.file.Files.readSymbolicLink(proc)}"
+        else Result.catching[java.net.UnknownHostException](java.net.InetAddress.getLocalHost.getHostName).getOrElse("unresolved-host")
+        end if
+    end namespace
+
     /** Whether `pid`, read from a container label, names a process that is still running.
       *
       * A value that does not parse as a `Long` reports not-running, which reaps the container. That is deliberate and it is the same

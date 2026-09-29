@@ -123,8 +123,9 @@ class TestContainersTest extends BasePodTest:
     "matchesFixture" - {
         val fingerprint = TestContainers.fixtureFingerprint(mysqlCfg)
         val labels      = Dict(
-            TestContainers.tagLabelKey     -> "mysql",
-            TestContainers.fixtureLabelKey -> fingerprint
+            TestContainers.tagLabelKey       -> "mysql",
+            TestContainers.fixtureLabelKey   -> fingerprint,
+            TestContainers.namespaceLabelKey -> TestProcessId.namespace
         )
 
         "accepts a container with both the tag and the fingerprint" in {
@@ -137,6 +138,21 @@ class TestContainersTest extends BasePodTest:
 
         "rejects a matching tag with a different fixture" in {
             assert(!TestContainers.matchesFixture(labels, "mysql", "deadbeef"))
+        }
+
+        "rejects a matching fixture created in another pid namespace" in {
+            val foreign = labels.concat(Dict(TestContainers.namespaceLabelKey -> "another-host/pid:[1]"))
+            assert(!TestContainers.matchesFixture(foreign, "mysql", fingerprint))
+        }
+
+        "rejects a matching fixture with no namespace label" in {
+            assert(!TestContainers.matchesFixture(labels.remove(TestContainers.namespaceLabelKey), "mysql", fingerprint))
+        }
+
+        "ownedElsewhere is true only for another namespace's label" in {
+            assert(TestContainers.ownedElsewhere(Dict(TestContainers.namespaceLabelKey -> "another-host/pid:[1]")))
+            assert(!TestContainers.ownedElsewhere(Dict(TestContainers.namespaceLabelKey -> TestProcessId.namespace)))
+            assert(!TestContainers.ownedElsewhere(Dict(TestContainers.tagLabelKey -> "mysql")))
         }
 
         "rejects a container from before the fixture label existed" in {
@@ -162,6 +178,7 @@ class TestContainersTest extends BasePodTest:
             val labels = TestContainers.labelled(mysqlCfg, "mysql").labels
             assert(labels.get("kyo-test-container") == Present("mysql"))
             assert(labels.get("kyo-test-owner-pid") == Present(TestProcessId.pid.toString))
+            assert(labels.get("kyo-test-owner-ns") == Present(TestProcessId.namespace))
             assert(labels.get("kyo-test-fixture") == Present(TestContainers.fixtureFingerprint(mysqlCfg)))
             assert(labels.get(TestContainers.legacyTagLabelKey).isEmpty)
             assert(labels.get(TestContainers.legacyOwnerLabelKey).isEmpty)

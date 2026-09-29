@@ -23,6 +23,12 @@ import kyo.*
   * rather than dead. Only a definite "no such process" is death. Removing on an unrecognised probe failure would let one broken probe
   * delete another run's containers, so [[TestProcessId.isAlive]] is written to make that impossible on every platform.
   *
+  * A pid means something only in the process table it came from. A build container (`scripts/build.sh --env podman-ci`) shares this
+  * machine's daemon but not its process table, and so does every other machine on a shared daemon: probed from here, its live test
+  * process's pid names no process, or an unrelated one. Each container therefore also carries `kyo-test-owner-ns`, the creating process's
+  * [[TestProcessId.namespace]], and a sweep judges only the containers from its own namespace; every other one is spared, and reaped by a
+  * sweep in its own namespace. A container with no namespace label predates the label and is judged by its pid.
+  *
   * The two cases that DO reap without consulting a process are a missing owner label and a label whose value is not a `Long`. Both are the
   * same judgement: this object is the only writer of this label and always writes `TestProcessId.pid.toString`, so neither shape can have
   * come from a live test process.
@@ -67,6 +73,9 @@ private[kyo] object TestContainers:
 
     /** Label key carrying the pid of the test process that created the container. */
     val ownerLabelKey: String = "kyo-test-owner-pid"
+
+    /** Label key carrying [[TestProcessId.namespace]] of the creating process: the process table its owner pid means something in. */
+    val namespaceLabelKey: String = "kyo-test-owner-ns"
 
     /** Label key carrying [[fixtureFingerprint]] of the config the container was created from. Two fixtures may share a tag and still be
       * incompatible (different server args, different auth plugin), so the tag alone cannot decide reuse.
@@ -131,9 +140,19 @@ private[kyo] object TestContainers:
         Integer.toHexString(parts.mkString(" ").hashCode)
     end fixtureFingerprint
 
-    /** Whether a listed container's labels describe the fixture `tag`+`fingerprint` asks for. */
+    /** Whether a listed container's labels describe the fixture `tag`+`fingerprint` asks for, created in this process's namespace. A
+      * container from another namespace is never adopted: the co-owner claim that protects an adopted container is a file this namespace's
+      * sweeps read, and the owner's sweeps run in a namespace that cannot see it.
+      */
     private[kyo] def matchesFixture(labels: Dict[String, String], tag: String, fingerprint: String): Boolean =
-        labels.get(tagLabelKey).contains(tag) && labels.get(fixtureLabelKey).contains(fingerprint)
+        labels.get(tagLabelKey).contains(tag) && labels.get(fixtureLabelKey).contains(fingerprint) &&
+            labels.get(namespaceLabelKey).contains(TestProcessId.namespace)
+
+    /** Whether a container's owner pid belongs to another process table, where a probe from here cannot judge it. A container with no
+      * namespace label predates the label and is judged by its pid.
+      */
+    private[kyo] def ownedElsewhere(labels: Dict[String, String]): Boolean =
+        labels.get(namespaceLabelKey).exists(_ != TestProcessId.namespace)
 
     private def adoptLive(cfg: Container.Config, tag: String)(using Frame): Maybe[Container] < Async =
         val fingerprint = fixtureFingerprint(cfg)
@@ -311,6 +330,7 @@ private[kyo] object TestContainers:
     private[kyo] def labelled(cfg: Container.Config, tag: String): Container.Config =
         cfg.label(tagLabelKey, tag)
             .label(ownerLabelKey, TestProcessId.pid.toString)
+            .label(namespaceLabelKey, TestProcessId.namespace)
             .label(fixtureLabelKey, fixtureFingerprint(cfg))
 
     private def reapOrphans(using Frame): Unit < Async =
@@ -323,14 +343,16 @@ private[kyo] object TestContainers:
         Abort.run[ContainerException] {
             Container.list(all = true, filters = Dict("label" -> Chunk(tagKey))).map { found =>
                 Kyo.foreachDiscard(found) { summary =>
-                    summary.labels.get(ownerKey) match
-                        case Present(owner) =>
-                            TestProcessId.isAlive(owner).map {
-                                case true  => Kyo.unit
-                                case false => reapIfUnowned(dir, summary)
-                            }
-                        case Absent =>
-                            reapIfUnowned(dir, summary)
+                    if ownedElsewhere(summary.labels) then Kyo.unit
+                    else
+                        summary.labels.get(ownerKey) match
+                            case Present(owner) =>
+                                TestProcessId.isAlive(owner).map {
+                                    case true  => Kyo.unit
+                                    case false => reapIfUnowned(dir, summary)
+                                }
+                            case Absent =>
+                                reapIfUnowned(dir, summary)
                 }
             }
         }.unit

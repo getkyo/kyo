@@ -31,4 +31,14 @@ class TestProcessIdTest extends BasePodTest:
         }.map(results => assert(results == Chunk(false, false, false, false)))
     }
 
+    // On Linux the pid namespace is the part that tells a build container from the host it shares a daemon
+    // with, so a Linux process has to carry it; everywhere the host name has to be there.
+    "the namespace names this host and, on Linux, this pid namespace" in {
+        Abort.run[FileSystemException](Path.runReadOnly(Path("/proc/self/ns/pid").exists(followLinks = false))).map { probed =>
+            val linux = probed.getOrElse(false)
+            assert(TestProcessId.namespace.nonEmpty && !TestProcessId.namespace.startsWith("/"), TestProcessId.namespace)
+            assert(!linux || TestProcessId.namespace.contains("/pid:["), TestProcessId.namespace)
+        }
+    }
+
 end TestProcessIdTest
