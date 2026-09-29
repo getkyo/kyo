@@ -3,6 +3,7 @@ package kyo.net.internal
 import kyo.*
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
+import scala.scalajs.js.annotation.JSImport
 import scala.scalajs.js as sjs
 
 /** Real-Node loopback tests for the [[JsIoDriver]] peer-close grace probe. Node gives no non-consuming FIN signal on a paused socket
@@ -41,6 +42,15 @@ class JsIoDriverTest extends kyo.net.Test:
             ))
         }.andThen(p.asInstanceOf[Fiber.Unsafe[(sjs.Dynamic, sjs.Dynamic), Abort[Closed]]].safe.get)
     end openPair
+
+    /** A Node `stream.Duplex` standing in for a socket whose peer never drains it: `write` never calls back, so no write completes and
+      * `end()` never emits `finish`; `read` never pushes, so no `data` or `end` arrives.
+      */
+    private def neverFlushingSocket(): sjs.Dynamic =
+        sjs.Dynamic.newInstance(NodeStream.asInstanceOf[sjs.Dynamic].Duplex)(sjs.Dynamic.literal(
+            write = ((_: sjs.Any, _: sjs.Any, _: sjs.Any) => ()): sjs.Function3[sjs.Any, sjs.Any, sjs.Any, Unit],
+            read = ((_: sjs.Any) => ()): sjs.Function1[sjs.Any, Unit]
+        ))
 
     private def buffer(bytes: Array[Byte]): sjs.Dynamic =
         sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
@@ -128,28 +138,27 @@ class JsIoDriverTest extends kyo.net.Test:
         Clock.withTimeControl { tc =>
             Clock.get.map { clock =>
                 val driver = JsIoDriver.init()
-                openPair().map { case (serverSock, clientSock) =>
-                    // A peer that never reads: 64 MiB is past what the loopback socket buffers hold, so Node never emits `finish`.
-                    discard(clientSock.pause())
-                    val handle = JsHandle.init(serverSock, driver, Frame.internal)
-                    handle.peerCloseGrace = 30.seconds
-                    handle.clock = clock
-                    discard(serverSock.write(buffer(new Array[Byte](64 * 1024 * 1024))))
-                    driver.closeHandle(handle)
-                    def destroyed = serverSock.destroyed.asInstanceOf[Boolean]
-                    val atClose   = destroyed
-                    tc.advance((30.seconds.toMillis - 1).millis).map { _ =>
-                        val oneTickBefore = destroyed
-                        val flushed       = serverSock.writableFinished.asInstanceOf[Boolean]
-                        tc.advance(1.millis).map { _ =>
-                            val atGrace = destroyed
-                            discard(clientSock.destroy())
-                            driver.close()
-                            assert(!atClose, "the graceful close must not destroy a socket whose output is still flushing")
-                            assert(!flushed, "the peer never read, so the output must not have finished; the leaf would test nothing")
-                            assert(!oneTickBefore, "the socket must survive until the grace ends")
-                            assert(atGrace, "the socket must be destroyed when the grace ends")
-                        }
+                // Not a real socket: how much of a write the kernel accepts from a peer that never reads is OS-dependent (Windows AFD takes
+                // a whole 64 MiB overlapped send), so a real socket can emit `finish` and settle the close before the grace. The output is a
+                // Duplex whose write callback never runs, so `end()` can never emit `finish` and the grace timer is the close's only exit.
+                val socket = neverFlushingSocket()
+                val handle = JsHandle.init(socket, driver, Frame.internal)
+                handle.peerCloseGrace = 30.seconds
+                handle.clock = clock
+                discard(socket.write(buffer(Array[Byte](1))))
+                driver.closeHandle(handle)
+                def destroyed = socket.destroyed.asInstanceOf[Boolean]
+                val atClose   = destroyed
+                tc.advance((30.seconds.toMillis - 1).millis).map { _ =>
+                    val oneTickBefore = destroyed
+                    val flushed       = socket.writableFinished.asInstanceOf[Boolean]
+                    tc.advance(1.millis).map { _ =>
+                        val atGrace = destroyed
+                        driver.close()
+                        assert(!atClose, "the graceful close must not destroy a socket whose output is still flushing")
+                        assert(!flushed, "the write never completed, so the output must not have finished; the leaf would test nothing")
+                        assert(!oneTickBefore, "the socket must survive until the grace ends")
+                        assert(atGrace, "the socket must be destroyed when the grace ends")
                     }
                 }
             }
@@ -209,3 +218,8 @@ class JsIoDriverTest extends kyo.net.Test:
     }
 
 end JsIoDriverTest
+
+// Imported like the facades in NodeBuiltins, since the Wasm backend links this suite as an ES module without `require`.
+@sjs.native
+@JSImport("node:stream", JSImport.Namespace)
+private object NodeStream extends sjs.Object
