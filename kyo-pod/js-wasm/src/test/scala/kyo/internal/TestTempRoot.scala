@@ -13,7 +13,7 @@ private object TestNodeOs extends js.Object:
     def tmpdir(): String = js.native
 end TestNodeOs
 
-/** The system temporary-directory root, for [[SqlTestContainers]]'s co-owner registry.
+/** The system temporary-directory root, for [[TestContainers]]'s co-owner registry.
   *
   * The registry is a cross-process rendezvous: every test process on the machine must resolve the SAME directory, so this is the platform's
   * temp root itself rather than `Path.tempDir`, which mints a fresh private directory per call. Scala.js does not surface `java.io.tmpdir`

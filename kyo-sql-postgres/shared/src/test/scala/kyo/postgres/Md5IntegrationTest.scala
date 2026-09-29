@@ -3,7 +3,7 @@ package kyo.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 
 /** Integration tests for MD5 password authentication.
   *
@@ -36,10 +36,10 @@ class Md5IntegrationTest extends SqlContainerTest:
     )(f: ContainerPredef.Postgres => A < S)(using Frame): A < (S & Async & Abort[ContainerException] & Scope) =
         val containerConfig = ContainerPredef.Postgres.buildContainerConfig(predefConfig)
             .env("POSTGRES_HOST_AUTH_METHOD", "md5")
-        // Through `SqlTestContainers` rather than `Container.init` directly, so the container carries the
-        // `kyo-sql-singleton` and `kyo-sql-owner-pid` labels: the scope removes it on every normal exit, and on a
+        // Through `TestContainers` rather than `Container.init` directly, so the container carries the
+        // `kyo-test-container` and `kyo-test-owner-pid` labels: the scope removes it on every normal exit, and on a
         // force-kill the labels are the only thing that lets the next run reap it and its anonymous volume.
-        SqlTestContainers.initScoped(containerConfig, "postgres-md5").flatMap { container =>
+        TestContainers.initScoped(containerConfig, "postgres-md5").flatMap { container =>
             f(new ContainerPredef.Postgres(container, predefConfig))
         }
     end initWithMd5

@@ -14,21 +14,21 @@ private[kyo] object NodeProcess extends js.Object:
     def kill(pid: Int, signal: Int): Boolean = js.native
 end NodeProcess
 
-/** This test process's own pid, plus a liveness probe for a foreign pid, for [[SqlTestContainers]]'s ownership predicate.
+/** This test process's own pid, plus a liveness probe for a foreign pid, for [[TestContainers]]'s ownership predicate.
   *
   * `kyo.Process` cannot serve either role: it is a handle over a process this program spawned, so its `pid` and `isAlive` describe a child
   * rather than the current process or an arbitrary pid read from a container label.
   */
 private[kyo] object TestProcessId:
 
-    /** This process's pid, stamped into the `kyo-sql-owner-pid` label of every container it creates. */
+    /** This process's pid, stamped into the `kyo-test-owner-pid` label of every container it creates. */
     val pid: Long = NodeProcess.pid.toLong
 
     /** Whether `pid`, read from a container label, names a process that is still running.
       *
       * A value that does not parse as a `Long` reports not-running, which reaps the container. That is deliberate and it is the same
-      * judgement as a missing owner label: the only writer of this label is `SqlTestContainers.initSingleton`, which always writes
-      * `TestProcessId.pid.toString`, so a value that does not parse cannot have come from a live kyo-sql test process.
+      * judgement as a missing owner label: the only writer of this label is `TestContainers`, which always writes
+      * `TestProcessId.pid.toString`, so a value that does not parse cannot have come from a live test process.
       *
       * Every other unknown outcome reports RUNNING. See the catch below.
       */

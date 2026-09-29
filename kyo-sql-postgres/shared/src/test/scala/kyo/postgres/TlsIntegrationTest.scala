@@ -3,7 +3,7 @@ package kyo.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration tests for Postgres TLS upgrade via SSLRequest handshake.
@@ -117,12 +117,12 @@ class TlsIntegrationTest extends SqlContainerTest:
                         Schedule.fixed(1.second).take(60)
                     ))
 
-                // Step 4: start and await the health check. Through `SqlTestContainers` rather than `Container.init`
-                // directly, so the container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels: the
+                // Step 4: start and await the health check. Through `TestContainers` rather than `Container.init`
+                // directly, so the container carries the `kyo-test-container` and `kyo-test-owner-pid` labels: the
                 // scope removes it on every normal exit, and on a force-kill the labels are the only thing that
                 // lets the next run reap it and its anonymous volume. An unlabelled container here would be
-                // exactly the leak `SqlTestContainers` exists to stop.
-                SqlTestContainers.initScoped(containerConfig, "postgres-tls").flatMap { container =>
+                // exactly the leak `TestContainers` exists to stop.
+                TestContainers.initScoped(containerConfig, "postgres-tls").flatMap { container =>
                     // Step 5: yield connection details
                     container.awaitHealthy.andThen {
                         container.mappedPort(5432).flatMap { port =>
@@ -220,10 +220,10 @@ class TlsIntegrationTest extends SqlContainerTest:
     "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Start a standard (non-TLS) Postgres and try to connect with TLS required.
-            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
             // process leaves something the reaper can find.
-            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-leaf").map { pg =>
+            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     Abort.run[SqlException] {
                         Scope.run {
