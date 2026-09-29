@@ -3,6 +3,7 @@ package kyo.test.runner
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.test.RunConfig
+import kyo.test.TestFilter
 import kyo.test.TestReport
 import kyo.test.TestResult
 import kyo.test.internal.TestBase
@@ -199,6 +200,20 @@ end RTDetachedAfterSuite
 class RTHeartbeatSuite extends TestBase[Any]:
     "slow-leaf" in Async.sleep(1.second).andThen(succeed)
 end RTHeartbeatSuite
+
+/** A leaf that parks past its own limit while the heartbeat interval lies far beyond it: the hang dump has to arrive before the timeout. */
+class RTHeartbeatBeforeTimeoutSuite extends TestBase[Any]:
+    "hung".timeout(4.seconds) in Async.sleep(30.seconds).andThen(succeed)
+end RTHeartbeatBeforeTimeoutSuite
+
+/** A suite whose own `config` sets the leaf limit, with a leaf that parks past it: whether the limit survives the caller's flags is
+  * observable as TimedOut versus a 30-second wait.
+  */
+class RTSuiteConfigSuite extends TestBase[Any]:
+    override def config: RunConfig = super.config.timeout(300.millis)
+    "hung" in Async.sleep(30.seconds).andThen(succeed)
+    "quick" in succeed
+end RTSuiteConfigSuite
 
 /** A `TestReporter` that records every `onLeafHeartbeat` call (thread-safe) and ignores all other lifecycle events. */
 final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
@@ -482,6 +497,41 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
                 elapsed.zip(elapsed.drop(1)).forall((a, b) => b >= a),
                 s"heartbeat elapsed must be non-decreasing as the leaf keeps running, got $beats"
             )
+        }
+    }
+
+    // The heartbeat is the only hang diagnostic: the console reporter prints the one-shot thread dump on the first
+    // STUCK leaf. A leaf limit at or below the interval used to time the leaf out first, so the dump never printed
+    // for exactly the leaf that needed it. The 1 s gap between the 3 s heartbeat and the 4 s limit is the margin a
+    // loaded scheduler gets.
+    "Heartbeat: a leaf whose limit is shorter than the interval is reported before it times out" in {
+        val rec    = new RecordingHeartbeatReporter
+        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 1.minutes)
+        TestRunner.runToFuture(classOf[RTHeartbeatBeforeTimeoutSuite], config).map { report =>
+            assert(leafByPath(report, Chunk("hung")).exists { case _: TestResult.TimedOut => true; case _ => false })
+            val beats = rec.recorded.filter(_._1 == Chunk("hung"))
+            assert(beats.nonEmpty, "a leaf with a 4 s limit under a 1 min interval must still be reported STUCK before it times out")
+            assert(beats.forall(_._2 < 4.seconds), s"every heartbeat must precede the timeout, got $beats")
+        }
+    }
+
+    // The sbt, JS, Native and CLI runners hand the runner the flags as an overlay on the suite's own config. Before the
+    // overlay existed any flag replaced the suite's config wholesale, so `testOnly X -- --filter=y` ran X's leaves with
+    // no timeout and none of its ordering.
+    "Overlay: flags apply on top of the suite's own config, so its timeout survives a filter" in {
+        val overlay: RunConfig => RunConfig = _.filter(TestFilter(pathInclude = Chunk("hung")))
+        TestRunner.runToFuture(classOf[RTSuiteConfigSuite], overlay).map { report =>
+            assert(leafByPath(report, Chunk("hung")).exists { case _: TestResult.TimedOut => true; case _ => false })
+            assert(leafByPath(report, Chunk("quick")).isEmpty, "the overlay's filter must still apply")
+        }
+    }
+
+    "Overlay: a field the flags set wins over the suite's config" in {
+        val rec                             = new RecordingHeartbeatReporter
+        val overlay: RunConfig => RunConfig = _.reporter(rec).heartbeatInterval(50.millis).filter(TestFilter(pathInclude = Chunk("hung")))
+        TestRunner.runToFuture(classOf[RTSuiteConfigSuite], overlay).map { report =>
+            assert(leafByPath(report, Chunk("hung")).exists { case _: TestResult.TimedOut => true; case _ => false })
+            assert(rec.recorded.exists(_._1 == Chunk("hung")), "the overlay's reporter and interval must be the ones in effect")
         }
     }
 

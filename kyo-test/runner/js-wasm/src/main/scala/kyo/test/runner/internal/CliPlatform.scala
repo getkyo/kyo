@@ -11,7 +11,7 @@ import kyo.test.internal.TestBase
   */
 private[runner] object CliPlatform:
 
-    def runSuites(suites: Chunk[Class[? <: TestBase[?]]], config: RunConfig): Unit =
+    def runSuites(suites: Chunk[Class[? <: TestBase[?]]], overlay: RunConfig => RunConfig): Unit =
         java.lang.System.err.println(
             "kyo-test: Cli.main is not supported on Scala.js. Use the sbt test-interface bridge instead."
         )

@@ -35,6 +35,12 @@ class JsNextParallelSuite extends TestBase[Any]:
     "leaf-c" in succeed
 end JsNextParallelSuite
 
+class JsNextFailingSuite extends TestBase[Any]:
+    "group" - {
+        "fails" in assert(1 == 2)
+    }
+end JsNextFailingSuite
+
 // ── Test infrastructure ──────────────────────────────────────────────────────────────────────────
 
 class JsCapturingEventHandler extends EventHandler:
@@ -136,6 +142,50 @@ class JsFrameworkTest extends AsyncFunSuite with NonImplicitAssertions:
             assert(evts.forall(_.status() eq Status.Success)): Unit
             succeed
         }
+    }
+
+    // The Scala.js test adapter runs one JS environment per sbt thread: the runner from `runner` is the controller, and a task that
+    // sbt executes on another thread runs in a worker from `slaveRunner`, whose `send` the adapter routes to the controller's
+    // `receiveMessage`. Only the controller's `done()` reaches the log, so it must count every worker's leaves.
+
+    private def executeOn(runner: sbt.testing.Runner, cls: Class[?]): Future[Unit] =
+        val done = Promise[Unit]()
+        runner.asInstanceOf[JsRunner].jsTasksTyped(Array(taskDefFor(cls)))(0).execute(
+            new JsCapturingEventHandler,
+            loggers,
+            _ =>
+                done.success(())
+                scala.runtime.BoxedUnit.UNIT
+        )
+        done.future
+    end executeOn
+
+    test("a worker's leaves are counted in the controller's summary") {
+        val controller = makeRunner()
+        val worker     = framework.slaveRunner(Array.empty, Array.empty, null, msg => kyo.discard(controller.receiveMessage(msg)))
+        for
+            _ <- executeOn(worker, classOf[JsNextParallelSuite])
+            _ <- executeOn(worker, classOf[JsNextFailingSuite])
+        yield
+            val _       = worker.done()
+            val summary = controller.done()
+            assert(summary.startsWith("kyo-test: 4 tests, 3 passed, 1 failed"), summary): Unit
+            assert(summary.contains("TOTAL FAILURES (1)"), summary): Unit
+            assert(summary.contains("group > fails  [FAIL]"), summary)
+        end for
+    }
+
+    test("the controller counts its own leaves together with a worker's") {
+        val controller = makeRunner()
+        val worker     = framework.slaveRunner(Array.empty, Array.empty, null, msg => kyo.discard(controller.receiveMessage(msg)))
+        for
+            _ <- executeOn(controller, classOf[JsNextSingleLeafSuite])
+            _ <- executeOn(worker, classOf[JsNextParallelSuite])
+        yield
+            val _       = worker.done()
+            val summary = controller.done()
+            assert(summary.startsWith("kyo-test: 4 tests, 4 passed, 0 failed"), summary)
+        end for
     }
 
     // ── Test 17: JsFramework.fingerprints has exactly 1 fingerprint ─────────────────────────────

@@ -84,20 +84,31 @@ object TestRunner:
     def runReport(suite: Class[? <: TestBase[?]], config: RunConfig = RunConfig.default)(using
         Frame
     ): TestReport < (Async & Abort[Throwable] & Scope) =
-        // Resolve effective config: when the caller uses RunConfig.default, substitute the suite's own config (via a
-        // throw-away single-threaded probe instantiation).
-        val effectiveConfig: RunConfig =
-            if config == RunConfig.default then
-                val probeCtx = new TestContext(Chunk.empty, discovery = true)
-                installContext(probeCtx)
-                try Instantiate.newInstance(suite).config
-                catch
-                    case t: Throwable =>
-                        java.lang.System.err.println(s"[kyo-test] config probe failed: $t")
-                        config
-                end try
-            else config
+        // A caller-built config replaces the suite's own; `RunConfig.default` means the suite's own config, unchanged.
+        if config == RunConfig.default then runReport(suite, identity[RunConfig])
+        else runReportWith(suite, config)
 
+    /** Runs `suite` under its own `config` with `overlay` applied on top. The sbt, JS, Native and CLI runners hand their flags over this
+      * way, so a flag changes only the field it names and the suite keeps its timeout, ordering and leak settings.
+      */
+    def runReport(suite: Class[? <: TestBase[?]], overlay: RunConfig => RunConfig)(using
+        Frame
+    ): TestReport < (Async & Abort[Throwable] & Scope) =
+        // The suite's own config comes from a throw-away single-threaded probe instantiation.
+        val probeCtx = new TestContext(Chunk.empty, discovery = true)
+        installContext(probeCtx)
+        val suiteConfig =
+            try Instantiate.newInstance(suite).config
+            catch
+                case t: Throwable =>
+                    java.lang.System.err.println(s"[kyo-test] config probe failed: $t")
+                    RunConfig.default
+        runReportWith(suite, overlay(suiteConfig))
+    end runReport
+
+    private def runReportWith(suite: Class[? <: TestBase[?]], effectiveConfig: RunConfig)(using
+        Frame
+    ): TestReport < (Async & Abort[Throwable] & Scope) =
         val reporter: TestReporter = resolveReporter(effectiveConfig)
         val suiteInfo              = SuiteInfo(
             name = simpleName(suite),
@@ -179,7 +190,7 @@ object TestRunner:
                             // no-op (single shared closure) unless leak-debug mode installed a probe, so the normal path is untouched.
                             LeakDebug.beginLeaf(path)
                         }.map { probeFinish =>
-                            withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, reporter)(
+                            withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, builder.timeout, reporter)(
                                 runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
                             ).map { entries =>
                                 // Run after the leaf body (which includes the leaf's Scope.run, so the leaf's own finalizers have already run):
@@ -259,29 +270,37 @@ object TestRunner:
                 java.lang.System.err.println(s"[kyo-test] unexpected panic during run: ${panic.exception}")
                 constructorFailureReport(suiteInfo, reporter, effectiveConfig, panic.exception)
         }
-    end runReport
+    end runReportWith
+
+    /** [[runReport]] run to a `Future`: a caller-built `config` replaces the suite's own, `RunConfig.default` means the suite's own. */
+    def runToFuture(suite: Class[? <: TestBase[?]], config: RunConfig = RunConfig.default)(using Frame): Future[TestReport] =
+        toFuture(runReport(suite, config))
+
+    /** [[runReport]] run to a `Future`, with `overlay` applied over the suite's own config. */
+    def runToFuture(suite: Class[? <: TestBase[?]], overlay: RunConfig => RunConfig)(using Frame): Future[TestReport] =
+        toFuture(runReport(suite, overlay))
 
     /** The single sbt-edge boundary: run the whole-run Kyo computation to a `Fiber` and convert to a `Future` exactly once. This is the
       * ONLY `Fiber#toFuture` in the codebase. The `Sync` produced by `Scope.run` / `Fiber.initUnscoped` / `toFuture` is discharged once
       * here.
       */
-    def runToFuture(suite: Class[? <: TestBase[?]], config: RunConfig = RunConfig.default)(using Frame): Future[TestReport] =
+    private def toFuture(report: TestReport < (Async & Abort[Throwable] & Scope))(using Frame): Future[TestReport] =
         val asFuture: Future[TestReport] < Sync =
-            Scope.run(runReport(suite, config)).handle(Fiber.initUnscoped).map(_.toFuture)
+            Scope.run(report).handle(Fiber.initUnscoped).map(_.toFuture)
         // Unsafe: sole sbt-edge boundary (justified per kyo-sql precedent). Discharging the terminal Sync to the produced Future is
         // the single sanctioned bridge; everything upstream is pure Kyo.
         import kyo.AllowUnsafe.embrace.danger
         Sync.Unsafe.evalOrThrow(asFuture)
-    end runToFuture
+    end toFuture
 
     /** CLI-boundary entry: identical to [[runToFuture]] but supplies the boundary `Frame` internally so the `kyo.test.runner.Cli` entry
       * point (which has no caller `Frame` to propagate and lives in the `kyo` package where `Frame.derive` is forbidden) does not have to
       * fabricate one at its call site. This is the sanctioned CLI-edge `Frame` source (debt D8), the analogue of the sbt-edge `Frame` the
       * `*Task` files pass; everything upstream of this boundary threads a real `Frame`.
       */
-    def runToFutureAtCliEdge(suite: Class[? <: TestBase[?]], config: RunConfig): Future[TestReport] =
+    def runToFutureAtCliEdge(suite: Class[? <: TestBase[?]], overlay: RunConfig => RunConfig): Future[TestReport] =
         // Frame.internal here is the single sanctioned CLI-edge boundary Frame; the Cli entry point has no caller Frame.
-        runToFuture(suite, config)(using Frame.internal)
+        runToFuture(suite, overlay)(using Frame.internal)
     end runToFutureAtCliEdge
 
     // ── Discovery: synchronous Kyo walk ──────────────────────────────────────────────────────
@@ -336,17 +355,26 @@ object TestRunner:
       * `Duration.Infinity` disables it (the body runs unchanged). This is an ordinary forked fiber, not a dedicated thread: a leaf that is
       * merely parked (waiting on a channel, fiber, or latch, the common hung-test shape) is still observed, because the scheduler runs the
       * heartbeat fiber on another worker. It cannot report a leaf that has wedged every worker; that rarer case is out of scope here.
+      *
+      * A leaf whose `timeout` is shorter than the interval gets its first heartbeat at three quarters of that timeout. The heartbeat is the
+      * only hang diagnostic (the console reporter's one-shot thread dump fires on it), and a leaf limit at or below the interval would
+      * otherwise time the leaf out before the dump, which is the run that needed it. Later heartbeats keep the interval.
       */
     private def withHeartbeat[A](
         info: LeafInfo,
         interval: Duration,
+        timeout: Maybe[Duration],
         reporter: TestReporter
     )(body: A < Async)(using Frame): A < Async =
         if interval == Duration.Infinity then body
         else
+            val first =
+                timeout match
+                    case Maybe.Present(limit) if limit < interval => limit * 0.75
+                    case _                                        => interval
             Sync.acquireReleaseWith(
                 Clock.stopwatch.map { sw =>
-                    Clock.repeatWithDelay(interval, interval) {
+                    Clock.repeatWithDelay(first, interval) {
                         sw.elapsed.map(elapsed => reporter.onLeafHeartbeat(info, elapsed))
                     }
                 }

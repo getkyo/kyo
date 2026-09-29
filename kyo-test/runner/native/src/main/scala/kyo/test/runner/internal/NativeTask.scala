@@ -26,9 +26,9 @@ import scala.scalanative.reflect.Reflect
   */
 final private[internal] class NativeTask(
     val taskDef: TaskDef,
-    baseConfig: RunConfig,
+    baseOverlay: RunConfig => RunConfig,
     testClassLoader: ClassLoader,
-    results: java.util.concurrent.ConcurrentLinkedQueue[TestReport]
+    record: TestReport => Unit
 ) extends Task:
 
     def tags(): Array[String] = Array.empty
@@ -37,18 +37,20 @@ final private[internal] class NativeTask(
         eventHandler: EventHandler,
         loggers: Array[Logger]
     ): Array[Task] =
-        if baseConfig.parallelism > 1 then
+        val requested = baseOverlay(RunConfig.default).parallelism
+        if requested > 1 then
             java.lang.System.err.println(
-                s"[kyo-test] WARNING: parallelism=${baseConfig.parallelism} is capped to 1 on Scala Native " +
+                s"[kyo-test] WARNING: parallelism=$requested is capped to 1 on Scala Native " +
                     "(single-threaded test fixture). Tests will run sequentially."
             )
         end if
 
         // Cap parallelism to 1: Native has real threads but our test fixture is single-threaded for simplicity.
-        val nativeConfig = if baseConfig.parallelism > 1 then baseConfig.copy(parallelism = 1) else baseConfig
+        val nativeOverlay: RunConfig => RunConfig =
+            baseOverlay.andThen(config => if config.parallelism > 1 then config.copy(parallelism = 1) else config)
 
-        val report = runSuite(nativeConfig)
-        results.add(report)
+        val report = runSuite(nativeOverlay)
+        record(report)
         emitEvents(report, eventHandler)
         Array.empty[Task]
     end execute
@@ -57,7 +59,7 @@ final private[internal] class NativeTask(
     // Use the Scala Native Reflect API to get the runtime Class object from the reflection registry.
     // The class is registered because kyo.test.Test carries @EnableReflectiveInstantiation via
     // kyo.test.internal.KyoTestReflect.
-    private def runSuite(config: RunConfig): TestReport =
+    private def runSuite(overlay: RunConfig => RunConfig): TestReport =
         val fqn          = taskDef.fullyQualifiedName()
         val runtimeClass = Reflect
             .lookupInstantiatableClass(fqn)
@@ -74,7 +76,7 @@ final private[internal] class NativeTask(
         // Unsafe: Frame.internal at the sbt edge. sbt's Task.execute has no caller Frame to propagate, and
         // NativeTask.scala is not a Frame-deriving file (only *Test/*Bench.scala are). This is the sanctioned
         // sbt-edge boundary (steering.md), matching the AllowUnsafe already used inside runToFuture.
-        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, config)(using kyo.Frame.internal)
+        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, overlay)(using kyo.Frame.internal)
         Await.result(future, Duration.Inf)
     end runSuite
 
