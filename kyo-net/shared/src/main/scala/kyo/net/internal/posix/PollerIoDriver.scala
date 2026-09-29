@@ -283,6 +283,10 @@ final private[net] class PollerIoDriver private[posix] (
     // multiple carriers, no poll-fiber confinement needed (unlike activeFds/pendingReads/etc; this touches only handle-scoped state).
     private val pendingCloses = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
 
+    // The handles whose registrations the current change drain admitted, each holding its handle open (PosixHandle.beginRegistration) until
+    // drainChanges has submitted the registrations to the kernel and releases them. Poll-carrier-confined like the fd tables; empty between drains.
+    private val registrationHolds = new java.util.ArrayList[PosixHandle]()
+
     // Missed-readiness tracker for the dropped-edge case under epoll EPOLLET register-once.
     //
     // When an EPOLLIN edge fires on an armed fd and dispatchRead finds no pending read (the consumer is in a backpressure pause, so
@@ -553,10 +557,9 @@ final private[net] class PollerIoDriver private[posix] (
                 // `triggerWake`, which resumes the parked task, so this cannot strand one.
                 if kyo.internal.Platform.isJS && idleNow then idleTask = Present(task)
                 else
-                    // Pass the kqueue changelist (changelistBuf + nChanges) so kevent submits the interest changes this drain staged atomically
-                    // with the wait. On epoll the changelist / nChanges arguments are ignored by
-                    // EpollPollerBackend.poll. Read into locals rather than a tuple: this runs on every cycle, and Maybe is opaque and
-                    // null-backed, so isDefined/get allocate nothing.
+                    // Pass whatever kqueue changelist is still staged (drainChanges submitted its own, so this is empty in the driver's cycle).
+                    // On epoll the changelist / nChanges arguments are ignored by EpollPollerBackend.poll. Read into locals rather than a
+                    // tuple: this runs on every cycle, and Maybe is opaque and null-backed, so isDefined/get allocate nothing.
                     val kq    = pollScratch.kqueueData
                     val clBuf = if kq.isDefined then kq.get.changelistBuf else pollScratch.armBuf
                     val clN   = if kq.isDefined then kq.get.nChanges else 0
@@ -633,9 +636,8 @@ final private[net] class PollerIoDriver private[posix] (
       * `activeFds` covers a listener as well as a connection, so a driver holding an open server socket is never idle, which is what keeps a
       * server process alive.
       *
-      * The idle branch skips the `kevent` that would submit kqueue's staged changelist, which is safe rather than lucky: `change` only
-      * accumulates for an `EV_ADD`, a delete goes through `keventNow` at once, and an `EV_ADD` staged by this cycle's drain put its fd in
-      * `activeFds`. So a staged batch and an idle cycle cannot coexist.
+      * The idle branch skips the poll's `kevent`, which loses no kqueue registration: the drain that precedes it has already submitted every
+      * staged change ([[PollerBackend.submitStaged]]).
       */
     private[posix] def idleNow: Boolean =
         activeFds.size == 0 && !changeQueue.peekNonEmpty() && engineQueue.isEmpty() && pendingCloses.isEmpty()
@@ -2466,18 +2468,23 @@ final private[net] class PollerIoDriver private[posix] (
       * accept bit disambiguates an OpRegisterRead from awaitAccept vs awaitRead, so a recycled fd reused across an accept and a read is never
       * mismatched. Applies nothing when no registration matches (a cancel removed it before the command ran). The handle's `@volatile` promise/id
       * reads here pair with the await methods' stores (published before the registration offer; the queue offer/take is the happens-before barrier).
+      *
+      * Returns the handle when the registration was applied, holding it open ([[PosixHandle.beginRegistration]]) and recorded in
+      * [[registrationHolds]] until the drain has handed the registration to the kernel; Absent when nothing is to be registered.
       */
-    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe, Frame): Long =
+    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe, Frame): Maybe[PosixHandle] =
         Maybe(takeRegistration(fd, kind)) match
             case Present(reg) =>
                 val handle = reg.handle
-                if handle.isClosing() then
+                // The hold, not a closing check, is what admits the registration: a check would leave the handle free to close, and its fd to be
+                // recycled, before the backend hands the interest to the kernel (see beginRegistration).
+                if !handle.beginRegistration() then
                     // A closing handle must never (re-)claim its fd. The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
                     // race the connection close: by the time this registration applies on the poll carrier, the handle's fd may already be closed
                     // and recycled into a NEW connection. Applying it would overwrite the new owner's activeFds/pendingReads entry and (epoll)
                     // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
                     // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
-                    // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
+                    // return Absent so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
                     // dispatchRead's beginDispatch guard and the OpDeregister id-guard; a live handle still registers normally below.
                     val res = kind match
                         case RegKind.Accept => s"listener ${handleLabel(handle)}"
@@ -2493,12 +2500,12 @@ final private[net] class PollerIoDriver private[posix] (
                             handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
                             handle.pendingWritablePromise = Absent
                     end match
-                    PollScratch.IdNoCheck
+                    Absent
                 else if kind == RegKind.Read && handle.upgradeActive && !handle.handshakeReading then
                     // STARTTLS upgrade confinement (poller): an OpRegisterRead for the read side while the handle is upgrading and the handshake has
                     // not yet taken read ownership (handshakeReading false) is the retiring plaintext ReadPump's stray re-arm (its requestNextRead
                     // raced detachForUpgrade). Admitting it would deposit the pump's promise as the fd's read owner and let the next readability event
-                    // deliver the peer's first TLS flight to the pump instead of the handshake. SKIP the backend register (return IdNoCheck) so the
+                    // deliver the peer's first TLS flight to the pump instead of the handshake. SKIP the backend register (return Absent) so the
                     // stray never owns the fd; the handshake's own arm (handshakeReading set in awaitReadCiphertext) is admitted by the branch below.
                     // Do NOT fail the pump's pendingReadPromise here: upgradeActive is set BEFORE detachForUpgrade flips the connection state to
                     // Upgrading, so failing the promise on this carrier could tear the pump down while the state is still Established, letting its
@@ -2506,7 +2513,8 @@ final private[net] class PollerIoDriver private[posix] (
                     // failed post-CAS instead, by whichever of the three sweeps its deposit ordering reaches: deregisterFds (deposit before the
                     // sweep), awaitRead's own isUpgraded re-check (deposit after the marker), or armUpgradeProducerRead's occupant fail (deposit in
                     // the sweep-to-marker gap). This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
-                    PollScratch.IdNoCheck
+                    discard(handle.endRegistration())
+                    Absent
                 else
                     kind match
                         case RegKind.Read =>
@@ -2524,13 +2532,14 @@ final private[net] class PollerIoDriver private[posix] (
                                 case Absent => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
                             end match
                     end match
-                    handle.id.packed
+                    discard(registrationHolds.add(handle))
+                    Present(handle)
                 end if
             case Absent =>
-                // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
+                // No registration matched (a cancel removed it before the command ran). Return Absent so the caller skips the backend register:
                 // arming a fd with no pending op would leave an interest with no owner id to tag the knote, and there is no op
                 // to deliver to anyway.
-                PollScratch.IdNoCheck
+                Absent
         end match
     end applyRegistration
 
@@ -2548,11 +2557,11 @@ final private[net] class PollerIoDriver private[posix] (
             // (RegKind.Accept vs RegKind.Read), so the live entry is applied to pendingAccepts vs pendingReads for THIS command, never confused with a
             // concurrently-pending registration of the other kind on the same fd.
             if accept then
-                val id = applyRegistration(fd, RegKind.Accept)
-                // Skip the backend register when no registration matched (id == IdNoCheck): there is no pending op to arm and no owner id to tag the
-                // kqueue knote (the udata stale-event cookie). The id is the registering handle's monotonic id, passed to the backend as the knote udata.
-                if id != PollScratch.IdNoCheck then
-                    val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
+                val admitted = applyRegistration(fd, RegKind.Accept)
+                // Skip the backend register when nothing was admitted: there is no pending op to arm and no owner id to tag the kqueue knote (the
+                // udata stale-event cookie). The id is the registering handle's monotonic id, passed to the backend as the knote udata.
+                if admitted.isDefined then
+                    val rc = backend.registerRead(pollerFd, fd, admitted.get.id.packed, pollScratch)
                     if rc < 0 then
                         Maybe(pendingAccepts.remove(fd)).foreach { h =>
                             h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(
@@ -2563,9 +2572,9 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
                 end if
             else
-                val id = applyRegistration(fd, RegKind.Read)
-                if id != PollScratch.IdNoCheck then
-                    val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
+                val admitted = applyRegistration(fd, RegKind.Read)
+                if admitted.isDefined then
+                    val rc = backend.registerRead(pollerFd, fd, admitted.get.id.packed, pollScratch)
                     if rc < 0 then
                         Maybe(pendingReads.remove(fd)).foreach { h =>
                             h.pendingReadPromise.getAndSet(Absent).foreach(_.completeDiscard(Result.fail(
@@ -2592,9 +2601,9 @@ final private[net] class PollerIoDriver private[posix] (
                 end if
             end if
         else if op == OpRegisterWrite then
-            val id = applyRegistration(fd, RegKind.Write)
-            if id != PollScratch.IdNoCheck then
-                val rc = backend.registerWrite(pollerFd, fd, id, pollScratch)
+            val admitted = applyRegistration(fd, RegKind.Write)
+            if admitted.isDefined then
+                val rc = backend.registerWrite(pollerFd, fd, admitted.get.id.packed, pollScratch)
                 if rc < 0 then
                     Maybe(pendingWritables.remove(fd)).foreach { entry =>
                         entry.promise.completeDiscard(Result.fail(
@@ -2661,12 +2670,33 @@ final private[net] class PollerIoDriver private[posix] (
       * registration whose register command has not yet run). A command offered after this returns empty is drained on the next poll cycle.
       */
     private def drainChanges()(using AllowUnsafe, Frame): Unit =
-        drainChangeQueue()
-        // A batching backend answers "did this registration take" only once the batch reaches the kernel, which happens after the registering
-        // command has already returned. Collect the rejections it discovered during this drain and fail their operations here; left unclaimed,
-        // each one is a read or write waiting on interest the kernel never registered.
-        backend.drainFailedRegistrations(pollScratch, failRejectedRegistration)
+        try
+            drainChangeQueue()
+            // Every registration this drain admitted must be in the kernel before its hold is released below: a close waiting on the hold then
+            // closes the fd and takes the interest with it, instead of the fd being recycled under a registration still in flight.
+            backend.submitStaged(pollerFd, pollScratch)
+            // A batching backend answers "did this registration take" only once the batch reaches the kernel, which happens after the
+            // registering command has already returned. Collect the rejections it discovered during this drain and fail their operations here;
+            // left unclaimed, each one is a read or write waiting on interest the kernel never registered.
+            backend.drainFailedRegistrations(pollScratch, failRejectedRegistration)
+        finally
+            // Also on a throw: the cycle then ends in the terminal exit, which never polls again, so no staged registration can reach the
+            // kernel after this, and a close waiting on a hold must still get its fd closed.
+            releaseRegistrationHolds()
+        end try
     end drainChanges
+
+    /** Release every [[PosixHandle.beginRegistration]] hold this drain's registrations took. A handle closed while its registration was in
+      * flight is freed here (its deferred `close(fd)` runs), on this carrier.
+      */
+    private def releaseRegistrationHolds()(using AllowUnsafe): Unit =
+        var i = 0
+        while i < registrationHolds.size() do
+            discard(registrationHolds.get(i).endRegistration())
+            i += 1
+        end while
+        registrationHolds.clear()
+    end releaseRegistrationHolds
 
     @scala.annotation.tailrec
     private def drainChangeQueue()(using AllowUnsafe, Frame): Unit =

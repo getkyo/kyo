@@ -202,4 +202,81 @@ class PollerIoDriverRecycledFdTest extends Test:
         }
     }
 
+    "a handle closed between its read registration's apply and the kernel submission leaves no registration on the recycled fd" in {
+        PosixTestSockets.assumePoller()
+        // The window is the one between applyRegistration's admission of a live handle and the backend call that hands the interest to the
+        // kernel (kqueue stages it for the next kevent; epoll issues epoll_ctl right after). The backend's onRegisterRead hook runs inside it, on
+        // the poll carrier: it closes the handle, then accepts a waiting connection, which takes the lowest free fd. If the close released the
+        // fd, the accepted socket reuses its number and the stale registration lands on it, tagged with the dead handle's id, so every event of
+        // the new socket reaches the poll loop as an orphan (on kqueue an EOF knote then fires on every kevent). The close must instead wait
+        // for the registration to reach the kernel, and then take the fd with it.
+        PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+            PosixTestSockets.pendingConnection().map { case (listener, waitingClient) =>
+                val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+                val real     = PollerBackend.default()
+                val pollerFd = real.create()
+                val backend  = RecordingPollerBackend(real)
+                val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+                discard(driver.start())
+
+                val handle      = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val recycled    = new java.util.concurrent.atomic.AtomicInteger(-1)
+                val closedEarly = new java.util.concurrent.atomic.AtomicBoolean(false)
+                val hookRan     = Promise.Unsafe.init[Unit, Any]()
+                backend.onRegisterRead = fd =>
+                    driver.closeHandle(handle)
+                    closedEarly.set(spy.closeCounts.getOrDefault(fd, 0) > 0)
+                    val addr = Buffer.alloc[Byte](SockAddr.inet4Size)
+                    val len  = Buffer.alloc[Int](1)
+                    len.set(0, SockAddr.inet4Size)
+                    val acceptFiber = sock.accept(listener, addr, len)
+                    acceptFiber.poll() match
+                        case Present(Result.Success(outcome)) => recycled.set(outcome.eval.value)
+                        case other                            => throw new AssertionError(s"accept did not complete inline: $other")
+                    addr.close()
+                    len.close()
+                    backend.deliveredFds.clear()
+                    // Make the new socket readable and at EOF: both produce readiness on a registration that lands on it.
+                    val payload = Buffer.fromArray[Byte](Array[Byte](1, 2, 3))
+                    discard(sock.sendNow(waitingClient, payload, 3L, PosixConstants.MSG_NOSIGNAL))
+                    payload.close()
+                    discard(sock.shutdown(waitingClient, PosixConstants.SHUT_RDWR))
+                    hookRan.completeDiscard(Result.succeed(()))
+
+                def pollBarrier(): Unit < Async =
+                    val p = Promise.Unsafe.init[Unit, Any]()
+                    driver.submitEngineOp(() => p.completeDiscard(Result.succeed(())))
+                    p.safe.get
+                end pollBarrier
+
+                val read = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                driver.awaitRead(handle, read)
+                hookRan.safe.get.andThen(pollBarrier()).andThen(pollBarrier()).andThen(pollBarrier()).andThen {
+                    Abort.run[Closed](read.safe.get).map { outcome =>
+                        val recycledFd = recycled.get()
+                        val delivered  = backend.deliveredFds.toArray.toList
+                        val closes     = spy.closeCounts.getOrDefault(accepted, 0)
+                        discard(sock.close(recycledFd))
+                        discard(sock.close(waitingClient))
+                        discard(sock.close(listener))
+                        discard(sock.close(client))
+                        Sync.defer(driver.close()).map { _ =>
+                            assert(outcome.isFailure, s"the closed handle's read must fail Closed, got $outcome")
+                            assert(
+                                !delivered.contains(recycledFd),
+                                s"the recycled fd $recycledFd produced events on this poller after the owner's close: $delivered"
+                            )
+                            assert(
+                                !closedEarly.get(),
+                                s"the fd ($accepted) was closed while its read registration had not yet reached the kernel " +
+                                    s"(recycled into $recycledFd; delivered since: $delivered)"
+                            )
+                            assert(closes == 1, s"the handle's fd must be closed exactly once after the registration, got $closes closes")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end PollerIoDriverRecycledFdTest

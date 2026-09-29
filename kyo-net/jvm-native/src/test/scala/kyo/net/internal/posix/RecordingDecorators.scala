@@ -544,6 +544,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // change worker inside the first change (the single-owner proof). null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onRegisterRead: Int => Unit = null
 
+    // Every fd a completed real poll delivered to the driver, in delivery order (the wake event included). Recorded only when the real poll
+    // completed inline, which is every JVM and Native poll; a test clears it to observe what reaches the poll loop from a given point on.
+    val deliveredFds: ConcurrentLinkedQueue[Int] = new ConcurrentLinkedQueue[Int]()
+
     // Per-fd latch that completes the first time registerRead(fd) runs on the change worker.
     private val registeredReadOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
 
@@ -605,11 +609,16 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         deregisteredFd(fd).completeDiscard(Result.succeed(()))
     end deregister
 
-    // Count of poll() calls that carried at least one batched change (nChanges > 0). On kqueue the changelist is submitted atomically
-    // alongside the kevent call; this counter confirms that at least one poll cycle delivered interest changes via the batch, proving
-    // the changelist accumulation path is live and not a no-op. On epoll the backend ignores the changelist, so this counter stays 0
-    // on Linux, but the test that checks it gates with assumeKqueue().
-    val pollWithChangesCount: AtomicInteger = new AtomicInteger(0)
+    override def drainFailedRegistrations(scratch: PollScratch, handler: RegistrationFailureHandler)(using AllowUnsafe, Frame): Unit =
+        real.drainFailedRegistrations(scratch, handler)
+
+    // Count of submitStaged calls that found staged changes to submit (kqueue only; epoll stages nothing).
+    val submitStagedWithChangesCount: AtomicInteger = new AtomicInteger(0)
+
+    override def submitStaged(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        if scratch.kqueueData.exists(_.nChanges > 0) then discard(submitStagedWithChangesCount.getAndIncrement())
+        real.submitStaged(pollerFd, scratch)
+    end submitStaged
 
     def poll(pollerFd: Int, timeoutMs: Int, changelist: kyo.ffi.Buffer[Byte], nChanges: Int, scratch: PollScratch)(using
         AllowUnsafe,
@@ -620,7 +629,6 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
-        if nChanges > 0 then discard(pollWithChangesCount.getAndIncrement())
         // Fire the pre-poll latch before delegating so the waiting fiber can act before epoll_wait/kevent blocks.
         val raw = prePollLatch.getAndSet(null)
         if raw != null then
@@ -633,6 +641,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         val injFd     = syntheticErrorFd.get()
         val hasInject = injFd >= 0 && syntheticErrorFd.compareAndSet(injFd, -1)
         val realFiber = real.poll(pollerFd, timeoutMs, changelist, nChanges, scratch)
+        if realFiber.poll().isDefined then
+            var i = 0
+            while i < scratch.readyCount do
+                discard(deliveredFds.add(scratch.fds(i)))
+                i += 1
+            end while
+        end if
         if hasInject then
             // After the real poll returns n events, append one synthetic error-flag entry at index n for the target fd, guarded to stay
             // within the scratch arrays (MaxEvents). The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the

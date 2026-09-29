@@ -13,11 +13,12 @@ import kyo.ffi.Ffi
   * Readiness is decoded from the returned event's `filter` (`EVFILT_READ` / `EVFILT_WRITE`), never a bitmask; the watched fd is the event's
   * `ident`.
   *
-  * `kqueue` is a plain (non-blocking) downcall. Interest changes ([[registerRead]] / [[registerWrite]] / [[deregister]]) are batched into a
-  * changelist and submitted atomically alongside the poll wait: `drainChanges` accumulates up to `MaxChanges * KEvent.size` bytes into
-  * `scratch.kqueueData.get.changelistBuf` and passes it with `nChanges` to [[poll]], which forwards them to `kevent`. This reduces K interest
-  * changes to 1 syscall per poll cycle. [[poll]] uses the `@Ffi.blocking` `kevent` (a negative timeout that waits indefinitely for events);
-  * the poll loop suspends across that indefinite wait.
+  * `kqueue` is a plain (non-blocking) downcall. Registrations ([[registerRead]] / [[registerWrite]]) are staged into a changelist,
+  * `scratch.kqueueData.get.changelistBuf`, and the driver submits the whole batch in one `kevent` at the end of its change drain
+  * ([[submitStaged]]), so K registrations cost 1 syscall per drain. The batch is submitted there and not with the poll wait because the driver
+  * holds each registering handle open until its registration is in the kernel, and a hold released only when a possibly indefinite wait
+  * returns would keep a closing connection's fd open for as long as the wait lasts. [[poll]] uses the `@Ffi.blocking` `kevent` (a negative
+  * timeout that waits indefinitely for events); the poll loop suspends across that indefinite wait.
   *
   * Each `struct kevent` is encoded into and decoded out of a raw `Buffer[Byte]` through the manual [[KEvent$]] codec (the changelist and
   * eventlist buffers in `scratch.kqueueData.get`, the per-driver [[KqueuePollData]] allocated by [[newPollScratch]]), exactly as the epoll arm
@@ -77,8 +78,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             ()
         else
             // Immediate delete: deregister must remove filters from the kernel BEFORE the next poll so that stale events from this fd are not
-            // delivered. Uses changeNow (immediate keventNow) rather than the batch change path, because the batch is consumed at poll time
-            // and a batch-path deregister could race with an event that fires before the next kevent call. The two changeNow calls are
+            // delivered. Uses changeNow (immediate keventNow) rather than the batch change path, because the batch is submitted only at the end
+            // of the drain and a batch-path deregister could race with an event that fires before that kevent call. The two changeNow calls are
             // sequential (never concurrent: deregister runs on the single poll-loop carrier in dispatchCmd), so armBuf is safe to reuse.
             // EV_DELETE matches the knote by ident+filter, so udata is irrelevant here; pass the fd as an inert value.
             discard(changeNow(pollerFd, fd, PosixConstants.EVFILT_READ, PosixConstants.EV_DELETE, fd.toLong, scratch.kqueueData))
@@ -155,9 +156,9 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     /** Encode an interest change into the batch changelist (when kqData is Present) or submit immediately via `keventNow` (when Absent).
       *
       * When `kqData` is `Present`, the change is appended to `kqData.changelistBuf` at slot `kqData.nChanges` and `nChanges` is incremented.
-      * The change is NOT submitted immediately; it is batched with other changes accumulated during this `drainChanges` cycle and submitted
-      * atomically in the next `backend.poll` call. This reduces K interest-change syscalls per poll cycle to 1 kevent syscall.
-      * Returns 0 (success assumed; the actual rc comes back from the `kevent` poll call that submits the batch).
+      * The change is NOT submitted immediately; it is batched with the other changes of this `drainChanges` cycle and submitted by
+      * [[submitStaged]] at the end of the drain, 1 kevent syscall for K changes. Returns 0 (success assumed; a rejection comes back as a
+      * receipt of the submitting `kevent` and reaches the driver through [[drainFailedRegistrations]]).
       *
       * When `kqData` is `Absent` (test callers that build a driver without a kqueue-specific scratch), submits immediately via a one-element
       * `keventNow` with fresh per-call allocation. This preserves the test path behavior without requiring a full scratch to be set up.
@@ -168,10 +169,9 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     ): Int =
         kqData match
             case Present(data) =>
-                // The changelist batches changes until the next poll submits them, but it has a hard capacity of MaxEvents slots: it is an
-                // optimization, not an unbounded accumulator. A single drain that produces more changes than that encodes past the buffer and
-                // aborts the cycle with IndexOutOfBounds, taking the driver down with it. Two ways to get there, both reachable under load:
-                // many fds re-arming in one cycle, and terminalTeardown's drain, which has no following poll to flush the batch at all.
+                // The changelist batches changes until the end of the drain, but it has a hard capacity of MaxEvents slots: it is an
+                // optimization, not an unbounded accumulator. A single drain that produces more changes than that would encode past the buffer and
+                // abort the cycle with IndexOutOfBounds, taking the driver down with it (many fds re-arming in one cycle reaches it under load).
                 // Submitting the full batch here and starting a fresh one costs an extra kevent under load instead of losing the driver.
                 if data.nChanges >= MaxEvents then flushChanges(pollerFd, data)
                 val slot = data.nChanges
@@ -192,7 +192,11 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         end match
     end change
 
-    /** Submit the full changelist mid-drain and start a fresh batch, recording any entry the kernel rejected.
+    override def submitStaged(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        scratch.kqueueData.foreach(data => if data.nChanges > 0 then flushChanges(pollerFd, data))
+
+    /** Submit the staged changelist and start a fresh batch, recording any entry the kernel rejected. Runs at the end of each change drain
+      * ([[submitStaged]]) and mid-drain when the batch is full.
       *
       * Every entry is submitted with [[PosixConstants.EV_RECEIPT]] added to its flags, and the eventlist is `flushEventsBuf` with room for
       * exactly `nChanges` receipts. That combination is what makes this submission safe, and both halves are load-bearing.
@@ -222,8 +226,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         val rc = kq.keventNow(pollerFd, data.changelistBuf, n, data.flushEventsBuf, n, ZeroTimeout)
         data.nChanges = 0
         // A negative rc means the call itself failed before producing any receipt (a bad kqueue fd, an unreadable changelist), so there is
-        // nothing per-entry to read and this batch is lost the way every batch used to be. Nothing here can attribute that to a connection, so
-        // it is logged rather than swallowed: the whole point of this path is that a lost batch stops being invisible.
+        // nothing per-entry to read and the whole batch is lost. Nothing here can attribute that to a connection, so it is logged rather than
+        // swallowed, so that a lost batch is visible.
         if rc.isError then Log.live.unsafe.error(s"kqueue changelist flush failed errno=${rc.errorCode} nChanges=$n")
         val received = if rc.isError then 0 else rc.value
         i = 0
@@ -279,9 +283,9 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             case Present(data) => pollWithData(pollerFd, timeoutMs, changelist, nChanges, scratch, data)
             case Absent        => pollFresh(pollerFd, timeoutMs, scratch)
 
-    /** Poll using the caller-owned reused buffers from [[KqueuePollData]]. The changelist batch (built by `drainChanges`) is passed alongside
-      * the poll wait so interest changes and event collection happen in one atomic `kevent` syscall. After submission, `data.nChanges`
-      * is reset to 0 so the changes staged by the next `drainChanges` accumulate into a fresh batch.
+    /** Poll using the caller-owned reused buffers from [[KqueuePollData]]. Any changelist still staged is passed alongside the wait (the driver's
+      * drain submits its own through [[submitStaged]] first, so in the driver's cycle this batch is empty). After submission, `data.nChanges` is
+      * reset to 0 so the changes staged by the next `drainChanges` accumulate into a fresh batch.
       *
       * Reuses the per-driver poll memo in `data` to avoid allocating a new [[Timespec]] on every call. The memo is owned by the poll-loop
       * carrier for this driver's scratch (see [[KqueuePollData]]). Since the poll loop always calls with the same `timeoutMs`, the memo
@@ -303,7 +307,6 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 data.pollMemoMs = timeoutMs
                 data.pollMemoTs = ts
                 ts
-        // Submit the changelist alongside the wait; interest changes and the blocking wait happen atomically in one kevent syscall.
         data.nChanges = 0 // reset BEFORE the kevent call so the next drain's changes start at slot 0 of a fresh batch
         val fiber = kq.kevent(pollerFd, changelist, nChanges, data.eventsBuffer, MaxEvents, timeout)
         fiber.poll() match
@@ -417,15 +420,15 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         // Unsafe: off-heap allocations at driver init (called once; closed in driver.close via PollScratch.close).
         // kqueueData holds the raw Buffer[Byte] changelist/eventlist buffers passed to keventNow/kevent, sized in KEvent.size-byte slots and
         // accessed through the KEvent codec (no Buffer[KEvent] struct round-trip, so no per-event Long boxing).
-        // changelistBuf holds up to MaxEvents batched interest changes; the poll call submits the batch atomically with the wait.
+        // changelistBuf holds up to MaxEvents batched interest changes; submitStaged submits the batch at the end of each change drain.
         // The byte-level fields (eventsBuffer, armBuf) on PollScratch are zero-element sentinels (not used by kqueue code paths).
         val kqData = new KqueuePollData(
             armBuf = Buffer.alloc[Byte](KEvent.size),                   // reused arm buffer for immediate changeNow calls (deregister path)
             eventsBuffer = Buffer.alloc[Byte](MaxEvents * KEvent.size), // poll eventlist buffer
             changelistBuf = Buffer.alloc[Byte](MaxEvents * KEvent.size), // batch changelist: up to MaxEvents changes per poll cycle
-            // Receipt eventlist for the mid-drain flush. Sharing eventsBuffer would in fact be safe today, because a flush cannot overlap a
-            // pending poll: both change drains run outside the wait (one before `backend.poll`, one after it has completed). This buffer is
-            // separate so that the flush does not depend on that ordering holding, since nothing in either signature enforces it.
+            // Receipt eventlist for the batch submission. Sharing eventsBuffer would be safe while a flush cannot overlap a pending poll (both
+            // change drains run outside the wait, one before `backend.poll`, one after it has completed). This buffer is separate so that the
+            // flush does not depend on that ordering holding, since nothing in either signature enforces it.
             flushEventsBuf = Buffer.alloc[Byte](MaxEvents * KEvent.size)
         )
         val sentinelEvents = Buffer.alloc[Byte](0) // unused on kqueue; closed via PollScratch.close

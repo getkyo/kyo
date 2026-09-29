@@ -542,6 +542,25 @@ final private[net] class PosixHandle private (
         freedHere
     end endDeferredClose
 
+    /** Hold the handle open while one of its interest registrations travels from the poll carrier to the kernel (a fourth holder kind alongside
+      * [[beginDispatch]] / [[beginWrite]] / [[beginDeferredClose]]). Admission and submission are separate steps: kqueue stages the change for a
+      * later `kevent`, epoll issues `epoll_ctl` after the admission. A close that released the fd between them would let the fd number be
+      * recycled and the registration land on the new socket under this handle's id, an interest no owner ever removes. While this hold is held
+      * a close defers its real `close(fd)` to the release. Returns `false` once a close was requested: the registration must not be applied.
+      * MUST pair with [[endRegistration]].
+      */
+    private[posix] def beginRegistration()(using AllowUnsafe): Boolean = guard.acquireRead()
+
+    /** Release the hold [[beginRegistration]] took, once the registration has reached the kernel. Returns `true` when a close raced the
+      * registration and this is the last holder, so the deferred free (and with it the real `close(fd)`, which drops the just-registered
+      * interest) runs here, exactly once.
+      */
+    private[posix] def endRegistration()(using AllowUnsafe): Boolean =
+        val freedHere = guard.release(read = true)
+        if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("registration"))
+        freedHere
+    end endRegistration
+
     /** Test whether a close has been requested (or resources already freed). Used by the io_uring read CQE path to detect that
       * [[feedAndDecrypt]] triggered [[requestClose]] (fatal TLS record): the io_uring path holds no dispatch guard, so the guard state
       * is the only observable signal after [[requestClose]] returns. Returns `true` if the close bit is set or the resources are already freed.

@@ -56,6 +56,16 @@ private[net] trait PollerBackend:
       */
     def drainFailedRegistrations(scratch: PollScratch, handler: RegistrationFailureHandler)(using AllowUnsafe, Frame): Unit = ()
 
+    /** Hand every staged interest change to the kernel now, recording any rejection for [[drainFailedRegistrations]].
+      *
+      * The driver calls this at the end of each change drain, before it releases the registration holds the drain took (see
+      * `PosixHandle.beginRegistration`): once it returns, every registration the drain applied is in the kernel, so a close that was waiting on
+      * one of those holds can close the fd and take the interest with it.
+      *
+      * Default: a no-op, for backends that submit each change inside the registering call.
+      */
+    def submitStaged(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit = ()
+
     /** Fill the `scratch.fds` and `scratch.flags` arrays with decoded event data after a `timeoutMs` wait (`timeoutMs < 0` means
       * indefinite: blocks until an event or a wake arrives). The `@Ffi.blocking` `epoll_wait` / `kevent` runs inline on JVM/Native
       * (fiber is already `done()` on return) and on a libuv worker on JS (fiber is genuinely pending). The driver's `while`-loop body
@@ -65,9 +75,10 @@ private[net] trait PollerBackend:
       * Returns the ready count `n` (0 if no events, negative on error). Ownership: `eventsBuffer`, `fds`, and `flags` in `scratch` are
       * owned exclusively by the poll loop carrier; `armBuf` is owned exclusively by the change worker. The two workers never share a slot.
       *
-      * `changelist` and `nChanges` are the kqueue changelist batched by `drainChanges` this cycle. On kqueue these are passed directly to
-      * `kevent` so the interest registrations and the wait are one atomic syscall. On epoll `changelist` and `nChanges` are ignored (epoll_wait
-      * has no changelist parameter; changes go through `epoll_ctl` in `drainChanges` before `poll` is called).
+      * `changelist` and `nChanges` are the kqueue changelist still staged when the wait begins, passed to `kevent` alongside the wait. The
+      * driver's change drain submits its registrations through [[submitStaged]] before this is called, so the batch reaching the wait is
+      * empty in the driver's own cycle. On epoll `changelist` and `nChanges` are ignored (epoll_wait has no changelist parameter; changes go
+      * through `epoll_ctl` in `drainChanges` before `poll` is called).
       */
     def poll(pollerFd: Int, timeoutMs: Int, changelist: kyo.ffi.Buffer[Byte], nChanges: Int, scratch: PollScratch)(using
         AllowUnsafe,

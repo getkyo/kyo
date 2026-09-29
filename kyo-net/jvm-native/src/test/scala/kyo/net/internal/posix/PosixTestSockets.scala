@@ -39,6 +39,22 @@ object PosixTestSockets:
       */
     def loopbackPair()(using Frame, AllowUnsafe): (Int, Int) < Async =
         val sockets = sock
+        pendingConnection().map { (server, client) =>
+            acceptNow(server).map { accepted =>
+                val shim = Ffi.load[PosixShimBindings]
+                assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
+                assert(shim.kyo_posix_set_nonblocking(accepted) == 0, "set_nonblocking(accepted) failed")
+                sockets.close(server).safe.get.map(_ => (client, accepted))
+            }
+        }
+    end loopbackPair
+
+    /** A 127.0.0.1 listener with one connection already established and waiting in its backlog, NOT yet accepted; returns
+      * (listenerFd, clientFd). A test accepts it with [[acceptNow]] at the exact point it needs a fresh fd: `accept` returns the lowest free fd
+      * number, so accepting right after a close hands back the number that close released.
+      */
+    def pendingConnection()(using Frame, AllowUnsafe): (Int, Int) < Async =
+        val sockets = sock
         val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         Sync.ensure(Sync.defer(a.close())) {
@@ -54,25 +70,22 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val (ca, cl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
-            val connected =
-                Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
-            connected.andThen {
-                val noAddr = Buffer.alloc[Byte](SockAddr.inet4Size)
-                val noLen  = Buffer.alloc[Int](1)
-                noLen.set(0, SockAddr.inet4Size)
-                Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
-                }.map { accepted =>
-                    val shim = Ffi.load[PosixShimBindings]
-                    assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
-                    assert(shim.kyo_posix_set_nonblocking(accepted) == 0, "set_nonblocking(accepted) failed")
-                    sockets.close(server).safe.get.map(_ => (client, accepted))
-                }
-            }
+            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
+            Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
+                .andThen((server, client))
         }
-    end loopbackPair
+    end pendingConnection
+
+    /** Accept one connection from `listener`, returning the accepted fd. */
+    def acceptNow(listener: Int)(using Frame, AllowUnsafe): Int < Async =
+        val noAddr = Buffer.alloc[Byte](SockAddr.inet4Size)
+        val noLen  = Buffer.alloc[Int](1)
+        noLen.set(0, SockAddr.inet4Size)
+        Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
+            sock.accept(listener, noAddr, noLen).safe.get.map(_.value)
+        }
+    end acceptNow
 
     /** Overload taking injected bindings; the variant that wraps supplied bindings, used with [[RecordingSocketBindings]].
       *

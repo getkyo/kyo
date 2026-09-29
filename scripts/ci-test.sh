@@ -42,9 +42,9 @@ set -uo pipefail
 # Between Native test batches the runner sweeps leftover containers and pins the
 # per-module test-worker count; both are hygiene, neither can change a verdict.
 #
-# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
-# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX, and
-# CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
+# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP, NATIVE_ONLY,
+# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX, SBT_HEAP_CAP,
+# RUN_HEAP_CAP and CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
 # invocations append -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
 # caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
 # this one runner is correct in every environment.
@@ -338,6 +338,39 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "a skipped module is absent from the plan and from both pools"
     else record no "a skipped module is absent from the plan and from both pools"; fi
     FAKE_SKIP=""
+
+    # 16a. NATIVE_ONLY reaches the same two invocations as `--only`, composed with NATIVE_SKIP, and the
+    # batches carry neither; the plan (the fake's) is consumed as it was written.
+    FAKE_PLAN="kyo-netNative kyo-httpNative"
+    run_runner_env "$PASS_BODY" Native test NATIVE_SKIP="kyo-aeron" NATIVE_ONLY="kyo-net,kyo-http"
+    if call_nth_has 1 "--exclude kyo-aeron --only kyo-net,kyo-http" \
+       && call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-netNative,kyo-httpNative Native" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --cross --exclude kyo-aeron --only kyo-net,kyo-http --all Native" \
+       && exit_is 0
+    then record ok "NATIVE_ONLY reaches the plan and the cross pass as --only; batches carry no --only"
+    else record no "NATIVE_ONLY reaches the plan and the cross pass as --only; batches carry no --only"; fi
+
+    # 16b. SBT_HEAP_CAP caps the plan, the links and the compile phases as -J-Xmx; the run phases keep
+    # RUN_HEAP_CAP, which the same environment overrides here.
+    FAKE_PLAN="kyo-dataNative"
+    run_runner_env "$PASS_BODY" Native test SBT_HEAP_CAP=5G RUN_HEAP_CAP=3G
+    if call_nth_has 1 "-J-Xmx5G testKyo --dry-run --plan-file" \
+       && call_nth_is 2 "-J-Xmx5G testKyo --phase link --scala 3 --modules kyo-dataNative Native" \
+       && call_nth_is 3 "-J-Xmx3G testKyo --scala 3 --modules kyo-dataNative Native" \
+       && call_nth_is 4 "-J-Xmx3G testKyo --cross --all Native" && exit_is 0
+    then record ok "SBT_HEAP_CAP caps the plan, links and compiles; RUN_HEAP_CAP the run phases"
+    else record no "SBT_HEAP_CAP caps the plan, links and compiles; RUN_HEAP_CAP the run phases"; fi
+    run_runner_env 'exit 0' JVM test SBT_HEAP_CAP=5G
+    if calls_count 3 && call_nth_is 1 "-J-Xmx5G testKyo --phase compile-main --all JVM" \
+       && call_nth_is 2 "-J-Xmx5G testKyo --phase compile-test --all JVM" \
+       && call_nth_is 3 "testKyo --all JVM" && exit_is 0
+    then record ok "SBT_HEAP_CAP reaches the JVM compile phases and never its run phase"
+    else record no "SBT_HEAP_CAP reaches the JVM compile phases and never its run phase"; fi
+    run_runner Native test "$PASS_BODY"
+    if calls_lack "-J-Xmx5G" && calls_lack "-J-Xmx3G"
+    then record ok "an unset SBT_HEAP_CAP adds nothing"
+    else record no "an unset SBT_HEAP_CAP adds nothing"; fi
 
     # 17. An empty plan links and tests nothing, and still runs the cross pass (a diff can touch only
     # cross-built modules).
@@ -664,6 +697,12 @@ NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 # workflow sets it for the Native target.
 NATIVE_SKIP="${NATIVE_SKIP:-}"
 
+# Space- or comma-separated base names the Native leg is NARROWED to, applied as `--only` to the same
+# two invocations NATIVE_SKIP reaches, composable with it. A pole that exists for one driver (the macOS
+# pole for kyo-net's kqueue) names the modules whose tests drive it and links nothing else; their
+# dependencies compile on demand. Empty by default: the whole set.
+NATIVE_ONLY="${NATIVE_ONLY:-}"
+
 # When non-empty, every nativeLink invocation runs with -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS:
 # each link batch and each NATIVE_HEAVY pre-link. The scala-native toolchain sizes its optimizer pool
 # and its concurrent clang forks from availableProcessors, and that fork fleet stacked on the driver
@@ -739,10 +778,20 @@ link_sbt() {
     if [ -n "$NATIVE_LINK_CPUS" ]; then
         JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
         JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
-            sbt_resolve_retry "$@"
+            sbt_resolve_retry $(sbt_heap) "$@"
     else
-        sbt_resolve_retry "$@"
+        sbt_resolve_retry $(sbt_heap) "$@"
     fi
+}
+
+# Driver heap cap for every invocation that is not a run phase: the plan, the links, the compile phases.
+# .jvmopts pins -Xmx12G for a 16GB runner; a runner with less (the 7 GB macOS pole) sets SBT_HEAP_CAP and
+# the cap goes on the command line as `-J-Xmx`, which is appended after .jvmopts and so wins. Empty by
+# default, and then nothing is added: the 16GB runners keep .jvmopts as is.
+SBT_HEAP_CAP="${SBT_HEAP_CAP:-}"
+sbt_heap() {
+    [ -n "$SBT_HEAP_CAP" ] && printf -- '-J-Xmx%s' "$SBT_HEAP_CAP"
+    return 0
 }
 
 # run-arg: full run sends --all, diff run sends nothing (testKyo diffs vs
@@ -771,8 +820,8 @@ run_phase_split() {
     local arg; arg=$(run_arg)
     case "$ACTION" in
         compile)
-            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            sbt_resolve_retry $(sbt_heap) "testKyo --phase compile-main $arg $PLATFORM" || return $?
+            sbt_resolve_retry $(sbt_heap) "testKyo --phase compile-test $arg $PLATFORM" || return $?
             return 0
             ;;
         link)
@@ -780,8 +829,8 @@ run_phase_split() {
             return 0
             ;;
         *)
-            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            sbt_resolve_retry $(sbt_heap) "testKyo --phase compile-main $arg $PLATFORM" || return $?
+            sbt_resolve_retry $(sbt_heap) "testKyo --phase compile-test $arg $PLATFORM" || return $?
             sbt_run_resolve_retry $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
             return 0
             ;;
@@ -1039,16 +1088,19 @@ check_worker_count() {
 run_native() {
     local arg; arg=$(run_arg)
 
-    # Comma-separated base names to drop from the Native leg (empty by default; CI sets NATIVE_SKIP).
-    # Only the two invocations that select for themselves, the plan and the cross pass, take it.
-    local skip_csv skip_flag
+    # Comma-separated base names to drop from (NATIVE_SKIP) or narrow to (NATIVE_ONLY) the Native leg,
+    # both empty by default. Only the two invocations that select for themselves, the plan and the cross
+    # pass, take them.
+    local skip_csv skip_flag only_csv only_flag
     skip_csv=$(printf '%s' "$NATIVE_SKIP" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
     skip_flag=""; [ -n "$skip_csv" ] && skip_flag="--exclude $skip_csv"
+    only_csv=$(printf '%s' "$NATIVE_ONLY" | tr -s ', ' ',' | sed 's/^,//; s/,$//')
+    only_flag=""; [ -n "$only_csv" ] && only_flag="--only $only_csv"
 
     # compile: compile main and test only, no plan, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-main' "$skip_flag" "$arg" Native)" || return $?
-        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-test' "$skip_flag" "$arg" Native)" || return $?
+        sbt_resolve_retry $(sbt_heap) "$(native_cmd 'testKyo --phase compile-main' "$skip_flag" "$only_flag" "$arg" Native)" || return $?
+        sbt_resolve_retry $(sbt_heap) "$(native_cmd 'testKyo --phase compile-test' "$skip_flag" "$only_flag" "$arg" Native)" || return $?
         return 0
     fi
 
@@ -1056,9 +1108,9 @@ run_native() {
 
     # One selection for the whole run: the shell partitions this file, so both pools work the
     # identical module list and each batch's membership lands in the runner log.
-    local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" '--scala 3' "$arg" Native)
+    local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" "$only_flag" '--scala 3' "$arg" Native)
     log "planning native modules: sbt $plan_cmd"
-    sbt_resolve_retry "$plan_cmd" || { log "native planning failed"; return 1; }
+    sbt_resolve_retry $(sbt_heap) "$plan_cmd" || { log "native planning failed"; return 1; }
     if [ ! -f "$PLAN" ]; then
         log "native planning wrote no plan file ($PLAN)"; return 1
     fi
@@ -1092,7 +1144,7 @@ run_native() {
     done
     # The cross-build modules select themselves per Scala 2.x version, so they are outside the plan
     # and outside both pools.
-    run_watched "cross pass" $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$skip_flag" "$arg" Native)" || return 1
+    run_watched "cross pass" $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$skip_flag" "$only_flag" "$arg" Native)" || return 1
     return 0
 }
 

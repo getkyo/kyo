@@ -340,9 +340,9 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
 
     "changelistBatchingNoDeadlock: two sequential write arms each resolve; registerWrite fires exactly twice; kqueue batches interest changes" in {
         PosixTestSockets.assumeKqueue()
-        // The ET kqueue path accumulates interest changes in a changelist and submits them with the poll wait. This test confirms that the
-        // batching does not deadlock the poll loop: both write promises resolve, the registerWrite count is exactly 2 (one per awaitWritable
-        // call), and at least one poll cycle carried a non-empty changelist (the batched registration submission).
+        // The ET kqueue path accumulates interest changes in a changelist and submits them in one kevent at the end of the change drain. This
+        // test confirms that the batching does not deadlock the poll loop: both write promises resolve, the registerWrite count is exactly 2
+        // (one per awaitWritable call), and at least one drain submitted a non-empty batch.
         // Gate: kqueue only. On epoll EPOLLET the fd stays armed and only fires an edge on write-buffer transition (not-writable to
         // writable). A loopback fd that is always writable fires the EPOLLOUT edge exactly once on ADD; a second awaitWritable after
         // dispatchWritable consumed the first edge finds no new transition and parks until timeout. The changelist batch is also
@@ -375,14 +375,14 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                     // registerWrite fires once per awaitWritable call: 2 write arms must produce exactly 2 registerWrite calls.
                     val wc = backend.registerWriteCount.get()
                     assert(wc == 2, s"exactly 2 registerWrite calls expected for 2 awaitWritable arms; got $wc")
-                    // On kqueue the registrations above are batched into the changelist and submitted atomically with the next kevent call.
-                    // At least one poll cycle must have carried a non-empty changelist, confirming the batch path is active.
-                    // epoll does not use the changelist (nChanges is always 0 there), so this assertion is kqueue-only.
+                    // On kqueue the registrations above are staged into the changelist and submitted in one kevent at the end of the change
+                    // drain. At least one drain must have submitted a non-empty batch, confirming the batch path is active. epoll stages
+                    // nothing (each change is its own epoll_ctl), so this assertion is kqueue-only.
                     if PosixConstants.isMacOrBsd then
-                        val batchedCycles = backend.pollWithChangesCount.get()
+                        val batchedDrains = backend.submitStagedWithChangesCount.get()
                         assert(
-                            batchedCycles > 0,
-                            s"kqueue: at least one poll cycle must carry a non-empty changelist; got batchedCycles=$batchedCycles"
+                            batchedDrains > 0,
+                            s"kqueue: at least one change drain must submit a non-empty staged batch; got batchedDrains=$batchedDrains"
                         )
                     end if
                 }

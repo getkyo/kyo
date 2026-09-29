@@ -25,8 +25,9 @@ set -uo pipefail
 # and handed clang object paths for files nobody had written. Codegen and compilation both logged
 # success; the link died on `clang: error: no such file or directory: .../<hash>.ll.o`.
 #
-# Reads SBT_CMD (the sbt binary, default `sbt`) from the environment; mutates nothing outside the
-# module's own target directory, and touches no tracked file.
+# Reads SBT_CMD (the sbt binary, default `sbt`) and SBT_HEAP_CAP (the driver heap ci-test.sh applies to
+# its link invocations, passed here the same way so the guard fits the runner the leg runs on) from the
+# environment; mutates nothing outside the module's own target directory, and touches no tracked file.
 
 MISSING_OBJECT_RE='no such file or directory.*\.ll\.o'
 
@@ -209,8 +210,8 @@ fail() { echo "=== [native-relink] FAILED: $* ===" >&2; exit "${2:-1}"; }
 # The single sbt invocation shape under test. CI=1 is what arms the `native-settings` drop hook, which
 # reads the environment rather than a setting.
 link() {
-    log "$1: CI=1 $SBT_CMD $PROJECT/Test/nativeLink"
-    ( cd "$ROOT" && CI=1 "$SBT_CMD" "$PROJECT/Test/nativeLink" ) 2>&1 | tee "$LOG"
+    log "$1: CI=1 $SBT_CMD ${SBT_HEAP_CAP:+-J-Xmx$SBT_HEAP_CAP }$PROJECT/Test/nativeLink"
+    ( cd "$ROOT" && CI=1 "$SBT_CMD" ${SBT_HEAP_CAP:+"-J-Xmx$SBT_HEAP_CAP"} "$PROJECT/Test/nativeLink" ) 2>&1 | tee "$LOG"
     return "${PIPESTATUS[0]}"
 }
 
