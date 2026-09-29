@@ -157,6 +157,16 @@ class ParametersTest extends kyo.test.Test[Any]:
             assert(Parameters.write("name", "=?utf-8?Q?a?=", Parameters.Style.Mime) ==
                 Result.succeed(Chunk("name*=utf-8''%3D%3Futf-8%3FQ%3Fa%3F%3D")))
         }
+        "the FormData style quotes every value and escapes only LF, CR and the quote, as the HTML standard writes form data" in {
+            assert(Parameters.write("name", "f", Parameters.Style.FormData) == Result.succeed(Chunk("name=\"f\"")))
+            assert(Parameters.write("filename", "C:\\dir\\\"a\".txt", Parameters.Style.FormData) ==
+                Result.succeed(Chunk("filename=\"C:\\dir\\%22a%22.txt\"")))
+            assert(Parameters.write("filename", "a\r\nX-Injected: yes", Parameters.Style.FormData) ==
+                Result.succeed(Chunk("filename=\"a%0D%0AX-Injected: yes\"")))
+            assert(Parameters.write("filename", "€ rates.csv", Parameters.Style.FormData) ==
+                Result.succeed(Chunk("filename=\"€ rates.csv\"")))
+            assert(Parameters.write("name", "", Parameters.Style.FormData) == Result.succeed(Chunk("name=\"\"")))
+        }
         "refuses a name that is not a token or that holds *" in {
             assert(Parameters.write("n me", "1", Parameters.Style.Http) ==
                 Result.fail(MimeInvalidParameterException(MimeException.Violation.NotAToken("parameter name", "n me"))))

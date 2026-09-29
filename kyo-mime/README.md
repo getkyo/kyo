@@ -80,6 +80,21 @@ Parameters.write("name*0", "x", Parameters.Style.Http)             // Result.fai
 
 A hostile value such as `a"\r\nX-Injected: yes` is percent-encoded in both styles, so a file name from a request can never end the header line early.
 
+## Form data
+
+A multipart/form-data part header follows the HTML standard, not RFC 6266: a browser quotes every value, writes LF, CR and `"` as `%0A`, `%0D` and `%22`, and escapes nothing else, so a Windows path keeps its backslashes and there is no `filename*`. `Style.FormData` writes that encoding, and `Disposition.parseFormData` reads it: exactly `form-data; name="..."`, optionally `; filename="..."`, with only those three escapes decoded and a CR or LF inside a value refused.
+
+```scala
+import kyo.*
+import kyo.mime.*
+
+Disposition.init("form-data", "name" -> "upload", "filename" -> "C:\\docs\\\"q3\".pdf").flatMap(_.render(Parameters.Style.FormData))
+// Result.succeed("form-data; name=\"upload\"; filename=\"C:\\docs\\%22q3%22.pdf\"")
+
+Disposition.parseFormData("form-data; name=\"upload\"; filename=\"C:\\docs\\%22q3%22.pdf\"").map(_.filename)
+// Result.succeed(Present("C:\\docs\\\"q3\".pdf"))
+```
+
 ## Multipart boundaries
 
 `Multipart` holds the boundary rules of RFC 2046 section 5.1.1 as functions over bytes, for a parser or a writer to apply. A delimiter is `--` and the boundary at the start of a line, at offset 0 or right after an LF; the same bytes mid-line are data, which keeps a part that quotes `--boundary` whole. The line end before a delimiter belongs to the delimiter, and what follows the boundary on its line is transport padding or `--` for the close delimiter.

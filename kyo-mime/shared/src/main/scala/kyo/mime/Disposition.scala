@@ -9,7 +9,8 @@ import kyo.internal.mime.Grammar.*
   *
   * Built by [[Disposition.init]] from parts, or by [[Disposition.parse]] from the value's text with CFWS removed, quoted strings resolved and RFC 2231 parameters merged, so `filename*=UTF-8''r%C3%A9sum%C3%A9.pdf` reads as the parameter
   * `filename`. `render` writes it back in a [[Parameters.Style]]: `Http` writes a non-ASCII file name as `filename*` (RFC 8187), which is
-  * how a download name reaches a browser intact.
+  * how a download name reaches a browser intact. A multipart/form-data part header follows the HTML standard instead, so it is read by
+  * [[Disposition.parseFormData]] and written with `Parameters.Style.FormData`.
   */
 final case class Disposition private (kind: String, parameters: Chunk[MediaType.Parameter]) derives CanEqual:
 
@@ -54,6 +55,49 @@ object Disposition:
             Result.fail(MimeInvalidDispositionException(MimeException.Violation.NotWellFormed(text)))
         else checked(text.substring(start, end), Parameters.readDecoded(text, rest, decode, unencoded))
     end parse
+
+    /** The disposition of a multipart/form-data part, read by the HTML standard's multipart/form-data parser rather than by RFC 6266:
+      * exactly `form-data; name="..."`, optionally followed by `; filename="..."`. A quoted value runs to the next `"`, with no quoted
+      * pairs, and a CR or LF inside it is no disposition; `%0A`, `%0D` and `%22` then read as LF, CR and `"`, and nothing else is decoded.
+      * This is the reading of what a browser, and `Parameters.Style.FormData`, writes: a backslash in a Windows path stays a backslash.
+      */
+    def parseFormData(text: String)(using Frame): Result[MimeInvalidDispositionException, Disposition] =
+        def malformed = Result.fail(MimeInvalidDispositionException(MimeException.Violation.NotWellFormed(text)))
+        // The end of the quoted value that opens at `from`, when it closes before any CR or LF.
+        def quotedEnd(from: Int): Maybe[Int] =
+            @scala.annotation.tailrec
+            def loop(at: Int): Maybe[Int] =
+                if at >= text.length then Absent
+                else
+                    text.charAt(at) match
+                        case '"'         => Present(at)
+                        case '\r' | '\n' => Absent
+                        case _           => loop(at + 1)
+            loop(from)
+        end quotedEnd
+        val namePrefix     = "form-data; name=\""
+        val filenamePrefix = "; filename=\""
+        if !text.startsWith(namePrefix) then malformed
+        else
+            quotedEnd(namePrefix.length) match
+                case Absent           => malformed
+                case Present(nameEnd) =>
+                    val name = Parameters.formDataUnescaped(text.substring(namePrefix.length, nameEnd))
+                    val rest = nameEnd + 1
+                    if rest == text.length then checked("form-data", Chunk("name" -> name))
+                    else if !text.startsWith(filenamePrefix, rest) then malformed
+                    else
+                        val filenameStart = rest + filenamePrefix.length
+                        quotedEnd(filenameStart) match
+                            case Present(filenameEnd) if filenameEnd + 1 == text.length =>
+                                val filename = Parameters.formDataUnescaped(text.substring(filenameStart, filenameEnd))
+                                checked("form-data", Chunk("name" -> name, "filename" -> filename))
+                            case _ => malformed
+                        end match
+                    end if
+            end match
+        end if
+    end parseFormData
 
     given Schema[Disposition] =
         Schema.derivedVia((kind: String, parameters: Chunk[MediaType.Parameter]) =>

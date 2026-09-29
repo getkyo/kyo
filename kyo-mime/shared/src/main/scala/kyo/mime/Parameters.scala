@@ -23,7 +23,11 @@ import kyo.internal.mime.Utf8
   * Writing takes a [[Parameters.Style]]: `Mime` follows RFC 2231 with 76-octet segments and quoted continuations, for a header that will
   * be folded; `Http` follows RFC 8187, one `name*=UTF-8''...` unit with no continuation and no length cap, for a header that will not.
   * In both, a value that is a token is written bare, a printable one as a quoted string, and any other (non-ASCII, a control, CR or LF)
-  * percent-encoded, so nothing written here can end a header line. The one value that cannot be written is a name holding `*`.
+  * percent-encoded. `FormData` is the HTML standard's multipart/form-data encoding, the one browsers write and form parsers read: every
+  * value quoted, LF as `%0A`, CR as `%0D`, `"` as `%22`, and nothing else escaped, so a backslash and non-ASCII text stay as they are
+  * (RFC 7578 section 4.2 forbids `filename*` there); a value holding `%22` literally therefore reads back as `"`, as it does from a
+  * browser. In every style nothing written can end a header line. The one value that cannot be
+  * written is a name holding `*`.
   */
 object Parameters:
 
@@ -34,9 +38,11 @@ object Parameters:
         case Text(text: String)
         case Encoded(charset: Maybe[String], language: Maybe[String], octets: Span[Byte])
 
-    /** How a parameter is written: `Mime` (RFC 2231, 76-octet segments, for a folded header) or `Http` (RFC 8187, one unit). */
+    /** How a parameter is written: `Mime` (RFC 2231, 76-octet segments, for a folded header), `Http` (RFC 8187, one unit), or `FormData`
+      * (the HTML standard's multipart/form-data part header).
+      */
     enum Style derives CanEqual:
-        case Mime, Http
+        case Mime, Http, FormData
 
     /** The RFC 8187 reading of a value: plain text as it is, an encoded value's octets as UTF-8 whatever charset label it carries. */
     val decodeUtf8: Value => String =
@@ -78,8 +84,9 @@ object Parameters:
             Result.fail(MimeInvalidParameterException(MimeException.Violation.UnwritableParameterName(name)))
         else
             style match
-                case Style.Http => Result.succeed(Chunk(httpUnit(name, value)))
-                case Style.Mime => Result.succeed(mimeUnits(name, value))
+                case Style.Http     => Result.succeed(Chunk(httpUnit(name, value)))
+                case Style.Mime     => Result.succeed(mimeUnits(name, value))
+                case Style.FormData => Result.succeed(Chunk(s"$name=\"${formDataEscaped(value)}\""))
 
     /** `head` and every parameter's units joined into one header line: `head; a=1; b="x y"`. */
     def render(head: String, parameters: Chunk[(String, String)], style: Style)(using
@@ -341,6 +348,40 @@ object Parameters:
         else
             val octets = utf8Octets(value)
             s"$name*=UTF-8''" + percentEncoded(octets, 0, octets.size)
+
+    private[kyo] def formDataEscaped(value: String): String =
+        val out = new java.lang.StringBuilder(value.length)
+        value.foreach {
+            case '\n'  => discard(out.append("%0A"))
+            case '\r'  => discard(out.append("%0D"))
+            case '"'   => discard(out.append("%22"))
+            case other => discard(out.append(other))
+        }
+        out.toString
+    end formDataEscaped
+
+    // The inverse of formDataEscaped: only these three escapes, matched case-sensitively, as the multipart/form-data parser has it.
+    private[kyo] def formDataUnescaped(value: String): String =
+        if value.indexOf('%') < 0 then value
+        else
+            val out = new java.lang.StringBuilder(value.length)
+            var i   = 0
+            while i < value.length do
+                if value.startsWith("%0A", i) then
+                    discard(out.append('\n'))
+                    i += 3
+                else if value.startsWith("%0D", i) then
+                    discard(out.append('\r'))
+                    i += 3
+                else if value.startsWith("%22", i) then
+                    discard(out.append('"'))
+                    i += 3
+                else
+                    discard(out.append(value.charAt(i)))
+                    i += 1
+            end while
+            out.toString
+    end formDataUnescaped
 
     private def percentEncoded(octets: Span[Byte], from: Int, until: Int): String =
         var size = 0

@@ -50,6 +50,59 @@ class DispositionTest extends kyo.test.Test[Any]:
         }
     }
 
+    "parseFormData" - {
+        "reads the name and file name a browser writes, a backslash staying a backslash" in {
+            assert(Disposition.parseFormData("form-data; name=\"f\"; filename=\"C:\\dir\\a.txt\"") ==
+                Result.succeed(dispositionOf("form-data", "name" -> "f", "filename" -> "C:\\dir\\a.txt")))
+            assert(Disposition.parseFormData("form-data; name=\"f\"") == Result.succeed(dispositionOf("form-data", "name" -> "f")))
+            assert(Disposition.parseFormData("form-data; name=\"\"") == Result.succeed(dispositionOf("form-data", "name" -> "")))
+        }
+        "decodes %0A, %0D and %22 and nothing else" in {
+            assert(Disposition.parseFormData("form-data; name=\"a%22b%0D%0Ac\"; filename=\"%41%0a%25.txt\"") ==
+                Result.succeed(dispositionOf("form-data", "name" -> "a\"b\r\nc", "filename" -> "%41%0a%25.txt")))
+        }
+        "reads back what the FormData style writes, hostile values included" in {
+            Seq("a\"b", "a\r\nX-Injected: yes", "C:\\dir\\a.txt", "\\", "€ rates.csv", "", "a;b=c").foreach { value =>
+                val written = dispositionOf("form-data", "name" -> "f", "filename" -> value).render(Parameters.Style.FormData)
+                written match
+                    case Result.Success(line) =>
+                        assert(!line.contains('\r') && !line.contains('\n'), s"$value: $line")
+                        assert(Disposition.parseFormData(line).map(_.filename) == Result.succeed(Present(value)), s"$value: $line")
+                    case other => fail(s"$value: expected a rendered line, got $other")
+                end match
+            }
+            succeed
+        }
+        "a literal %22 reads back as a quote, as it does from a browser" in {
+            assert(dispositionOf("form-data", "name" -> "%22").render(Parameters.Style.FormData) ==
+                Result.succeed("form-data; name=\"%22\""))
+            assert(Disposition.parseFormData("form-data; name=\"%22\"").map(_.name) == Result.succeed(Present("\"")))
+        }
+        "anything but that exact shape is no form-data disposition" in {
+            Seq(
+                "form-data; name=f",
+                "Form-Data; name=\"f\"",
+                "attachment; name=\"f\"",
+                "form-data;name=\"f\"",
+                "form-data; name=\"f",
+                "form-data; name=\"a\nb\"",
+                "form-data; name=\"a\rb\"",
+                "form-data; name=\"f\"; filename*=UTF-8''a.txt",
+                "form-data; name=\"f\"; filename=\"a\nb\"",
+                "form-data; name=\"f\" ",
+                "form-data; name=\"f\"; filename=\"a\"; x=\"y\"",
+                ""
+            ).foreach { text =>
+                assert(
+                    Disposition.parseFormData(text) ==
+                        Result.fail(MimeInvalidDispositionException(MimeException.Violation.NotWellFormed(text))),
+                    text
+                )
+            }
+            succeed
+        }
+    }
+
     "construction" - {
         "checks the type and the parameters like a media type" in {
             assert(Disposition.init("in line").map(_.kind) ==
