@@ -15,7 +15,8 @@ class ParametersTest extends kyo.test.Test[Any]:
     private def readAll(value: String, unencoded: String => Span[Byte] = Parameters.utf8Octets): Chunk[(String, Read)] =
         Parameters.read(value, 0, unencoded).map {
             case (name, Value.Text(text))                         => name -> Read.Text(text)
-            case (name, Value.Encoded(charset, language, octets)) => name -> Read.Encoded(charset, language, octets.toArray.toSeq.map(_ & 0xff))
+            case (name, Value.Encoded(charset, language, octets)) => name ->
+                    Read.Encoded(charset, language, octets.toArray.toSeq.map(_ & 0xff))
         }
 
     private def ascii(s: String): Seq[Int] = s.map(_.toInt)
