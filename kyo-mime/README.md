@@ -54,9 +54,11 @@ import kyo.mime.Parameters.Value
 Parameters.readDecoded("; title*=UTF-8''%c2%a3%20and%20%e2%82%ac%20rates", 0)
 // Chunk("title" -> "£ and € rates")
 
-val Chunk(("title", Value.Encoded(charset, language, octets))) =
-    Parameters.read("; title*=iso-8859-1'en'%A3%20rates", 0): @unchecked
-// charset == Present("iso-8859-1"), language == Present("en"), octets.size == 7:
+Parameters.read("; title*=iso-8859-1'en'%A3%20rates", 0).map {
+    case (name, Value.Encoded(charset, language, octets)) => s"$name: $charset $language, ${octets.size} octets"
+    case (name, Value.Text(text))                         => s"$name: $text"
+}
+// Chunk("title: Present(iso-8859-1) Present(en), 7 octets"):
 // the caller decodes the octets with the charset it accepts
 ```
 

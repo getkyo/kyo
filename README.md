@@ -371,11 +371,13 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Specialized tools
 
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack bots, native C bindings, and TASTy reflection.
+Domain-shaped modules: parsing, character sets, MIME headers, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack bots, native C bindings, and TASTy reflection.
 
 | Module                                  | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | --------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
 | [kyo-parse](kyo-parse/README.md)        | ✅  | ✅  | ✅     | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)   |
+| [kyo-charset](kyo-charset/README.md)    | ✅  | ✅  | ✅     | ✅   | Every WHATWG encoding plus UTF-7 and UTF-32, decoding bytes exactly as a browser does on every platform    |
+| [kyo-mime](kyo-mime/README.md)          | ✅  | ✅  | ✅     | ✅   | `MediaType`, `Disposition` and RFC 2231 `Parameters` as checked values, plus `Multipart` boundary rules    |
 | [kyo-pod](kyo-pod/README.md)†           | ✅  | ✅  | ✅     | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup |
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
 | [kyo-browser](kyo-browser/README.md)†   | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |

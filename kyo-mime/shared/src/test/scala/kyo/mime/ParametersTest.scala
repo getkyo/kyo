@@ -7,10 +7,16 @@ class ParametersTest extends kyo.test.Test[Any]:
 
     private def read(value: String): Chunk[(String, Value)] = Parameters.read(value, 0)
 
-    private def octets(value: Value): Seq[Int] =
-        value match
-            case Value.Encoded(_, _, octets) => octets.toArray.toSeq.map(_ & 0xff)
-            case Value.Text(_)               => Seq.empty
+    // A Value with its octets as unsigned ints, so a whole read compares by value (a Span compares by reference).
+    private enum Read derives CanEqual:
+        case Text(text: String)
+        case Encoded(charset: Maybe[String], language: Maybe[String], octets: Seq[Int])
+
+    private def readAll(value: String, unencoded: String => Span[Byte] = Parameters.utf8Octets): Chunk[(String, Read)] =
+        Parameters.read(value, 0, unencoded).map {
+            case (name, Value.Text(text))                         => name -> Read.Text(text)
+            case (name, Value.Encoded(charset, language, octets)) => name -> Read.Encoded(charset, language, octets.toArray.toSeq.map(_ & 0xff))
+        }
 
     private def ascii(s: String): Seq[Int] = s.map(_.toInt)
 
@@ -36,40 +42,32 @@ class ParametersTest extends kyo.test.Test[Any]:
 
     "an encoded value" - {
         "carries its charset, language and octets, %XX in either case decoded and a bad escape kept" in {
-            val Chunk(("name", value)) = read("; name*=utf-8'en-us'a%c3%A9%zz%4"): @unchecked
-            assert(value == Value.Encoded(Present("utf-8"), Present("en-us"), octetsOf(value)))
-            assert(octets(value) == Seq(0x61, 0xc3, 0xa9) ++ ascii("%zz%4"))
+            assert(readAll("; name*=utf-8'en-us'a%c3%A9%zz%4") ==
+                Chunk("name" -> Read.Encoded(Present("utf-8"), Present("en-us"), Seq(0x61, 0xc3, 0xa9) ++ ascii("%zz%4"))))
         }
         "the charset and language of segment 0 apply to every segment, encoded or not" in {
-            val Chunk(("name", value)) = read("; name*0*=iso-8859-1''caf%E9; name*1=\" au lait\""): @unchecked
-            assert(value.asInstanceOf[Value.Encoded].charset == Present("iso-8859-1"))
-            assert(value.asInstanceOf[Value.Encoded].language == Absent)
-            assert(octets(value) == ascii("caf") ++ Seq(0xe9) ++ ascii(" au lait"))
+            assert(readAll("; name*0*=iso-8859-1''caf%E9; name*1=\" au lait\"") ==
+                Chunk("name" -> Read.Encoded(Present("iso-8859-1"), Absent, ascii("caf") ++ Seq(0xe9) ++ ascii(" au lait"))))
         }
         "an unencoded segment's octets come from the caller's function, UTF-8 by default" in {
-            val utf8   = read("; name*0*=iso-8859-1''a; name*1=é")
-            val latin1 = Parameters.read("; name*0*=iso-8859-1''a; name*1=é", 0, s => Span.from(s.map(_.toByte).toArray))
-            assert(octets(utf8.head._2) == Seq(0x61, 0xc3, 0xa9))
-            assert(octets(latin1.head._2) == Seq(0x61, 0xe9))
+            assert(readAll("; name*0*=iso-8859-1''a; name*1=é") ==
+                Chunk("name" -> Read.Encoded(Present("iso-8859-1"), Absent, Seq(0x61, 0xc3, 0xa9))))
+            assert(readAll("; name*0*=iso-8859-1''a; name*1=é", s => Span.from(s.map(_.toByte).toArray)) ==
+                Chunk("name" -> Read.Encoded(Present("iso-8859-1"), Absent, Seq(0x61, 0xe9))))
         }
         "an empty charset or an empty language is absent" in {
-            val Chunk(("name", value)) = read("; name*=''caf%E9"): @unchecked
-            assert(value == Value.Encoded(Absent, Absent, octetsOf(value)))
-            assert(octets(value) == ascii("caf") :+ 0xe9)
+            assert(readAll("; name*=''caf%E9") == Chunk("name" -> Read.Encoded(Absent, Absent, ascii("caf") :+ 0xe9)))
         }
         "segment 0 without the two quotes is data with no charset" in {
-            val Chunk(("name", value)) = read("; name*0*=abc%41"): @unchecked
-            assert(value.asInstanceOf[Value.Encoded].charset == Absent)
-            assert(octets(value) == ascii("abcA"))
+            assert(readAll("; name*0*=abc%41") == Chunk("name" -> Read.Encoded(Absent, Absent, ascii("abcA"))))
         }
         "only segment 0 carries a charset: a later segment's charset-like prefix is data" in {
-            val Chunk(("name", value)) = read("; name*0*=iso-8859-1''a; name*1*=iso-8859-1''b"): @unchecked
-            assert(octets(value) == ascii("aiso-8859-1''b"))
+            assert(readAll("; name*0*=iso-8859-1''a; name*1*=iso-8859-1''b") ==
+                Chunk("name" -> Read.Encoded(Present("iso-8859-1"), Absent, ascii("aiso-8859-1''b"))))
         }
         "an extended value written as a quoted string has its quotes removed first" in {
-            val Chunk(("name", value)) = read("; name*=\"iso-8859-1''HasenundFr%F6sche.txt\""): @unchecked
-            assert(value.asInstanceOf[Value.Encoded].charset == Present("iso-8859-1"))
-            assert(octets(value) == ascii("HasenundFr") ++ Seq(0xf6) ++ ascii("sche.txt"))
+            assert(readAll("; name*=\"iso-8859-1''HasenundFr%F6sche.txt\"") ==
+                Chunk("name" -> Read.Encoded(Present("iso-8859-1"), Absent, ascii("HasenundFr") ++ Seq(0xf6) ++ ascii("sche.txt"))))
         }
         "with no encoded segment the segments are text, not decoded" in {
             assert(read("; name*0=%41; name*1=b") == Chunk("name" -> Value.Text("%41b")))
@@ -106,10 +104,8 @@ class ParametersTest extends kyo.test.Test[Any]:
         "RFC 8187 3.2.3 examples" in {
             assert(Parameters.readDecoded("; title*=UTF-8''%c2%a3%20and%20%e2%82%ac%20rates", 0) ==
                 Chunk("title" -> "£ and € rates"))
-            val Chunk(("title", value)) = read("; title*=iso-8859-1'en'%A3%20rates"): @unchecked
-            assert(value.asInstanceOf[Value.Encoded].charset == Present("iso-8859-1"))
-            assert(value.asInstanceOf[Value.Encoded].language == Present("en"))
-            assert(octets(value) == Seq(0xa3) ++ ascii(" rates"))
+            assert(readAll("; title*=iso-8859-1'en'%A3%20rates") ==
+                Chunk("title" -> Read.Encoded(Present("iso-8859-1"), Present("en"), Seq(0xa3) ++ ascii(" rates"))))
         }
     }
 
@@ -128,28 +124,33 @@ class ParametersTest extends kyo.test.Test[Any]:
                 Result.succeed(Chunk(s"name*=UTF-8''$long%C3%A9")))
         }
         "the MIME style writes 76-octet units: quoted continuations for printable text, %XX segments otherwise" in {
-            val printable             = "a" * 100
-            val Result.Success(units) = Parameters.write("name", printable, Parameters.Style.Mime): @unchecked
-            assert(units.size == 2 && units.forall(_.length <= 76))
-            assert(units(0).startsWith("name*0=\"") && units(1).startsWith("name*1=\""))
-            val nonAscii                = "é" * 20
-            val Result.Success(encoded) = Parameters.write("name", nonAscii, Parameters.Style.Mime): @unchecked
-            assert(encoded == Chunk("name*0*=utf-8''" + "%C3%A9" * 10, "name*1*=" + "%C3%A9" * 10))
+            val printable = "a" * 100
+            Parameters.write("name", printable, Parameters.Style.Mime) match
+                case Result.Success(units) =>
+                    assert(units.size == 2 && units.forall(_.length <= 76))
+                    assert(units(0).startsWith("name*0=\"") && units(1).startsWith("name*1=\""))
+                    assert(Parameters.readDecoded("; " + units.mkString("; "), 0) == Chunk("name" -> printable))
+                case other => fail(s"expected units, got $other")
+            end match
+            val nonAscii = "é" * 20
+            val encoded  = Chunk("name*0*=utf-8''" + "%C3%A9" * 10, "name*1*=" + "%C3%A9" * 10)
+            assert(Parameters.write("name", nonAscii, Parameters.Style.Mime) == Result.succeed(encoded))
             assert(Parameters.readDecoded("; " + encoded.mkString("; "), 0) == Chunk("name" -> nonAscii))
-            assert(Parameters.readDecoded("; " + units.mkString("; "), 0) == Chunk("name" -> printable))
         }
         "the MIME style never cuts a quoted pair or a %XX across units" in {
-            val quotes                = "\"" * 60
-            val Result.Success(units) = Parameters.write("name", quotes, Parameters.Style.Mime): @unchecked
-            assert(units.forall(u => u.length <= 76 && !u.endsWith("\\\"")))
-            assert(Parameters.readDecoded("; " + units.mkString("; "), 0) == Chunk("name" -> quotes))
+            val quotes = "\"" * 60
+            Parameters.write("name", quotes, Parameters.Style.Mime) match
+                case Result.Success(units) =>
+                    assert(units.forall(u => u.length <= 76 && !u.endsWith("\\\"")))
+                    assert(Parameters.readDecoded("; " + units.mkString("; "), 0) == Chunk("name" -> quotes))
+                case other => fail(s"expected units, got $other")
+            end match
         }
         "an unpaired surrogate is written as U+FFFD in both styles, on every platform, and read back as octets EF BF BD" in {
             assert(Parameters.write("name", "a\ud800.pdf", Parameters.Style.Mime) == Result.succeed(Chunk("name*=utf-8''a%EF%BF%BD.pdf")))
             assert(Parameters.write("name", "a\ud800.pdf", Parameters.Style.Http) == Result.succeed(Chunk("name*=UTF-8''a%EF%BF%BD.pdf")))
             assert(Parameters.readDecoded("; name*=utf-8''a%EF%BF%BD.pdf", 0) == Chunk("name" -> "a�.pdf"))
-            val Chunk(("name", value)) = read("; name*0*=''x; name*1=\ud800"): @unchecked
-            assert(octets(value) == Seq(0x78, 0xef, 0xbf, 0xbd))
+            assert(readAll("; name*0*=''x; name*1=\ud800") == Chunk("name" -> Read.Encoded(Absent, Absent, Seq(0x78, 0xef, 0xbf, 0xbd))))
         }
         "a value holding =? goes through RFC 2231 in the MIME style, so no encoded word appears" in {
             assert(Parameters.write("name", "=?utf-8?Q?a?=", Parameters.Style.Mime) ==
@@ -177,9 +178,8 @@ class ParametersTest extends kyo.test.Test[Any]:
         }
         "100,000 parameters are all read, in order" in {
             val count = 100000
-            val all   = read((0 until count).map(i => s"; p$i=$i").mkString)
-            assert(all.size == count && all.head == ("p0" -> Value.Text("0")) &&
-                all.last == (s"p${count - 1}"             -> Value.Text(s"${count - 1}")))
+            assert(read((0 until count).map(i => s"; p$i=$i").mkString) ==
+                Chunk.from((0 until count).map(i => s"p$i" -> Value.Text(s"$i"))))
         }
         "an unquoted value followed by 200,000 unclosed ( is that text, ( being data" in {
             val tail = " (" * 200000
@@ -193,10 +193,5 @@ class ParametersTest extends kyo.test.Test[Any]:
             assert(read("; a=\"1\"" + "; \t" * (1024 * 1024 / 3)) == Chunk("a" -> Value.Text("1")))
         }
     }
-
-    private def octetsOf(value: Value): Span[Byte] =
-        value match
-            case Value.Encoded(_, _, octets) => octets
-            case Value.Text(_)               => Span.empty[Byte]
 
 end ParametersTest
