@@ -204,7 +204,7 @@ final private[kyo] class JsIoDriver private (
                 if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
             val settle: js.Function0[Unit] =
                 if handle.peerCloseGrace.isFinite then
-                    val timer = Clock.live.unsafe.sleep(handle.peerCloseGrace)
+                    val timer = handle.clock.unsafe.sleep(handle.peerCloseGrace)
                     timer.onComplete(_ => destroyNow())
                     () =>
                         destroyNow()

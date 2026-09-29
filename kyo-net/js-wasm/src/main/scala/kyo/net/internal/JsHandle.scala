@@ -22,6 +22,10 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
     var peerCloseGrace: Duration = Duration.Infinity
 
+    // The clock that times peerCloseGrace here and in JsIoDriver.closeHandle: the transport's, so a test under Clock.withTimeControl drives
+    // both windows with virtual time.
+    var clock: Clock = Clock.live
+
     // Never reset:
     // the upgraded connection wraps a fresh JsHandle over the TLSSocket, so this handle is discarded whether the upgrade succeeds or fails.
     var upgrading: Boolean = false

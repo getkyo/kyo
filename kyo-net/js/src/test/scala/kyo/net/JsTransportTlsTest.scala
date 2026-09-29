@@ -291,28 +291,37 @@ class JsTransportTlsTest extends Test:
         // Node's tls.TLSSocket surfaces a close_notify-then-FIN and a bare FIN identically, so the transport cannot tell CleanClose from
         // Truncated and must not claim to. Both halves are pinned on the transport itself: the status after a clean peer close, and the
         // capability a caller consults before trusting an Active status at the close.
-        val transport = JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-        for
-            accepted <- Promise.init[Connection, Any]
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial) { serverConn =>
-                accepted.unsafe.completeDiscard(Result.succeed(serverConn))
-            }.safe.get
-            client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
-            server <- accepted.get
-            _ = server.close() // Node sends close_notify, then the FIN
-            _ <- Abort.run[Closed](Loop.foreach(client.inbound.safe.take.map(_ => Loop.continue)))
-        yield
-            val reason = client.status
-            client.close()
-            listener.close()
-            assert(
-                reason == Connection.Status.Active,
-                s"the Node transport observes no close reason, so the status must stay Active; got $reason"
-            )
-            assert(!transport.reportsTlsCloseReason, "the Node transport must declare that it cannot report the TLS close reason")
-        end for
+        onFrozenClock { transport =>
+            for
+                accepted <- Promise.init[Connection, Any]
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial) { serverConn =>
+                    accepted.unsafe.completeDiscard(Result.succeed(serverConn))
+                }.safe.get
+                client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                server <- accepted.get
+                _ = server.close() // Node sends close_notify, then the FIN
+                _ <- Abort.run[Closed](Loop.foreach(client.inbound.safe.take.map(_ => Loop.continue)))
+            yield
+                val reason = client.status
+                client.close()
+                listener.close()
+                assert(
+                    reason == Connection.Status.Active,
+                    s"the Node transport observes no close reason, so the status must stay Active; got $reason"
+                )
+                assert(!transport.reportsTlsCloseReason, "the Node transport must declare that it cannot report the TLS close reason")
+            end for
+        }
     }
+
+    /** Runs `f` over a transport whose clock is controlled and never advanced, so no connection's `peerCloseGrace` can end during it: a
+      * graceful close that completes did so because Node reported the output flushed, never because the grace destroyed the socket.
+      */
+    private def onFrozenClock[A](f: JsTransport => A < (Async & Abort[NetException]))(using Frame): A < (Async & Abort[NetException]) =
+        Clock.withTimeControl { _ =>
+            Clock.get.map(clock => f(JsTransport.init(poolSize = 1, clock = clock)))
+        }
 
     /** A raw Node client (`tls` or `net`) to `port` that collects every byte the server sends, completed when the server's end reaches it.
       * The `end` event is the latch (Node emits it once the peer's FIN follows the last byte), with `close` and `error` as the settle for a
@@ -365,37 +374,39 @@ class JsTransportTlsTest extends Test:
         // therefore waits in Node's TLS output until the first completes; a close that destroys the socket on the same turn discards it,
         // invisibly to the write pump (socket.write already accepted it) and to every caller. A graceful close must end the writable side
         // and let Node flush before the socket goes away.
-        val transport = JsTransport.init(poolSize = 1)
-        val expected  = responseHead ++ responseBody
-        for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial)(
-                writeThenCloseHandler(responseHead, responseBody)
-            ).safe.get
-            received <- rawClientReadsUntilEnd(listener.port, overTls = true)
-        yield
-            listener.close()
-            assert(
-                received.toSeq == expected.toSeq,
-                s"the peer must read all ${expected.length} bytes written before the close over TLS; got ${received.length}"
-            )
-        end for
+        val expected = responseHead ++ responseBody
+        onFrozenClock { transport =>
+            for
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial)(
+                    writeThenCloseHandler(responseHead, responseBody)
+                ).safe.get
+                received <- rawClientReadsUntilEnd(listener.port, overTls = true)
+            yield
+                listener.close()
+                assert(
+                    received.toSeq == expected.toSeq,
+                    s"the peer must read all ${expected.length} bytes written before the close over TLS; got ${received.length}"
+                )
+            end for
+        }
     }
 
     "a plaintext connection closed right after two writes delivers every byte before the peer's end" in {
         // The plain-socket sibling: a net.Socket write reaches the kernel synchronously when it can, so this arm holds today and pins that
         // the graceful close keeps the plain path whole.
-        val transport = JsTransport.init(poolSize = 1)
-        val expected  = responseHead ++ responseBody
-        for
-            listener <- transport.listen("127.0.0.1", 0, 128)(writeThenCloseHandler(responseHead, responseBody)).safe.get
-            received <- rawClientReadsUntilEnd(listener.port, overTls = false)
-        yield
-            listener.close()
-            assert(
-                received.toSeq == expected.toSeq,
-                s"the peer must read all ${expected.length} bytes written before the close; got ${received.length}"
-            )
-        end for
+        val expected = responseHead ++ responseBody
+        onFrozenClock { transport =>
+            for
+                listener <- transport.listen("127.0.0.1", 0, 128)(writeThenCloseHandler(responseHead, responseBody)).safe.get
+                received <- rawClientReadsUntilEnd(listener.port, overTls = false)
+            yield
+                listener.close()
+                assert(
+                    received.toSeq == expected.toSeq,
+                    s"the peer must read all ${expected.length} bytes written before the close; got ${received.length}"
+                )
+            end for
+        }
     }
 
     /** The finite deadline the Infinity leaf's pacer listener carries. It bounds what the leaf catches: a deadline wrongly armed for an

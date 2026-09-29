@@ -43,7 +43,8 @@ import scala.util.control.NonFatal
   * channel binding (RFC 5929 tls-server-end-point).
   */
 final private[kyo] class JsTransport private (
-    val pool: IoDriverPool[JsHandle]
+    val pool: IoDriverPool[JsHandle],
+    clock: Clock
 ) extends TransportImpl[JsHandle]:
 
     // Process-wide guard: exactly one stdio connection at a time (fd 0/1 are process-global).
@@ -524,7 +525,8 @@ final private[kyo] class JsTransport private (
                 if tcpNoDelay then discard(socket.setNoDelay(true))
                 val handle = JsHandle.init(socket, driver, frame)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -626,7 +628,8 @@ final private[kyo] class JsTransport private (
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -718,7 +721,8 @@ final private[kyo] class JsTransport private (
                 // Unix sockets do not support TCP_NODELAY: skip setNoDelay
                 val handle = JsHandle.init(socket, driver, frame)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -854,7 +858,8 @@ final private[kyo] class JsTransport private (
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -1146,7 +1151,8 @@ final private[kyo] class JsTransport private (
                     val newHandle = JsHandle.init(tlsSocket, driver, frame)
                     newHandle.peerCloseGrace =
                         handle.peerCloseGrace // the upgraded connection inherits the original connection's reclaim grace
-                    val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace)
+                    newHandle.clock = handle.clock
+                    val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace, clock = handle.clock)
                     // Preserve the upgrade role on the new TLS connection so a further upgrade does not silently flip client/server.
                     newConn.isServerOrigin = isServerSide
                     // Wire upgrade function on the new TLS connection so further upgrade attempts
@@ -1213,7 +1219,9 @@ private[kyo] object JsTransport:
       * handshake has not settled. The count exists so a test can barrier on registration rather than racing Node's `connection` event.
       */
     final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
-    def init(poolSize: Int = 1)(using AllowUnsafe, Frame): JsTransport =
+
+    /** `clock` times each connection's `peerCloseGrace`, in the ReadPump and in the driver's graceful close. */
+    def init(poolSize: Int = 1, clock: Clock = Clock.live)(using AllowUnsafe, Frame): JsTransport =
         // This is NodeBackend's own transport, so it builds NodeBackend's `JsIoDriver` directly. The registry is now
         // heterogeneous (NodeBackend over `JsHandle` plus the koffi posix backends over `PosixHandle`), so a driver
         // obtained through selection could be a posix driver; each backend builds its OWN transport via `Entry.build`,
@@ -1221,7 +1229,7 @@ private[kyo] object JsTransport:
         val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.NodeBackend.createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start()
-        new JsTransport(pool)
+        new JsTransport(pool, clock)
     end init
 end JsTransport
 
