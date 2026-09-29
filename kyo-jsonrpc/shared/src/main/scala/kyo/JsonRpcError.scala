@@ -307,7 +307,7 @@ object JsonRpcLifecycleError:
     /** Named lifecycle stages at which a [[JsonRpcLifecycleError]] can be raised. */
     enum Stage derives CanEqual:
         case Init, Bind, Connect, Drain, Close
-        def describe: String = this.toString.toLowerCase
+        def describe: String = kyo.internal.Ascii.toLower(this.toString)
     end Stage
 end JsonRpcLifecycleError
 
