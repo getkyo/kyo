@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.Test
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.net.Connection
 
 /** Pins the two ways a caller stops a statement that is taking too long.
@@ -135,8 +135,8 @@ class SqlClientInterruptTest extends SqlContainerTest:
         val cfg = ContainerPredef.Postgres.Config.default
         HttpClient.init().flatMap { httpClient =>
             HttpClient.let(httpClient) {
-                SqlTestContainers.getOrInit(SqlTestContainers.containers, "postgres")(
-                    SqlTestContainers.initSingleton(ContainerPredef.Postgres.buildContainerConfig(cfg), "postgres")
+                TestContainers.getOrInit(TestContainers.containers, "postgres")(
+                    TestContainers.initSingleton(ContainerPredef.Postgres.buildContainerConfig(cfg), "postgres")
                 ).flatMap { container =>
                     container.mappedPort(cfg.port).flatMap { port =>
                         f(s"postgres://${cfg.username}:${cfg.password}@${container.host}:$port/${cfg.database}?application_name=$appName")

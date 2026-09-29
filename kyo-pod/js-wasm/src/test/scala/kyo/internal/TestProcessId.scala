@@ -14,21 +14,44 @@ private[kyo] object NodeProcess extends js.Object:
     def kill(pid: Int, signal: Int): Boolean = js.native
 end NodeProcess
 
-/** This test process's own pid, plus a liveness probe for a foreign pid, for [[SqlTestContainers]]'s ownership predicate.
+@js.native
+@JSImport("node:os", JSImport.Namespace)
+private[kyo] object NodeOs extends js.Object:
+    def hostname(): String = js.native
+end NodeOs
+
+@js.native
+@JSImport("node:fs", JSImport.Namespace)
+private[kyo] object NodeFs extends js.Object:
+    def readlinkSync(path: String): String = js.native
+end NodeFs
+
+/** This test process's own pid, plus a liveness probe for a foreign pid, for [[TestContainers]]'s ownership predicate.
   *
   * `kyo.Process` cannot serve either role: it is a handle over a process this program spawned, so its `pid` and `isAlive` describe a child
   * rather than the current process or an arbitrary pid read from a container label.
   */
 private[kyo] object TestProcessId:
 
-    /** This process's pid, stamped into the `kyo-sql-owner-pid` label of every container it creates. */
+    /** This process's pid, stamped into the `kyo-test-owner-pid` label of every container it creates. */
     val pid: Long = NodeProcess.pid.toLong
+
+    /** The process table [[pid]] belongs to, stamped into the `kyo-test-owner-ns` label: the host name, then on Linux the pid namespace.
+      * See the JVM `TestProcessId` for why both parts are needed. `os.hostname()` is `gethostname(2)`, with no DNS lookup.
+      */
+    val namespace: String =
+        // Node reports a missing link by throwing; outside Linux there is no /proc and the host name stands alone.
+        val pidNamespace =
+            try "/" + NodeFs.readlinkSync("/proc/self/ns/pid")
+            catch case _: Throwable => ""
+        NodeOs.hostname() + pidNamespace
+    end namespace
 
     /** Whether `pid`, read from a container label, names a process that is still running.
       *
       * A value that does not parse as a `Long` reports not-running, which reaps the container. That is deliberate and it is the same
-      * judgement as a missing owner label: the only writer of this label is `SqlTestContainers.initSingleton`, which always writes
-      * `TestProcessId.pid.toString`, so a value that does not parse cannot have come from a live kyo-sql test process.
+      * judgement as a missing owner label: the only writer of this label is `TestContainers`, which always writes
+      * `TestProcessId.pid.toString`, so a value that does not parse cannot have come from a live test process.
       *
       * Every other unknown outcome reports RUNNING. See the catch below.
       */

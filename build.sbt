@@ -1142,7 +1142,9 @@ lazy val `kyo-sql` =
         // only at the JSON tier, for Sql.jsonColumn's Schema-based overload.
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        // test->test as well: the leftover-container sweep the SQL suites create their containers through
+        // (`kyo.internal.TestContainers`) lives in kyo-pod's test tree.
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1186,7 +1188,7 @@ lazy val `kyo-sql-postgres` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1205,7 +1207,7 @@ lazy val `kyo-sql-mysql` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1254,7 +1256,7 @@ lazy val `kyo-sql-dolt` =
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-dolt"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1604,7 +1606,7 @@ lazy val `kyo-sql-tests` =
         .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-conformance` % Test)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-tests"))
         .withKyoTest
         .settings(

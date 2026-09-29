@@ -3,7 +3,7 @@ package kyo.internal.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Protocol-level integration tests for SCRAM-SHA-256-PLUS (channel binding).
@@ -20,7 +20,7 @@ import kyo.net.NetTlsConfig
   *
   * Fixture architecture (shared-container, post-startup SSL enable):
   *   - One Postgres container started lazily by a per-class CAS-singleton (see [[tlsRef]]); shared across all TLS leaves and surviving the
-  *     test class. It carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels, and `SqlTestContainers.initSingleton` removes every
+  *     test class. It carries the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every
   *     dead-owner container, together with its anonymous volumes, before creating a new singleton. There is no build-level cleanup task: a
   *     force-killed test process runs no sbt hook either.
   *   - SSL is enabled AFTER startup via `ALTER SYSTEM SET ssl = on` (and ssl_cert_file/ssl_key_file) followed by `pg_reload_conf()`. These
@@ -112,10 +112,10 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
     "connecting plaintext to a PG that offers PLUS falls back to SCRAM-SHA-256".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Use a plain non-TLS Postgres container. Without TLS, no cert hash, so non-PLUS.
-            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
             // process leaves something the reaper can find.
-            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram-plus-leaf").map { pg =>
+            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-scram-plus-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     AtomicRef.init("").flatMap { mechanismRef =>
                         PostgresConnection.connectWithCertHashOverride(
@@ -438,7 +438,7 @@ object ScramPlusIntegrationTest:
       *   6. SELECT pg_reload_conf(), sighup-context settings activate without restart.
       *   7. Probe `awaitSslReady` until PG responds 'S' to SSLRequest.
       *
-      * The container is left running for the JVM lifetime; `SqlTestContainers.initSingleton` reaps it, with its anonymous volumes, on the
+      * The container is left running for the JVM lifetime; `TestContainers.initSingleton` reaps it, with its anonymous volumes, on the
       * next container-using run once this process is gone. The temp dir for cert files is cleaned by `Scope.ensure` registered inside the
       * singleton's lifetime; it survives the JVM in the happy path and is removed only if init throws.
       */
@@ -513,7 +513,7 @@ object ScramPlusIntegrationTest:
                 Schedule.fixed(1.second).take(60)
             ))
 
-        SqlTestContainers.initSingleton(containerConfig, "postgres-scram-plus").flatMap { container =>
+        TestContainers.initSingleton(containerConfig, "postgres-scram-plus").flatMap { container =>
             container.awaitHealthy.andThen {
                 // Container is healthy: PG is fully up.
                 // Step 1: Copy certs from the bind mount into /tmp/ and fix permissions.

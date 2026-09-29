@@ -2,7 +2,7 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration tests for MySQL TLS upgrade (CLIENT_SSL mid-handshake).
@@ -34,10 +34,10 @@ class MysqlTlsIntegrationTest extends SqlContainerTest:
     private def withTlsContainer[A](
         f: TlsConnDetails => A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[Throwable] & Scope) =
-        // Through `SqlTestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
+        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
         // process leaves something the reaper can find.
-        SqlTestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-tls").map { mysql =>
+        TestContainers.initScopedMysql(ContainerPredef.MySQL.Config.default, "mysql-tls").map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val details = TlsConnDetails(
                     mysql.container.host,
