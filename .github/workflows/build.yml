@@ -11,9 +11,10 @@ name: build
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
 #
 # The macOS poles are the exception to the 16GB sizing below: macos-arm64 (3 vCPU / 7 GB) and macos-x64
-# (4 vCPU / 14 GB) run Native alone, on kyo-net and kyo-http only, to cover kyo-net's kqueue driver. Their
-# knobs (NATIVE_ONLY, SBT_HEAP_CAP, RUN_HEAP_CAP, their NATIVE_LINK_CPUS) are derived from `inputs.os`
-# next to the others.
+# (4 vCPU / 14 GB) run Native on kyo-net and kyo-http only, to cover kyo-net's kqueue driver; a dispatch
+# with `macos-full` runs any target over the whole plan instead. Their knobs (NATIVE_ONLY, SBT_HEAP_CAP,
+# RUN_HEAP_CAP, their NATIVE_LINK_CPUS and NATIVE_LINK_BATCH) are derived from `inputs.os` next to the
+# others.
 on:
   workflow_call:
     inputs:
@@ -40,6 +41,11 @@ on:
         type: string
         required: false
         default: ''
+      macos-full:
+        description: 'macOS poles only: run the whole Native plan instead of the kqueue modules (kyo-net, kyo-http).'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   # `targets` arrives as a JSON array so the matrix reads it directly. Parsing it in a separate
@@ -102,8 +108,8 @@ jobs:
       # suites need a database container and a hosted Mac has no container runtime, so they would run
       # nothing there. ci-test.sh applies this as `--only` to the same two invocations NATIVE_SKIP reaches;
       # the dependencies of the two compile on demand and are neither linked nor run. Empty on every other
-      # pole, so the Linux legs are unchanged.
-      NATIVE_ONLY: "${{ matrix.target == 'Native' && contains(inputs.os, 'macos') && 'kyo-net,kyo-http' || '' }}"
+      # pole, so the Linux legs are unchanged, and empty under `macos-full`, which runs the Linux plan.
+      NATIVE_ONLY: "${{ matrix.target == 'Native' && contains(inputs.os, 'macos') && !inputs.macos-full && 'kyo-net,kyo-http' || '' }}"
       # Cap the Native link drivers to 3 CPUs (-XX:ActiveProcessorCount). The scala-native toolchain
       # sizes its optimizer pool and its concurrent clang forks from availableProcessors, and that fork
       # fleet stacked on the driver heap is what overcommits the 16GB runner (kernel OOM, exit 143) when
@@ -128,8 +134,9 @@ jobs:
       # carries more than 8 modules of accumulated heap and metaspace into a link or a test fork; the
       # measured accumulation delta (+2.2G RSS) builds up around the tenth module of a shared driver. A
       # full run pays ~4 extra sbt startups (~1 min each) per pool and, in exchange, a crash re-runs one
-      # batch instead of the whole phase. Native target only.
-      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
+      # batch instead of the whole phase. Native target only. The 7 GB arm64 macOS runner takes 4: its 5G
+      # driver has less than half the heap the 8-module figure was measured against.
+      NATIVE_LINK_BATCH: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '4' || '8') || '' }}"
       NATIVE_TEST_BATCH: "${{ matrix.target == 'Native' && '8' || '' }}"
       # Below 512MB free the runner is minutes from dying WITHOUT uploading its log (observed twice
       # on Native rows). ci-monitor.sh then prints the disk attribution and TERM-kills the build,

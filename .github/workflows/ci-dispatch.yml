@@ -48,6 +48,11 @@ on:
         type: string
         required: false
         default: ''
+      macos-full:
+        description: 'macOS poles only: run every target requested over the whole plan, instead of Native on kyo-net and kyo-http.'
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   # Custom-mode groups key on the run id (no dedup): the free-form command must never reach
@@ -69,10 +74,12 @@ jobs:
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_OSES: ${{ inputs.oses }}
           INPUT_TARGETS: ${{ inputs.targets }}
+          INPUT_MACOS_FULL: ${{ inputs.macos-full }}
         run: |
           mode="$INPUT_MODE"
           oses="$INPUT_OSES"
           targets="$INPUT_TARGETS"
+          macos_full="$INPUT_MACOS_FULL"
 
           for os in $oses; do
             case "$os" in
@@ -83,10 +90,11 @@ jobs:
 
           # One pole per requested os, carrying the intersection of the pole's supported
           # targets with the requested targets (neither Windows pole has Native or Wasm; the
-          # macOS poles have Native alone, see ci.yml). A pole whose intersection is empty is
-          # dropped so the matrix never spawns a no-op build.yml call.
-          poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
+          # macOS poles have Native alone, see ci.yml, or every target under macos-full). A pole
+          # whose intersection is empty is dropped so the matrix never spawns a no-op build.yml call.
+          poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" --arg macos_full "$macos_full" '
             ($targets | split(" ") | map(select(length > 0))) as $req
+            | (if $macos_full == "true" then ["JVM","JS","Native","Wasm"] else ["Native"] end) as $macos
             | $oses
             | split(" ")
             | map(select(length > 0))
@@ -94,8 +102,8 @@ jobs:
                 if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
                 elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
                 elif . == "windows-arm64" then {os: ., image: "windows-11-arm", supported: ["JVM","JS"]}
-                elif . == "macos-arm64" then {os: ., image: "macos-14", supported: ["Native"]}
-                elif . == "macos-x64" then {os: ., image: "macos-15-intel", supported: ["Native"]}
+                elif . == "macos-arm64" then {os: ., image: "macos-14", supported: $macos}
+                elif . == "macos-x64" then {os: ., image: "macos-15-intel", supported: $macos}
                 else {os: ., image: "windows-latest", supported: ["JVM","JS"]}
                 end
               )
@@ -127,6 +135,7 @@ jobs:
       targets: ${{ matrix.pole.targets }}
       mode: ${{ needs.prep.outputs.mode }}
       ref: ${{ inputs.ref }}
+      macos-full: ${{ inputs.macos-full }}
 
   custom:
     # No `needs: prep`: this job reads none of prep's outputs, running one command on the runner
