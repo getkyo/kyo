@@ -584,7 +584,10 @@ The command-line entry point (`kyo.test.runner.Cli`) takes flags that map onto t
 | `--reporter=VALUE` | Add a reporter: `console`, `tap`, `tap:PATH`, `junit-xml:PATH` (comma-separated or repeatable) |
 | `--verbose` / `--quiet` | Raise / lower console detail |
 | `--count` / `--list` | Discovery only: report the leaf count, or print every leaf's full path; no body runs |
+| `--heartbeat-interval=D` | Report a leaf still running after `D` (`30s`, `2 minutes`; `infinity` disables). Default 1 minute; a leaf whose own limit is shorter is reported at three quarters of it, so the hang dump precedes the timeout |
 | `--help` | Print usage |
+
+The same flags work under sbt after `--` (`sbt 'kyo-coreJVM/testOnly kyo.ChannelTest -- --filter=**/put'`). Flags overlay each suite's own `config`: a flag changes only the field it names, and the suite keeps its timeout, ordering and leak settings.
 
 Exit codes are `0` (all passed, or nothing ran), `1` (a leaf failed, was cancelled, or timed out), and `2` (argument parse error).
 

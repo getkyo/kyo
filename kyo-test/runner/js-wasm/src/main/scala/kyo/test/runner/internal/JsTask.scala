@@ -22,9 +22,9 @@ import scala.scalajs.reflect.Reflect
   */
 final private[internal] class JsTask(
     val taskDef: TaskDef,
-    baseConfig: RunConfig,
+    baseOverlay: RunConfig => RunConfig,
     testClassLoader: ClassLoader,
-    results: scala.collection.mutable.ListBuffer[TestReport]
+    record: TestReport => Unit
 ) extends Task:
 
     def tags(): Array[String] = Array.empty
@@ -57,16 +57,17 @@ final private[internal] class JsTask(
     end execute
 
     private def runSuite(eventHandler: EventHandler): scala.concurrent.Future[Unit] =
-        val needsCap = baseConfig.parallelism > 1
-        if needsCap then
+        val requested = baseOverlay(RunConfig.default).parallelism
+        if requested > 1 then
             java.lang.System.err.println(
-                s"[kyo-test] WARNING: parallelism=${baseConfig.parallelism} is not supported on Scala.js (single-threaded). " +
+                s"[kyo-test] WARNING: parallelism=$requested is not supported on Scala.js (single-threaded). " +
                     "Tests will run sequentially."
             )
         end if
 
-        // Cap parallelism to 1 for JS: even if the config says > 1, we run sequentially.
-        val jsConfig = if needsCap then baseConfig.copy(parallelism = 1) else baseConfig
+        // Cap parallelism to 1 for JS: whatever the flags or the suite's config say, we run sequentially.
+        val jsOverlay: RunConfig => RunConfig =
+            baseOverlay.andThen(config => if config.parallelism > 1 then config.copy(parallelism = 1) else config)
 
         // sbt-edge EC: the kyo scheduler exposed as an ExecutionContext (MacrotaskExecutor on JS via the cross-platform Scheduler).
         given ExecutionContext = kyo.scheduler.Scheduler.get.asExecutionContext
@@ -90,14 +91,14 @@ final private[internal] class JsTask(
         // Unsafe: Frame.internal at the sbt edge. sbt's Task.execute has no caller Frame to propagate, and
         // JsTask.scala is not a Frame-deriving file (only *Test/*Bench.scala are). This is the sanctioned
         // sbt-edge boundary (steering.md), matching the AllowUnsafe already used inside runToFuture.
-        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, jsConfig)(using kyo.Frame.internal)
+        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, jsOverlay)(using kyo.Frame.internal)
 
         future.map { report =>
-            results += report
+            record(report)
             emitEvents(report, eventHandler)
         }.recover { case t =>
             val syntheticReport = syntheticFailReport(t)
-            results += syntheticReport
+            record(syntheticReport)
             emitEvents(syntheticReport, eventHandler)
         }
     end runSuite

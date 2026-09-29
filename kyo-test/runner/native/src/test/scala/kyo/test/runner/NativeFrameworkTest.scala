@@ -31,6 +31,12 @@ class NativeNextParallelSuite extends TestBase[Any]:
     "leaf-c" in succeed
 end NativeNextParallelSuite
 
+class NativeNextFailingSuite extends TestBase[Any]:
+    "group" - {
+        "fails" in assert(1 == 2)
+    }
+end NativeNextFailingSuite
+
 // ── Test infrastructure ──────────────────────────────────────────────────────────────────────────
 
 class NativeCapturingEventHandler extends EventHandler:
@@ -116,6 +122,37 @@ class NativeFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         val evts = runTask(classOf[NativeNextParallelSuite], "--parallel=4")
         assert(evts.size == 3): Unit
         assert(evts.forall(_.status() eq Status.Success)): Unit
+    }
+
+    // Scala Native's test adapter runs one process per sbt thread: the runner from `runner` is the controller, and a task that sbt
+    // executes on another thread runs in a worker from `slaveRunner`, whose `send` the adapter routes to the controller's
+    // `receiveMessage`. Only the controller's `done()` reaches the log, so it must count every worker's leaves.
+
+    private def executeOn(runner: sbt.testing.Runner, cls: Class[?]): Unit =
+        val _ = runner.tasks(Array(taskDefFor(cls)))(0).execute(new NativeCapturingEventHandler, loggers)
+
+    test("a worker's leaves are counted in the controller's summary") {
+        val loader     = getClass.getClassLoader
+        val controller = makeRunner()
+        val worker     = framework.slaveRunner(Array.empty, Array.empty, loader, msg => kyo.discard(controller.receiveMessage(msg)))
+        executeOn(worker, classOf[NativeNextParallelSuite])
+        executeOn(worker, classOf[NativeNextFailingSuite])
+        val _       = worker.done()
+        val summary = controller.done()
+        assert(summary.startsWith("kyo-test: 4 tests, 3 passed, 1 failed"), summary): Unit
+        assert(summary.contains("TOTAL FAILURES (1)"), summary): Unit
+        assert(summary.contains("group > fails  [FAIL]"), summary)
+    }
+
+    test("the controller counts its own leaves together with a worker's") {
+        val loader     = getClass.getClassLoader
+        val controller = makeRunner()
+        val worker     = framework.slaveRunner(Array.empty, Array.empty, loader, msg => kyo.discard(controller.receiveMessage(msg)))
+        executeOn(controller, classOf[NativeNextSingleLeafSuite])
+        executeOn(worker, classOf[NativeNextParallelSuite])
+        val _       = worker.done()
+        val summary = controller.done()
+        assert(summary.startsWith("kyo-test: 4 tests, 4 passed, 0 failed"), summary)
     }
 
     // ── Test 17: NativeFramework.fingerprints has exactly 1 fingerprint ─────────────────────────

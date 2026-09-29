@@ -127,4 +127,40 @@ class LeafPoolTest extends AsyncFreeSpec with NonImplicitAssertions:
         discharge(computation)
     }
 
+    "a submitted computation sees the submitter's Locals, with the workers already running" in {
+        val pool        = new LeafPool(k, 64)
+        val local       = Local.init("default")
+        val computation =
+            for
+                warm      <- pool.submit(local.get)
+                _         <- warm.get
+                submitted <- local.let("submitter")(pool.submit(local.get))
+                observed  <- submitted.get
+            yield assert(observed == "submitter", s"the pooled computation read '$observed'")
+        discharge(computation)
+    }
+
+    "the context around the first submit does not stay with the workers" in {
+        // The first submit starts the workers, so it is made under a controlled clock. Every later item parks
+        // until all k are in flight, which puts one on each worker, and each reports the clock it saw.
+        val pool        = new LeafPool(k, 64)
+        val computation =
+            for
+                first   <- Clock.withTimeControl(_ => pool.submit(Clock.get))
+                _       <- first.get
+                started <- Channel.initUnscoped[Unit](k)
+                release <- Promise.init[Unit, Any]
+                later   <- Kyo.foreach(0 until k) { _ =>
+                    pool.submit(Clock.get.map(clock => started.put(()).handle(Abort.run[Closed]).andThen(release.get).andThen(clock)))
+                }
+                _        <- Kyo.foreachDiscard(0 until k)(_ => started.take.handle(Abort.run[Closed]))
+                _        <- release.completeDiscard(Result.succeed(()))
+                observed <- Kyo.foreach(later)(_.get)
+            yield assert(
+                Chunk.from(observed.map(_ eq Clock.live)) == Chunk.fill(k)(true),
+                s"a worker kept the first submitter's clock: $observed"
+            )
+        discharge(computation)
+    }
+
 end LeafPoolTest
