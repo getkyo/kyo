@@ -63,4 +63,12 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
+    "contentLength.parse matches the header name in any ASCII case" in {
+        val input  = Chunk.from("content-length: 5\r\n\r\nhelloCONTENT-LENGTH: 2\r\n\r\n{}".getBytes("UTF-8"))
+        val stream = Stream.init[Chunk[Byte], Any](Seq(input))
+        JsonRpcFramer.contentLength.parse(stream).run.map { frames =>
+            assert(frames.map(f => new String(f.toArray, "UTF-8")) == Chunk("hello", "{}"))
+        }
+    }
+
 end JsonRpcTransportFramerTest

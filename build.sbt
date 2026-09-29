@@ -291,6 +291,34 @@ lazy val `kyo-settings` = Seq(
     }
 )
 
+// A suite named `*LocaleTest` runs in its own fork whose default locale is Turkish, where `String.toLowerCase()` maps
+// `I` to a dotless `ı` and `toUpperCase()` maps `i` to a dotted `İ`. That is the one way to prove a fold does not depend
+// on the default locale without changing the locale of the JVM the module's other suites share. Every other suite keeps
+// the module's single default fork.
+lazy val `locale-fork-settings` = Seq(
+    Test / testGrouping := {
+        val javaOptionsValue                   = javaOptions.value.toVector
+        val envsVarsValue                      = envVars.value
+        def fork(extraOptions: Vector[String]) =
+            Tests.SubProcess(
+                ForkOptions(
+                    javaHome = javaHome.value,
+                    outputStrategy = outputStrategy.value,
+                    bootJars = Vector.empty,
+                    workingDirectory = Some(baseDirectory.value),
+                    runJVMOptions = javaOptionsValue ++ extraOptions,
+                    connectInput = connectInput.value,
+                    envVars = envsVarsValue
+                )
+            )
+        val (localeTests, otherTests) = (Test / definedTests).value.partition(_.name.endsWith("LocaleTest"))
+        val localeGroup               =
+            if (localeTests.isEmpty) Seq.empty
+            else Seq(Tests.Group("locale#tr", localeTests, fork(Vector("-Duser.language=tr", "-Duser.country=TR"))))
+        localeGroup :+ Tests.Group("default", otherTests, fork(Vector.empty))
+    }
+)
+
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
 // coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
@@ -982,7 +1010,7 @@ lazy val `kyo-schema` =
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(mimaCheck(false), `locale-fork-settings`)
         // kyo-schema/README.md documents the whole module family (core + every format), so its
         // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
@@ -3202,7 +3230,7 @@ lazy val `kyo-jsonrpc` =
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(mimaCheck(false), `locale-fork-settings`)
         // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
         // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
         .nativeSettings(`native-settings`, `openssl-native-settings`)
