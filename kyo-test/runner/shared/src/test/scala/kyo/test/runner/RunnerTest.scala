@@ -215,6 +215,17 @@ class RTSuiteConfigSuite extends TestBase[Any]:
     "quick" in succeed
 end RTSuiteConfigSuite
 
+/** A leaf that records the time its clock reports, telling the caller's controlled clock apart from the live one. */
+class RTClockSuite extends TestBase[Any]:
+    "reads-clock" in Clock.now.map(now => RTClockSuite.observed.set(Maybe(now))).andThen(succeed)
+end RTClockSuite
+
+object RTClockSuite:
+    val observed: java.util.concurrent.atomic.AtomicReference[Maybe[Instant]] =
+        new java.util.concurrent.atomic.AtomicReference(Maybe.empty)
+    def reset(): Unit = observed.set(Maybe.empty)
+end RTClockSuite
+
 /** A `TestReporter` that records every `onLeafHeartbeat` call (thread-safe) and ignores all other lifecycle events. */
 final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
     private val beats =
@@ -241,6 +252,26 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         report.suiteReports.iterator
             .flatMap(_.leafResults.iterator)
             .collectFirst { case (p, r) if p == path => r }
+
+    private def discharge[A](comp: A < (Async & Abort[Throwable] & Scope))(using Frame): Future[A] =
+        val asFuture: Future[A] < Sync =
+            Scope.run(comp).handle(Fiber.initUnscoped).map(_.toFuture)
+        // Unsafe: the test-edge boundary, the same conversion TestRunner.runToFuture performs.
+        import kyo.AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(asFuture)
+    end discharge
+
+    "Caller context: a leaf observes the clock the caller installed, with the pool already warm" in {
+        RTClockSuite.reset()
+        val run =
+            TestRunner.runReport(classOf[RTTwoLeafSuite]).andThen(
+                Clock.withTimeControl(_ => TestRunner.runReport(classOf[RTClockSuite]))
+            )
+        discharge(run).map { report =>
+            assert(leafByPath(report, Chunk("reads-clock")).exists { case _: TestResult.Passed => true; case _ => false })
+            assert(RTClockSuite.observed.get() == Maybe(Instant.Epoch), s"the leaf read ${RTClockSuite.observed.get()}")
+        }
+    }
 
     "Scenario 1: all leaves run, bounded by the process-global pool" in {
         // Contract change (not a weakening): the old per-suite Meter cap (peak <= 2) is gone by design. Concurrent
