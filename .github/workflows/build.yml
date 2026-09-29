@@ -10,14 +10,15 @@ name: build
 # Parallel across os poles: the calling workflow (ci.yml, or ci-dispatch.yml) calls this once per pole.
 # Those calls have no `needs:` between them so the poles run as independent CI jobs.
 #
-# The macos-arm64 pole is the exception to the 16GB sizing below: a 3 vCPU / 7 GB runner that runs
-# Native alone, on kyo-net and kyo-http only, to cover kyo-net's kqueue driver. Its knobs (NATIVE_ONLY,
-# SBT_HEAP_CAP, RUN_HEAP_CAP, its NATIVE_LINK_CPUS) are derived from `inputs.os` next to the others.
+# The macOS poles are the exception to the 16GB sizing below: macos-arm64 (3 vCPU / 7 GB) and macos-x64
+# (4 vCPU / 14 GB) run Native alone, on kyo-net and kyo-http only, to cover kyo-net's kqueue driver. Their
+# knobs (NATIVE_ONLY, SBT_HEAP_CAP, RUN_HEAP_CAP, their NATIVE_LINK_CPUS) are derived from `inputs.os`
+# next to the others.
 on:
   workflow_call:
     inputs:
       os:
-        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64, macos-arm64).'
+        description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64, windows-x64, macos-arm64, macos-x64).'
         type: string
         required: true
       runner-image:
@@ -110,18 +111,19 @@ jobs:
       # modules of accumulated heap, which frees headroom for one more optimizer thread: the old 2-CPU
       # cap was sized for a driver already carrying the whole set and left the box half idle (load 1.5
       # to 2 on 4 vCPUs) across a three hour link phase. ci-test.sh applies this to every nativeLink
-      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs. The macOS
-      # runner has 3 vCPUs: 2 leaves one to the driver.
-      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && (contains(inputs.os, 'macos') && '2' || '3') || '' }}"
-      # The sbt driver heap on the 7 GB macOS runner. .jvmopts pins 12G and JAVA_OPTS cannot override it
+      # invocation; the plan process, the test batches, and the cross pass keep all 4 CPUs. The arm64
+      # macOS runner has 3 vCPUs: 2 leaves one to the driver.
+      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && (inputs.os == 'macos-arm64' && '2' || '3') || '' }}"
+      # The sbt driver heap on the macOS runners. .jvmopts pins 12G and JAVA_OPTS cannot override it
       # (above), but a command-line -J-Xmx can: ci-test.sh passes SBT_HEAP_CAP to every non-run invocation
       # (the plan, the links, the compile phases) and RUN_HEAP_CAP to the run phases, whose driver holds
-      # no test heap. 5G for a link driver that carries at most the two modules of the plan, leaving the
-      # clang forks and the OS 2 GB; 3G for the run phases. Whether 5G links kyo-http's test binary is the
-      # first run's measurement. Empty on every other pole: the Linux legs keep .jvmopts and the runner's
-      # 6G run-phase default.
-      SBT_HEAP_CAP: "${{ contains(inputs.os, 'macos') && '5G' || '' }}"
-      RUN_HEAP_CAP: "${{ contains(inputs.os, 'macos') && '3G' || '' }}"
+      # no test heap. Measured on an M-series Mac under -Xmx5G and 3 CPUs: the kyo-net test link peaks at
+      # 8.0 GB RSS for the sbt and clang tree, with a live heap of 1.6 to 3.3 GB. 7G on the 14 GB Intel
+      # runner leaves the clang forks and the OS about 4 GB; 5G on the 7 GB arm64 runner is below that
+      # peak by construction and stays only as the measurement of whether it fits. Empty on every other
+      # pole: the Linux legs keep .jvmopts and the runner's 6G run-phase default.
+      SBT_HEAP_CAP: "${{ inputs.os == 'macos-arm64' && '5G' || (inputs.os == 'macos-x64' && '7G' || '') }}"
+      RUN_HEAP_CAP: "${{ inputs.os == 'macos-arm64' && '3G' || (inputs.os == 'macos-x64' && '4G' || '') }}"
       # Modules per sbt process in the Native link and test pools. Each batch is a fresh driver, so none
       # carries more than 8 modules of accumulated heap and metaspace into a link or a test fork; the
       # measured accumulation delta (+2.2G RSS) builds up around the tenth module of a shared driver. A
