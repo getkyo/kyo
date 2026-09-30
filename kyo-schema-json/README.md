@@ -246,7 +246,7 @@ Each resolved line is a `Result`: a success carries a `Json.Lines.Line`, and a f
 
 ```scala doctest:expect=runs
 val outcome = Json.Lines.Framer.init(maxLineSize = 8.bytes).feed(utf8("123456789\n12345678\n"))
-val texts = outcome match
+val texts   = outcome match
     case Json.Lines.Framed.Continued(_, lines) =>
         lines.collect { case Result.Success(record) => record.text }
     case Json.Lines.Framed.Halted(_, breach) => throw breach

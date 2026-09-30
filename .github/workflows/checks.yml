@@ -125,6 +125,17 @@ jobs:
             exit 1
           fi
 
+      # `sbt doctest` rewrites README blocks into the .scalafmt.conf style in place, and nothing checks the tree after it,
+      # so an unformatted block would stay unformatted in git and resurface as a diff in whichever change next runs doctest
+      # locally. doctestFormat is that same rewrite without compiling, seconds for every README.
+      - name: Check README formatting
+        run: |
+          sbt doctestFormat
+          if ! git diff --exit-code; then
+            echo "::error::README scala blocks are not formatted. Run 'sbt doctestFormat' locally."
+            exit 1
+          fi
+
       # --- then the expensive one (~42m) ---
       # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
       # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.

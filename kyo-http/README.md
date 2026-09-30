@@ -614,7 +614,7 @@ val handler =
     route.handler { req =>
         checkPermission(req).map {
             case false => Abort.fail(Forbidden("insufficient permissions"))
-            case true =>
+            case true  =>
                 findResource(req.fields.id).map {
                     case Absent       => Abort.fail(NotFound("not found"))
                     case Present(res) => HttpResponse.ok(res)

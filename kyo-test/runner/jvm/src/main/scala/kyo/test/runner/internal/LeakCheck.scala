@@ -334,31 +334,49 @@ private[runner] object LeakCheck:
         "0B" -> "CLOSING"
     )
 
-    /** For a `socket:[inode]` target, resolves the socket to an actionable description: a TCP connection's state and local/remote ports from
-      * `/proc/net/tcp{,6}` (e.g. `CLOSE_WAIT` means the peer closed and this side held the connection open, and the ports say which side it
-      * is), or a Unix-domain socket's path from `/proc/net/unix`. A socket with no row in any of those tables is a TCP fd already in kernel
-      * state CLOSED (protocol teardown done, fd not yet `close(2)`'d) or a closed unnamed UDS: the suffix says so explicitly rather than
-      * leaving the inode ambiguous. Returns "" for a non-socket target.
+    /** The description of the socket `inode` from the lines of one `/proc/net/tcp{,6}` table, or `Absent` when the table has no row for it.
+      *
+      * A connection also carries its send and receive queue sizes and its peer's row, found by the swapped address pair. Together they tell
+      * apart the ways a connection outlives a run while still ESTABLISHED: bytes stranded in this side's receive queue (a read that stopped),
+      * a peer that is an orphan (inode 0, no fd anywhere) still holding its tail and FIN, or a peer that is live elsewhere. A peer with no row
+      * is off this host or already gone. A listener has no peer to look up.
+      */
+    def describeTcpRow(lines: Seq[String], inode: String): Maybe[String] =
+        val rows = lines.map(_.trim.split("\\s+"))
+        // columns: sl local rem st tx_queue:rx_queue ... inode (index 9); the header row has no numeric inode at f(9)
+        def state(f: Array[String]): String  = tcpStates.getOrElse(f(3).toUpperCase, f(3))
+        def queues(f: Array[String]): String =
+            val q = f(4).split(":")
+            s"tx:${java.lang.Long.parseLong(q(0), 16)} rx:${java.lang.Long.parseLong(q(1), 16)}"
+        rows.find(f => f.length > 9 && f(9) == inode) match
+            case None    => Maybe.empty
+            case Some(f) =>
+                val lp   = Integer.parseInt(f(1).split(":")(1), 16)
+                val rp   = Integer.parseInt(f(2).split(":")(1), 16)
+                val peer =
+                    if rp == 0 then ""
+                    else
+                        rows.find(p => p.length > 9 && p(1) == f(2) && p(2) == f(1)) match
+                            case None    => "; peer: no row"
+                            case Some(p) =>
+                                val holder = if p(9) == "0" then "orphan (no fd)" else s"inode:${p(9)}"
+                                s"; peer ${state(p)} ${queues(p)} $holder"
+                Maybe(s" [${state(f)} local:$lp remote:$rp ${queues(f)}$peer]")
+        end match
+    end describeTcpRow
+
+    /** For a `socket:[inode]` target, resolves the socket to an actionable description: a TCP connection's state, local/remote ports, queue
+      * sizes and peer from `/proc/net/tcp{,6}` ([[describeTcpRow]]; e.g. `CLOSE_WAIT` means the peer closed and this side held the connection
+      * open, and the ports say which side it is), or a Unix-domain socket's path from `/proc/net/unix`. A socket with no row in any of those
+      * tables is a TCP fd already in kernel state CLOSED (protocol teardown done, fd not yet `close(2)`'d) or a closed unnamed UDS: the suffix
+      * says so explicitly rather than leaving the inode ambiguous. Returns "" for a non-socket target.
       */
     def describeSocket(target: String): String =
         if !target.startsWith("socket:[") then ""
         else
             val inode                                = target.stripPrefix("socket:[").stripSuffix("]")
             def scanTcp(path: String): Maybe[String] =
-                try
-                    val lines              = java.nio.file.Files.readAllLines(Paths.get(path)).asScala
-                    var res: Maybe[String] = Maybe.empty
-                    lines.foreach { line =>
-                        val f = line.trim.split("\\s+")
-                        // columns: sl local rem st ... inode (index 9); the header row has no numeric inode at f(9)
-                        if res.isEmpty && f.length > 9 && f(9) == inode then
-                            val st = tcpStates.getOrElse(f(3).toUpperCase, f(3))
-                            val lp = Integer.parseInt(f(1).split(":")(1), 16)
-                            val rp = Integer.parseInt(f(2).split(":")(1), 16)
-                            res = Maybe(s" [$st local:$lp remote:$rp]")
-                        end if
-                    }
-                    res
+                try describeTcpRow(java.nio.file.Files.readAllLines(Paths.get(path)).asScala.toSeq, inode)
                 catch case _: Throwable => Maybe.empty
             def scanUnix(): Maybe[String] =
                 try

@@ -441,12 +441,12 @@ A `Duration` is a magnitude and is never negative, so subtraction is the one ope
 ```scala
 import kyo.*
 
-val a: Duration                = 5.seconds + 30.seconds          // 35 seconds
-val b: Maybe[Duration]         = 1.hour.minus(30.minutes)        // Present(30 minutes)
-val none: Maybe[Duration]      = 30.minutes.minus(1.hour)        // Absent
-val remaining: Duration        = 30.minutes.minusOrZero(1.hour)  // Zero
-val c: Duration                = 1.second * 60                   // 60 seconds
-val clamped: Duration          = Duration.Infinity + 1.day       // still Infinity
+val a: Duration           = 5.seconds + 30.seconds         // 35 seconds
+val b: Maybe[Duration]    = 1.hour.minus(30.minutes)       // Present(30 minutes)
+val none: Maybe[Duration] = 30.minutes.minus(1.hour)       // Absent
+val remaining: Duration   = 30.minutes.minusOrZero(1.hour) // Zero
+val c: Duration           = 1.second * 60                  // 60 seconds
+val clamped: Duration     = Duration.Infinity + 1.day      // still Infinity
 ```
 
 `Duration` also offers unit accessors (`toNanos`, `toMillis`, `toSeconds`, ...) and conversion to `java.time.Duration` and `scala.concurrent.duration.Duration`.
@@ -458,11 +458,11 @@ For timestamps (a moment, not a span), use `Instant`. It is an opaque wrapper ov
 ```scala
 import kyo.*
 
-val now: Instant     = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
-val later: Instant   = now + 1.hour
-val earlier: Instant = now - 30.minutes
+val now: Instant         = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
+val later: Instant       = now + 1.hour
+val earlier: Instant     = now - 30.minutes
 val gap: Maybe[Duration] = later.minus(earlier) // Present(1 hour 30 minutes)
-val hour: Instant    = now.truncatedTo(Duration.Units.Hours)
+val hour: Instant        = now.truncatedTo(Duration.Units.Hours)
 ```
 
 > **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); `instant - Duration.Infinity` returns `Instant.Min`. Arithmetic does not throw on overflow. The time between two instants follows `Duration`'s subtraction: `later.minus(earlier)` is `Absent` when `earlier` is in fact later, and `minusOrZero` clamps.
@@ -479,7 +479,7 @@ import kyo.*
 val immediate: Schedule = Schedule.immediate
 val never: Schedule     = Schedule.never
 val every5s: Schedule   = Schedule.fixed(5.seconds)
-val backoff: Schedule = Schedule.exponentialBackoff(
+val backoff: Schedule   = Schedule.exponentialBackoff(
     initial = 100.millis,
     factor = 2.0,
     maxBackoff = 10.seconds
@@ -502,10 +502,10 @@ val daily2am: Schedule = Schedule.anchored(1.day, 2.hours)
 // Read the first three delays from a schedule
 def take3(s: Schedule, now: Instant): List[Duration] =
     s.next(now) match
-        case Absent => Nil
+        case Absent            => Nil
         case Present((d1, s1)) =>
             s1.next(now + d1) match
-                case Absent => List(d1)
+                case Absent            => List(d1)
                 case Present((d2, s2)) =>
                     s2.next(now + d1 + d2) match
                         case Absent           => List(d1, d2)
@@ -734,11 +734,11 @@ When code only needs to allocate arrays of `A`, `ShallowTag[A]` is enough. It ho
 ```scala
 import kyo.*
 
-val longs: Array[Long]             = ShallowTag[Long].newArray(4)
-val maybes: Array[Maybe[Int]]      = ShallowTag[Maybe[Int]].newArray(2)
-val none: Array[String]            = ShallowTag[String].emptyArray
-val sameEmpty: Boolean             = none eq ShallowTag[String].newArray(0) // true
-val erased: Class[?]               = ShallowTag[Maybe[Int]].erasedClass
+val longs: Array[Long]        = ShallowTag[Long].newArray(4)
+val maybes: Array[Maybe[Int]] = ShallowTag[Maybe[Int]].newArray(2)
+val none: Array[String]       = ShallowTag[String].emptyArray
+val sameEmpty: Boolean        = none eq ShallowTag[String].newArray(0) // true
+val erased: Class[?]          = ShallowTag[Maybe[Int]].erasedClass
 ```
 
 Zero-length arrays are cached per class, so `emptyArray` and `newArray(0)` allocate at most once per class. On the JVM the cache does not keep classes from unloading.

@@ -4,7 +4,7 @@
 ```scala
 import kyo.*
 
-val uri = Compiler.Uri("Main.scala")
+val uri  = Compiler.Uri("Main.scala")
 val text =
     """object Main:
       |  val xs = List(1, 2, 3)

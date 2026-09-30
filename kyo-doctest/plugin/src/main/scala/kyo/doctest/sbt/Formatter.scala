@@ -3,9 +3,13 @@ package kyo.doctest.sbt
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files => NioFiles}
-import java.nio.file.{Path => NioPath}
-import java.nio.file.Paths
-import org.scalafmt.interfaces.Scalafmt
+import metaconfig.Configured
+import org.scalafmt.Formatted
+import org.scalafmt.Scalafmt
+import org.scalafmt.Versions
+import org.scalafmt.config.ConfParsed
+import org.scalafmt.config.ScalafmtConfig
+import sbt.MessageOnlyException
 import sbt.util.Logger
 
 /** Rewrites the scala code blocks in Markdown files in place using scalafmt and the project's `.scalafmt.conf`.
@@ -16,7 +20,8 @@ import sbt.util.Logger
   * `noformat` token on the fence info string (for example `scala noformat`).
   *
   * The formatter lives on the sbt (Scala 2.12) side rather than in the Scala 3 runner so that scalafmt's classpath never mixes with the
-  * forked dotty driver's.
+  * forked dotty driver's. It is scalafmt-core on the plugin's own classpath, never one fetched at run time, so a config naming another
+  * scalafmt version is reported and left unformatted rather than resolved.
   */
 private[sbt] object Formatter {
 
@@ -30,27 +35,43 @@ private[sbt] object Formatter {
     /** Per-file outcome: how many blocks were reformatted, left unchanged, or skipped (un-parseable or `noformat`). */
     final case class FileResult(file: File, reformatted: Int, unchanged: Int, skipped: Int)
 
-    /** Reformats every existing source in place using the supplied `.scalafmt.conf`. */
+    /** Reformats every existing source in place using the supplied `.scalafmt.conf`. A config that cannot be read fails the task. */
     def run(sources: Seq[File], scalafmtConf: File, log: Logger): Seq[FileResult] =
         if (!scalafmtConf.exists()) {
             log.warn(s"doctest-format: scalafmt config not found at $scalafmtConf; skipping")
             Seq.empty
-        } else {
-            val scalafmt = Scalafmt.create(getClass.getClassLoader)
-            try {
-                val confPath = scalafmtConf.toPath
-                sources.filter(_.exists()).map { file =>
-                    val result = formatFile(scalafmt, confPath, file)
-                    val detail = s"${result.reformatted} reformatted, ${result.unchanged} unchanged, ${result.skipped} skipped"
-                    log.info(s"doctest-format: $file ($detail)")
-                    result
-                }
-            } finally scalafmt.clear()
-        }
+        } else
+            style(scalafmtConf, log) match {
+                case None        => Seq.empty
+                case Some(style) =>
+                    sources.filter(_.exists()).map { file =>
+                        val result = formatFile(style, file)
+                        val detail = s"${result.reformatted} reformatted, ${result.unchanged} unchanged, ${result.skipped} skipped"
+                        log.info(s"doctest-format: $file ($detail)")
+                        result
+                    }
+            }
 
-    private def formatFile(scalafmt: Scalafmt, confPath: NioPath, file: File): FileResult = {
+    private def style(scalafmtConf: File, log: Logger): Option[ScalafmtConfig] = {
+        val confPath = scalafmtConf.toPath
+        ConfParsed.fromPath(confPath).version match {
+            case Some(Right(version)) if version != Versions.version =>
+                log.warn(
+                    s"doctest-format: $scalafmtConf asks for scalafmt $version and this plugin carries ${Versions.version}; " +
+                        "skipping formatting"
+                )
+                None
+            case _ =>
+                Scalafmt.parseHoconConfigFile(confPath) match {
+                    case Configured.Ok(style)    => Some(style)
+                    case Configured.NotOk(error) => throw new MessageOnlyException(s"doctest-format: cannot read $scalafmtConf: $error")
+                }
+        }
+    }
+
+    private def formatFile(style: ScalafmtConfig, file: File): FileResult = {
         val original                                     = new String(NioFiles.readAllBytes(file.toPath), StandardCharsets.UTF_8)
-        val (rewritten, reformatted, unchanged, skipped) = rewrite(scalafmt, confPath, original)
+        val (rewritten, reformatted, unchanged, skipped) = rewrite(style, original)
         if (rewritten != original) NioFiles.write(file.toPath, rewritten.getBytes(StandardCharsets.UTF_8))
         FileResult(file, reformatted, unchanged, skipped)
     }
@@ -58,10 +79,9 @@ private[sbt] object Formatter {
     /** Pure transform: scans `content` for ` ```scala ` fences, reformats each block body, and returns the rewritten content plus counts.
       * Package-private so it can be exercised directly without touching disk.
       */
-    private[sbt] def rewrite(scalafmt: Scalafmt, confPath: NioPath, content: String): (String, Int, Int, Int) = {
+    private[sbt] def rewrite(style: ScalafmtConfig, content: String): (String, Int, Int, Int) = {
         val lines       = content.split("\n", -1).toVector
         val out         = Vector.newBuilder[String]
-        val fmtFile     = Paths.get("DoctestBlock.scala")
         var i           = 0
         var reformatted = 0
         var unchanged   = 0
@@ -79,7 +99,7 @@ private[sbt] object Formatter {
                     val replacement: Vector[String] =
                         if (j >= lines.length || hasNoFormat(info)) { skipped += 1; bodyLines }
                         else
-                            formatBlock(scalafmt, confPath, fmtFile, body) match {
+                            formatBlock(style, body) match {
                                 case Some(formatted) if formatted != body => reformatted += 1; formatted.split("\n", -1).toVector
                                 case Some(_)                              => unchanged += 1; bodyLines
                                 case None                                 => skipped += 1; bodyLines
@@ -107,18 +127,19 @@ private[sbt] object Formatter {
 
     private def hasNoFormat(info: String): Boolean = info.split("\\s+").contains("noformat")
 
-    private def formatBlock(scalafmt: Scalafmt, confPath: NioPath, fmtFile: NioPath, body: String): Option[String] = {
+    private def formatBlock(style: ScalafmtConfig, body: String): Option[String] = {
         if (body.trim.isEmpty) return Some(body)
         // Indent only STRUCTURAL lines (those outside a multi-line `"""` string) by one level so scalafmt
         // sees a well-formed object body. Multi-line string CONTENT is left at its original column, so the
         // literal's value is preserved exactly. scalafmt then normalises the structural indentation, which
         // unwrap strips back off. Indenting every line (including string interiors) would change a string's
         // value; indenting none confuses scalafmt's Scala-3 significant-indentation parse.
-        val wrapped   = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
-        val formatted =
-            try scalafmt.format(confPath, fmtFile, wrapped)
-            catch { case _: Throwable => return None }
-        unwrap(formatted)
+        val wrapped = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
+        // A block scalafmt cannot format (an intentionally broken example, pseudo-code) is left as written.
+        Scalafmt.format(wrapped, style, Set.empty, "DoctestBlock.scala") match {
+            case Formatted.Success(formatted) => unwrap(formatted)
+            case Formatted.Failure(_)         => None
+        }
     }
 
     // Strips the synthetic wrapper object and dedents the body. Handles both `object W { ... }` and the

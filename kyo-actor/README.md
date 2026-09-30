@@ -599,7 +599,7 @@ val supervised: String < (Async & Scope & Abort[Closed]) =
     for
         cleanedUp <- Latch.init(2)
         events    <- Queue.Unbounded.init[String]()
-        parent <- Actor.run {
+        parent    <- Actor.run {
             for
                 child1 <- Actor.run {
                     Scope.ensure(events.add("child1 cleaned up").andThen(cleanedUp.release))
@@ -781,7 +781,7 @@ val pubSubExample: Unit < (Async & Scope & Abort[Closed]) =
         hub <- Hub.init[LogEvent]
         publisher = Subject.init(hub) // publish bridge: send/trySend -> hub.put/offer
         subscribed <- Latch.init(1)
-        logger <- Actor.run {
+        logger     <- Actor.run {
             Actor.subscribe(hub)(identity) // funnels hub events into this actor's mailbox
                 .andThen(subscribed.release)
                 .andThen(Actor.receiveMax[LogEvent](3) { event =>
@@ -986,7 +986,7 @@ val dispatcherExample: Unit < (Async & Scope & Abort[Closed]) =
                 .andThen(monitorReady.release)
                 .andThen(Actor.receiveMax[JobEvent](6) { _ => () }) // 3 started + 3 completed
         }
-        _ <- monitorReady.await // ensure listener exists before any publish
+        _       <- monitorReady.await // ensure listener exists before any publish
         workers <- Kyo.foreach(0 until 2) { _ =>
             Actor.run {
                 // Each worker processes jobs and publishes completion to the shared hub.
@@ -1181,7 +1181,7 @@ val stage2: Chunk[Transaction] < (Async & Scope & Abort[Closed]) =
             Actor.receiveMax[Transaction](3)(auditQueue.add(_))
         }
         // Subscribe before any publish so no event is lost.
-        _ <- topic.subscribe(audit.subject)
+        _       <- topic.subscribe(audit.subject)
         account <- Actor.run {
             Var.run(Account(1, Amount.zero)) {
                 Actor.receiveMax[AccountMessage](4) {
@@ -1254,15 +1254,15 @@ val stage3: Boolean < (Async & Scope & Abort[Closed]) =
         topic      <- PubSub.init[Transaction]
         auditQueue <- Queue.Unbounded.init[Transaction]()
         fraudQueue <- Queue.Unbounded.init[FraudSignal]()
-        audit <- Actor.run {
+        audit      <- Actor.run {
             Actor.receiveMax[Transaction](2)(auditQueue.add(_))
         }
         fraud <- Actor.run {
             Actor.receiveMax[FraudSignal](2)(fraudQueue.add(_))
         }
         // audit gets Transaction directly; fraud adapts via contramap.
-        _ <- topic.subscribe(audit.subject)
-        _ <- topic.subscribe(fraud.subject.contramap(FraudSignal(_)))
+        _       <- topic.subscribe(audit.subject)
+        _       <- topic.subscribe(fraud.subject.contramap(FraudSignal(_)))
         account <- Actor.run {
             Var.run(Account(1, Amount.zero)) {
                 Actor.receiveMax[AccountMessage](2) {

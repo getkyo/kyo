@@ -4284,10 +4284,14 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
-        // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
-        // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
-        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
-        scriptedLaunchOpts                     := Seq(
+        // The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, so a published plugin
+        // formats exactly as scalafmtAll does and never fetches a formatter at run time.
+        libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+            val conf = IO.read((ThisBuild / baseDirectory).value / ".scalafmt.conf")
+            """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+                .getOrElse(sys.error("no version in .scalafmt.conf"))
+        },
+        scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.

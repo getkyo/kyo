@@ -248,7 +248,7 @@ def fromCallback[A](api: (Try[A] => Unit) => Unit): CIO[A] =
 ```scala
 val late: CIO[QueryResult]       = CIO.delay(500.millis)(query("data"))
 val maybeUser: CIO[Option[User]] = CIO.timeout(5.seconds)(fetchUser(id))
-val mustComplete: CIO[User] =
+val mustComplete: CIO[User]      =
     CIO.timeoutWithError(5.seconds)(new TimeoutException("fetch deadline"))(fetchUser(id))
 ```
 
