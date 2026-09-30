@@ -106,9 +106,12 @@ class SqliteConnectionTest extends Test:
         Scope.run {
             Path.run(Path.tempDir("kyo-sql-sqlite-interrupt")).map { dir =>
                 val url = s"sqlite://${(dir / "db").unsafe.show}"
+                // Unbounded budgets, so the leaf waits for the reclaim to finish whatever the host's speed. Under the defaults a slow
+                // reclaim fails the next acquire, and one past `cancelTimeout` swaps in a fresh connection the reclaim never touched.
+                val config = SqlConfig(maxConnections = 1, acquireTimeout = Duration.Infinity, cancelTimeout = Duration.Infinity)
                 for
-                    holder <- SqlClient.init(url, SqlConfig(maxConnections = 1))
-                    waiter <- SqlClient.init(url, SqlConfig(maxConnections = 1))
+                    holder <- SqlClient.init(url, config)
+                    waiter <- SqlClient.init(url, config)
                     _      <- holder.executeRaw("CREATE TABLE t (id INT)")
                     _      <- waiter.query("SELECT count(*) FROM t")
                     _      <- Kyo.foreachDiscard(1 to 20) { round =>
