@@ -23,23 +23,27 @@ private[kyo] case class MemoryData(
 private[kyo] object MemoryData:
     val empty = MemoryData(Dict.empty, Dict.empty, Dict.empty, Dict.empty, Dict.empty, 1L)
 
+/** The reference store.
+  *
+  * @param writes
+  *   the generation of committed writes: a promise completed by the next write and then replaced. A blocked poll reads it BEFORE it
+  *   asks, so a write that lands after the ask completes the promise the poll holds, and one that landed before it is already in what
+  *   the ask saw. A buffered token cannot do either: it outlives the writes it announces, so it wakes a poll that began after them, and
+  *   one token reaches one waiter, so a poller whose row the write made ready can sleep out its whole timeout while the token goes to
+  *   a poller with nothing to claim.
+  * @param registrations
+  *   the generation of registered definitions, with the same shape. A registration is a different kind of change from a write about an
+  *   execution: what a caller serves is fixed for the life of one `claimReady` call, so a registration cannot make anything ready for
+  *   the caller that is waiting, and the only useful answer is to hand control back and let the next poll ask with the wider set.
+  */
 private[kyo] class MemoryFlowStore(
     ref: AtomicRef[MemoryData],
-    channel: Channel[Unit],
-    registrations: Channel[Unit]
+    writes: AtomicRef[Promise[Unit, Any]],
+    registrations: AtomicRef[Promise[Unit, Any]]
 )(using Frame) extends FlowStore:
 
-    private def notify(using Frame): Unit < Sync =
-        Abort.run[Closed](channel.offer(())).unit
-
-    /** A registration is a different kind of change from a write about an execution, and a blocked poll answers it differently.
-      *
-      * A write may make an execution ready for the caller that is waiting, so that caller re-asks and keeps waiting. A registration
-      * cannot: what a caller serves is fixed for the life of one `claimReady` call, so the only useful answer is to hand control back
-      * and let the next poll ask with the wider set.
-      */
-    private def notifyRegistration(using Frame): Unit < Sync =
-        Abort.run[Closed](registrations.offer(())).unit
+    private def announce(generation: AtomicRef[Promise[Unit, Any]])(using Frame): Unit < Sync =
+        MemoryFlowStore.generation.map(next => generation.getAndSet(next).map(_.completeUnitDiscard))
 
     /** One atomic transition over the whole database, answering what it did.
       *
@@ -55,7 +59,7 @@ private[kyo] class MemoryFlowStore(
                     if next eq data then answer
                     else
                         ref.compareAndSet(data, next).map {
-                            case true  => notify.andThen(answer)
+                            case true  => announce(writes).andThen(answer)
                             case false => attempt
                         }
                     end if
@@ -313,41 +317,44 @@ private[kyo] class MemoryFlowStore(
         enum Woke derives CanEqual:
             case Write, Registration, TimedOut
 
-        def awaitChange(remaining: Duration): Woke < Async =
-            Abort.run[Closed] {
-                Async.race(
-                    Async.delay(remaining)(Woke.TimedOut),
-                    channel.take.andThen(Woke.Write),
-                    registrations.take.andThen(Woke.Registration)
-                )
-            }.map(_.getOrElse(Woke.TimedOut))
+        def awaitChange(remaining: Duration, written: Promise[Unit, Any], registered: Promise[Unit, Any]): Woke < Async =
+            Async.race(
+                Async.delay(remaining)(Woke.TimedOut),
+                written.get.andThen(Woke.Write),
+                registered.get.andThen(Woke.Registration)
+            )
 
         Clock.deadline(timeout).map { deadline =>
+            // Both generations are read before the ask, and the time left is read before it too. The ask is then the last thing
+            // the pass looks at: a change after it completes a promise this pass holds, and a deadline this pass saw as passed is
+            // answered with an ask made after it. Read after the ask, the time left can run out between the two reads, and the
+            // call answers empty over a row that came due in between.
             def poll: Seq[FlowStore.Claimed] < Async =
-                tryOnce.map { claimed =>
-                    if claimed.nonEmpty then claimed
-                    else
+                writes.get.map { written =>
+                    registrations.get.map { registered =>
                         deadline.timeLeft.map { remaining =>
-                            if remaining == Duration.Zero then Seq.empty
-                            else
-                                awaitChange(remaining).map {
-                                    // A write about an execution may have made one ready for this caller, so the poll
-                                    // re-asks and keeps waiting until its own deadline.
-                                    case Woke.Write => poll
-                                    // A registration cannot make anything ready for THIS call, whose served set was fixed
-                                    // when it was made, so the answer goes back to the caller: the next poll asks with the
-                                    // wider set. Without it an execution held for a version nobody served waits out a whole
-                                    // poll timeout after the definition it needs arrives.
-                                    case Woke.Registration => tryOnce
-                                    // The deadline ASKS ONE MORE TIME rather than answering empty on the strength of having
-                                    // run out of time. Two things become ready without a write to wake anyone: a sleep row
-                                    // whose instant simply passed, and a claim that simply expired, and a caller that
-                                    // answered empty while one of them sat ready would hide it for a whole poll cycle. The
-                                    // rule the call is held to says either it hands the row over or it leaves the row as it
-                                    // found it, and it admits no exception for the last instant of the wait.
-                                    case Woke.TimedOut => tryOnce
-                                }
+                            tryOnce.map { claimed =>
+                                // At the deadline the answer is whatever this last ask claimed, rather than empty on the
+                                // strength of having run out of time. Two things become ready without a write to wake
+                                // anyone: a sleep row whose instant simply passed, and a claim that simply expired, and a
+                                // caller that answered empty while one of them sat ready would hide it for a whole poll
+                                // cycle. The rule the call is held to says either it hands the row over or it leaves the row
+                                // as it found it, and it admits no exception for the last instant of the wait.
+                                if claimed.nonEmpty || remaining == Duration.Zero then claimed
+                                else
+                                    awaitChange(remaining, written, registered).map {
+                                        // A write may have made an execution ready for this caller, and a deadline reached
+                                        // is answered by the pass it starts, so both ask again.
+                                        case Woke.Write | Woke.TimedOut => poll
+                                        // A registration cannot make anything ready for THIS call, whose served set was
+                                        // fixed when it was made, so the answer goes back to the caller: the next poll asks
+                                        // with the wider set. Without it an execution held for a version nobody served waits
+                                        // out a whole poll timeout after the definition it needs arrives.
+                                        case Woke.Registration => tryOnce
+                                    }
+                            }
                         }
+                    }
                 }
             poll
         }
@@ -531,12 +538,29 @@ private[kyo] class MemoryFlowStore(
     // until the blocked poll timed out on its own.
     def putWorkflow(meta: FlowEngine.WorkflowInfo)(using Frame): Unit < Async =
         ref.getAndUpdate(d => d.copy(workflows = d.workflows.update(Flow.Id.Workflow(meta.id), meta))).unit
-            .andThen(notifyRegistration)
+            .andThen(announce(registrations))
 
     def getWorkflow(id: Flow.Id.Workflow)(using Frame): Maybe[FlowEngine.WorkflowInfo] < Async =
         ref.use(_.workflows.get(id))
 
     def listWorkflows(using Frame): Seq[FlowEngine.WorkflowInfo] < Async =
         ref.use(_.workflows.toChunk.map(_._2))
+
+end MemoryFlowStore
+
+private[kyo] object MemoryFlowStore:
+
+    def init(using Frame): MemoryFlowStore < Sync =
+        for
+            ref           <- AtomicRef.init(MemoryData.empty)
+            writes        <- generation.map(AtomicRef.init(_))
+            registrations <- generation.map(AtomicRef.init(_))
+        yield new MemoryFlowStore(ref, writes, registrations)
+
+    private def generation(using Frame): Promise[Unit, Any] < Sync =
+        // Unsafe: an interruptible promise cannot be shared by waiters that race it. A race interrupts the arm it did not pick, and
+        // an interrupt aimed at an arm awaiting a promise reaches the promise itself, so one poll timing out would end the generation
+        // for every other poll blocked in it, with a panic rather than a wake.
+        Sync.Unsafe.defer(Promise.Unsafe.initUninterruptible[Unit, Any]().safe)
 
 end MemoryFlowStore

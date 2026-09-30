@@ -42,7 +42,7 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
       * `hash` defaults to the empty one the suite serves, so a fixture that says nothing about versions gets an execution every claim
       * in this file can take. A leaf about the version gate passes one this caller does not serve.
       */
-    private def mkExecution(
+    private[kyo] def mkExecution(
         store: FlowStore,
         eid: Flow.Id.Execution,
         flowId: Flow.Id.Workflow,
@@ -108,7 +108,7 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
             }.andThen(claimed.finish(FlowStore.Claimed.Outcome.Suspended(waits.map(_._1).toSet)))
         }.unit
 
-    private def mkWait(
+    private[kyo] def mkWait(
         store: FlowStore,
         eid: Flow.Id.Execution,
         flowId: Flow.Id.Workflow,
@@ -167,6 +167,37 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
             Clock.nowWith(ts => claimed.finish(FlowStore.Claimed.Outcome.Terminal(status, event(ts))))
         }.unit
 
+    /** Whether every fiber in `fibers` finished, rather than one of them registering a sleep.
+      *
+      * The race awaits a fresh copy of each fiber's completion, since interrupting the losing arm would otherwise interrupt what it awaits.
+      */
+    private[kyo] def settledOrRearmed[A, S](control: Clock.TimeControl, fibers: Seq[Fiber[A, S]])(using Frame): Boolean < Async =
+        Kyo.foreach(fibers) { fiber =>
+            Fiber.Promise.init[Unit, Any].map(finished => fiber.onComplete(_ => finished.completeUnitDiscard).andThen(finished))
+        }.map { finished =>
+            Async.race(control.awaitPendingSleepers(1).andThen(false), Kyo.foreachDiscard(finished)(_.get).andThen(true))
+        }
+
+    /** Jumps the clock by `step` until every fiber in `fibers` has answered, at most `rounds` times, and answers whether they all did.
+      *
+      * One jump cannot be relied on to end a blocked call. A call reads the time it has left and then sleeps, and when the jump lands
+      * between the two its sleep is stamped from the moved clock with the duration read before it, so no jump already made fires it.
+      * Each round waits for the calls to answer or for one to register a sleep, and answers a sleep with another jump; the answer is the
+      * barrier, so no round waits on the wall clock. The bound turns a store that never stops re-arming into a failed assertion rather
+      * than a hung leaf.
+      */
+    private[kyo] def advanceUntilAnswered[A, S](
+        control: Clock.TimeControl,
+        step: Duration,
+        fibers: Seq[Fiber[A, S]],
+        rounds: Int = 10
+    )(using Frame): Boolean < Async =
+        Loop(1) { round =>
+            control.advance(step, Duration.Zero).andThen(settledOrRearmed(control, fibers)).map { settled =>
+                if settled || round >= rounds then Loop.done(settled) else Loop.continue(round + 1)
+            }
+        }
+
     // =========================================================================
     // I1: claim exclusivity
     // =========================================================================
@@ -222,8 +253,9 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
           *
           * **This one forces the overlap without needing to interpose on the store.** Both callers start with NO ready execution
           * and a real timeout, so both block on the store's wake path; the execution is created while they are both inside
-          * `claimReady`; and the clock is advanced to let the wake and the timeout resolve. Whatever the store does about waking,
-          * both callers were genuinely inside it when the row appeared.
+          * `claimReady`; and the clock is jumped until both answer, so the wake and the timeout resolve. Whatever the store does
+          * about waking, both callers were genuinely inside it when the row appeared. The caller that loses re-arms its wait after
+          * the write, possibly after a jump, which is why no single jump is relied on to end it.
           *
           * The premise is asserted first: at least one caller must have been handed the row, or the run says nothing about
           * exclusivity, it just says nobody was woken.
@@ -234,14 +266,14 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
                     for
                         one <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
                         two <- Fiber.init(store.claimReady(served, ex2, lease, 10, 2.seconds))
-                        // Both callers are inside their waits once both sleeps are registered; a jump before that leaves a
-                        // sleep registered afterwards with no advance to fire it.
-                        _      <- tc.awaitPendingSleepers(2)
-                        _      <- mkExecution(store, eid1, wf1, Flow.Status.Running)
-                        _      <- tc.advance(3.seconds)
-                        first  <- one.get
-                        second <- two.get
+                        // Both callers are inside their waits once both sleeps are registered.
+                        _        <- tc.awaitPendingSleepers(2)
+                        _        <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                        answered <- advanceUntilAnswered(tc, 3.seconds, Seq(one, two))
+                        first    <- if answered then one.get else Kyo.lift(Seq.empty[FlowStore.Claimed])
+                        second   <- if answered then two.get else Kyo.lift(Seq.empty[FlowStore.Claimed])
                     yield
+                        assert(answered, "both callers must answer once their deadlines have passed")
                         val handed = (first.map(_.state.executionId) ++ second.map(_.state.executionId)).count(_ == eid1)
                         assert(
                             handed >= 1,
@@ -265,38 +297,37 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
           * writer to announce it. The rule the call is held to admits no exception for its last instant: either it hands the row
           * over or it leaves the row as it found it.
           *
-          * **The scenario is repeated rather than run once, and that is what makes the failure reliable rather than the leaf
-          * flaky.** Each iteration is deterministic under a correct store, so a correct store answers the row every time; against
-          * one that answers empty on its deadline the result turns on whether the caller had reached its wait before the clock
-          * jumped, which one run samples and twenty do not. The loop is sized to catch that, not to tolerate it.
+          * **One run is the whole scenario.** The caller is fenced inside its wait, with nothing due, before the clock moves, and
+          * nothing writes after it starts, so a store that wakes only on writes gives it one way out: its deadline, then one more
+          * ask. A store that answers empty on its deadline fails every run, so repeating the run would sample nothing. The clock is
+          * jumped until the caller answers rather than once, because a store may still wake a caller for a reason of its own and
+          * re-arm, and a sleep re-armed after the only jump would never fire.
           */
         "a row that came due while a caller waited is handed over at the deadline" in {
-            def once(round: Int)(using Frame): Unit < (Async & Abort[FlowStoreException] & Scope) =
-                Clock.withTimeControl { tc =>
-                    makeStore.map { store =>
-                        for
-                            now <- Clock.now
-                            _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
-                            // Due one second in, while a caller that starts now is still waiting out its two.
-                            _      <- mkWait(store, eid1, wf1, "timer", Flow.Wake.At(now + 1.second))
-                            caller <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
-                            // Fence on the caller's sleep, so it is inside its wait, with nothing due yet, before the clock
-                            // jumps. A jump that lands before the caller has looked once lets it find the row on its way in
-                            // rather than at the deadline; one that lands before the sleep is registered leaves that sleep
-                            // with no advance to fire it, and the caller never returns.
-                            _   <- tc.awaitPendingSleepers(1)
-                            _   <- tc.advance(3.seconds)
-                            got <- caller.get
-                        yield assert(
+            Clock.withTimeControl { tc =>
+                makeStore.map { store =>
+                    for
+                        now <- Clock.now
+                        _   <- mkExecution(store, eid1, wf1, Flow.Status.Running)
+                        // Due one second in, while a caller that starts now is still waiting out its two.
+                        _      <- mkWait(store, eid1, wf1, "timer", Flow.Wake.At(now + 1.second))
+                        caller <- Fiber.init(store.claimReady(served, ex1, lease, 10, 2.seconds))
+                        // Fence on the caller's sleep, so it is inside its wait, with nothing due yet, before the clock jumps.
+                        // A jump that lands before the caller has looked once lets it find the row on its way in rather than at
+                        // the deadline.
+                        _        <- tc.awaitPendingSleepers(1)
+                        answered <- advanceUntilAnswered(tc, 3.seconds, Seq(caller))
+                        got      <- if answered then caller.get else Kyo.lift(Seq.empty[FlowStore.Claimed])
+                    yield
+                        assert(answered, "the caller must answer once its deadline has passed")
+                        assert(
                             got.map(_.state.executionId) == Seq(eid1),
-                            s"round $round: the sleep came due while the caller waited, and nothing writes when one does, so " +
-                                s"the deadline must ask once more rather than answer empty over a ready row, got " +
-                                s"${got.map(_.state.executionId)}"
+                            s"the sleep came due while the caller waited, and nothing writes when one does, so the deadline " +
+                                s"must ask once more rather than answer empty over a ready row, got ${got.map(_.state.executionId)}"
                         )
-                        end for
-                    }
+                    end for
                 }
-            Kyo.foreachDiscard(1 to 20)(once).andThen(assert(true))
+            }
         }
 
         "repeated calls with same executor get different executions" in {
@@ -2488,14 +2519,17 @@ abstract class FlowStoreConformanceTest extends kyo.test.Test[Any]:
                         // First poll: sleep not expired, times out
                         fiber1 <- Fiber.init(store.claimReady(served, ex1, lease, 10, 100.millis))
                         // The timeout can only fire a sleep that is already registered.
-                        _     <- tc.awaitPendingSleepers(1)
-                        _     <- tc.advance(100.millis)
-                        empty <- fiber1.get
+                        _ <- tc.awaitPendingSleepers(1)
+                        // A store that wakes the caller for a reason of its own re-arms its sleep, and one re-armed after a
+                        // single jump would never fire.
+                        answered <- advanceUntilAnswered(tc, 100.millis, Seq(fiber1))
+                        empty    <- if answered then fiber1.get else Kyo.lift(Seq.empty[FlowStore.Claimed])
                         // Advance past sleep expiry
                         _ <- tc.advance(500.millis)
                         // Second poll: sleep expired, found immediately
                         found <- store.claimReady(served, ex1, lease, 10, 100.millis)
                     yield
+                        assert(answered, "the first poll must answer once its deadline has passed")
                         assert(empty.isEmpty)
                         assert(found.size == 1)
                 }
