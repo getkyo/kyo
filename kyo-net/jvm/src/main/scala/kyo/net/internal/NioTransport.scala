@@ -154,7 +154,7 @@ final private[kyo] class NioTransport private (
       * on, Windows included.
       */
     override private[net] val capabilities: TransportCapabilities =
-        TransportCapabilities(Set("jdk"), unixSockets = true)
+        TransportCapabilities(Set("jdk"), unixSockets = true, tlsCloseReason = true)
 
     /** Claim flag for the process-global stdio connection, so stdio is claimed at most once (fds 0/1 must never be double-owned). Mirrors the
       * posix and Node transports' claim.
