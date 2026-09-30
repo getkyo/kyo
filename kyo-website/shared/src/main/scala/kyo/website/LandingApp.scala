@@ -236,8 +236,11 @@ object LandingApp:
       * reduced-motion the line renders fully drawn (its inline dash base), so the chart is always complete.
       */
     private def failureChart(using Frame): UI =
-        val n       = 10
-        val failure = Chunk.from(1 to n).map(s => 1.0 - math.pow(0.85, s.toDouble))
+        val n = 10
+        // Not `math.pow`: it is not correctly rounded, and the JVM and Scala.js results differ in the last bit at n = 10. That bit
+        // reaches the path text, so the SSG page and the bundle's mount would render different markup. A product of correctly
+        // rounded multiplications is the same double on every platform.
+        val failure = Chunk.from(1 to n).map(s => 1.0 - Iterator.fill(s)(0.85).product)
 
         val w      = 340.0
         val h      = 152.0

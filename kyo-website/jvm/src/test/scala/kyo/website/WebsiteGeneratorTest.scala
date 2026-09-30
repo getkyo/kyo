@@ -1268,6 +1268,26 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
+    "module and intro pages paint the article as the bundle mounts it: the pre-rendered HTML in its own reactive range" in {
+        for
+            out        <- tmpDir
+            bundleDir  <- stubBundleDir
+            _          <- emit(Chunk(vWithModules), out, bundleDir)
+            moduleHtml <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
+            introHtml  <- readFile(out / "v1.0.0-RC2" / "index.html")
+            module     <- DocsMarkdownRender.renderArticle(dataReadme)
+            intro      <- DocsMarkdownRender.renderArticle(vWithModules.intro)
+        yield
+            val articleRange = s"""<main data-kyo-path="1.2" class="docs-content"><!--kyo-rs:"""
+            assert(moduleHtml.contains(module.articleHtml), s"the module page must carry the pre-rendered article: $moduleHtml")
+            assert(moduleHtml.contains(articleRange), s"the module article must open its own reactive range: $moduleHtml")
+            assert(enclosingReactiveRange(moduleHtml, module.articleHtml).isDefined)
+            assert(introHtml.contains(intro.articleHtml), s"the intro page must carry the pre-rendered article: $introHtml")
+            assert(introHtml.contains(articleRange), s"the intro article must open its own reactive range: $introHtml")
+            assert(enclosingReactiveRange(introHtml, intro.articleHtml).isDefined)
+        end for
+    }
+
     "module page carries both islands before </body>, byte-identical to prior splice behavior" in {
         for
             out       <- tmpDir
