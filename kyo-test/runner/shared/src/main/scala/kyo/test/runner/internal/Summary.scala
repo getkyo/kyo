@@ -3,7 +3,6 @@ package kyo.test.runner.internal
 import kyo.Chunk
 import kyo.discard
 import kyo.test.TestReport
-import kyo.test.TestResult
 import scala.collection.mutable.LinkedHashMap
 
 /** Renders the final summary string from accumulated [[TestReport]] values.
@@ -34,14 +33,15 @@ private[internal] object Summary:
         discoveryErrors: Chunk[String],
         positionalArgs: Chunk[String]
     ): String =
-        val allLeaves: Chunk[(Chunk[String], TestResult)] =
-            Chunk.from(
-                reports.iterator
-                    .flatMap(_.suiteReports.iterator)
-                    .flatMap(_.leafResults.iterator)
-            )
+        renderLeaves(Chunk.from(reports.iterator.flatMap(LeafRecord.of(_).iterator)), discoveryErrors, positionalArgs)
 
-        val counts = allLeaves.foldLeft(TestReport.Counts()) { case (acc, (_, result)) => acc.tally(result) }
+    /** Renders the summary over leaf records, the form in which a Scala.js or Scala Native worker's leaves reach the controller. */
+    def renderLeaves(
+        allLeaves: Chunk[LeafRecord],
+        discoveryErrors: Chunk[String],
+        positionalArgs: Chunk[String]
+    ): String =
+        val counts = allLeaves.foldLeft(TestReport.Counts())((acc, leaf) => tally(acc, leaf.kind))
 
         val body =
             if counts.total == 0 && positionalArgs.nonEmpty then
@@ -59,7 +59,7 @@ private[internal] object Summary:
             end if
         end withDiscovery
 
-        val failingLeaves = allLeaves.filter { case (_, r) => isFailure(r) }
+        val failingLeaves = allLeaves.filter(leaf => isFailure(leaf.kind))
         val rendered      =
             if failingLeaves.isEmpty then
                 withDiscovery
@@ -67,7 +67,17 @@ private[internal] object Summary:
                 withDiscovery + "\nTOTAL FAILURES (" + failingLeaves.size + "):\n" + boundedBlock(failureLines(failingLeaves))
         boundedUtf8(rendered)
 
-    end render
+    end renderLeaves
+
+    private def tally(counts: TestReport.Counts, kind: LeafRecord.Kind): TestReport.Counts =
+        kind match
+            case LeafRecord.Kind.Passed    => counts.copy(passed = counts.passed + 1)
+            case LeafRecord.Kind.Failed    => counts.copy(failed = counts.failed + 1)
+            case LeafRecord.Kind.Cancelled => counts.copy(cancelled = counts.cancelled + 1)
+            case LeafRecord.Kind.Pending   => counts.copy(pending = counts.pending + 1)
+            case LeafRecord.Kind.Ignored   => counts.copy(ignored = counts.ignored + 1)
+            case LeafRecord.Kind.TimedOut  => counts.copy(timedOut = counts.timedOut + 1)
+            case LeafRecord.Kind.Skipped   => counts.copy(skipped = counts.skipped + 1)
 
     /** Collapse failing leaves that share the same status and reason into one counted line. The common
       * native overflow is a whole browser suite cancelled for the same reason (e.g. no chrome-headless-shell
@@ -76,13 +86,13 @@ private[internal] object Summary:
       * line each (with their path), so unique failures keep their full identity. Order is the first-occurrence
       * order of each (status, reason) so the output stays deterministic across runs and platforms.
       */
-    private def failureLines(failingLeaves: Chunk[(Chunk[String], TestResult)]): Chunk[String] =
+    private def failureLines(failingLeaves: Chunk[LeafRecord]): Chunk[String] =
         val groups = LinkedHashMap.empty[(String, String), (Int, Chunk[String])]
-        failingLeaves.foreach { case (path, result) =>
-            val key = (statusTag(result), oneLineReason(result))
+        failingLeaves.foreach { leaf =>
+            val key = (statusTag(leaf.kind), leaf.reason)
             groups.get(key) match
                 case Some((n, firstPath)) => groups(key) = (n + 1, firstPath)
-                case None                 => groups(key) = (1, path)
+                case None                 => groups(key) = (1, leaf.path)
         }
         Chunk.from(groups.iterator.map { case ((tag, reason), (count, firstPath)) =>
             if count == 1 then "  " + firstPath.mkString(" > ") + "  " + tag + "  " + reason
@@ -154,61 +164,14 @@ private[internal] object Summary:
     // A failure is a real red only: a failed assertion or a timeout. Cancelled, Skipped, Pending,
     // and Ignored are deliberate non-runs, already reported as their own counts on the summary line.
     // They never enter TOTAL FAILURES, so the failed count and the failure list cannot disagree.
-    private def isFailure(r: TestResult): Boolean =
-        r match
-            case _: TestResult.Failed   => true
-            case _: TestResult.TimedOut => true
-            case _                      => false
+    private def isFailure(kind: LeafRecord.Kind): Boolean =
+        kind == LeafRecord.Kind.Failed || kind == LeafRecord.Kind.TimedOut
 
-    private def statusTag(r: TestResult): String =
-        r match
-            case _: TestResult.Failed    => "[FAIL]"
-            case _: TestResult.TimedOut  => "[TIMEOUT]"
-            case _: TestResult.Cancelled => "[CANCELLED]"
-            case _                       => ""
-
-    /** Upper bound on a single failure-reason line in the summary. The summary is the string
-      * `Runner.done()` returns; on Scala Native sbt ships it back over the test-interface RPC via
-      * `DataOutputStream.writeUTF` (65535-byte cap). A failing leaf whose diagram is a single very long
-      * line (e.g. a rendered SVG with no newlines) would otherwise carry the whole value into the
-      * summary and overflow that RPC, crashing the suite's transport. The full diagram is still
-      * available per-leaf via the reporters; the summary only needs a short identifying preview. Failing
-      * leaves that share this line are grouped (see [[failureLines]]), so it can be generous.
-      */
-    private val MaxReasonChars = 500
-
-    private def boundedFirstLine(s: String): String =
-        val line = s.linesIterator.nextOption().getOrElse("")
-        if line.length <= MaxReasonChars then line
-        else line.substring(0, MaxReasonChars) + s"... (${line.length} chars total)"
-    end boundedFirstLine
-
-    private def oneLineReason(r: TestResult): String =
-        r match
-            case TestResult.Failed(diagram, cause, _, _) =>
-                if diagram.nonEmpty then
-                    boundedFirstLine(diagram)
-                else
-                    boundedFirstLine(cause.fold("")(t => t.getClass.getName + ": " + t.getMessage))
-            case TestResult.TimedOut(limit) =>
-                "limit: " + formatDuration(limit)
-            case TestResult.Cancelled(reason, _) =>
-                boundedFirstLine(reason)
-            case _ =>
-                ""
-
-    private def formatDuration(d: kyo.Duration): String =
-        val ms = d.toMillis
-        if ms < 1000 then s"${ms}ms"
-        else if ms < 60000 then
-            val s   = ms / 1000
-            val rem = ms % 1000
-            if rem == 0 then s"${s}s" else f"${s}.${rem / 100}s"
-        else
-            val m   = ms / 60000
-            val sec = (ms % 60000) / 1000
-            if sec == 0 then s"${m}m" else s"${m}m ${sec}s"
-        end if
-    end formatDuration
+    private def statusTag(kind: LeafRecord.Kind): String =
+        kind match
+            case LeafRecord.Kind.Failed    => "[FAIL]"
+            case LeafRecord.Kind.TimedOut  => "[TIMEOUT]"
+            case LeafRecord.Kind.Cancelled => "[CANCELLED]"
+            case _                         => ""
 
 end Summary

@@ -3,7 +3,7 @@ package kyo.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.internal.postgres.PostgresConnection
 import kyo.net.NetTlsConfig
 
@@ -18,8 +18,8 @@ import kyo.net.NetTlsConfig
   *   - Leaves 2-9, 12-14, 16 share one TLS-enabled Postgres container (permits both TLS and plaintext).
   *   - Leaves 11 and 15 share a REQUIRE-SSL Postgres container (only `hostssl` in pg_hba.conf).
   *
-  * Containers are NOT torn down in-process. They carry the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels, and
-  * `SqlTestContainers.initSingleton` removes every dead-owner container, together with its anonymous volumes, before creating a new
+  * Containers are NOT torn down in-process. They carry the `kyo-test-container` and `kyo-test-owner-pid` labels, and
+  * `TestContainers.initSingleton` removes every dead-owner container, together with its anonymous volumes, before creating a new
   * singleton. There is no build-level cleanup task: a force-killed test process runs no sbt hook either.
   *
   * Cert fixture (generated once, on demand):
@@ -109,10 +109,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
 
     "sslmode=disable connects without TLS".tagged("kyo.OwnContainer") in {
         Scope.run {
-            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
             // process leaves something the reaper can find.
-            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=disable"
                     SqlClient.init(url).flatMap { client =>
@@ -370,10 +370,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     "sslmode=allow connects plaintext when server permits plaintext".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Plain Postgres container (no cert mount → no TLS support)
-            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
             // process leaves something the reaper can find.
-            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=allow"
                     SqlClient.init(url).flatMap { client =>
@@ -444,10 +444,10 @@ class SqlConfigTlsModeIntegrationTest extends SqlContainerTest:
     "sslmode=prefer falls back to plaintext when server refuses TLS".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Plain Postgres container: no cert → SSLRequest returns 'N' → plaintext fallback.
-            // Through `SqlTestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
-            // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+            // Through `TestContainers` rather than `ContainerPredef.Postgres.initWith` directly, so the
+            // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
             // process leaves something the reaper can find.
-            SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
+            TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-tls-mode-leaf").map { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
                     val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}?sslmode=prefer"
                     SqlClient.init(url).flatMap { client =>
@@ -790,7 +790,7 @@ object SqlConfigTlsModeIntegrationTest:
                 Schedule.fixed(1.second).take(60)
             ))
 
-        SqlTestContainers.initSingleton(containerConfig, "postgres-tls-mode").flatMap { container =>
+        TestContainers.initSingleton(containerConfig, "postgres-tls-mode").flatMap { container =>
             container.awaitHealthy.andThen {
                 container.mappedPort(5432).map { port =>
                     TlsCtx(
@@ -848,7 +848,7 @@ object SqlConfigTlsModeIntegrationTest:
                 Schedule.fixed(1.second).take(60)
             ))
 
-        SqlTestContainers.initSingleton(containerConfig, "postgres-tls-mode-require").flatMap { container =>
+        TestContainers.initSingleton(containerConfig, "postgres-tls-mode-require").flatMap { container =>
             container.awaitHealthy.andThen {
                 // Container is healthy and initially permits both SSL and plaintext.
                 // Rewrite pg_hba.conf to require SSL (hostssl-only) and reload.

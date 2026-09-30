@@ -116,4 +116,21 @@ class NameCaseConversionTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The tokenizer splits on Unicode case (`État` starts a word), so the fold has to be Unicode too: an
+    // ASCII fold would leave `État` capitalised inside a snake-case name while lowering `Http`.
+    "non-ASCII letters fold with the same alphabet the tokenizer splits on" - {
+        "naïveÉtat -> naïve_état, NAÏVE-ÉTAT, naïveÉtat, NaïveÉtat" in {
+            assert(snake("naïveÉtat") == "naïve_état")
+            assert(screaming("naïveÉtat") == "NAÏVE_ÉTAT")
+            assert(camel("naïve_état") == "naïveÉtat")
+            assert(pascal("naïve_état") == "NaïveÉtat")
+        }
+
+        "Über -> über, ÜBER; école_normale -> ÉcoleNormale" in {
+            assert(snake("Über") == "über")
+            assert(screaming("Über") == "ÜBER")
+            assert(pascal("école_normale") == "ÉcoleNormale")
+        }
+    }
+
 end NameCaseConversionTest

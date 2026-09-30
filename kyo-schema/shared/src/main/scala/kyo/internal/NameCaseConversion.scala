@@ -28,11 +28,19 @@ private[kyo] object NameCaseConversion:
     def convert(nameCase: Schema.NameCase): String => String =
         nameCase match
             case Schema.NameCase.CamelCase          => name => joinCamel(tokenize(name))
-            case Schema.NameCase.SnakeCase          => name => tokenize(name).map(_.toLowerCase).mkString("_")
-            case Schema.NameCase.KebabCase          => name => tokenize(name).map(_.toLowerCase).mkString("-")
+            case Schema.NameCase.SnakeCase          => name => tokenize(name).map(lower).mkString("_")
+            case Schema.NameCase.KebabCase          => name => tokenize(name).map(lower).mkString("-")
             case Schema.NameCase.PascalCase         => name => tokenize(name).map(capitalize).mkString
-            case Schema.NameCase.ScreamingSnakeCase => name => tokenize(name).map(_.toUpperCase).mkString("_")
+            case Schema.NameCase.ScreamingSnakeCase => name => tokenize(name).map(upper).mkString("_")
     end convert
+
+    // Per character, never `String.toLowerCase()`: that one folds through the JVM's default locale, so a wire name
+    // derived on a Turkish machine (`Id` to `ıd`) would differ from every other machine's. Per-char folding is
+    // locale-independent on every platform and uses the same alphabet as the tokenizer's `isUpper` split, so a
+    // non-ASCII word start (`État`) is lowered like an ASCII one.
+    private def lower(word: String): String = word.map(_.toLower)
+
+    private def upper(word: String): String = word.map(_.toUpper)
 
     /** Splits an identifier into words by the acronym-aware two-pass lookahead. A break is
       * taken at a `_`/`-` separator (the separator char is dropped) and BEFORE an index
@@ -78,10 +86,10 @@ private[kyo] object NameCaseConversion:
 
     private def joinCamel(words: Chunk[String]): String =
         if words.isEmpty then ""
-        else words.head.toLowerCase + words.tail.map(capitalize).mkString
+        else lower(words.head) + words.tail.map(capitalize).mkString
 
     private def capitalize(word: String): String =
         if word.isEmpty then word
-        else word.head.toUpper.toString + word.tail.toLowerCase
+        else word.head.toUpper.toString + lower(word.tail)
 
 end NameCaseConversion

@@ -291,6 +291,34 @@ lazy val `kyo-settings` = Seq(
     }
 )
 
+// A suite named `*LocaleTest` runs in its own fork whose default locale is Turkish, where `String.toLowerCase()` maps
+// `I` to a dotless `ı` and `toUpperCase()` maps `i` to a dotted `İ`. That is the one way to prove a fold does not depend
+// on the default locale without changing the locale of the JVM the module's other suites share. Every other suite keeps
+// the module's single default fork.
+lazy val `locale-fork-settings` = Seq(
+    Test / testGrouping := {
+        val javaOptionsValue                   = javaOptions.value.toVector
+        val envsVarsValue                      = envVars.value
+        def fork(extraOptions: Vector[String]) =
+            Tests.SubProcess(
+                ForkOptions(
+                    javaHome = javaHome.value,
+                    outputStrategy = outputStrategy.value,
+                    bootJars = Vector.empty,
+                    workingDirectory = Some(baseDirectory.value),
+                    runJVMOptions = javaOptionsValue ++ extraOptions,
+                    connectInput = connectInput.value,
+                    envVars = envsVarsValue
+                )
+            )
+        val (localeTests, otherTests) = (Test / definedTests).value.partition(_.name.endsWith("LocaleTest"))
+        val localeGroup               =
+            if (localeTests.isEmpty) Seq.empty
+            else Seq(Tests.Group("locale#tr", localeTests, fork(Vector("-Duser.language=tr", "-Duser.country=TR"))))
+        localeGroup :+ Tests.Group("default", otherTests, fork(Vector.empty))
+    }
+)
+
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
 // coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
@@ -419,6 +447,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-pekko`.jvm,
         `kyo-data`.jvm,
         `kyo-charset`.jvm,
+        `kyo-mime`.jvm,
         `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
@@ -517,6 +546,7 @@ lazy val kyoJS = project
         `kyo-scheduler`.js,
         `kyo-data`.js,
         `kyo-charset`.js,
+        `kyo-mime`.js,
         `kyo-kernel`.js,
         `kyo-prelude`.js,
         `kyo-parse`.js,
@@ -596,6 +626,7 @@ lazy val kyoNative = project
     .aggregate(
         `kyo-data`.native,
         `kyo-charset`.native,
+        `kyo-mime`.native,
         `kyo-prelude`.native,
         `kyo-parse`.native,
         `kyo-kernel`.native,
@@ -679,6 +710,7 @@ lazy val kyoWasm = project
         `kyo-stats-registry`.wasm,
         `kyo-data`.wasm,
         `kyo-charset`.wasm,
+        `kyo-mime`.wasm,
         `kyo-kernel`.wasm,
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
@@ -889,6 +921,19 @@ lazy val `kyo-charset` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-mime` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-schema-json` % "test->compile")
+        .in(file("kyo-mime"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -965,7 +1010,7 @@ lazy val `kyo-schema` =
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(mimaCheck(false), `locale-fork-settings`)
         // kyo-schema/README.md documents the whole module family (core + every format), so its
         // blocks need classpaths the core does not have; kyo-schema-tests validates it instead.
         .jvmConfigure(_.settings(doctestSources := Seq.empty))
@@ -1125,7 +1170,9 @@ lazy val `kyo-sql` =
         // only at the JSON tier, for Sql.jsonColumn's Schema-based overload.
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
-        .dependsOn(`kyo-pod` % "test->compile")
+        // test->test as well: the leftover-container sweep the SQL suites create their containers through
+        // (`kyo.internal.TestContainers`) lives in kyo-pod's test tree.
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1169,7 +1216,7 @@ lazy val `kyo-sql-postgres` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1188,7 +1235,7 @@ lazy val `kyo-sql-mysql` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1237,7 +1284,7 @@ lazy val `kyo-sql-dolt` =
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-dolt"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1587,7 +1634,7 @@ lazy val `kyo-sql-tests` =
         .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-conformance` % Test)
-        .dependsOn(`kyo-pod` % "test->compile")
+        .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-tests"))
         .withKyoTest
         .settings(
@@ -3183,7 +3230,7 @@ lazy val `kyo-jsonrpc` =
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(mimaCheck(false), `locale-fork-settings`)
         // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
         // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
         .nativeSettings(`native-settings`, `openssl-native-settings`)

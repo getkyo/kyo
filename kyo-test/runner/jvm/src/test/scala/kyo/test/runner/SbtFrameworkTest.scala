@@ -160,7 +160,8 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
     // ── Test 9: runner.done returns summary ─────────────────────────────────────────────────────
 
     test("runner.done returns summary") {
-        val runner   = makeRunner()
+        // Unforked, as in sbt without fork: this suite's own JVM is a fork, where the runner would also print its summary into the log.
+        val runner   = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false)
         val handler1 = new CapturingEventHandler
         val handler2 = new CapturingEventHandler
         val task1    = runner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0)
@@ -173,24 +174,36 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(summary.contains("1 failed")): Unit
     }
 
-    // ── Test 10: done() summary loses a run executed by a separate (forked) runner ──────────────
-    // Under `fork := true`, sbt runs SbtTask.execute in the forked JVM's runner, but logs the
-    // main-JVM runner's done(), whose results queue never received the reports, so the kyo-test
-    // summary line and TOTAL FAILURES block report zero. This is modelled by executing the suite
-    // on a separate runner from the one that produces the summary. pendingUntilFixed runs the body
-    // and inverts: a still-failing body reports Pending. Remove the marker once the fork-side
-    // summary is surfaced and the body passes (if the fix routes the fork's own done() rather than
-    // sharing results across instances, remove the marker by hand when that lands).
+    // ── Test 10: a runner that was never given tasks has no summary ─────────────────────────────
+    // Under `fork := true`, sbt builds a runner in its own JVM only to pass the arguments to the fork, never calls its tasks(), and
+    // logs that runner's done(). A summary from it would report zero whatever the fork ran.
 
-    test("done() summary reflects a run executed by a separate (forked) runner instance") {
-        pendingUntilFixed {
-            val summaryRunner = makeRunner()
-            val execRunner    = makeRunner()
-            execRunner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
-            val summary = summaryRunner.done()
-            assert(summary.contains("1 tests")): Unit
-            assert(summary.contains("1 passed")): Unit
-        }
+    test("a runner that was never given tasks returns no summary") {
+        val summary = makeRunner().done()
+        assert(summary == "", s"expected no summary, got: $summary")
+    }
+
+    private def runnerWritingTo(bytes: java.io.ByteArrayOutputStream, forked: Boolean): SbtRunner =
+        new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked, new java.io.PrintStream(bytes, true, "UTF-8"))
+
+    test("a forked runner writes its summary itself, once, since sbt discards a forked done()") {
+        val bytes  = new java.io.ByteArrayOutputStream
+        val runner = runnerWritingTo(bytes, forked = true)
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteB])))(0).execute(new CapturingEventHandler, loggers)
+        val summary = runner.done()
+        val _       = runner.done()
+        assert(summary.startsWith("kyo-test: 1 tests, 0 passed, 1 failed"), summary): Unit
+        assert(summary.contains("TOTAL FAILURES (1)"), summary): Unit
+        assert(bytes.toString("UTF-8") == summary + java.lang.System.lineSeparator())
+    }
+
+    test("an unforked runner leaves its summary to sbt") {
+        val bytes  = new java.io.ByteArrayOutputStream
+        val runner = runnerWritingTo(bytes, forked = false)
+        runner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+        val summary = runner.done()
+        assert(summary.startsWith("kyo-test: 1 tests, 1 passed"), summary): Unit
+        assert(bytes.size() == 0, bytes.toString("UTF-8"))
     }
 
     // ── Test 11: SbtRunner.discoveryErrors is overwritten by successive calls ───────────────────

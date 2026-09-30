@@ -2,7 +2,7 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 
 /** Integration tests for MySQL sslmode `allow` and `prefer` (opportunistic TLS).
   *
@@ -19,7 +19,7 @@ import kyo.internal.SqlTestContainers
   *     connection is established over TLS via `SHOW SESSION STATUS LIKE 'Ssl_cipher'`.
   *   - Leaves 3 and 5 share a single TLS-enabled MySQL container lazily started by a per-class CAS-singleton (see [[tlsRef]]). `mysql:8.0`
   *     auto-generates server certs on first start, so no manual cert setup is required. The container survives the test class; it carries
-  *     the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels, and `SqlTestContainers.initSingleton` removes every dead-owner container,
+  *     the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every dead-owner container,
   *     together with its anonymous volumes, before creating a new singleton. There is no build-level cleanup task: a force-killed test
   *     process runs no sbt hook either.
   *   - Leaf 4 starts its own `--skip-ssl` container rather than sharing the singleton, so it is grouped with leaf 1 rather than with 3.
@@ -66,9 +66,9 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
             val skipSslPredef = ContainerPredef.MySQL.Config.default
                 .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
             val skipSslConfig = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef)
-            // Through `SqlTestContainers` rather than `Container.init` directly, so the container carries the
-            // `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a force-killed run's leftover is still reapable.
-            SqlTestContainers.initScoped(skipSslConfig, "mysql-skip-ssl").flatMap { skipSslContainer =>
+            // Through `TestContainers` rather than `Container.init` directly, so the container carries the
+            // `kyo-test-container` and `kyo-test-owner-pid` labels and a force-killed run's leftover is still reapable.
+            TestContainers.initScoped(skipSslConfig, "mysql-skip-ssl").flatMap { skipSslContainer =>
                 val mysql = new ContainerPredef.MySQL(skipSslContainer, skipSslPredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
@@ -107,7 +107,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
                 )
             val requireSslConfig = ContainerPredef.MySQL.buildContainerConfig(requireSslPredef)
             // Labelled for the same reason as leaf 1: an unlabelled container is unreapable after a force-kill.
-            SqlTestContainers.initScoped(requireSslConfig, "mysql-require-secure-transport").flatMap { requireSslContainer =>
+            TestContainers.initScoped(requireSslConfig, "mysql-require-secure-transport").flatMap { requireSslContainer =>
                 val mysql = new ContainerPredef.MySQL(requireSslContainer, requireSslPredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     // No establish budget (`connectTimeout=0` reads back as `Duration.Infinity`), because this leaf is
@@ -198,7 +198,7 @@ class MysqlSqlConfigTlsModeIntegrationTest extends SqlContainerTest:
                 .appendServerArgs("--skip-ssl", "--default-authentication-plugin=mysql_native_password")
             val skipSslConfig2 = ContainerPredef.MySQL.buildContainerConfig(skipSslPredef2)
             // Labelled for the same reason as leaf 1: an unlabelled container is unreapable after a force-kill.
-            SqlTestContainers.initScoped(skipSslConfig2, "mysql-skip-ssl").flatMap { skipSslContainer2 =>
+            TestContainers.initScoped(skipSslConfig2, "mysql-skip-ssl").flatMap { skipSslContainer2 =>
                 val mysql = new ContainerPredef.MySQL(skipSslContainer2, skipSslPredef2)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=prefer"
@@ -574,7 +574,7 @@ object MysqlSqlConfigTlsModeIntegrationTest:
         val cfg = ContainerPredef.MySQL.buildContainerConfig(predef)
             .bind(tempDirPath, Path("/etc/ssl-my"), readOnly = true)
             .command("sh", "-c", wrapperScript)
-        SqlTestContainers.initSingleton(cfg, "mysql-tls-certs").flatMap { container =>
+        TestContainers.initSingleton(cfg, "mysql-tls-certs").flatMap { container =>
             container.awaitHealthy.andThen {
                 container.mappedPort(ContainerPredef.MySQL.defaultPort).map { port =>
                     CertCtx(
@@ -592,7 +592,7 @@ object MysqlSqlConfigTlsModeIntegrationTest:
     end startCertContainer
 
     /** Starts a plain `mysql:8.0` container, auto-generated certs make CLIENT_SSL available out of the box. The container is left running
-      * for the JVM's lifetime; `SqlTestContainers.initSingleton` reaps it, with its anonymous volumes, on the next container-using run once
+      * for the JVM's lifetime; `TestContainers.initSingleton` reaps it, with its anonymous volumes, on the next container-using run once
       * this process is gone.
       */
     private def initTlsContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
@@ -601,7 +601,7 @@ object MysqlSqlConfigTlsModeIntegrationTest:
         val database = "test"
         val predef   = ContainerPredef.MySQL.Config.default.copy(username = username, password = password, database = database)
         val cfg      = ContainerPredef.MySQL.buildContainerConfig(predef)
-        SqlTestContainers.initSingleton(cfg, "mysql-tls-mode").flatMap { container =>
+        TestContainers.initSingleton(cfg, "mysql-tls-mode").flatMap { container =>
             val mysql = new ContainerPredef.MySQL(container, predef)
             mysql.container.mappedPort(mysql.config.port).map { port =>
                 TlsCtx(mysql.container.host, port, username, password, database)

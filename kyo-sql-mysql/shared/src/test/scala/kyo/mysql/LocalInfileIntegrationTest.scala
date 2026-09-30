@@ -2,14 +2,14 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 
 /** Integration tests for MySQL LOAD DATA LOCAL INFILE via stream upload.
   *
   * Every leaf but one uses the `local_infile=1` container; the `local_infile=0` leaf uses a separate container.
   *
   * Both containers are lazily started by per-class CAS-singletons (see [[localInfileOnRef]] and [[localInfileOffRef]]) and survive the test
-  * class. They carry the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels, and `SqlTestContainers.initSingleton` removes every dead-owner
+  * class. They carry the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every dead-owner
   * container, together with its anonymous volumes, before creating a new singleton. There is no build-level cleanup task: a force-killed
   * test process runs no sbt hook either. MySQL startup costs ~30-60 s; reusing the container amortises that cost.
   */
@@ -523,7 +523,7 @@ object LocalInfileIntegrationTest:
         val predef = ContainerPredef.MySQL.Config.default
             .appendServerArgs("--default-authentication-plugin=mysql_native_password", localInfileFlag)
         val cfg = ContainerPredef.MySQL.buildContainerConfig(predef)
-        SqlTestContainers.initSingleton(cfg, labelSuffix).flatMap { container =>
+        TestContainers.initSingleton(cfg, labelSuffix).flatMap { container =>
             val mysql = new ContainerPredef.MySQL(container, predef)
             mysql.container.mappedPort(mysql.config.port).map { port =>
                 MysqlCtx(mysql.container.host, port, mysql.username, mysql.password, mysql.database)

@@ -1,6 +1,7 @@
 package kyo.internal.framing
 
 import kyo.*
+import kyo.internal.Ascii
 
 private[kyo] object FramerImpl:
 
@@ -115,7 +116,7 @@ private[kyo] object FramerImpl:
             if colon > 0 then
                 val key   = line.substring(0, colon).trim
                 val value = line.substring(colon + 1).trim
-                if key.equalsIgnoreCase("Content-Length") then
+                if Ascii.equalsIgnoreCase(key, "Content-Length") then
                     scala.util.Try(value.toInt).toOption match
                         // scala.Option arm; interop with stdlib Try.toOption
                         case Some(n) if n >= 0 => found = Maybe.Present(n)

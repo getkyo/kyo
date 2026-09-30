@@ -2,7 +2,7 @@ package kyo.mysql
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 import kyo.net.NetTlsConfig
 
 /** Integration test for MySQL sha256_password auth plugin.
@@ -43,11 +43,11 @@ class Sha256PasswordIntegrationTest extends SqlContainerTest:
     )(
         f: (String, Int, String, String, String) => A < (S & Async & Abort[SqlException] & Scope)
     )(using Frame): A < (S & Async & Abort[Throwable] & Scope) =
-        // Through `SqlTestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
-        // container carries the `kyo-sql-singleton` and `kyo-sql-owner-pid` labels and a killed test
+        // Through `TestContainers` rather than `ContainerPredef.MySQL.initWith` directly, so the
+        // container carries the `kyo-test-container` and `kyo-test-owner-pid` labels and a killed test
         // process leaves something the reaper can find.
         val predef = ContainerPredef.MySQL.Config.default.serverArgs(serverArgs)
-        SqlTestContainers.initScopedMysql(predef, "mysql-sha256-password").map { mysql =>
+        TestContainers.initScopedMysql(predef, "mysql-sha256-password").map { mysql =>
             mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                 val host = mysql.container.host
                 val user = mysql.username

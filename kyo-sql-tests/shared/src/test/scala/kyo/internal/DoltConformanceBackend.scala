@@ -211,8 +211,8 @@ final class DoltConformanceBackend extends ContainerConformanceBackend:
         Frame
     ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
         for
-            container <- SqlTestContainers.getOrInit(SqlTestContainers.containers, "dolt")(
-                SqlTestContainers.initSingleton(containerConfig, "dolt")
+            container <- TestContainers.getOrInit(TestContainers.containers, "dolt")(
+                TestContainers.initSingleton(containerConfig, "dolt")
             )
             port   <- container.mappedPort(3306)
             schema <- freshSchemaName

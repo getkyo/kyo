@@ -42,7 +42,8 @@ import kyo.minutes
   * @param heartbeatInterval
   *   how long a single leaf may run before the runner reports it as still running via `TestReporter.onLeafHeartbeat`, repeating every
   *   interval thereafter. This makes a slow or hung leaf visible while it runs (the console reporter is silent between a leaf's start and
-  *   finish otherwise, so a hung leaf is invisible). `Duration.Infinity` disables heartbeats; defaults to 1 minute.
+  *   finish otherwise, so a hung leaf is invisible). A leaf whose own timeout is shorter than the interval is first reported at three
+  *   quarters of that timeout, so the report precedes the timeout. `Duration.Infinity` disables heartbeats; defaults to 1 minute.
   * @param leakCheck
   *   when `true` (the default), a forked test JVM runs end-of-run leak detection once all of its suites finish: it fails the run if a fiber is
   *   still running on the scheduler, a file descriptor opened during the run is still open, or a non-daemon thread the run started is still
@@ -161,7 +162,9 @@ final case class RunConfig(
     def failOnNoAssertion(failOnNoAssertion: Boolean): RunConfig = copy(failOnNoAssertion = failOnNoAssertion)
 
     /** Returns a copy with the given heartbeat interval. A leaf still running after this interval is reported via
-      * `TestReporter.onLeafHeartbeat`, and again every interval thereafter; `Duration.Infinity` disables heartbeats.
+      * `TestReporter.onLeafHeartbeat`, and again every interval thereafter; `Duration.Infinity` disables heartbeats. A leaf whose own
+      * timeout is shorter than the interval is first reported at three quarters of that timeout, so the report (and the console
+      * reporter's hang dump) precedes the timeout.
       */
     def heartbeatInterval(heartbeatInterval: Duration): RunConfig = copy(heartbeatInterval = heartbeatInterval)
 

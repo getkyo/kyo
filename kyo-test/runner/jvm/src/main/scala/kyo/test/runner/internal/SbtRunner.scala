@@ -14,12 +14,18 @@ import sbt.testing.TaskDef
   * [[SbtTask]] per [[TaskDef]], and accumulates per-suite [[TestReport]] values for the final `done()` summary. [[SbtTask]] delegates
   * execution to the pure-Kyo [[kyo.test.runner.TestRunner]].
   *
+  * Under `fork := true` sbt builds two runners. The one in sbt's own JVM only carries the arguments to the fork, is never asked for tasks,
+  * and is the one whose `done()` sbt logs; the forked one runs every task, and sbt's `ForkMain` discards its `done()`. So a runner never
+  * asked for tasks returns no summary, and a forked runner writes its summary to `summaryOut` itself, the stdout sbt forwards from the fork.
+  *
   * The `results` queue is thread-safe; sbt may call `execute` on multiple tasks concurrently.
   */
 final private[runner] class SbtRunner(
     val args: Array[String],
     val remoteArgs: Array[String],
-    val testClassLoader: ClassLoader
+    val testClassLoader: ClassLoader,
+    forked: Boolean = LeakCheck.isForked,
+    summaryOut: java.io.PrintStream = java.lang.System.out
 ) extends Runner:
 
     private val parsedArgs: Args.Result = Args.parse(args)
@@ -33,21 +39,22 @@ final private[runner] class SbtRunner(
             case Args.Result.Ok(_) =>
                 ()
 
-    private[internal] val baseConfig: RunConfig =
-        val fromArgs =
+    /** The flags as an overlay over each suite's own config; see `TestRunner.runReport`. */
+    private[internal] val baseOverlay: RunConfig => RunConfig =
+        val fromArgs: RunConfig => RunConfig =
             parsedArgs match
-                case Args.Result.Ok(parsed) => parsed.config
-                case _                      => RunConfig()
+                case Args.Result.Ok(parsed) => parsed.overlay
+                case _                      => identity
         // Count-only can also be triggered by the `kyo.test.count` system property. This works with a plain `test` (no
         // `testOnly -- --count` needed) and, crucially, in modules that also register another test framework (e.g. ScalaTest),
         // whose runner rejects the unknown `--count` CLI arg and would abort the whole task before kyo-test counts.
-        val withCount =
-            if java.lang.System.getProperty("kyo.test.count") == "true" then fromArgs.copy(countOnly = true)
+        val withCount: RunConfig => RunConfig =
+            if java.lang.System.getProperty("kyo.test.count") == "true" then fromArgs.andThen(_.copy(countOnly = true))
             else fromArgs
-        if java.lang.System.getProperty("kyo.test.list") == "true" then withCount.copy(countOnly = true, listOnly = true)
+        if java.lang.System.getProperty("kyo.test.list") == "true" then withCount.andThen(_.copy(countOnly = true, listOnly = true))
         else withCount
         end if
-    end baseConfig
+    end baseOverlay
 
     private[internal] val positionalArgs: Chunk[String] =
         parsedArgs match
@@ -59,13 +66,17 @@ final private[runner] class SbtRunner(
 
     // End-of-run leak detection runs once per forked test JVM, the one place the probe is both sound (the fork holds only this
     // run's resources) and safe to fail by exit. Enablement and the allowlist are per-suite RunConfig (default on), carried on
-    // each SuiteReport and aggregated at done(); the fork check is resolved once here (cheap: `sun.java.command` is set at JVM
-    // launch). The baseline is captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's
+    // each SuiteReport and aggregated at done(); the fork check is resolved once, at construction (cheap: `sun.java.command` is set at
+    // JVM launch). The baseline is captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's
     // own startup descriptors and threads (including the sbt.ForkMain socket). In the main sbt JVM `forked` is false: no
     // baseline, no carrier tracking, no check (the diff would be polluted by sbt's own resources and a throw would fail sbt).
-    private val forked            = LeakCheck.isForked
     private val leakBaseline      = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
     private val endOfRunChecksRan = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val tasksRequested = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    // sbt calls a forked runner's done() twice (after execution and from a shutdown hook); the summary is written once.
+    private val summaryWritten = new java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Leak-debug mode (KYO_TEST_LEAK_DEBUG=1): leaves are forced serial (LeafPool.globalK = 1), so install a per-leaf probe that snapshots the
     // open descriptors around each leaf and records which descriptors the leaf left open. The end-of-run leak report then attributes each leaked
@@ -83,22 +94,30 @@ final private[runner] class SbtRunner(
         new AtomicReference(Chunk.empty)
 
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
+        tasksRequested.set(true)
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
-                taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results, forked))
+                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, forked))
             case _ =>
                 Array.empty
+        end match
+    end tasks
 
     def done(): String =
+        // The summary is written before the end-of-run checks, which fail by throwing, so a leak report never hides the counts.
+        val summary =
+            parsedArgs match
+                case Args.Result.Error(msg) => msg
+                case Args.Result.Help       => ""
+                case Args.Result.Ok(_)      =>
+                    if !tasksRequested.get() then ""
+                    else
+                        import scala.jdk.CollectionConverters.*
+                        Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
+        if forked && summary.nonEmpty && summaryWritten.compareAndSet(false, true) then summaryOut.println(summary)
         runEndOfRunChecks()
-        parsedArgs match
-            case Args.Result.Error(msg) => msg
-            case Args.Result.Help       => ""
-            case Args.Result.Ok(_)      =>
-                import scala.jdk.CollectionConverters.*
-                Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
-        end match
+        summary
     end done
 
     /** Runs the end-of-run leak and stranded-op probes once, only inside a forked test JVM, throwing on the first one that finds
