@@ -64,7 +64,8 @@ final class TestChannelTransport(conns: Seq[Connection]) extends Transport:
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("upgradeToTls")
 
-    private[net] def capabilities: TransportCapabilities = TransportCapabilities(Set.empty, unixSockets = false)
+    private[net] def capabilities: TransportCapabilities =
+        TransportCapabilities(Set.empty, unixSockets = false, tlsCloseReason = false)
 
 end TestChannelTransport
 
@@ -150,5 +151,6 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("upgradeToTls")
 
-    private[net] def capabilities: TransportCapabilities = TransportCapabilities(Set.empty, unixSockets = false)
+    private[net] def capabilities: TransportCapabilities =
+        TransportCapabilities(Set.empty, unixSockets = false, tlsCloseReason = false)
 end DeferredConnectTransport

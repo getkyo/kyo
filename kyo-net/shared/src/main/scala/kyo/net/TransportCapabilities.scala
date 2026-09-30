@@ -18,5 +18,10 @@ package kyo.net
   *   all, which then honors no provider id.
   * @param unixSockets
   *   Whether this transport can bind and connect AF_UNIX filesystem paths.
+  * @param tlsCloseReason
+  *   Whether a TLS connection of this transport reports the RFC 8446 6.1 close distinction through [[Connection.status]]: true where the
+  *   transport drives the TLS record layer itself and sees the peer's close_notify, false where it delegates TLS termination to a runtime
+  *   that surfaces a clean close and a truncation identically.
   */
-final private[net] case class TransportCapabilities(tlsProviders: Set[String], unixSockets: Boolean) derives CanEqual
+final private[net] case class TransportCapabilities(tlsProviders: Set[String], unixSockets: Boolean, tlsCloseReason: Boolean)
+    derives CanEqual

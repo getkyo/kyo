@@ -1366,7 +1366,8 @@ import scala.quoted.*
             report.errorAndAbort(
                 s"Cannot derive Schema for ${tpe.show} via a constructor: the type is not a case class. " +
                     "Schema.derivedVia reads the wire shape from the case fields, so it needs one. " +
-                    "Provide a given Schema built with Schema.init for a type with no case fields."
+                    "For a type over one value, such as an opaque type, build its schema from the underlying type's with " +
+                    "transformVia: summon[Schema[Int]].transformVia(Port.parse)(_.value)."
             )
         end if
         rejectPrivateCaseFields(tpe, sym)

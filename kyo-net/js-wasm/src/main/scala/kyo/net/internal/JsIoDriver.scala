@@ -180,12 +180,42 @@ final private[kyo] class JsIoDriver private (
         end match
     end cancel
 
-    def closeHandle(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
-        // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
-        // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
-        // net.Socket.
-        if !handle.socket.destroyed.asInstanceOf[Boolean] then
-            discard(handle.socket.destroy())
+    /** A graceful close ends the writable side and destroys the socket once Node reports it finished, instead of destroying at once.
+      *
+      * `destroy()` discards what the writable side still holds. A `net.Socket` write reaches the kernel on the calling turn when it can, so
+      * a destroy right after it rarely loses anything; a `tls.TLSSocket` write is encrypted at once but handed to the underlying socket only
+      * when no earlier write is in flight there, and a write's completion lands on a later event-loop turn even on loopback, so the second
+      * of two back-to-back writes still sits in Node's TLS output when a same-turn destroy discards it. The write pump cannot see the loss:
+      * `socket.write` accepted the bytes. `end()` flushes that output and then sends the FIN; `finish` is Node's signal that every accepted
+      * write reached the underlying socket, and the destroy follows it.
+      *
+      * The wait is bounded by the handle's `peerCloseGrace`, the window the transport already grants a peer that has stopped reading: a
+      * peer that never drains never lets the output finish, and the socket is destroyed regardless when the window ends. `Duration.Infinity`
+      * (stdio, whose shim owns no socket) arms no timer. An abort keeps the immediate destroy: the upgrade abandon, the handshake deadline
+      * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
+      */
+    def closeHandle(handle: JsHandle)(using allow: AllowUnsafe, frame: Frame): Unit =
+        // Node's net.Socket#destroyed and #writableFinished are documented boolean properties; js.Dynamic erases them to untyped JS values,
+        // so recovering the typed Boolean needs these narrowing casts. Safe per Node's documented property types; they cannot dissolve
+        // without a typed facade for Node's net.Socket.
+        val socket = handle.socket
+        if !socket.destroyed.asInstanceOf[Boolean] then
+            def destroyNow(): Unit =
+                if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
+            val settle: js.Function0[Unit] =
+                if handle.peerCloseGrace.isFinite then
+                    val timer = handle.clock.unsafe.sleep(handle.peerCloseGrace)
+                    timer.onComplete(_ => destroyNow())
+                    () =>
+                        destroyNow()
+                        // Interrupting completes the timer and runs the callback above, which finds the socket destroyed and does nothing.
+                        timer.interruptDiscard(Result.Panic(Interrupted(frame, "socket settled before the close grace")))
+                else () => destroyNow()
+            // `close` covers a socket that finished before this ran or that Node destroys on an error after the end.
+            discard(socket.once("finish", settle))
+            discard(socket.once("close", settle))
+            discard(socket.end())
+            if socket.writableFinished.asInstanceOf[Boolean] then settle()
         end if
     end closeHandle
 

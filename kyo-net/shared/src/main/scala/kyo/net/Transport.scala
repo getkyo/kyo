@@ -145,6 +145,14 @@ abstract class Transport:
       * duplicated as per-suite platform checks.
       */
     final private[kyo] def supportsUnixSockets: Boolean = capabilities.unixSockets
+
+    /** Whether a TLS connection of this transport reports the RFC 8446 6.1 close distinction through [[Connection.status]]
+      * (`CleanClose` after the peer's close_notify, `Truncated` after a bare FIN). True for the posix and NIO transports, which drive the TLS
+      * record layer themselves. False for the Node transport, which delegates TLS termination to Node and observes neither. A caller that
+      * frames by the close (an HTTP/1.1 body with no `Content-Length`) reads this to know whether an `Active` status at the close means
+      * "nothing observed" or "no close_notify".
+      */
+    final private[kyo] def reportsTlsCloseReason: Boolean = capabilities.tlsCloseReason
 end Transport
 
 object Transport:

@@ -87,6 +87,13 @@ class NioTransportTlsCloseReasonTest extends Test:
         }
     }
 
+    "the inline NIO transport declares that it reports the TLS close reason" in {
+        given Frame = Frame.internal
+        mkTransport().map { transport =>
+            assert(transport.reportsTlsCloseReason, "the NIO transport drives the JDK SSLEngine itself and sees the close_notify")
+        }
+    }
+
     // Truncated: the peer ends the TCP connection with a bare FIN and NO close_notify. The inline NIO client must report Truncated (the
     // truncation-attack condition, made observable). Without the wiring it would report Active, so a length-aware caller could not detect the truncation.
     "inline NIO TLS client reports Truncated when the peer ends with a bare FIN and no close_notify" in {
