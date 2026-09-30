@@ -776,34 +776,34 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     }
 
     "close(gracePeriod) drains before forcing" in {
-        // The handler blocks on releaseGate (a real Promise the test completes) instead of sleeping, then
-        // completes `done`. The grace-period close (close(1.second)) waits for in-flight work to drain. The
-        // test confirms the call is in-flight, starts the close, then completes releaseGate so the handler
-        // runs to its natural end and drains. `done` completing is the drain-before-force proof: a forced
-        // close interrupts the in-flight handler (finalizer step 8) before it can complete `done`, so a
-        // completed `done` means the handler drained gracefully rather than being forced. This replaces the
-        // wall-clock `elapsed < 900` proxy with the gate-ordering guarantee, and the 1-second grace is never
-        // actually elapsed because the gated drain completes first.
+        // The grace is a real Async.timeout on the ambient clock, so the leaf runs under Clock.withTimeControl and never advances it: the
+        // 1-second grace cannot expire, and closeFib completes only by the drain. The handler signals `entered` before blocking on
+        // releaseGate, and the close starts only after that, so the request is already on the handler side. The caller's inFlight count
+        // alone is not enough: on a live clock a round trip slower than the grace lets the forced close shut the transport before the
+        // handler runs, and `done` never completes.
         val done = Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe
         Fiber.Promise.init[Unit, Any].map { releaseGate =>
-            val q = JsonRpcRoute.request[Unit, Unit]("q") { (_, _) =>
-                releaseGate.get.andThen(done.completeUnit.unit)
-            }
-            JsonRpcTransport.inMemory.map { (ta, tb) =>
-                JsonRpcHandler.init(ta, Seq.empty).map { a =>
-                    JsonRpcHandler.init(tb, Seq(q)).map { _ =>
-                        val impl = a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl]
-                        Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
-                            // Yield until the call fiber has registered in inFlight. On Native's single-threaded
-                            // scheduler, Fiber.initUnscoped does not transfer control immediately, so close()
-                            // can observe inFlight == 0 and skip draining without this guard.
-                            assertEventually(impl.inFlight.get.map(_ > 0)).andThen {
-                                Fiber.initUnscoped(a.close(1.second)).map { closeFib =>
-                                    // Release the handler so it completes `done` and the endpoint drains.
-                                    releaseGate.completeUnitDiscard.andThen {
-                                        closeFib.get.andThen {
-                                            done.get.andThen {
-                                                Sync.Unsafe.defer(assert(impl.inFlight.unsafe.get() <= 0))
+            Fiber.Promise.init[Unit, Any].map { entered =>
+                val q = JsonRpcRoute.request[Unit, Unit]("q") { (_, _) =>
+                    entered.completeUnitDiscard.andThen(releaseGate.get).andThen(done.completeUnit.unit)
+                }
+                Clock.withTimeControl { control =>
+                    JsonRpcTransport.inMemory.map { (ta, tb) =>
+                        JsonRpcHandler.init(ta, Seq.empty).map { a =>
+                            JsonRpcHandler.init(tb, Seq(q)).map { _ =>
+                                val impl = a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl]
+                                Fiber.initUnscoped(a.call[Unit, Unit]("q", ())).andThen {
+                                    entered.get.andThen {
+                                        Fiber.initUnscoped(a.close(1.second)).map { closeFib =>
+                                            // The grace timer is armed, so the close is waiting on the drain before the handler is released.
+                                            control.awaitPendingSleepers(1).andThen {
+                                                releaseGate.completeUnitDiscard.andThen {
+                                                    closeFib.get.andThen {
+                                                        done.get.andThen {
+                                                            Sync.Unsafe.defer(assert(impl.inFlight.unsafe.get() <= 0))
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
