@@ -18,8 +18,8 @@ import kyo.net.Test
   * These leaves pin the wakeup directly (the higher-level `TransportHandshakeTimeoutTest` exercises it under real connect timing): build a driver
   * over a real epoll/kqueue backend through a [[RecordingPollerBackend]] spy, START the poll loop so it parks in the real bounded wait, then arm
   * a write-readiness through the public connect path on an already-writable loopback fd. The wakeup must make the parked poll return and deliver
-  * the writable; the spy's `wakeCount` proves the wake path ran on submit. A bounded `Async.timeout` guard turns a regression (no wake, the
-  * writable starved past the guard) into a failure rather than a hang. No sleep-as-synchronization.
+  * the writable; the spy's `wakeCount` proves the wake path ran on submit. A writable that is never delivered hangs the leaf to its cap. No
+  * sleep-as-synchronization.
   *
   * Gate: `PosixTestSockets.assumePoller()` (a real epoll/kqueue fd; io_uring uses a different driver and the NIO floor a different transport).
   */
@@ -47,15 +47,15 @@ class PollerWakeConnectTest extends Test:
 
                 // awaitConnect -> armSocketWritable -> submitChange(OpRegisterWrite); submitChange triggers backend.wake, cutting the park short so
                 // the register runs and the (already-writable) fd's readiness is delivered. Without the wake the writable still arrives, but only
-                // after the bounded park; the bounded guard below would still pass, so the wakeCount assertion is what pins the wake path.
+                // after the bounded park, so the wakeCount assertion is what pins the wake path.
                 driver.awaitConnect(handle, promise)
 
-                Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](promise.safe.get))).map { outcome =>
+                Abort.run[Closed | NetException](promise.safe.get).map { outcome =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     assert(
-                        outcome == Result.succeed(Result.succeed(())),
+                        outcome == Result.succeed(()),
                         s"the write-readiness must be delivered (the connect-writable wake), got $outcome"
                     )
                     assert(
@@ -76,8 +76,8 @@ class PollerWakeConnectTest extends Test:
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
                 discard(driver.start())
 
-                // Re-arm write-readiness on the same already-writable fd many times in sequence, each bounded by a generous guard. This mirrors the
-                // 30-rapid-connect cadence: every arm must be delivered promptly via the wake, not stranded behind a park.
+                // Re-arm write-readiness on the same already-writable fd many times in sequence. This mirrors the rapid-connect cadence: every
+                // arm must be delivered, not stranded behind a park.
                 // The handle id is bumped each iteration so a prior cycle's stale writable cannot satisfy the next (mirrors a fresh connect fd).
                 Loop(0) { i =>
                     if i >= 20 then Loop.done(i)
@@ -85,9 +85,9 @@ class PollerWakeConnectTest extends Test:
                         val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val promise = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                         driver.awaitConnect(handle, promise)
-                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](promise.safe.get))).map { outcome =>
+                        Abort.run[Closed | NetException](promise.safe.get).map { outcome =>
                             assert(
-                                outcome == Result.succeed(Result.succeed(())),
+                                outcome == Result.succeed(()),
                                 s"iteration $i: the write-readiness must be delivered via the wake, got $outcome"
                             )
                             Loop.continue(i + 1)

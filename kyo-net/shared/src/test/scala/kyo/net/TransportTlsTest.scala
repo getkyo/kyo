@@ -57,19 +57,18 @@ class TransportTlsTest extends Test:
         import NetTlsConfig.Version.*
         // Server accepts only TLS 1.3; client offers only TLS 1.2. There is no common version, so the handshake MUST fail on every cell rather
         // than silently negotiating an unintended version. The cell's provider pin carried by serverTls/clientTls is preserved through copy, so
-        // the rejection is asserted on each TLS implementation, not just the platform default. Bounded by Async.timeout so a cell that mishandled
-        // the mismatch by hanging fails the guard rather than the suite.
-        val srv = serverTls.copy(minVersion = TLS13, maxVersion = TLS13)
-        val cli = clientTls.copy(minVersion = TLS12, maxVersion = TLS12)
+        // the rejection is asserted on each TLS implementation, not just the platform default. A cell that mishandled the mismatch by hanging
+        // fails at the leaf cap.
+        // No handshake deadline on either end: only the rejection can end the connect, so a missing one hangs to the leaf cap.
+        val srv = serverTls.copy(minVersion = TLS13, maxVersion = TLS13, handshakeTimeout = Duration.Infinity)
+        val cli = clientTls.copy(minVersion = TLS12, maxVersion = TLS12, handshakeTimeout = Duration.Infinity)
         transport.listenTls("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
             Scope.ensure(Sync.defer(listener.close())).andThen {
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, cli).safe.get)
-                ).map { outcome =>
+                Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, cli).safe.get).map { outcome =>
                     listener.close()
                     // Defensive: if this ever unexpectedly succeeds, the returned connection must still not leak.
                     outcome.foreach(conn => conn.close())
-                    assert(outcome.isFailure, s"a TLS version-mismatch handshake must fail on this cell, got $outcome")
+                    assert(Test.rejected(outcome), s"a TLS version-mismatch handshake must fail on this cell, got $outcome")
                 }
             }
         }
@@ -77,26 +76,24 @@ class TransportTlsTest extends Test:
 
     "a TLS client connecting to a plaintext (non-TLS) server fails Closed" - eachBackendTls { (transport, _, clientTls) =>
         // The server is plaintext and closes each accepted connection immediately, so it never performs a TLS handshake. A connect(tls) client
-        // must fail (the handshake aborts on EOF), not hang or silently succeed. Bounded so a cell that hung would fail the guard.
+        // must fail (the handshake aborts on EOF), not hang or silently succeed. A cell that hung fails at the leaf cap.
         transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
             Scope.ensure(Sync.defer(listener.close())).andThen {
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
-                ).map { outcome =>
+                // No handshake deadline: only the server's close can end the connect, so a client that ignores the EOF hangs to the leaf cap.
+                val cli = clientTls.copy(handshakeTimeout = Duration.Infinity)
+                Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, cli).safe.get).map { outcome =>
                     listener.close()
                     // Defensive: if this ever unexpectedly succeeds, the returned connection must still not leak.
                     outcome.foreach(conn => conn.close())
-                    assert(outcome.isFailure, s"a TLS client against a plaintext server must fail on this cell, got $outcome")
+                    assert(Test.rejected(outcome), s"a TLS client against a plaintext server must fail on this cell, got $outcome")
                 }
             }
         }
     }
 
     "pem fixture paths are unique under concurrent writes" in {
-        // pins TlsTestCertShared.uniquePathTag: nanoTime alone can tie across concurrent callers
-        // (its granularity is about 40ns on an aarch64 VM, and a suite start fans the whole cell
-        // matrix out at once), and a tied path means one cell truncate-rewrites the very pem
-        // another cell's TLS setup is reading, observed as a truncated-key handshake failure
+        // pins TlsTestCertShared.uniquePathTag: a tied path means one cell truncate-rewrites the very
+        // pem another cell's TLS setup is reading, observed as a truncated-key handshake failure
         Async.fill(256, 256)(TlsTestCertShared.writePems).map { pairs =>
             val paths = pairs.flatMap { case (cert, key) => Chunk(cert, key) }
             assert(paths.distinct.size == paths.size)

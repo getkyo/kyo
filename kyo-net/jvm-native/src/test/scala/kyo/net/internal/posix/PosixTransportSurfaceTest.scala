@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.NetAddress
+import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.Connection as InternalConnection
@@ -292,19 +293,17 @@ class PosixTransportSurfaceTest extends Test:
             // blocking pool, not panic). This exercises the full resolve-then-fail path through transport.connect: the host is non-numeric
             // and not a loopback name, so it goes through HostResolver, the real system resolver yields a failure, and the connect promise
             // must complete with it. The host is under the RFC 6761 reserved `.invalid` TLD, which never resolves (the system resolver
-            // returns NXDOMAIN), so the lookup fails against the REAL resolver with no injected stub. A real negative lookup is not bounded
-            // by the transport (a pathological host resolver can stall on an upstream query before returning NXDOMAIN), so a generous
-            // Async.timeout bounds it: either the resolver fails (NetDnsResolutionException) or the bound expires (Timeout), both clean
-            // failures with no hang and no crash. The numeric and loopback round-trip leaves above cover the resolve-SUCCESS path against
-            // the real resolver.
+            // returns NXDOMAIN), so the lookup fails against the REAL resolver with no injected stub. The numeric and loopback round-trip
+            // leaves above cover the resolve-SUCCESS path against the real resolver.
             assumePoller()
             withTransport { transport =>
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(10.seconds)(transport.connect("kyo-net-unresolvable-host.invalid", 80).safe.get)
-                ).map { outcome =>
+                Abort.run[NetException | Closed](transport.connect("kyo-net-unresolvable-host.invalid", 80).safe.get).map { outcome =>
                     // Defensive: see the dead-port leaf above for why an unexpected success is still closed here.
                     outcome.foreach(_.close())
-                    assert(outcome.isFailure, s"expected a clean failure connecting to an unresolvable host, got $outcome")
+                    outcome match
+                        case Result.Failure(_: NetDnsResolutionException) => succeed
+                        case other => fail(s"expected a NetDnsResolutionException connecting to an unresolvable host, got $other")
+                    end match
                 }
             }
         }
@@ -314,9 +313,8 @@ class PosixTransportSurfaceTest extends Test:
         "connectUnix + listenUnix round-trips a known message through an echo handler" in {
             assumePoller()
             // A unique short path under /tmp (exists on Linux and macOS). /tmp keeps it well under the 108-byte sun_path limit, unlike the
-            // macOS $TMPDIR; nanoTime gives uniqueness without java.util.UUID (Native has no SecureRandom). The path is fresh per run, so no
-            // stale-file cleanup is needed here (and `java.io.File` is unavailable on Scala.js, where this shared test must still link).
-            val path = s"/tmp/kyo-posix-uds-${java.lang.System.nanoTime()}.sock"
+            // macOS $TMPDIR. The path is fresh per run, so no stale-file cleanup is needed here.
+            val path = s"/tmp/kyo-posix-uds-${kyo.net.TlsTestCertShared.uniquePathTag()}.sock"
             withTransport { transport =>
                 for
                     serverConnRef <- AtomicRef.init[Maybe[Connection]](Absent)

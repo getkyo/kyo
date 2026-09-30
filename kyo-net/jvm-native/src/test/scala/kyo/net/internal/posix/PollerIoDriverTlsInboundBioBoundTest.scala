@@ -180,7 +180,8 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                 reader.start()
                                 Fiber.initUnscoped(Abort.run[Closed](sendAllBackpressured(driver, clientH, client, allCipher))).flatMap {
                                     _ =>
-                                        Abort.run[Timeout | Closed](Async.timeout(20.seconds)(done.safe.get)).map { outcome =>
+                                        // A standing read that stalls short of the plaintext hangs the leaf to its cap.
+                                        Abort.run[Closed](done.safe.get).map { outcome =>
                                             import scala.jdk.CollectionConverters.*
                                             val feedLens = recordingServer.feedLens.iterator().asScala.toList
                                             val maxIn    = recordingServer.maxInFlight.get()
@@ -222,10 +223,6 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                                         s"engine ops overlapped: maxInFlight=$maxIn (expected 1); a feed ran before the prior drain finished, so the BIO could accumulate"
                                                     )
                                                     succeed
-                                                case Result.Failure(_: Timeout) =>
-                                                    fail(
-                                                        s"standing read stalled after ${plainAcc.size()} of ${expectedPlain.length} plaintext bytes"
-                                                    )
                                                 case other => fail(s"unexpected standing-read outcome: $other")
                                             end match
                                         }

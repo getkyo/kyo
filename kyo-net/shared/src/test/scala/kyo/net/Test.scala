@@ -142,6 +142,18 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
+        tlsCells(skipCell)((entry, serverTls, clientTls) => scenario(entry.transport, serverTls, clientTls))
+
+    /** One leaf per (backend, TLS provider) cell, each running `runCell` with the cell's pinned server and client configs once the cell is known
+      * to be available, not skipped, and a pair the backend drives.
+      */
+    private def tlsCells(skipCell: (String, String) => Maybe[String])(
+        runCell: (
+            TestBackends.Entry,
+            NetTlsConfig,
+            NetTlsConfig
+        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
         import AllowUnsafe.embrace.danger
         for
             entry <- TestBackends.all
@@ -160,11 +172,9 @@ abstract class Test extends kyo.test.Test[Any]:
                     skipCell(entry.name, provider.name) match
                         case Present(reason) => cancel(reason)
                         case Absent          =>
-                            // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario
-                            // runs (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built
-                            // transport and cancels rather than running a mislabeled handshake on a substituted implementation.
-                            val transport = entry.transport
-                            if !transport.supportedTlsProviders.contains(provider.name) then
+                            // Query the backend's shared transport for its TLS capability so an unsupported cell cancels visibly BEFORE the
+                            // scenario runs, rather than running a mislabeled handshake on a substituted implementation.
+                            if !entry.transport.supportedTlsProviders.contains(provider.name) then
                                 cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
                             else
                                 Sync.defer(()).andThen {
@@ -175,14 +185,70 @@ abstract class Test extends kyo.test.Test[Any]:
                                             tlsProvider = Present(provider.name)
                                         )
                                         val clientTls = NetTlsConfig(trustAll = true, tlsProvider = Present(provider.name))
-                                        scenario(transport, serverTls, clientTls)
+                                        runCell(entry, serverTls, clientTls)
                                     }
                                 }
                             end if
                     end match
             }
         end for
-    end tlsLeaves
+    end tlsCells
+
+    /** Re-check `cond` once per scheduler turn until it holds, for state no event reports (a fiber parking on a promise, the kernel releasing
+      * a port). The turn is a trivial fiber this one awaits, which suspends it so scheduled fibers run; on JS every task is a macrotask, so a
+      * turn also lets the Node event loop run its I/O phase. No clock is read, and a state that never arrives hangs to the leaf cap.
+      */
+    def untilTurn[S](cond: => Boolean < (Async & S))(using Frame): Unit < (Async & S) =
+        Loop(())(_ => cond.map(holds => if holds then Loop.done(()) else turn.andThen(Loop.continue(()))))
+
+    /** [[untilTurn]] for a plain condition on state another carrier advances (a driver's poll or reap carrier), which the wait must not
+      * disturb: it adds no wakeup, no registration and no reap of its own.
+      */
+    def untilState(cond: => Boolean)(using Frame): Unit < Async =
+        untilTurn(Sync.defer(cond))
+
+    /** One scheduler turn, as [[untilTurn]] describes: pacing for a loop that must let other fibers and I/O run, with no clock. */
+    def turn(using Frame): Unit < Async =
+        Fiber.initUnscoped(()).map(_.get)
+
+    /** Like [[eachBackend]], but each cell runs on a transport of its own whose deadlines, backoffs and close graces are on a controlled clock.
+      * The scenario receives that transport and the clock's [[Clock.TimeControl]]; virtual time moves only when the scenario advances it, so a
+      * deadline fires at the exact instant the scenario chooses and never during an unrelated wait. The cell's drivers close with its scope.
+      */
+    def eachBackendOnClock(
+        scenario: (Transport, Clock.TimeControl) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        TestBackends.all.foreach { entry =>
+            s"[${entry.name}]" in {
+                if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
+                else onClock(entry)(scenario)
+            }
+        }
+
+    /** [[eachBackendTls]] on a controlled clock, with the cell's transport and drivers as [[eachBackendOnClock]] describes. */
+    def eachBackendTlsOnClock(
+        scenario: (
+            Transport,
+            Clock.TimeControl,
+            NetTlsConfig,
+            NetTlsConfig
+        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        tlsCells((_, _) => Absent) { (entry, serverTls, clientTls) =>
+            onClock(entry)((transport, timeControl) => scenario(transport, timeControl, serverTls, clientTls))
+        }
+
+    private def onClock(entry: TestBackends.Entry)(
+        scenario: (Transport, Clock.TimeControl) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
+        Clock.withTimeControl { timeControl =>
+            Clock.get.map { clock =>
+                Sync.Unsafe.defer(entry.transportOn(clock)).map { transport =>
+                    Scope.ensure(Sync.Unsafe.defer(Test.closeDrivers(transport))).andThen(scenario(transport, timeControl))
+                }
+            }
+        }
+    end onClock
 
     /** Run `scenario` against this backend's transport.
       *
@@ -208,5 +274,22 @@ object Test:
       */
     private[net] def isolationEnv(name: String): Maybe[String] =
         Maybe(FlagPlatform.env(name)).filter(_.nonEmpty)
+
+    /** Closes every driver of a transport built for one leaf. A transport has no close of its own (production's lives for the process), and
+      * `next()` taken `size` times visits each driver of the round-robin pool once.
+      */
+    private[net] def closeDrivers(transport: Transport)(using AllowUnsafe, Frame): Unit =
+        transport match
+            case impl: kyo.net.internal.transport.TransportImpl[?] => (0 until impl.pool.size).foreach(_ => impl.pool.next().close())
+            case _                                                 => ()
+
+    /** Whether `outcome` failed for a reason no deadline produced. A handshake or connect that merely ran out of time proves nothing about the
+      * rejection a leaf asserts, so it does not count.
+      */
+    private[net] def rejected(outcome: Result[Any, Any]): Boolean =
+        outcome match
+            case Result.Failure(_: (NetTlsHandshakeTimeoutException | NetConnectTimeoutException)) => false
+            case Result.Failure(_)                                                                 => true
+            case _                                                                                 => false
 
 end Test

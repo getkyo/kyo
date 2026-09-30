@@ -28,7 +28,10 @@ import kyo.net.Test
   * tears down cleanly (the real accept then succeeds).
   *
   * Completion: no clock is read. The leaf settles on whichever event lands first and the assertion reads which: a resource-backoff re-arm
-  * (the `onAcceptResourceBackoff` hook) or the spy's `spinThreshold` spin cap, which only a spinning loop reaches. `Async.timeout` is only the deadlock ceiling.
+  * (the `onAcceptResourceBackoff` hook) or the spy's `spinThreshold` spin cap, which only a spinning loop reaches. The backoff then runs on
+  * the transport's controlled clock, so the leaf also pins the re-arm to the backoff's instant: nothing before it, one `acceptNow` at it.
+  * That retry needs the re-armed accept to report a listen fd that is already ready, which an edge-triggered epoll arm skipping its
+  * `epoll_ctl(MOD)` does not.
   */
 class PosixTransportAcceptEmfileTest extends Test:
 
@@ -46,10 +49,6 @@ class PosixTransportAcceptEmfileTest extends Test:
     // Spin cap: once acceptNow is called this many times for ONE pending connection (a bounded-backoff loop issues only a handful), the spy
     // settles the leaf with Spun and stops injecting EMFILE so a regressed build's real accept drains the backlog and teardown is clean.
     private val spinThreshold = 200
-
-    // Deadlock ceiling, not a pass condition: the assertion reads which event settled the leaf, never elapsed time. This turns an accept loop
-    // that neither backs off nor spins (a listener wedged with no re-arm at all) into a failed test instead of a hang.
-    private val settleCeiling = 15.seconds
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -118,56 +117,74 @@ class PosixTransportAcceptEmfileTest extends Test:
 
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
-            val settled   = Promise.Unsafe.init[AcceptGuard, Any]()
-            val spy       = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
-            val driver    = PollerIoDriver.init()
-            val transport = TestTransports.forTesting(
-                driver,
-                spy,
-                backendIsEpoll = false,
-                // First backoff re-arm means the loop took the anti-spin path: settle BackedOff. The promise gate makes it idempotent, so the
-                // first backoff (or the spin cap, whichever the loop reaches) owns the outcome.
-                onAcceptResourceBackoff = () => discard(settled.complete(Result.succeed(AcceptGuard.BackedOff)))
-            )
+            val settled       = Promise.Unsafe.init[AcceptGuard, Any]()
+            val secondBackoff = Promise.Unsafe.init[Unit, Any]()
+            val backoffs      = new AtomicInteger(0)
+            val spy           = new EmfileAcceptSockets(Ffi.load[SocketBindings], settled)
+            val driver        = PollerIoDriver.init()
+            val backoff       = kyo.net.acceptResourceBackoff().millis
             discard(driver.start())
-            Sync.ensure(Sync.defer(driver.close())) {
-                for
-                    listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
-                    // Registered as soon as the listener is up: the connect below (or its inline assert) can fail before the tail block that
-                    // used to hold the only listener.close(), which would leak the listener.
-                    _ <- Scope.ensure(Sync.defer(listener.close()))
-                    port = listener.port
-                    // One real client connect: the listen fd gets exactly one backlog entry, so it is genuinely read-ready and the poll loop
-                    // drives the transport's acceptAll -> acceptNow path against the injected EMFILE.
-                    clientFd <-
-                        val fd = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-                        // Registered immediately for the same reason: the raw client fd's only close used to sit past the same connect/assert.
-                        Scope.ensure(Sync.defer(discard(spy.close(fd)))).andThen {
-                            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
-                            spy.connect(fd, ca, cl).safe.get.map { r =>
-                                ca.close()
-                                assert(r.value == 0, s"client connect failed errno=${r.errorCode}")
-                                fd
-                            }
-                        }
-                    // Settles on the first backoff re-arm or on the spin cap, whichever the accept loop reaches first.
-                    outcome <- Abort.run[Timeout](Async.timeout(settleCeiling)(settled.safe.get))
-                yield outcome match
-                    case Result.Success(AcceptGuard.BackedOff) => succeed
-                    case Result.Success(AcceptGuard.Spun)      =>
-                        fail(
-                            s"accept loop spun: it re-armed immediately under a persistent EMFILE instead of backing off, issuing acceptNow up " +
-                                s"to the spin cap ($spinThreshold) for ONE pending connection. EMFILE leaves the connection in the backlog, so an " +
-                                "immediate re-arm re-fires the still-ready listen fd at once and the loop livelocks; the fix re-arms only after a " +
-                                "bounded backoff."
-                        )
-                    case Result.Failure(_: Timeout) =>
-                        fail(
-                            "the accept loop neither backed off nor spun: it never re-armed under EMFILE, so the listener is wedged and the " +
-                                "pending connection is never accepted"
-                        )
-                    case other => fail(s"unexpected accept-loop outcome: $other")
-                end for
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val transport = TestTransports.forTesting(
+                        driver,
+                        spy,
+                        backendIsEpoll = false,
+                        // First backoff re-arm means the loop took the anti-spin path: settle BackedOff. The promise gate makes it idempotent,
+                        // so the first backoff (or the spin cap, whichever the loop reaches) owns the outcome.
+                        onAcceptResourceBackoff = () =>
+                            if backoffs.incrementAndGet() == 1 then discard(settled.complete(Result.succeed(AcceptGuard.BackedOff)))
+                            else discard(secondBackoff.complete(Result.succeed(()))),
+                        clock = clock
+                    )
+                    Sync.ensure(Sync.defer(driver.close())) {
+                        for
+                            listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
+                            // Registered before the connect so its inline assert cannot leak the listener.
+                            _ <- Scope.ensure(Sync.defer(listener.close()))
+                            port = listener.port
+                            // One real client connect: the listen fd gets exactly one backlog entry, so it is genuinely read-ready and the poll
+                            // loop drives the transport's acceptAll -> acceptNow path against the injected EMFILE.
+                            _ <-
+                                val fd = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                                Scope.ensure(Sync.defer(discard(spy.close(fd)))).andThen {
+                                    val (ca, cl) =
+                                        SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+                                    spy.connect(fd, ca, cl).safe.get.map { r =>
+                                        ca.close()
+                                        assert(r.value == 0, s"client connect failed errno=${r.errorCode}")
+                                    }
+                                }
+                            // Settles on the first backoff re-arm or on the spin cap, whichever the accept loop reaches first. A loop that does
+                            // neither never settles and the leaf hangs to its cap.
+                            outcome <- settled.safe.get
+                            _ = if outcome == AcceptGuard.Spun then
+                                fail(
+                                    s"accept loop spun: it re-armed immediately under a persistent EMFILE instead of backing off, issuing acceptNow " +
+                                        s"up to the spin cap ($spinThreshold) for ONE pending connection. EMFILE leaves the connection in the " +
+                                        "backlog, so an immediate re-arm re-fires the still-ready listen fd at once and the loop livelocks; the fix " +
+                                        "re-arms only after a bounded backoff."
+                                )
+                            // Time is held, so no acceptNow can follow until the backoff elapses on the transport's clock.
+                            atFirst <- Sync.defer(spy.acceptNowCalls.get())
+                            _       <- tc.awaitPendingSleepers(1)
+                            _       <- tc.advance(backoff.minusOrZero(1.millis))
+                            _       <- tc.awaitPendingSleepers(1)
+                            early   <- Sync.defer(spy.acceptNowCalls.get())
+                            _       <- tc.advance(1.millis)
+                            // The re-armed accept must report the connection still queued: it produces no new readiness transition, so an
+                            // arm that waits for one strands it until another client connects and the leaf hangs to its cap.
+                            _        <- secondBackoff.safe.get
+                            atSecond <- Sync.defer(spy.acceptNowCalls.get())
+                        yield
+                            assert(early == atFirst, s"no acceptNow may run before the $backoff backoff elapses, got ${early - atFirst}")
+                            assert(
+                                atSecond == atFirst + 1,
+                                s"the re-arm at the backoff instant must issue exactly one acceptNow, got ${atSecond - atFirst}"
+                            )
+                        end for
+                    }
+                }
             }
         }
     }

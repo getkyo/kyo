@@ -334,7 +334,7 @@ final private[kyo] class JsTransport private (
       * `net.Socket` on TCP accept (before the handshake), "secureConnection" with the wrapping `tls.TLSSocket` on a successful handshake, and
       * "tlsClientError" with the `tls.TLSSocket` on a failed handshake; the `TLSSocket._parent` is the raw socket the "connection" event delivered.
       *
-      *   - "connection": start `Clock.live.unsafe.sleep(handshakeTimeout)` (a timer fiber on the clock executor, never a blocked carrier). When
+      *   - "connection": start `clock.unsafe.sleep(handshakeTimeout)` on the transport's clock (a timer fiber, never a blocked carrier). When
       *     the deadline elapses, the timer's continuation claims the per-socket guard and, if it wins (the handshake has not resolved),
       *     `socket.destroy()` reaps the stalled connection (closing the fd and releasing its buffers), the same teardown Node runs on any
       *     destroyed socket.
@@ -397,7 +397,7 @@ final private[kyo] class JsTransport private (
             discard(server.on(
                 "connection",
                 { (rawSocket: js.Dynamic) =>
-                    val timer = Clock.live.unsafe.sleep(handshakeTimeout)
+                    val timer = clock.unsafe.sleep(handshakeTimeout)
                     timer.onComplete { _ =>
                         if claim(rawSocket) then
                             Log.live.unsafe.warn(s"JsTransport server TLS handshake timed out after ${handshakeTimeout.show}")
@@ -419,8 +419,7 @@ final private[kyo] class JsTransport private (
 
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect. When the caller's `connectTimeout` is finite (and the target is a TCP host:port,
       * for a Unix socket too; `port < 0` selects the Unix leaf rather than skipping the deadline), schedule
-      * `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the
-      * clock executor, never a blocked carrier) and fail `promise` with `NetConnectTimeoutException(host, port, connectTimeout)` when the
+      * `clock.unsafe.sleep(d).onComplete(...)` on the transport's clock (a timer fiber, never a blocked carrier) and fail `promise` with `NetConnectTimeoutException(host, port, connectTimeout)` when the
       * deadline fires. `promise.completeDiscard` completes the promise at most once, so the deadline and the Node connect/error outcome are
       * mutually exclusive. This is the close-cause discrimination: the deadline arm is the only producer of the typed timeout leaf, so a
       * deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close surfaces `NetConnectException` through `connectError`.
@@ -438,7 +437,7 @@ final private[kyo] class JsTransport private (
             // at-most-once completeDiscard made it a no-op); handing the deadline off at the TCP boundary, with the promise still pending
             // through the handshake, makes it live.
             val disarmed = AtomicBoolean.Unsafe.init(false)
-            val timer    = Clock.live.unsafe.sleep(connectTimeout)
+            val timer    = clock.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
                 if !disarmed.get() then
                     // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
@@ -502,7 +501,7 @@ final private[kyo] class JsTransport private (
                     // when handshakeTimeout is Infinity, because that is what the contract means: phase two is then unbounded by request.
                     disarmConnectDeadline()
                     if handshakeTimeout.isFinite then
-                        val deadline = Clock.live.unsafe.sleep(handshakeTimeout)
+                        val deadline = clock.unsafe.sleep(handshakeTimeout)
                         deadline.onComplete { _ =>
                             // Destroy the socket so Node releases the fd; the promise carries the typed leaf either way.
                             if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, port, handshakeTimeout))) then
@@ -1131,7 +1130,7 @@ final private[kyo] class JsTransport private (
             // the deadline reuses that path rather than adding a second teardown. There is no fresh connect port for an upgrade, so the leaf carries
             // -1, matching the other backends. `Duration.Infinity` arms no timer.
             if tls.handshakeTimeout.isFinite then
-                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+                val deadline = clock.unsafe.sleep(tls.handshakeTimeout)
                 deadline.onComplete { _ =>
                     val host = tls.sniHostname.getOrElse("")
                     if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout))) then
@@ -1220,7 +1219,9 @@ private[kyo] object JsTransport:
       */
     final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
 
-    /** `clock` times each connection's `peerCloseGrace`, in the ReadPump and in the driver's graceful close. */
+    /** `clock` times each connection's `peerCloseGrace`, in the ReadPump and in the driver's graceful close, and every connect and handshake
+      * deadline.
+      */
     def init(poolSize: Int = 1, clock: Clock = Clock.live)(using AllowUnsafe, Frame): JsTransport =
         // This is NodeBackend's own transport, so it builds NodeBackend's `JsIoDriver` directly. The registry is now
         // heterogeneous (NodeBackend over `JsHandle` plus the koffi posix backends over `PosixHandle`), so a driver

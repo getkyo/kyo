@@ -37,20 +37,18 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    // 1*64) = 256, which fits the privileged-container cgroup `io_uring.max` cap (the
-    // production default depth is rejected there and falls back to epoll). assumeUring probes at this same depth, so the gate matches the ring
-    // the transport will build. handshakeTimeout = 1s is finite (so the deadline arms and reaps the stalled handshake) yet long enough that the
-    // test reliably detects the in-flight recv and registers its reap latch BEFORE the deadline fires.
     private def assumeTls(): Unit =
         if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     /** Build a REAL io_uring ring at depth 256, wrap it in a [[RecordingIoUringBindings]] spy (every op runs for real; the spy only observes the
       * recv buffers and fires a latch on each CQE reap), build an [[IoUringDriver]] over it, start its reap loop, and build a [[PosixTransport]]
-      * over the SAME driver and the real socket bindings. Tears the ring down on exit.
+      * over the SAME driver, the real socket bindings and `clock`. Tears the ring down on exit.
       */
-    private def withRecordingTransport[A](
+    private def withRecordingTransport[A](clock: Clock)(
         body: (PosixTransport, RecordingIoUringBindings) => A < (Abort[NetException | Closed] & Async & Scope)
     )(using Frame): A < (Abort[NetException | Closed] & Async) =
+        // 256 fits the privileged-container cgroup `io_uring.max` cap, where the production default depth is rejected and falls back to epoll.
+        // assumeUring probes at this same depth, so the gate matches the ring the transport builds.
         val depth     = 256
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
@@ -64,7 +62,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
         // backendIsEpoll = false: the driver is io_uring, so the regular-file fallback never applies.
-        val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
+        val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false, clock = clock)
         // Scope.run discharges the body's Scope.ensure-registered listener/socket cleanup (see the "in" leaf below) before the driver itself
         // is torn down, so those finalizers still have a live ring to run their close() calls against.
         Sync.ensure(Sync.defer(driver.close()))(Scope.run(body(transport, recording)))
@@ -79,82 +77,49 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
         Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0))).map(_ => client)
     end rawStallingClient
 
-    /** Poll a real condition (no settle) until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Returns whether the
-      * condition held within the bound. Used to wait on the in-flight recv being submitted and on the recv buffer being closed: both are real
-      * driver-carrier state transitions, not a timer-based settle.
-      */
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     "IoUringDriver handshake-timeout teardown" - {
 
         "the stalled-handshake recv readBuffer is freed only AFTER its in-flight recv CQE reaps, never while the recv is kernel-owned" in {
             PosixTestSockets.assumeUring()
             assumeTls()
             given Frame = Frame.internal
+            val timeout = 1.second
             TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-                // A finite 1s handshake deadline: long enough that the test registers its reap latch before the deadline fires.
                 val serverTls =
-                    NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
-                withRecordingTransport { (transport, recording) =>
-                    // A finite, short handshakeTimeout so the deadline reaps the stalled server handshake. The plaintext raw client never sends a
-                    // ClientHello, so the server handshake parks in awaitReadCiphertext with exactly ONE in-flight io_uring op: the recv SQE into
-                    // the server handle's readBuffer (the server has sent nothing, the client has sent nothing, so no other CQE precedes the reap).
-                    transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                        // Registered as soon as the listener is up: the assertions below (sawRecv, recvBuf non-null, not-yet-closed) can fail
-                        // before the eventual reapOutcome branch that used to hold the only listener.close(), which would leak the listener.
-                        Scope.ensure(Sync.defer(listener.close())).andThen {
-                            rawStallingClient(listener.port).map { clientFd =>
-                                // Registered immediately for the same reason: the raw client fd's only close used to sit past the same
-                                // assertions.
-                                Scope.ensure(Sync.defer(discard(sock.close(clientFd)))).andThen {
-                                    // Wait until the server handshake has submitted its in-flight recv SQE. The recording spy records every recv buffer the
-                                    // driver hands the kernel; during the stalled handshake the ONLY driver recv is the server handshake's awaitRead, so the
-                                    // first recorded recv buffer IS the server handle's readBuffer (the kernel-owned buffer at the heart of the use-after-free).
-                                    awaitCondition(5.seconds)(!recording.recvBufs.isEmpty).map { sawRecv =>
-                                        assert(
-                                            sawRecv,
-                                            "the server handshake must submit an in-flight recv SQE before the deadline reaps it"
-                                        )
-                                        val recvBuf = recording.recvBufs.peek()
-                                        assert(recvBuf != null, "recorded recv buffer must be present")
-                                        // Barrier on the monotone non-wake reap count, NOT a FIFO reap waiter. This leaf's non-wake reaps are exactly
-                                        // (1) the accept and (2) the teardown-forced recv: the stalled handshake submits one recv and neither peer sends. A
-                                        // registered awaitReap() waiter could be consumed by the accept reap (unordered vs the client's connect returning),
-                                        // completing early and failing the post-reap assertion spuriously. cqeSeenCount is incremented only for non-wake CQEs
-                                        // and only AFTER the driver's complete() ran the deferred close (RecordingIoUringBindings.kyo_uring_cqe_seen), so
-                                        // `>= 2` means the recv CQE reaped and the readBuffer free ran as part of that reap. The buffer's pre-teardown liveness
-                                        // is implied by the recorded recv (a recv cannot be submitted into a closed buffer), so no racy live pre-check is
-                                        // needed. A teardown that freed the readBuffer synchronously while the recv was kernel-owned, issuing no shutdown,
-                                        // leaves the recv unable to reap, so the count never reaches 2 and the ordering-violation branch fires.
-                                        awaitCondition(15.seconds)(recording.cqeSeenCount.get >= 2).map { reaped =>
-                                            if reaped then
-                                                assert(
-                                                    recvBuf.isClosed,
-                                                    "deferred PosixHandle.close must free the recv readBuffer once its in-flight recv CQE reaps"
-                                                )
-                                            else
-                                                fail(
-                                                    s"ordering violation: the in-flight recv CQE never reaped after the handshake-timeout teardown " +
-                                                        s"(recv readBuffer isClosed=${recvBuf.isClosed} while the recv SQE was still kernel-owned). The teardown " +
-                                                        s"must defer the readBuffer free through ioDriver.closeHandle and force the recv to complete via " +
-                                                        s"shutdown(SHUT_RDWR), so the kernel-owned buffer is freed only after its recv CQE reaps."
-                                                )
-                                            end if
-                                        }
-                                    }
-                                }
-                            }
+                    NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = timeout)
+                Clock.withTimeControl { tc =>
+                    Clock.get.map { clock =>
+                        withRecordingTransport(clock) { (transport, recording) =>
+                            // The plaintext raw client never sends a ClientHello, so the server handshake parks in awaitReadCiphertext with exactly
+                            // ONE in-flight io_uring op: the recv SQE into the server handle's readBuffer (neither peer sends, so no other CQE
+                            // precedes the reap).
+                            for
+                                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get
+                                _        <- Scope.ensure(Sync.defer(listener.close()))
+                                clientFd <- rawStallingClient(listener.port)
+                                _        <- Scope.ensure(Sync.defer(discard(sock.close(clientFd))))
+                                // During the stalled handshake the ONLY driver recv is the server handshake's awaitRead, so the first recorded
+                                // recv buffer IS the server handle's readBuffer (the kernel-owned buffer at the heart of the use-after-free).
+                                _ <- recording.firstRecv.safe.get
+                                recvBuf = recording.recvBufs.peek()
+                                // Time is held, so the deadline cannot fire before the recv is in hand; fire it at its instant.
+                                _ <- tc.awaitPendingSleepers(1)
+                                _ <- tc.advance(timeout)
+                                // Barrier on the non-wake reap count, NOT a FIFO reap waiter. This leaf's non-wake reaps are exactly (1) the accept
+                                // and (2) the teardown-forced recv, and a FIFO waiter could be consumed by the accept reap (unordered vs the client's
+                                // connect returning). The count is bumped only AFTER the driver's complete() ran the deferred close, so reaching 2
+                                // means the recv CQE reaped and the readBuffer free ran as part of that reap. A teardown that freed the readBuffer
+                                // synchronously while the recv was kernel-owned, issuing no shutdown, leaves the recv unable to reap, and the leaf
+                                // hangs to its cap.
+                                _ <- recording.awaitSeenCount(2).safe.get
+                            yield assert(
+                                recvBuf.isClosed,
+                                "deferred PosixHandle.close must free the recv readBuffer once its in-flight recv CQE reaps"
+                            )
                         }
                     }
                 }
-            }.map(_ => succeed)
+            }
         }
     }
 

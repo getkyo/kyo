@@ -47,23 +47,24 @@ class TransportMutualTlsTest extends Test:
     "a clientAuth=Required server rejects a client that presents no certificate (no round-trip)" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             // The client trusts the server but presents no certificate of its own; the cell pin is preserved on clientTls.
-            echoListener(transport, serverMtls(serverTls)).map { listener =>
+            // No handshake deadline on either end: only the rejection can end the round-trip, so a missing one hangs to the leaf cap.
+            echoListener(transport, serverMtls(serverTls).copy(handshakeTimeout = Duration.Infinity)).map { listener =>
                 val message = "kyo-mtls-reject".getBytes("UTF-8")
                 // Under TLS 1.3 `connectTls` can succeed even for a certless client (the server only validates the client cert on first use), so
                 // `client` is a real live connection here regardless of how the round-trip below turns out; Scope.ensure guarantees it is closed
-                // whether the put/collect succeeds, fails Closed, or the round-trip is still pending when Async.timeout fires.
+                // whether the put/collect succeeds or fails Closed. The server's rejection ends the round-trip; one that never ends hangs to the
+                // leaf cap.
                 val connectAndEcho: Array[Byte] < (Async & Abort[NetException | Closed] & Scope) =
-                    transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
-                        Scope.ensure(Sync.defer(client.close())).andThen {
-                            client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
-                        }
+                    transport.connectTls("127.0.0.1", listener.port, clientTls.copy(handshakeTimeout = Duration.Infinity)).safe.get.map {
+                        client =>
+                            Scope.ensure(Sync.defer(client.close())).andThen {
+                                client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
+                            }
                     }
-                val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < (Async & Scope) =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(connectAndEcho))
-                outcome.map { outcome =>
+                Abort.run[NetException | Closed](connectAndEcho).map { outcome =>
                     listener.close()
                     assert(
-                        outcome.isFailure,
+                        Test.rejected(outcome),
                         s"a clientAuth=Required server must not let a certless client round-trip on this cell, got $outcome"
                     )
                 }
@@ -75,10 +76,6 @@ class TransportMutualTlsTest extends Test:
             val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mutual-tls".getBytes("UTF-8")
-                // A mutual-TLS round-trip is CPU-heavy (both ends verify a certificate chain); under a cold JVM with every backend cell running
-                // concurrently on a constrained runner it can take several seconds, so this inner bound is generous. It is only a hang-guard: a
-                // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
-                // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
                 // Scope.ensure guarantees `client` is closed even if the put/collect below aborts before the tuple (and its trailing
                 // client.close() in the success match arm) is ever produced.
                 val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed] & Scope) =
@@ -87,9 +84,7 @@ class TransportMutualTlsTest extends Test:
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
                     }
-                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
-                outcome.map { outcome =>
+                Abort.run[NetException | Closed](connectAndEcho).map { outcome =>
                     listener.close()
                     outcome match
                         case Result.Success((client, echoed)) =>

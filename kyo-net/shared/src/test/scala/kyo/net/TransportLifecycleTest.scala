@@ -31,15 +31,14 @@ class TransportLifecycleTest extends Test:
                 transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get.map { listener =>
                     val port = listener.port
                     listener.close()
-                    // A connect to the just-closed port must be refused, but `listener.close()` is not observed instantly on every OS
-                    // (Windows keeps it briefly reachable), so poll the SAME port with a backoff: an unbound port refuses within the settle
-                    // budget; if it keeps succeeding past it the port was rebound by another suite (retry a fresh one), and a real bug exhausts both.
-                    def settle(tries: Int): Unit < (Async & Abort[NetException | Closed]) =
+                    // `released` completes once the descriptor is really gone, so the connect below targets an unbound port rather than one the
+                    // OS still keeps reachable after close (Windows does). A connect that still succeeds means another suite rebound the port:
+                    // retry a fresh one; a real bug succeeds every time and exhausts the retries.
+                    listener.released.safe.get.andThen {
                         Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map {
                             case Result.Success(conn) =>
                                 conn.close()
-                                if tries > 0 then Async.sleep(20.millis).andThen(settle(tries - 1))
-                                else if remaining > 0 then attempt(remaining - 1)
+                                if remaining > 0 then attempt(remaining - 1)
                                 else
                                     Sync.defer(assert(
                                         false,
@@ -53,7 +52,7 @@ class TransportLifecycleTest extends Test:
                                     s"expected Closed connecting to a port with no listener (port $port), got $outcome"
                                 ))
                         }
-                    settle(tries = 100)
+                    }
                 }
             attempt(remaining = 8)
         }
@@ -110,8 +109,8 @@ class TransportLifecycleTest extends Test:
                         }
                     })
                 }.safe.get
-                // Guards the listener and client if `fail(...)` below fires (server connection never captured) or `assertEventually` exhausts
-                // its retry budget, either of which would otherwise throw before the trailing close() calls in the yield below run.
+                // Guards the listener and client if `fail(...)` below fires (server connection never captured), which would otherwise throw
+                // before the trailing close() calls in the yield below run.
                 _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connect("127.0.0.1", listener.port).safe.get
                 _      <- Scope.ensure(Sync.defer(client.close()))
@@ -123,14 +122,17 @@ class TransportLifecycleTest extends Test:
                 // The peer (server) closes the idle connection; the client's standing read sees the FIN as EOF and tears down. The teardown
                 // sets closedFlag inside closeFn, which the ReadPump runs in the onComplete callback of inbound.closeAwaitEmpty, so closedFlag
                 // flips a scheduler turn after inbound terminates rather than synchronously with the take returning Closed. Drain inbound to
-                // Closed (EOF observed), then assert the eventual pool-health-check contract: isOpen must become false so a pool discards the
-                // dead conn instead of reusing it. A backend that never flips it fails via the per-test timeout.
+                // Closed (EOF observed), then assert the pool-health-check contract: isOpen must become false so a pool discards the dead conn
+                // instead of reusing it. The close signal fires after the state leaves Established, so it is the latch; a backend that never
+                // tears down hangs to the leaf cap.
                 _ <- Sync.defer(server.close())
                 _ <- Abort.run[Closed](client.inbound.safe.take)
-                _ <- assertEventually(Sync.defer(!client.isOpen))
+                _ <- client.onClosing.safe.get
             yield
+                val open = client.isOpen
                 client.close()
                 listener.close()
+                assert(!open, "a connection whose peer closed must report !isOpen once its close signal fired")
             end for
         }
     }

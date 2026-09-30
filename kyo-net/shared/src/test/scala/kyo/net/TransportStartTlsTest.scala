@@ -1,7 +1,6 @@
 package kyo.net
 
 import kyo.*
-import kyo.net.internal.TlsProviderPlatform
 
 /** Cross-backend, cross-TLS-implementation STARTTLS upgrade via the PUBLIC API only (`Transport.upgradeToTls` on both peers), over the full
   * backend x TLS-impl matrix via [[eachBackendTls]]. A real user cannot reach the connection's `private[net]` upgrade internals, so the server
@@ -13,9 +12,6 @@ import kyo.net.internal.TlsProviderPlatform
 class TransportStartTlsTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private def assumeTls(): Unit =
-        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
@@ -99,31 +95,26 @@ class TransportStartTlsTest extends Test:
         (transport, serverTls, clientTls) =>
             // The upgrade-handoff race (the retiring plaintext pump dropping or stealing the peer's first TLS flight on the shared handle) is
             // probabilistic: a single upgrade can pass by luck. Looping the tight connect -> signal -> upgrade-immediately -> round-trip cycle makes it
-            // surface reliably: every round must echo, or a dropped ClientHello strands the handshake and the bounding timeout fails the leaf. This is
-            // the deterministic regression guard for the upgrade-handoff drop the selector/poll-carrier confinement closes on every non-io_uring backend.
+            // surface reliably: every round must echo, or a dropped ClientHello strands the handshake and the leaf hangs to its cap. This is the
+            // deterministic regression guard for the upgrade-handoff drop the selector/poll-carrier confinement closes on every non-io_uring backend.
             val cli    = clientTls.copy(sniHostname = Present("localhost"))
             val rounds = 20
             startTlsEchoServer(transport, serverTls).map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[Timeout] {
-                        Loop.indexed { i =>
-                            if i >= rounds then Loop.done(())
-                            else
-                                val msg = s"handoff-$i".getBytes("UTF-8")
-                                // Each round's upgrade round-trip is bounded on its own, so amortized slowness across the 20 rounds cannot
-                                // accumulate into a false failure the way a single budget spanning all rounds would. 30s fires only on a genuine
-                                // strand (a dropped ClientHello leaving the handshake parked), never on a slow-but-progressing round.
-                                Async.timeout(30.seconds)(startTlsClient(transport, listener.port, cli, msg)).map { echoed =>
-                                    assert(
-                                        new String(echoed, "UTF-8") == s"handoff-$i",
-                                        s"round $i must round-trip after the STARTTLS upgrade"
-                                    )
-                                    Loop.continue
-                                }
-                        }
-                    }.map { outcome =>
+                    Loop.indexed { i =>
+                        if i >= rounds then Loop.done(i)
+                        else
+                            val msg = s"handoff-$i".getBytes("UTF-8")
+                            startTlsClient(transport, listener.port, cli, msg).map { echoed =>
+                                assert(new String(echoed, "UTF-8") == s"handoff-$i", s"round $i must round-trip after the STARTTLS upgrade")
+                                Loop.continue
+                            }
+                    }.map { completed =>
                         listener.close()
-                        assert(outcome.isSuccess, s"all $rounds STARTTLS upgrades must round-trip without stranding; got $outcome")
+                        assert(
+                            completed == rounds,
+                            s"all $rounds STARTTLS upgrades must round-trip without stranding; completed $completed"
+                        )
                     }
                 }
             }
@@ -151,8 +142,8 @@ class TransportStartTlsTest extends Test:
             val clientNoCert = clientTls.copy(sniHostname = Present("localhost"))
             startTlsEchoServer(transport, serverMtls(serverTls)).map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[NetException | Closed | Timeout](
-                        Async.timeout(5.seconds)(startTlsClient(transport, listener.port, clientNoCert, "hello-mtls".getBytes("UTF-8")))
+                    Abort.run[NetException | Closed](
+                        startTlsClient(transport, listener.port, clientNoCert, "hello-mtls".getBytes("UTF-8"))
                     ).map { outcome =>
                         listener.close()
                         assert(
@@ -190,8 +181,8 @@ class TransportStartTlsTest extends Test:
                             r       <- tlsConn.inbound.safe.take
                         yield r
                     )
-                val outcome: Result[NetException | Closed | Timeout, Span[Byte]] < Async =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(attempt))
+                val outcome: Result[NetException | Closed, Span[Byte]] < Async =
+                    Abort.run[NetException | Closed](attempt)
                 outcome.map { outcome =>
                     listener.close()
                     assert(outcome.isFailure, s"a STARTTLS upgrade against a non-TLS server must fail on this cell, got $outcome")
@@ -230,10 +221,9 @@ class TransportStartTlsTest extends Test:
                     _ <- conn.outbound.safe.put(upgradeRequest)
                     _ <- conn.inbound.safe.take
                     first = transport.upgradeToTls(conn, cli, 16).safe
-                    second <-
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(conn, cli, 16).safe.get))
+                    second <- Abort.run[NetException | Closed](transport.upgradeToTls(conn, cli, 16).safe.get)
                     _ = conn.close()
-                    firstOutcome <- Abort.run[NetException | Closed | Timeout](Async.timeout(10.seconds)(first.get))
+                    firstOutcome <- Abort.run[NetException | Closed](first.get)
                 yield
                     listener.close()
                     assert(
@@ -241,7 +231,7 @@ class TransportStartTlsTest extends Test:
                         s"a second upgradeToTls on an upgrading connection must fail NetAlreadyDetachedException, got $second"
                     )
                     // The second call must not have disarmed the first upgrade's close route: close() settles the still-parked first
-                    // upgrade with the typed close leaf and releases what it holds. A Timeout here means the first upgrade was stranded.
+                    // upgrade with the typed close leaf and releases what it holds. A stranded first upgrade hangs the leaf to its cap.
                     assert(
                         firstOutcome.failure.exists(_.isInstanceOf[NetConnectionClosedException]),
                         s"close() must settle the first, still-parked upgrade with NetConnectionClosedException, got $firstOutcome"
@@ -298,12 +288,12 @@ class TransportStartTlsTest extends Test:
         (transport, serverTls, clientTls) =>
             // A verifying client (trustAll = false) pins the cert as CA so the chain validates, but leaves sniHostname Absent, so upgradeToTls
             // drives the handshake with host = "", i.e. no reference identity. A chain-valid certificate with no bound name is never acceptable
-            // (RFC 9525 6.1; CWE-295): the upgrade must fail closed on every cell. Bounded so a hang fails the guard.
+            // (RFC 9525 6.1; CWE-295): the upgrade must fail closed on every cell.
             val verifyingClientNoSni = clientTls.copy(trustAll = false, caCertPath = serverTls.certChainPath, sniHostname = Absent)
             startTlsEchoServer(transport, serverTls).map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[NetException | Closed | Timeout](
-                        Async.timeout(5.seconds)(startTlsClient(transport, listener.port, verifyingClientNoSni, "x".getBytes("UTF-8")))
+                    Abort.run[NetException | Closed](
+                        startTlsClient(transport, listener.port, verifyingClientNoSni, "x".getBytes("UTF-8"))
                     ).map { outcome =>
                         listener.close()
                         assert(
@@ -329,8 +319,8 @@ class TransportStartTlsTest extends Test:
                     NetTlsConfig(caCertPath = Present(wrongCert), sniHostname = Present("localhost"), tlsProvider = clientTls.tlsProvider)
                 startTlsEchoServer(transport, srv).map { listener =>
                     Scope.ensure(Sync.defer(listener.close())).andThen {
-                        Abort.run[NetException | Closed | Timeout](
-                            Async.timeout(5.seconds)(startTlsClient(transport, listener.port, cli, "x".getBytes("UTF-8")))
+                        Abort.run[NetException | Closed](
+                            startTlsClient(transport, listener.port, cli, "x".getBytes("UTF-8"))
                         ).map { outcome =>
                             listener.close()
                             assert(outcome.isFailure, s"a STARTTLS client verifying localhost must reject a wronghost cert, got $outcome")
@@ -370,46 +360,33 @@ class TransportStartTlsTest extends Test:
     // ServerHello leaves the handshake parked on a read forever, holding the detached fd and the TLS engine. The plaintext connection has
     // already been detached by then, so nothing else reclaims them, and on the process-shared transport no later close() sweeps them either.
     //
-    // The peer here accepts the plaintext connection and simply never upgrades, which is exactly a silent TLS peer from the upgrading side. The
-    // outer Async.timeout is the regression detector: with no deadline armed the upgrade parks and the window expires, failing the assertion
-    // below rather than hanging the suite.
-    "a STARTTLS upgrade whose peer never speaks TLS is reaped on its own deadline" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (_, _) =>
-            val transport = NetPlatform.transport
-            transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
-                Scope.ensure(Sync.defer(silentListener.close())).andThen {
-                    transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
-                        Scope.ensure(Sync.defer(conn.close())).andThen {
-                            val clientTls =
-                                NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
-                            Abort.run[NetException | Closed | Timeout](
-                                Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
-                            ).map { outcome =>
-                                silentListener.close()
-                                outcome match
-                                    case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
-                                        assert(e.timeout == 150.millis, s"expected the upgrade's own 150ms deadline, got ${e.timeout}")
-                                    case other =>
-                                        assert(
-                                            false,
-                                            s"expected NetTlsHandshakeTimeoutException(150ms) from the upgrade handshake deadline, got $other " +
-                                                "(a Timeout means no deadline was armed, so the detached fd and engine leak)"
-                                        )
-                                end match
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // The peer here accepts the plaintext connection and simply never upgrades, which is exactly a silent TLS peer from the upgrading side. On
+    // the controlled clock the deadline is latched as armed, survives to one millisecond before its instant, and fires at it.
+    "a STARTTLS upgrade whose peer never speaks TLS is reaped on its own deadline, not one tick before" - eachBackendTlsOnClock {
+        (transport, tc, _, clientTls) =>
+            val timeout = 150.millis
+            for
+                silentListener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
+                _              <- Scope.ensure(Sync.defer(silentListener.close()))
+                conn           <- transport.connect("127.0.0.1", silentListener.port, Duration.Infinity).safe.get
+                _              <- Scope.ensure(Sync.defer(conn.close()))
+                cli = clientTls.copy(sniHostname = Present("localhost"), handshakeTimeout = timeout)
+                outcome <- Fiber.init(Abort.run[NetException](transport.upgradeToTls(conn, cli, 16).safe.get))
+                _       <- tc.awaitPendingSleepers(1)
+                _       <- tc.advance(timeout.minusOrZero(1.millis))
+                _       <- tc.awaitPendingSleepers(1)
+                _       <- tc.advance(1.millis)
+                result  <- outcome.get
+            yield result match
+                case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
+                    assert(e.timeout == timeout, s"expected the upgrade's own $timeout deadline, got ${e.timeout}")
+                case other =>
+                    fail(s"expected the upgrade handshake deadline to fire, got $other")
+            end for
     }
 
     /** A server that upgrades only AFTER the peer's first TLS flight (the ClientHello) has already landed in the plaintext inbound channel, so the
       * upgrade's replay path (preRead) is guaranteed non-empty.
-      * `serverTls.handshakeTimeout` is expected to be lowered so a dropped replay
-      * surfaces as a fast timeout rather than the 30s default.
       */
     private def startTlsEchoServerAfterStaged(transport: Transport, serverTls: NetTlsConfig)(using
         Frame,
@@ -422,8 +399,16 @@ class TransportStartTlsTest extends Test:
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
                                 // The detach must find the ClientHello already staged: an empty plaintext channel would exercise the ordinary
-                                // upgrade path instead of the replay path this leaf covers.
-                                assertEventually(Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1) >= 1)).andThen {
+                                // upgrade path instead of the replay path this leaf covers. Taking it latches on its arrival; putting it back
+                                // into the channel it left, now empty since the client sends nothing more until the server answers, stages it.
+                                serverConn.inbound.safe.take.map { hello =>
+                                    Sync.Unsafe.defer(serverConn.inbound.offer(hello)).map { staged =>
+                                        assert(
+                                            staged == Result.succeed(true),
+                                            s"the ClientHello must be staged back into the plaintext channel: $staged"
+                                        )
+                                    }
+                                }.andThen {
                                     transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
                                         Loop.foreach {
                                             tlsConn.inbound.safe.take.flatMap { data =>
@@ -442,9 +427,10 @@ class TransportStartTlsTest extends Test:
     "a STARTTLS server upgrading after the peer's first flight is already staged still round-trips (afterDetach replay-drop regression)" -
         eachBackendTls {
             (transport, serverTls, clientTls) =>
-                val fastFail = 5.seconds
-                val srvCfg   = serverTls.copy(handshakeTimeout = fastFail)
-                val cli      = clientTls.copy(sniHostname = Present("localhost"), handshakeTimeout = fastFail)
+                // No handshake deadline: a dropped replay strands the handshake and the leaf hangs to its cap, where a real-clock deadline
+                // would turn a slow runner into a false failure.
+                val srvCfg = serverTls.copy(handshakeTimeout = Duration.Infinity)
+                val cli    = clientTls.copy(sniHostname = Present("localhost"), handshakeTimeout = Duration.Infinity)
                 startTlsEchoServerAfterStaged(transport, srvCfg).map { listener =>
                     Scope.ensure(Sync.defer(listener.close())).andThen {
                         Abort.run[NetException | Closed](startTlsClient(

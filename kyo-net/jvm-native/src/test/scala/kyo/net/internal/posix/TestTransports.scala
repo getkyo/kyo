@@ -17,16 +17,18 @@ object TestTransports:
       * [[PosixTransport.realEngineFactory]]) where a test needs to observe or script the engine the transport is otherwise the sole builder of.
       *
       * `onAcceptResourceBackoff` fires once per accept-loop re-arm under descriptor exhaustion (`EMFILE`/`ENFILE`), letting a test count re-arms as events, not time.
+      * `clock` times the transport's deadlines and backoffs, so a test under `Clock.withTimeControl` drives them with virtual time.
       */
     def forTesting(
         ioDriver: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
         buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory,
-        onAcceptResourceBackoff: () => Unit = () => ()
+        onAcceptResourceBackoff: () => Unit = () => (),
+        clock: Clock = Clock.live
     )(using AllowUnsafe): PosixTransport =
         val pool = IoDriverPool.init(Array(ioDriver))
-        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine, onAcceptResourceBackoff)
+        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine, onAcceptResourceBackoff, clock)
     end forTesting
 
 end TestTransports

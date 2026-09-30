@@ -16,13 +16,13 @@ import kyo.net.internal.transport.ReadOutcome
   * kqueue registers read and write as INDEPENDENT one-shot filters, so both coexist and both fire; this leaf passes there today. epoll carries
   * ONE interest mask per fd, and `EPOLL_CTL_MOD` REPLACES it: arming the writable after a read would overwrite the read interest with write
   * interest, and `EPOLLONESHOT` would then disable the whole fd once the writable fired, so the parked read's readiness could never be
-  * delivered (the peer's bytes arrive but the read promise hangs with a `kyo.Timeout`: the kyo-http TLS deadlock on the JDK-`SSLEngine` floor
+  * delivered (the peer's bytes arrive but the read promise hangs: the kyo-http TLS deadlock on the JDK-`SSLEngine` floor
   * on Linux). The epoll arm tracks per-fd interest and arms the UNION, and re-arms the non-fired survivor after `EPOLLONESHOT`, so the parked read survives.
   *
   * The leaf drives the REAL [[PollerIoDriver]] over a real loopback socket pair (epoll on Linux, kqueue on macOS/BSD): park a read with no data
   * (so it stays pending), park a writable on the same fd and await it (the freshly-connected socket is writable, so it completes; on an epoll
   * where a later interest replaces an earlier one, this is the arm that clobbers the read), THEN have the peer send bytes and assert the parked
-  * read delivers exactly those bytes. The read await is bounded so a driver that lost the read fails fast with a timeout instead of hanging to the suite limit.
+  * read delivers exactly those bytes. A driver that lost the read hangs to the leaf cap.
   */
 class PollerIoDriverConcurrentInterestTest extends Test:
 
@@ -108,19 +108,15 @@ class PollerIoDriverConcurrentInterestTest extends Test:
 
                     for
                         // The writable must complete (the socket is writable). This is the point past which a last-write-wins epoll would have lost the read.
-                        writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
+                        writeOutcome <- Abort.run[Closed | NetException](writePromise.safe.get)
                         // Only now does the peer send: with the read interest clobbered + ONESHOT-disabled, a last-write-wins epoll would never report this
-                        // readiness. The driver re-arms the read survivor, so it fires and delivers the bytes.
+                        // readiness. The driver re-arms the read survivor, so it fires and delivers the bytes; a starved read hangs to the leaf cap.
                         _           <- sendAll(client, payload)
-                        readOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
+                        readOutcome <- Abort.run[Closed](readPromise.safe.get)
                         _ = driver.closeHandle(acceptedH)
                         _ <- sock.close(client).safe.get
                     yield
-                        writeOutcome match
-                            case Result.Success(())         => succeed
-                            case Result.Failure(_: Timeout) => fail("the writable on the shared fd never fired")
-                            case other                      => fail(s"unexpected writable outcome: $other")
-                        end match
+                        assert(writeOutcome == Result.succeed(()), s"the writable on the shared fd must fire, got $writeOutcome")
                         readOutcome match
                             case Result.Success(ReadOutcome.Bytes(got)) =>
                                 assert(
@@ -129,10 +125,6 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                                 )
                             case Result.Success(other) =>
                                 fail(s"expected ReadOutcome.Bytes, got $other")
-                            case Result.Failure(_: Timeout) =>
-                                fail(
-                                    "interest starvation: the parked read was clobbered by the writable arm and its readiness was never delivered"
-                                )
                             case other => fail(s"unexpected read outcome: $other")
                         end match
                     end for

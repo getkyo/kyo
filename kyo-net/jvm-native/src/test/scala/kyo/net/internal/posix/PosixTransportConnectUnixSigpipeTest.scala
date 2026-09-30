@@ -100,8 +100,8 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
 
         "sets SO_NOSIGPIPE on the client socket on macOS/BSD (SIGPIPE suppression independent of nodelay)" in {
             assumeKqueue()
-            // A unique short path under /tmp (well under the 108-byte sun_path limit). nanoTime gives uniqueness without java.util.UUID.
-            val path      = s"/tmp/kyo-net-sigpipe-${java.lang.System.nanoTime()}.sock"
+            // A unique short path under /tmp (well under the 108-byte sun_path limit).
+            val path      = s"/tmp/kyo-net-sigpipe-${kyo.net.TlsTestCertShared.uniquePathTag()}.sock"
             val spy       = new OptRecordingSockets(Ffi.load[SocketBindings])
             val driver    = PollerIoDriver.init()
             val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)

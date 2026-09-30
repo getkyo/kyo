@@ -31,8 +31,7 @@ import kyo.net.internal.transport.WriteResult
   * native Linux).
   *
   * Anti-flakiness: the peer is drained by parking real recv reads through the driver (`awaitRead` on a plaintext peer handle), terminating on the
-  * byte total reaching `p1.length + p2.length`. No sleep, no poll-retry. `Async.timeout` is ONLY the deadlock ceiling (a dropped tail would
-  * otherwise hang the drain), never a settle timer.
+  * byte total reaching `p1.length + p2.length`. No sleep, no poll-retry, no timer: a dropped tail hangs the drain to the leaf cap.
   */
 class IoUringRawWriteOrderingTest extends Test:
 
@@ -58,8 +57,8 @@ class IoUringRawWriteOrderingTest extends Test:
     end withRecordingDriver
 
     /** Drain the plaintext peer through the driver until `want` bytes have arrived, returning them in arrival order. Each `awaitRead` is a
-      * real-event latch completing when the kernel delivers bytes; the loop terminates on `acc.length >= want`. The dropped/reordered defect is
-      * caught by the enclosing `Async.timeout` ceiling (a stalled drain) and by the byte-equality assertion (a reorder).
+      * real-event latch completing when the kernel delivers bytes; the loop terminates on `acc.length >= want`. A dropped send stalls the
+      * drain to the leaf cap; a reorder fails the byte-equality assertion.
       */
     private def drainPeer(drv: IoUringDriver, peerHandle: PosixHandle, want: Int)(using
         Frame
@@ -87,9 +86,8 @@ class IoUringRawWriteOrderingTest extends Test:
                 val p2       = Array.tabulate[Byte](20 * 1024)(i => ((i + 7) % 251).toByte)
                 val expected = (p1 ++ p2).toList
 
-                // Async.timeout is ONLY the deadlock ceiling: a conserving drain finishes far inside it; a reordered or
-                // dropped send stalls the drain so the Timeout fires, which the Abort.run converts to a failure.
-                Abort.run[Timeout](Async.timeout(80.seconds)(Loop(0) { iteration =>
+                // A dropped send stalls the drain, which hangs the leaf to its cap; a reordered one fails the byte equality.
+                Loop(0) { iteration =>
                     if iteration >= 8 then Loop.done(succeed)
                     else
                         PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (driverFd, peerFd) =>
@@ -116,10 +114,6 @@ class IoUringRawWriteOrderingTest extends Test:
                                 Loop.continue(iteration + 1)
                             }
                         }
-                })).map {
-                    case Result.Failure(_: Timeout) =>
-                        fail("ordering: the drain stalled across 8 iterations; a reordered or dropped send left bytes undelivered")
-                    case Result.Success(assertion) => assertion
                 }
             }
         }

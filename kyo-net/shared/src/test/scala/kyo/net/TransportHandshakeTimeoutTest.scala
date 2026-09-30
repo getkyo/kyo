@@ -1,23 +1,18 @@
 package kyo.net
 
 import kyo.*
-import kyo.net.internal.TlsProviderPlatform
 
-/** Cross-backend server accept-handshake deadline (`NetTlsConfig.handshakeTimeout`, CWE-400 slowloris), via the PUBLIC
-  * one process-shared `NetPlatform.transport`, so the SAME test runs against whichever backend the platform selected: posix (JVM default +
-  * Native), the NIO floor and the epoll driver (forced-backend CI legs), and Node (JS).
+/** Handshake deadlines (`NetTlsConfig.handshakeTimeout`, CWE-400 slowloris) on every backend and TLS provider, each cell on a transport whose
+  * clock is controlled: a deadline fires at the virtual instant a leaf advances to and never during an unrelated wait, so every leaf asserts
+  * the exact instant and no leaf depends on the wall clock.
   *
-  * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
-  * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.
-  * Reaps and disarms are observed through the public `Connection` surface, never a sleep: the disarm leaf pairs the tested connection with a
-  * stalled one whose reap proves the deadline instant passed, and `Async.timeout` is only a ceiling turning a missing reap into a failure, not a hang.
+  * A stalled server handshake is a plaintext client that completes the TCP accept and never sends a ClientHello; its reap closes the accepted
+  * fd, which the client observes as its inbound terminating. The server arms the deadline at accept, so the leaves latch on the armed timer
+  * (`awaitPendingSleepers`) before advancing. Clients connect with `connectTimeout = Infinity`, so no connect deadline shares the clock.
   */
 class TransportHandshakeTimeoutTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private def assumeTls(): Unit =
-        if !TlsProviderPlatform.hasAvailableEngine then cancel("no TLS engine provider is available on this host")
 
     /** Read exactly `target` bytes from a connection's inbound channel, concatenated. */
     private def collect(conn: Connection, target: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =
@@ -26,304 +21,218 @@ class TransportHandshakeTimeoutTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
-    // The CLIENT-role counterpart, and the phase-handoff contract Transport.connectTls documents: connectTimeout bounds the TCP phase,
-    // NetTlsConfig.handshakeTimeout bounds the handshake, so the worst case is their sum rather than whichever timer happens to be shorter.
-    //
-    // A plaintext listener accepts the TCP connection and then never speaks TLS, so the TCP phase completes in microseconds while the client's
-    // handshake parks forever waiting for a ServerHello. connectTimeout is deliberately set FAR shorter than handshakeTimeout: if the connect
-    // timer still owned the connection past the TCP phase, it would fire first and report a connect timeout for a stall that is entirely in
-    // the handshake, which is the misclassification this pins. The handshake timer must own it instead.
-    //
-    // The two timers are a coupled system: connectTimeout (1s) is generous next to a loopback TCP connect (microseconds) so CI load never fires
-    // it spuriously, while handshakeTimeout (10s) stays an order of magnitude larger so the ordering the discrimination depends on (connect timer
-    // disarmed, handshake timer owns the stall) is preserved. The handshake deadline is the one that fires here, so the green path takes ~10s.
-    "connectTls hands the deadline from the TCP phase to the handshake phase" in {
-        assumeTls()
-        given Frame = Frame.internal
-        // The one process-shared transport, like every other caller: this leaf asserts per-operation deadline behavior, not transport-level
-        // isolation, so it has no reason to build its own I/O fabric.
-        val transport = NetPlatform.transport
-        // Plaintext listener: completes the accept, never sends a ServerHello.
-        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
-            val clientTls = NetTlsConfig(trustAll = true, handshakeTimeout = 10.seconds)
-            Abort.run[NetException](
-                transport.connectTls("127.0.0.1", listener.port, clientTls, connectTimeout = 1.second).safe.get
-            ).map { outcome =>
-                // Close the listener, never the transport: it is the process-shared one.
-                listener.close()
-                outcome match
-                    case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
-                        assert(
-                            e.timeout == 10.seconds,
-                            s"the handshake phase must fail on ITS OWN deadline, got ${e.timeout}"
-                        )
-                        succeed
-                    case Result.Failure(e: NetConnectTimeoutException) =>
-                        assert(
-                            false,
-                            s"the TCP phase completed, so its ${e.timeout} deadline must have been disarmed at connect: a handshake stall " +
-                                "reported as a connect timeout means the connect timer still owned the connection through the handshake"
-                        )
-                    case Result.Success(conn) =>
-                        // Regression path: the handshake deadline never fired and connectTls handed back a live connection. Close it so a
-                        // failing run does not also leak the socket.
-                        conn.close()
-                        assert(false, s"expected the handshake deadline to fire, got a successful connection instead")
-                    case other =>
-                        assert(false, s"expected the handshake deadline to fire, got $other")
-                end match
-            }
+    /** Whether the server reaped this stalled client: its inbound ends with a Closed failure or an empty EOF span, depending on backend. */
+    private def reaped(client: Connection)(using Frame): Boolean < Async =
+        Abort.run[Closed](client.inbound.safe.take).map {
+            case Result.Success(span) => span.isEmpty
+            case Result.Failure(_)    => true
+            case _                    => false
         }
+
+    private def echo(serverConn: Connection)(using Frame): Unit =
+        discard(Sync.Unsafe.evalOrThrow {
+            Fiber.initUnscoped {
+                Abort.run[Closed] {
+                    Loop.foreach(serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk).andThen(Loop.continue)))
+                }.unit
+            }
+        })
+
+    /** An echo handler that completes `handled` once the server has a connection. A client's handshake can finish before the server reads
+      * its Finished, so only the handler proves the server settled its handshake guard and the deadline can no longer claim the connection.
+      */
+    private def handledEcho(handled: Promise[Unit, Any])(using Frame): Connection => Unit = serverConn =>
+        echo(serverConn)
+        handled.unsafe.completeDiscard(Result.succeed(()))
+
+    /** A plaintext listener's handler that completes `latch` when the first bytes arrive: the client's ClientHello, sent only after its
+      * handshake deadline is armed.
+      */
+    private def onFirstBytes(latch: Promise[Unit, Any])(using Frame): Connection => Unit = serverConn =>
+        discard(Sync.Unsafe.evalOrThrow {
+            Fiber.initUnscoped(Abort.run[Closed](serverConn.inbound.safe.take).map(_ => latch.unsafe.completeDiscard(Result.succeed(()))))
+        })
+
+    private def roundTrips(client: Connection, text: String)(using Frame): Boolean < (Async & Abort[Closed]) =
+        val message = text.getBytes("UTF-8")
+        client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(_.sameElements(message))
+
+    // connectTimeout bounds the TCP phase and handshakeTimeout the handshake, so the worst case is their sum. A plaintext listener accepts the
+    // TCP connection and never speaks TLS: if the connect timer still owned the connection after the TCP phase, it would fire at 1 s and
+    // report a connect timeout for a stall that is entirely in the handshake.
+    "connectTls hands the deadline from the TCP phase to the handshake phase" - eachBackendTlsOnClock { (transport, tc, _, clientTls) =>
+        for
+            hello    <- Promise.init[Unit, Any]
+            listener <- transport.listen("127.0.0.1", 0, 16)(onFirstBytes(hello)).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
+            outcome  <- Fiber.init(Abort.run[NetException](
+                transport.connectTls(
+                    "127.0.0.1",
+                    listener.port,
+                    clientTls.copy(handshakeTimeout = 10.seconds),
+                    connectTimeout = 1.second
+                ).safe.get
+            ))
+            _      <- hello.get
+            _      <- tc.advance(1.second)
+            _      <- tc.advance(9.seconds)
+            result <- outcome.get
+        yield result match
+            case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
+                assert(e.timeout == 10.seconds, s"the handshake phase must fail on its own deadline, got ${e.timeout}")
+            case Result.Failure(e: NetConnectTimeoutException) =>
+                fail(
+                    s"the TCP phase completed, so its ${e.timeout} deadline must have been disarmed: the connect timer owned the handshake"
+                )
+            case Result.Success(conn) =>
+                conn.close()
+                fail("expected the handshake deadline to fire, got a connection")
+            case other =>
+                fail(s"expected the handshake deadline to fire, got $other")
+        end for
     }
 
-    "a stalled server TLS handshake is reaped after the deadline on every backend" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            // A finite, short handshakeTimeout. A plaintext client completes the TCP accept but never sends a ClientHello, so the server
-            // handshake parks; the deadline reaps it and closes the accepted fd. The await is bounded by a generous guard so a regression
-            // (no reap, i.e. the deadline was not honored) fails rather than hangs.
-            val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 150.millis)
-            val transport = NetPlatform.transport
-            transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                            client.close()
-                            listener.close()
-                            // The reap closes the accepted fd; the client's inbound either fails Closed (channel torn down) or delivers an empty
-                            // EOF span, depending on backend. Both are reaps; a Timeout (the window expired) means no reap, the regression symptom.
-                            val reaped = outcome match
-                                case Result.Success(Result.Success(span)) => span.isEmpty
-                                case Result.Success(Result.Failure(_))    => true
-                                case _                                    => false
-                            assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    "repeatedly reaping stalled server TLS handshakes does not corrupt memory (io_uring UAF regression guard)" in {
-        assumeTls()
-        given Frame = Frame.internal
-        // Regression guard: a stalled server TLS handshake parks the server in awaitReadCiphertext with an in-flight io_uring recv SQE
-        // pointed at handle.readBuffer. When the finite handshakeTimeout fires, the deadline teardown MUST route the readBuffer free + engine free
-        // through the driver's UAF-safe ioDriver.closeHandle (deferred until the recv CQE reaps) and force the recv to complete (shutdown), rather
-        // than freeing the kernel-owned buffer and the engine directly. Freeing them directly would free memory the kernel is still writing into (Invalid
-        // write) and could feed a freed engine. The corruption is silent on most runs, so this loops the stall+reap cycle many times to make the
-        // in-flight-recv-vs-free race reliable: under Valgrind / ASan on real io_uring an unsafe teardown reports the UAF here; the deferred teardown is clean.
-        // The behavioral assertion (every stalled handshake is reaped) also holds on the poller backends, where the path is already UAF-safe, so the
-        // SAME loop is the cross-backend reap proof. Reaps are observed through the public Connection surface with a generous Async.timeout bound,
-        // never a sleep-as-synchronization.
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 60.millis)
-            val transport = NetPlatform.transport
-            // One transport serves both roles: handshakeTimeout arms ONLY the server accept-handshake reap (it rides serverTls on the
-            // listener), while the client connects with the default 30s connectTimeout, so the loopback connect completes well before any
-            // connect deadline could fire a spurious NetConnectTimeoutException unrelated to the reap this guard exercises. Two deadlines,
-            // two operations, one transport: that is exactly what the per-operation model buys.
-            transport.listenTls("127.0.0.1", 0, 64, serverTls) { _ => () }.safe.get.map { listener =>
-                // Guarantees the listener is released even if an iteration's assertion fails partway through the loop, which would otherwise
-                // skip the trailing `listener.close()` below and leak the listen fd for the rest of the run.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
-                    // in-flight recv; the 60ms deadline reaps it (closing the accepted fd), which the client observes as its inbound terminating. A
-                    // Timeout (the 5s window expired with no reap) is the regression symptom (the deadline was not honored); a Closed or empty-EOF span
-                    // is a reap. The clients run sequentially so each stall+reap is a clean, isolated cycle that exercises the teardown path once.
-                    Loop(0) { i =>
-                        if i >= 30 then Loop.done(i)
-                        else
-                            transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                                Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                                    client.close()
-                                    val reaped = outcome match
-                                        case Result.Success(Result.Success(span)) => span.isEmpty
-                                        case Result.Success(Result.Failure(_))    => true
-                                        case _                                    => false
-                                    assert(
-                                        reaped,
-                                        s"iteration $i: expected the finite handshakeTimeout to reap the stalled handshake, got $outcome"
-                                    )
-                                    Loop.continue(i + 1)
-                                }
-                            }
-                    }.map { n =>
-                        listener.close()
-                        assert(n == 30, s"expected 30 stall+reap cycles, completed $n")
-                    }
-                }
-            }
-        }
-    }
-
-    // Proving the completed handshake's timer never fires needs a point provably past its deadline. One deadline is armed per accepted connection, so a
-    // second stalled peer (accepted later, same duration) falls due strictly after; its reap proves the deadline passed, then the round-trip proves the completed peer was not reaped.
-    "a handshake that completes within the deadline is NOT reaped on every backend" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            // Both connections below ride this one listener, so both deadlines have exactly this duration (10s). It is generous next to a loopback
-            // handshake (tens of ms), which is what makes a fired timer on the completed connection a real defect rather than a slow machine. The
-            // pacer's reap (below) falls due ~10s after its accept; the leaf observes the reap and the round-trip by awaiting them directly, so a
-            // genuine no-reap or lost echo hangs until the suite's per-leaf cap rather than racing an in-test ceiling.
-            val serverTls =
-                NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 10.seconds)
-            val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-            val transport = NetPlatform.transport
-            transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
-                discard(Sync.Unsafe.evalOrThrow {
-                    Fiber.initUnscoped {
-                        Abort.run[Closed] {
-                            Loop.foreach {
-                                serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk).andThen(Loop.continue))
-                            }
-                        }.unit
-                    }
-                })
-            }.safe.get.map { listener =>
-                val message = "completes-within-deadline".getBytes("UTF-8")
+    "a stalled server handshake is reaped at its deadline, not one tick before, and one that completes before it is not" -
+        eachBackendTlsOnClock {
+            (transport, tc, serverTls, clientTls) =>
+                val timeout = 150.millis
                 for
-                    // Every connection below is released even if an assertion aborts the leaf partway through.
-                    _      <- Scope.ensure(Sync.defer(listener.close()))
-                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
-                    _      <- Scope.ensure(Sync.defer(client.close()))
-                    // The pacer: a plaintext peer completes the TCP accept and never sends a ClientHello. Its deadline is armed at that accept,
-                    // which happens after connectTls above returned, so it falls due strictly after the completed connection's would have.
-                    stalled <- transport.connect("127.0.0.1", listener.port).safe.get
-                    _       <- Scope.ensure(Sync.defer(stalled.close()))
-                    // The reap closes the pacer's accepted fd, which it observes as its inbound terminating (a Closed failure or an empty EOF
-                    // span, depending on backend). Awaiting the take IS the barrier: the reap fires ~10s after the pacer's accept (its
-                    // handshakeTimeout). A pacer that is never reaped hangs until the suite's per-leaf cap.
-                    reap <- Abort.run[Closed](stalled.inbound.safe.take)
-                    reaped = reap match
-                        case Result.Success(span) => span.isEmpty
-                        case Result.Failure(_)    => true
-                        case _                    => false
-                    _ = assert(
-                        reaped,
-                        "the stalled pacer was not reaped, so nothing here proves the completed connection's deadline instant has passed " +
-                            s"and the round-trip below would assert nothing, got $reap"
-                    )
-                    _      <- client.outbound.safe.put(Span.fromUnsafe(message))
-                    echoed <- Abort.run[Closed](collect(client, message.length))
-                yield echoed match
-                    case Result.Success(bytes) =>
-                        assert(
-                            bytes.sameElements(message),
-                            s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(bytes, "UTF-8")}'"
-                        )
-                    case other =>
-                        fail(
-                            "the completed handshake was reaped past its deadline instead of disarming its timer: the round-trip on it " +
-                                s"ended with $other"
-                        )
+                    handled  <- Promise.init[Unit, Any]
+                    listener <-
+                        transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = timeout))(handledEcho(handled)).safe.get
+                    _       <- Scope.ensure(Sync.defer(listener.close()))
+                    early   <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                    stalled <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                    _       <- tc.awaitPendingSleepers(2)
+                    _       <- tc.advance(timeout.minusOrZero(1.millis))
+                    // One tick before the deadline both server handshakes are alive: this one completes, on both sides.
+                    upgraded <- transport.upgradeToTls(early, clientTls.copy(handshakeTimeout = Duration.Infinity), 16).safe.get
+                    _        <- handled.get
+                    _        <- tc.advance(1.millis)
+                    reap     <- reaped(stalled)
+                    // Past the deadline, the completed handshake's timer is disarmed, not fired.
+                    alive <- roundTrips(upgraded, "completed-before-deadline")
+                yield
+                    upgraded.close()
+                    stalled.close()
+                    assert(reap, "the stalled handshake must be reaped at its deadline")
+                    assert(alive, "a handshake that completed before its deadline must survive past it")
                 end for
-            }
         }
+
+    "repeatedly reaping stalled server handshakes does not corrupt memory (io_uring UAF regression guard)" - eachBackendTlsOnClock {
+        (transport, tc, serverTls, _) =>
+            // A stalled server handshake parks in awaitReadCiphertext with an in-flight io_uring recv SQE on handle.readBuffer. The deadline
+            // teardown must route the buffer and engine frees through the driver's closeHandle, deferred until the recv CQE reaps; freeing
+            // them directly writes into kernel-owned memory. The corruption is silent on most runs, so the stall and reap cycle repeats: under
+            // Valgrind or ASan on real io_uring an unsafe teardown reports the UAF here, and on every backend each stall must be reaped.
+            val timeout = 60.millis
+            for
+                listener <- transport.listenTls("127.0.0.1", 0, 64, serverTls.copy(handshakeTimeout = timeout))(_ => ()).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                cycles   <- Loop(0) { i =>
+                    if i >= 30 then Loop.done(i)
+                    else
+                        for
+                            client <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                            _      <- tc.awaitPendingSleepers(1)
+                            _      <- tc.advance(timeout)
+                            reap   <- reaped(client)
+                        yield
+                            client.close()
+                            assert(reap, s"iteration $i: the stalled handshake must be reaped at its deadline")
+                            Loop.continue(i + 1)
+                }
+            yield assert(cycles == 30)
+            end for
     }
 
-    "a stalled server TLS handshake is not reaped when handshakeTimeout is larger than the observation window" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
-            // The default handshakeTimeout is 30s (finite, but much larger than the 500ms observation window). A stalled handshake will not be
-            // reaped within 500ms, so the inbound take must NOT complete within the window. The bounded Async.timeout must expire (Failure),
-            // proving no early reap. The window is an Async suspension, not a thread block.
+    "a handshake that completes within the deadline is not reaped past it" - eachBackendTlsOnClock {
+        (transport, tc, serverTls, clientTls) =>
+            for
+                handled  <- Promise.init[Unit, Any]
+                listener <-
+                    transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = 10.seconds))(handledEcho(handled)).safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
+                client <- transport.connectTls("127.0.0.1", listener.port, clientTls.copy(handshakeTimeout = Duration.Infinity)).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
+                _      <- handled.get
+                _      <- tc.advance(10.seconds + 1.millis)
+                alive  <- roundTrips(client, "completes-within-deadline")
+            yield assert(alive, "a completed handshake must not be reaped when its deadline passes")
+            end for
+    }
+
+    "the default 30 s handshake deadline reaps at 30 s, not one tick before" - eachBackendTlsOnClock {
+        (transport, tc, serverTls, clientTls) =>
             assert(NetTlsConfig.default.handshakeTimeout == 30.seconds)
-            val transport = NetPlatform.transport
-            transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                        Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                            client.close()
-                            listener.close()
-                            assert(
-                                outcome.isFailure,
-                                s"a stalled handshake must not be reaped within 500ms when handshakeTimeout is 30s, got $outcome"
-                            )
-                        }
-                    }
-                }
-            }
-        }
+            for
+                handled  <- Promise.init[Unit, Any]
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(handledEcho(handled)).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                early    <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                stalled  <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                _        <- tc.awaitPendingSleepers(2)
+                _        <- tc.advance(30.seconds.minusOrZero(1.millis))
+                upgraded <- transport.upgradeToTls(early, clientTls.copy(handshakeTimeout = Duration.Infinity), 16).safe.get
+                _        <- handled.get
+                _        <- tc.advance(1.millis)
+                reap     <- reaped(stalled)
+            yield
+                upgraded.close()
+                stalled.close()
+                assert(reap, "the stalled handshake must be reaped at the default deadline")
+            end for
     }
 
-    "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity (no timer armed)" in {
-        assumeTls()
-        given Frame = Frame.internal
-        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-            // With handshakeTimeout = Infinity the transport arms NO timer at all: a stalled handshake parks forever and is not reaped. A
-            // bounded observation window (an Async suspension, not a thread block) is the no-reap ceiling; the Async.timeout must expire,
-            // proving the inbound did not complete within the window. This is stronger than a finite-but-large default: it asserts the
-            // Infinity code path arms nothing, not just that a 30s timer does not fire within 500ms.
-            val serverTls = NetTlsConfig(
-                certChainPath = Present(certPath),
-                privateKeyPath = Present(keyPath),
-                handshakeTimeout = Duration.Infinity
-            )
-            val transport = NetPlatform.transport
-            transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                        Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                            client.close()
-                            listener.close()
-                            assert(
-                                outcome.isFailure,
-                                s"a stalled handshake must not be reaped when handshakeTimeout is Infinity (no timer is armed), got $outcome"
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    "handshakeTimeout = Infinity arms no timer: a stall a year long still completes" - eachBackendTlsOnClock {
+        (transport, tc, serverTls, clientTls) =>
+            val unbounded = clientTls.copy(handshakeTimeout = Duration.Infinity)
+            for
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = Duration.Infinity))(echo).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                stalled  <- transport.connect("127.0.0.1", listener.port, Duration.Infinity).safe.get
+                // A second client completes its handshake. The listener accepts in connection order, so the stalled client's server handshake
+                // was accepted first: had it armed a timer, the timer would be pending before the advance below.
+                witness <- transport.connectTls("127.0.0.1", listener.port, unbounded).safe.get
+                _       <- tc.advance(365.days)
+                resumed <- transport.upgradeToTls(stalled, unbounded, 16).safe.get
+                alive   <- roundTrips(resumed, "a-year-later")
+            yield
+                witness.close()
+                resumed.close()
+                assert(alive, "with handshakeTimeout = Infinity a stalled server handshake must survive any stall")
+            end for
     }
 
-    // The CLIENT side of the same guard. A peer that completes the TCP connect and then never speaks TLS leaves the client handshake parked on
-    // a read that never arrives, holding the fd and the TLS engine. On the process-shared transport nothing later reclaims them, so without a
-    // deadline this is a permanent leak, not merely a slow connect. Reproduced with a plaintext listener: it accepts the TCP connection and
-    // sends nothing, which is exactly a silent TLS server from the client's point of view.
-    //
-    // The outer Async.timeout is the regression detector, not the mechanism under test: if no deadline is armed the connect parks and the outer
-    // window expires with a Timeout, which fails the assertion below rather than hanging the suite.
-    "a client TLS handshake that stalls is reaped on its own deadline" in {
-        assumeTls()
-        given Frame   = Frame.internal
-        val transport = NetPlatform.transport
-        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
-            val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
-            Abort.run[NetException | Closed | Timeout](
-                Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", silentListener.port, clientTls).safe.get)
-            ).map { outcome =>
-                silentListener.close()
-                outcome match
-                    case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
-                        assert(e.timeout == 150.millis, s"expected the client's own 150ms deadline, got ${e.timeout}")
-                    case Result.Success(conn) =>
-                        // Regression path: the client handshake deadline never fired and connectTls handed back a live connection. Close it so
-                        // a failing run does not also leak the socket and TLS engine.
-                        conn.close()
-                        assert(
-                            false,
-                            "expected NetTlsHandshakeTimeoutException(150ms) from the client handshake deadline, got a successful connection"
-                        )
-                    case other =>
-                        assert(
-                            false,
-                            s"expected NetTlsHandshakeTimeoutException(150ms) from the client handshake deadline, got $other " +
-                                "(a Timeout means no deadline was armed on the connect path, so the fd and engine leak)"
-                        )
-                end match
-            }
-        }
+    // The client side of the same guard. A peer that completes the TCP connect and never speaks TLS parks the client handshake on a read that
+    // never arrives, holding the fd and the engine; without a deadline that is a permanent leak on the process-shared transport.
+    "a client handshake that stalls is reaped at its own deadline, not one tick before" - eachBackendTlsOnClock {
+        (transport, tc, _, clientTls) =>
+            val timeout = 150.millis
+            for
+                hello    <- Promise.init[Unit, Any]
+                listener <- transport.listen("127.0.0.1", 0, 16)(onFirstBytes(hello)).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                outcome  <- Fiber.init(Abort.run[NetException](
+                    transport.connectTls("127.0.0.1", listener.port, clientTls.copy(handshakeTimeout = timeout), Duration.Infinity).safe.get
+                ))
+                // The ClientHello is sent after the deadline is armed.
+                _      <- hello.get
+                _      <- tc.awaitPendingSleepers(1)
+                _      <- tc.advance(timeout.minusOrZero(1.millis))
+                _      <- tc.awaitPendingSleepers(1)
+                _      <- tc.advance(1.millis)
+                result <- outcome.get
+            yield result match
+                case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
+                    assert(e.timeout == timeout, s"expected the client's own $timeout deadline, got ${e.timeout}")
+                case Result.Success(conn) =>
+                    conn.close()
+                    fail("expected the client handshake deadline to fire, got a connection")
+                case other =>
+                    fail(s"expected the client handshake deadline to fire, got $other")
+            end for
     }
 
 end TransportHandshakeTimeoutTest

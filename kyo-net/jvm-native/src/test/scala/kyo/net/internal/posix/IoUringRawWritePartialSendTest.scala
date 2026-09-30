@@ -21,17 +21,15 @@ import kyo.net.internal.transport.WriteResult
   * [[PollerIoDriverWriteBackpressureTest]] uses for the readiness arm and the TLS partial leaf in [[IoUringTlsWriteOrderingTest]] uses.
   *
   * Expected real-ring outcome: with the dropped-remainder defect present, the peer can never accumulate the full payload (the tail after the
-  * first partial send is never re-submitted), so the conservation drain stalls until the `Async.timeout` deadlock ceiling trips, surfacing a
-  * `Timeout` that the leaf converts to a failure. Once `writeRaw`/`complete` re-flush the `[res, len)` remainder, every byte arrives, the drain
-  * terminates on the conservation condition well inside the ceiling, and `got == payload` exactly.
+  * first partial send is never re-submitted), so the conservation drain stalls and the leaf hangs to its cap. Once `writeRaw`/`complete`
+  * re-flush the `[res, len)` remainder, every byte arrives, the drain terminates on the conservation condition, and `got == payload` exactly.
   *
   * Every leaf is gated by [[PosixTestSockets.assumeUring]] (cancel off Linux / where the production-depth ring cannot init; run the real ring on
   * native Linux).
   *
   * Anti-flakiness: the peer is drained by parking real recv reads through the driver (`awaitRead` on a plaintext peer handle), a real-event
   * latch that completes only when the kernel delivers bytes; the loop terminates on the byte total reaching the payload length. No sleep, no
-  * poll-retry. `Async.timeout` is ONLY the deadlock ceiling (the dropped-tail defect would otherwise hang the drain), never a settle timer: on
-  * a conserving implementation the loop completes long before it.
+  * poll-retry, no timer.
   */
 class IoUringRawWritePartialSendTest extends Test:
 
@@ -58,8 +56,7 @@ class IoUringRawWritePartialSendTest extends Test:
 
     /** Drain the plaintext peer through the driver, parking real recv reads until `want` bytes have arrived, returning them in arrival order.
       * Each `awaitRead` is a real-event latch completing when the kernel delivers bytes; the loop terminates on the conservation condition
-      * (`acc.length >= want`). The dropped-tail defect is caught by the enclosing `Async.timeout` ceiling, which interrupts the stalled
-      * `awaitRead`.
+      * (`acc.length >= want`). The dropped-tail defect leaves the last `awaitRead` parked, hanging the leaf to its cap.
       */
     private def drainPeer(drv: IoUringDriver, peerHandle: PosixHandle, want: Int)(using
         Frame
@@ -92,24 +89,18 @@ class IoUringRawWritePartialSendTest extends Test:
                     val w = drv.write(handle, Span.fromUnsafe(payload), 0)
                     assert(w == WriteResult.Done, s"raw write result=$w")
 
-                    // Async.timeout is ONLY the deadlock ceiling: a conserving drain finishes far inside it; the dropped-tail defect stalls the
-                    // drain, so the Timeout fires and is converted to a failure (the drop manifests as the drain never reaching the payload length).
-                    Abort.run[Timeout](Async.timeout(10.seconds)(drainPeer(drv, peerHandle, payload.length))).map { outcome =>
+                    // The dropped-tail defect stalls the drain short of the payload length, which hangs the leaf to its cap.
+                    drainPeer(drv, peerHandle, payload.length).map { got =>
                         drv.closeHandle(handle)
                         drv.closeHandle(peerHandle)
-                        outcome match
-                            case Result.Failure(_: Timeout) =>
-                                fail(s"conservation: the drain stalled; the peer never received all ${payload.length} bytes (tail dropped)")
-                            case Result.Success(got) =>
-                                assert(
-                                    got.length == payload.length,
-                                    s"conservation: peer must receive every byte of the raw write; got ${got.length} of ${payload.length}"
-                                )
-                                assert(
-                                    got.toList == payload.toList,
-                                    "conservation: the received bytes must equal the payload once each, in order (no drop/reorder)"
-                                )
-                        end match
+                        assert(
+                            got.length == payload.length,
+                            s"conservation: peer must receive every byte of the raw write; got ${got.length} of ${payload.length}"
+                        )
+                        assert(
+                            got.toList == payload.toList,
+                            "conservation: the received bytes must equal the payload once each, in order (no drop/reorder)"
+                        )
                     }
                 }
             }.map(_ => succeed)

@@ -112,24 +112,22 @@ class PollerIoDriverHalfCloseTest extends Test:
                         val done = Promise.Unsafe.init[String, Any]()
                         val r    = new HalfCloseReader(driver, acceptedH, acc, done)
                         r.start()
-                        Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
+                        // A read that stalls without an EOF hangs to the leaf cap.
+                        done.safe.get.map { outcome =>
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client))
                             outcome match
-                                case Result.Success(HalfCloseReader.EofSeen) =>
+                                case HalfCloseReader.EofSeen =>
                                     assert(
                                         acc.toByteArray.toList == payload.toList,
                                         s"buffered bytes not delivered in full before EOF: got ${acc.size()} of ${payload.length} bytes"
                                     )
-                                case Result.Success(HalfCloseReader.ClosedSeen) =>
+                                case HalfCloseReader.ClosedSeen =>
                                     fail(
                                         s"half-close surfaced Closed after ${acc.size()} of ${payload.length} bytes instead of an " +
                                             "empty-Span EOF (an EV_EOF -> Error event was routed to dispatchError)"
                                     )
-                                case Result.Success(other)      => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
-                                case Result.Failure(_: Timeout) =>
-                                    fail(s"half-close read stalled after ${acc.size()} of ${payload.length} bytes (no EOF delivered)")
-                                case other => fail(s"unexpected outcome: $other")
+                                case other => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
                             end match
                         }
                     }

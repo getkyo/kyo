@@ -58,7 +58,7 @@ class TransportStartTlsCrossTailTest extends Test:
                 latch  <- Latch.init(1)
                 fibers <- Kyo.foreach(Chunk.from(1 to concurrency)) { i =>
                     // Scope.run keeps this per-attempt: conn/tlsConn are closed as soon as THIS attempt finishes (success, a
-                    // failed Abort, or the per-fiber Async.timeout interrupt below), rather than deferring 32-way to the
+                    // failed Abort), rather than deferring 32-way to the
                     // leaf's own Scope, which would hold every fiber's connection open simultaneously until the whole leaf ends.
                     val attempt: Boolean < (Async & Abort[NetException | Closed]) =
                         Scope.run(
@@ -77,12 +77,10 @@ class TransportStartTlsCrossTailTest extends Test:
                             yield java.util.Arrays.equals(echoed.take(payload.length), payload)
                         )
                     end attempt
-                    val body: Result[NetException | Timeout | Closed, Boolean] < Async =
-                        // All N fibers park here until latch.release fires, maximizing upgrade overlap. The per-fiber ceiling is a hang-guard:
-                        // the tested property is that every one of the 32 overlapping STARTTLS upgrades echoes correctly, and 60s fires only on a
-                        // genuine stall, so 32-way contention on a slow or emulated runner cannot turn a slow-but-progressing upgrade into a failure.
+                    val body: Result[NetException | Closed, Boolean] < Async =
+                        // All N fibers park here until latch.release fires, maximizing upgrade overlap. A stalled upgrade hangs to the leaf cap.
                         latch.await.flatMap { _ =>
-                            Abort.run[NetException | Timeout | Closed](Async.timeout(60.seconds)(attempt))
+                            Abort.run[NetException | Closed](attempt)
                         }
                     Fiber.init(body)
                 }

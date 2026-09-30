@@ -4,7 +4,6 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.posix.PosixTestSockets
@@ -29,8 +28,7 @@ import kyo.net.internal.posix.PosixTestSockets
   * serverOutput and included in failure messages for diagnostics.
   *
   * Gate: PosixTestSockets.assumeUring() and TlsRealEngines.assumeTlsReady() cancel off Linux / missing TLS provider.
-  * probeOpenssl() cancels when the openssl binary is absent. s_server readiness timeout cancels (not fails) when
-  * the process does not print ACCEPT within 15s.
+  * probeOpenssl() cancels when the openssl binary is absent. An s_server that exits without printing ACCEPT cancels (not fails).
   *
   * This file lives in jvm/src/test (JVM-only) because it spawns an external OS process; jvm-native/src/test would
   * compile for Native where openssl subprocess is not the right test strategy.
@@ -65,7 +63,8 @@ class StartTlsInteropClientTest extends Test:
         TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
             Sync.defer(uringEntry.transport).flatMap { transport =>
                 val serverOutput = new ConcurrentLinkedQueue[String]()
-                val serverReady  = new AtomicBoolean(false)
+                // True once s_server prints ACCEPT, false when its output ends without it (the process exited).
+                val serverReady = Promise.Unsafe.init[Boolean, Any]()
 
                 // Pick an ephemeral port then start openssl s_server with minimal flags.
                 // -rev: server reverses each input line and echoes it back.
@@ -95,10 +94,11 @@ class StartTlsInteropClientTest extends Test:
                                 var line   = reader.readLine()
                                 while line != null do
                                     discard(serverOutput.offer(line))
-                                    if line.contains("ACCEPT") then serverReady.set(true)
+                                    if line.contains("ACCEPT") then serverReady.completeDiscard(Result.succeed(true))
                                     line = reader.readLine()
                                 end while
-                            catch case _: Exception => (),
+                            catch case _: Exception => ()
+                            finally serverReady.completeDiscard(Result.succeed(false)),
                         "openssl-reader"
                     )
                     readerThread.setDaemon(true)
@@ -106,22 +106,13 @@ class StartTlsInteropClientTest extends Test:
                     (proc, port)
                 }.flatMap { case (proc, port) =>
                     Sync.ensure(Sync.defer { proc.destroy(); () }) {
-                        // Poll serverReady up to 15s; cancel (not fail) on timeout since this
-                        // is infrastructure, not a code defect.
-                        Abort.run[Timeout](
-                            Async.timeout(15.seconds) {
-                                Loop.foreach {
-                                    if serverReady.get() then Loop.done(())
-                                    else Async.sleep(100.millis).andThen(Loop.continue)
-                                }
-                            }
-                        ).flatMap {
-                            case Result.Failure(_) =>
+                        // An s_server that exits without accepting is infrastructure, not a code defect: cancel, not fail.
+                        serverReady.safe.get.flatMap {
+                            case false =>
                                 Sync.defer(cancel(
-                                    s"openssl s_server did not print ACCEPT within 15s on port $port " +
-                                        s"(process alive=${proc.isAlive}). Output:\n${outputString(serverOutput)}"
+                                    s"openssl s_server exited without printing ACCEPT on port $port. Output:\n${outputString(serverOutput)}"
                                 ))
-                            case Result.Success(_) =>
+                            case true =>
                                 val clientTls =
                                     NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
 
@@ -132,28 +123,26 @@ class StartTlsInteropClientTest extends Test:
                                 Loop(0) { i =>
                                     if i >= 8 then Loop.done(())
                                     else
-                                        Abort.run[Timeout | Closed](
-                                            Async.timeout(15.seconds) {
-                                                // Scoped per-iteration (not the leaf's Scope): 8 rounds run in this loop, and deferring
-                                                // conn/tlsConn cleanup to the leaf's own Scope would hold every round's connection open
-                                                // simultaneously until the whole leaf ends, matching the startTlsClient idiom in
-                                                // TransportStartTlsTest.scala.
-                                                Scope.run(
-                                                    for
-                                                        conn    <- transport.connect("127.0.0.1", port).safe.get
-                                                        _       <- Scope.ensure(Sync.defer(conn.close()))
-                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                                                        _       <- Scope.ensure(Sync.defer(tlsConn.close()))
-                                                        payload = "ping\n".getBytes
-                                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                                                        echoed <- tlsConn.inbound.safe.take
-                                                        _ = assert(
-                                                            echoed.size > 0,
-                                                            s"iteration $i: expected echo from openssl s_server -rev, got empty"
-                                                        )
-                                                    yield ()
-                                                )
-                                            }
+                                        Abort.run[NetException | Closed](
+                                            // Scoped per-iteration (not the leaf's Scope): 8 rounds run in this loop, and deferring
+                                            // conn/tlsConn cleanup to the leaf's own Scope would hold every round's connection open
+                                            // simultaneously until the whole leaf ends, matching the startTlsClient idiom in
+                                            // TransportStartTlsTest.scala.
+                                            Scope.run(
+                                                for
+                                                    conn    <- transport.connect("127.0.0.1", port).safe.get
+                                                    _       <- Scope.ensure(Sync.defer(conn.close()))
+                                                    tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                                    _       <- Scope.ensure(Sync.defer(tlsConn.close()))
+                                                    payload = "ping\n".getBytes
+                                                    _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                                    echoed <- tlsConn.inbound.safe.take
+                                                    _ = assert(
+                                                        echoed.size > 0,
+                                                        s"iteration $i: expected echo from openssl s_server -rev, got empty"
+                                                    )
+                                                yield ()
+                                            )
                                         ).map {
                                             case Result.Failure(e) =>
                                                 fail(

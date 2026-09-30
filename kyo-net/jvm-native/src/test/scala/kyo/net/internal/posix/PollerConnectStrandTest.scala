@@ -15,8 +15,8 @@ import kyo.net.Test
   * socket becomes writable only when the kernel TCP handshake COMPLETES, and the poll loop's `dispatchWritable` must wake the
   * connecting fiber on that completion. A dedicated thread `accept`s every connection so the listener's accept queue never
   * fills (so a strand is never a backlog artifact, always a dropped wakeup). Many in-flight connects run concurrently on
-  * rapidly-recycled fds; every armed write-readiness promise MUST resolve, never hang. A stranded promise is caught by the
-  * bounded `Async.timeout`. Observation is non-perturbing: only in-memory atomic counters, NO console logging in any hot path.
+  * rapidly-recycled fds; every armed write-readiness promise MUST resolve, never hang. A stranded promise hangs the leaf to its cap.
+  * Observation is non-perturbing: only in-memory atomic counters, NO console logging in any hot path.
   *
   * Gate: `PosixTestSockets.assumePoller()` (a real epoll/kqueue fd; io_uring uses a different driver, the NIO floor a
   * different transport).
@@ -74,7 +74,6 @@ class PollerConnectStrandTest extends Test:
         acceptor.start()
 
         val tasks = 400
-        val hungN = new AtomicInteger(0)
 
         def oneConnect(using Frame): Boolean < (Async & Abort[Closed]) =
             Sync.defer {
@@ -91,12 +90,10 @@ class PollerConnectStrandTest extends Test:
                         val handle  = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                         driver.awaitConnect(handle, promise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed | NetException]]])
-                        Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](promise.safe.get))).map {
-                            outcome =>
-                                discard(sockets.close(client).poll())
-                                val resolved = outcome.isSuccess // the writable promise resolved; Timeout = stranded (the bug)
-                                if !resolved then discard(hungN.incrementAndGet())
-                                resolved
+                        // A stranded promise never resolves, so a dropped wakeup hangs the leaf to its cap.
+                        Abort.run[Closed](promise.safe.get).map { outcome =>
+                            discard(sockets.close(client).poll())
+                            outcome.isSuccess
                         }
                     end if
                 }
@@ -106,10 +103,10 @@ class PollerConnectStrandTest extends Test:
             acceptStop.set(true)
             driver.close()
             discard(sockets.close(server).poll())
-            val hung = results.count(_ == false)
+            val closed = results.count(_ == false)
             assert(
-                hung == 0,
-                s"$hung of $tasks in-flight connects were never woken on completion (dropped wakeup); accepted=${accepted.get()}"
+                closed == 0,
+                s"$closed of $tasks in-flight connects settled Closed instead of writable; accepted=${accepted.get()}"
             )
         }
     }

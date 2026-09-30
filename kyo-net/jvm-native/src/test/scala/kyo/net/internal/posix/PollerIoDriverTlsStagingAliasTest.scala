@@ -176,7 +176,8 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                                 reader.start()
                                 Fiber.initUnscoped(Abort.run[Closed](sendAllBackpressured(driver, clientH, client, allCipher))).flatMap {
                                     _ =>
-                                        Abort.run[Timeout | Closed](Async.timeout(15.seconds)(done.safe.get)).map { outcome =>
+                                        // A standing read that stalls short of the plaintext hangs the leaf to its cap.
+                                        Abort.run[Closed](done.safe.get).map { outcome =>
                                             import scala.jdk.CollectionConverters.*
                                             val feedBufs = recordingServer.feedBufs.iterator().asScala.toList
                                             val staging  =
@@ -212,10 +213,6 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
                                                         )
                                                     }
                                                     succeed
-                                                case Result.Failure(_: Timeout) =>
-                                                    fail(
-                                                        s"standing read stalled after ${plainAcc.size()} of ${expectedPlain.length} plaintext bytes"
-                                                    )
                                                 case other => fail(s"unexpected standing-read outcome: $other")
                                             end match
                                         }

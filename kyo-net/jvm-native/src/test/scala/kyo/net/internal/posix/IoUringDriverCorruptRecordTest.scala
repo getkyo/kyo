@@ -32,7 +32,7 @@ import kyo.net.internal.transport.ReadOutcome
   * cannot init, or where no BoringSSL provider is staged, so this is CI-validated on native Linux.
   *
   * Anti-flakiness: each leaf synchronizes on the read promise (completed only when the recv CQE reaps and the decrypt engine op runs) and a
-  * FIFO barrier (the decrypt engine op has run), never a timer. `Async.timeout` is only the deadlock ceiling. The probe engines are freed in a
+  * FIFO barrier (the decrypt engine op has run), never a timer; a read that never completes hangs to the leaf cap. The probe engines are freed in a
   * finally; the driver handle's `engineFreeSink` is set to a no-op so `withEngines` owns the single real free (no double-free of the native
   * session when `requestClose` tears the handle down). No sleep, no busy-spin.
   */
@@ -105,7 +105,8 @@ class IoUringDriverCorruptRecordTest extends Test:
 
                         val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
-                        Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                        // A fatal abort that never completes the read hangs the leaf to its cap.
+                        Abort.run[Closed](promise.safe.get).map { outcome =>
                             // The decrypt engine op (which ran requestClose on the fatal record) has run once the FIFO barrier fires.
                             fifoBarrier(drv).safe.get.map { _ =>
                                 val closing = handle.isClosing()
@@ -129,8 +130,6 @@ class IoUringDriverCorruptRecordTest extends Test:
                                             s"a fatal TLS record was swallowed: the read delivered ${got.size} bytes (${got.toArray.toList}) " +
                                                 "instead of the typed decrypt failure; RFC 5246 §7.2.2 requires the connection to be torn down"
                                         )
-                                    case Result.Failure(_: Timeout) =>
-                                        fail("the read hung on a fatal record: the fatal abort never completed the read")
                                     case other =>
                                         fail(s"a fatal TLS record must surface as the typed decrypt failure; got: $other")
                                 end match

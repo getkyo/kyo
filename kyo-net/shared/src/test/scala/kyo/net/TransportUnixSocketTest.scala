@@ -9,8 +9,8 @@ import kyo.*
   * the 108-byte `sun_path` limit on every platform), a client connects to it, a known message round-trips through an echo handler, and the
   * listener reports the Unix address with port `-1`.
   *
-  * The path uses `nanoTime` for a fresh name per run (no `java.util.UUID` / `SecureRandom`, which Native lacks; no `java.io.File`, which Scala.js
-  * lacks). `/tmp` exists on Linux and macOS, and resolves to a drive-relative `\tmp` on the Windows JVM runner.
+  * The path carries [[TlsTestCertShared.uniquePathTag]] for a fresh name per run (no `java.io.File`, which Scala.js lacks). `/tmp` exists on
+  * Linux and macOS, and resolves to a drive-relative `\tmp` on the Windows JVM runner.
   *
   * Every leaf gates on [[Transport.supportsUnixSockets]] and cancels where the transport cannot bind AF_UNIX paths (Node on Windows maps the
   * local domain to named pipes, so a filesystem listen path fails EACCES there); the capability lives on the transport, not as a platform
@@ -71,24 +71,34 @@ class TransportUnixSocketTest extends Test:
         // and ignored it. Removing that guard is what this leaf protects, and it protects the dangerous direction: a timer that now runs for
         // every Unix connect must not fire on one that connects normally. A misfire here would break every Unix connection rather than only the
         // parked ones, so this runs on every platform.
-        "a finite deadline does not disturb a Unix connect that completes" in {
-            val transport = NetPlatform.transport
-            assumeUnixSockets(transport)
-            val path = s"/tmp/kyo-uds-deadline-${TlsTestCertShared.uniquePathTag()}.sock"
-            transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
-                Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>
-                        listener.close()
-                        outcome match
-                            case Result.Success(conn) =>
-                                conn.close()
-                                succeed
-                            case other =>
-                                assert(false, s"a Unix connect with a generous finite deadline must succeed, got $other")
-                        end match
+        "a finite deadline is disarmed when a Unix connect completes, so it does not fire past its instant" - eachBackendOnClock {
+            (transport, tc) =>
+                assumeUnixSockets(transport)
+                val path    = s"/tmp/kyo-uds-deadline-${TlsTestCertShared.uniquePathTag()}.sock"
+                val message = "past-the-deadline".getBytes("UTF-8")
+                for
+                    listener <- transport.listenUnix(path, 16) { serverConn =>
+                        discard(Sync.Unsafe.evalOrThrow {
+                            Fiber.initUnscoped {
+                                Abort.run[Closed] {
+                                    Loop.foreach(serverConn.inbound.safe.take.map(chunk =>
+                                        serverConn.outbound.safe.put(chunk).andThen(Loop.continue)
+                                    ))
+                                }.unit
+                            }
+                        })
+                    }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
+                    client <- transport.connectUnix(path, 5.seconds).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
+                    _      <- tc.advance(5.seconds + 1.millis)
+                    _      <- client.outbound.safe.put(Span.fromUnsafe(message))
+                    echoed <- Loop(Array.emptyByteArray) { acc =>
+                        if acc.length >= message.length then Loop.done(acc)
+                        else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
                     }
-                }
-            }
+                yield assert(echoed.sameElements(message), "a Unix connection must outlive its connect deadline once connected")
+                end for
         }
     }
 

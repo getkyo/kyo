@@ -314,6 +314,34 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
         p
     end awaitReap
 
+    // One-shot latch completed the first time the driver hands the kernel a recv buffer.
+    val firstRecv: Promise.Unsafe[Unit, Any] = Promise.Unsafe.init[Unit, Any]()
+
+    private val seenCountWaiters = new ConcurrentLinkedQueue[(Int, Promise.Unsafe[Unit, Any])]()
+
+    /** A promise that completes once `cqeSeenCount` reaches `n`: an order-independent barrier for when a leaf's non-wake reaps are known by
+      * count but their order is not, which a FIFO [[awaitReap]] waiter would misattribute.
+      */
+    def awaitSeenCount(n: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        val p = Promise.Unsafe.init[Unit, Any]()
+        discard(seenCountWaiters.offer((n, p)))
+        // Re-check after publishing: a reap that incremented the count before the offer landed would otherwise never release this waiter.
+        releaseSeenCountWaiters()
+        p
+    end awaitSeenCount
+
+    /** Suspend across successive reaps until `cond` holds, for driver state that `complete()` changes on the reap carrier before the CQE is
+      * marked seen. The next-reap waiter is registered BEFORE `cond` is checked, so a reap landing between the check and the wait is not lost;
+      * it is count-based rather than an [[awaitReap]] FIFO entry, so one left unconsumed never steals a later reap from another waiter.
+      */
+    def awaitReapUntil(cond: => Boolean)(using AllowUnsafe, Frame): Unit < Async =
+        Loop(()) { _ =>
+            val next = awaitSeenCount(cqeSeenCount.get() + 1)
+            if cond then Loop.done(())
+            else next.safe.get.andThen(Loop.continue(()))
+        }
+    end awaitReapUntil
+
     def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int =
         real.io_uring_queue_init(entries, realRing, flags)
 
@@ -338,6 +366,7 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
     def kyo_uring_prep_recv(sqe: Ffi.Handle[IoUringSqe], fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Int =
         recvBufs.add(buf)
         recvLens.add(len)
+        firstRecv.completeDiscard(Result.succeed(()))
         real.kyo_uring_prep_recv(sqe, fd, buf, len, flags)
     end kyo_uring_prep_recv
 
@@ -429,8 +458,18 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
             discard(cqeSeenCount.getAndIncrement())
             cqeSeen.completeDiscard(Result.succeed(()))
             Maybe(reapWaiters.poll()).foreach(_.completeDiscard(Result.succeed(())))
+            releaseSeenCountWaiters()
         end if
     end kyo_uring_cqe_seen
+
+    private def releaseSeenCountWaiters(): Unit =
+        val seen = cqeSeenCount.get()
+        discard(seenCountWaiters.removeIf { waiter =>
+            val due = waiter._1 <= seen
+            if due then waiter._2.completeDiscard(Result.succeed(()))
+            due
+        })
+    end releaseSeenCountWaiters
 
     def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean =
         real.kyo_uring_probe_available(depth)
@@ -575,6 +614,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         real.create()
 
     def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        recordRead(fd, scratch)(real.registerRead(pollerFd, fd, id, scratch))
+
+    // An accept arm is read interest on the listen fd, so it records exactly as registerRead does.
+    def registerAccept(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        recordRead(fd, scratch)(real.registerAccept(pollerFd, fd, id, scratch))
+
+    private def recordRead(fd: Int, scratch: PollScratch)(register: => Int)(using AllowUnsafe): Int =
         val hook = onRegisterRead
         if hook != null && onRegisterRead.eq(hook) then
             onRegisterRead = null
@@ -584,10 +630,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         registeredReadFds.add(fd)
         registerReadArmBufs.add(scratch.armBuf)
         discard(callLogQueue.add(s"registerRead($fd)"))
-        val rc = real.registerRead(pollerFd, fd, id, scratch)
+        val rc = register
         registeredRead(fd).completeDiscard(Result.succeed(()))
         rc
-    end registerRead
+    end recordRead
 
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         discard(registerWriteCount.getAndIncrement())
@@ -632,7 +678,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         // Consume the one-shot synthetic injection atomically before delegating so the CAS wins exactly once.
         val injFd     = syntheticErrorFd.get()
         val hasInject = injFd >= 0 && syntheticErrorFd.compareAndSet(injFd, -1)
-        val realFiber = real.poll(pollerFd, timeoutMs, changelist, nChanges, scratch)
+        // Once set, every wait runs the real syscall against fd -1, which kevent and epoll_wait refuse with EBADF: the poller fd is gone, with no
+        // recycled fd number for a concurrent leaf to land on.
+        val waitFd    = if pollerLost.get() then -1 else pollerFd
+        val realFiber = real.poll(waitFd, timeoutMs, changelist, nChanges, scratch)
         if hasInject then
             // After the real poll returns n events, append one synthetic error-flag entry at index n for the target fd, guarded to stay
             // within the scratch arrays (MaxEvents). The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the
@@ -695,6 +744,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     val throwOnPoll: java.util.concurrent.atomic.AtomicBoolean =
         new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // When true, every later poll() waits on an invalid poller fd (see poll).
+    val pollerLost: java.util.concurrent.atomic.AtomicBoolean =
+        new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // When true, the next registerWake returns false (forced failure) without calling real. CAS to false on use so it fires once.
     val forceRegisterWakeFail: java.util.concurrent.atomic.AtomicBoolean =
         new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -731,8 +784,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         if p != null then p.asInstanceOf[Promise.Unsafe[Unit, Any]].completeDiscard(Result.succeed(()))
     end closeWake
 
+    // Every close(pollerFd) call, recorded before delegating.
+    val closedPollerFds: java.util.concurrent.ConcurrentLinkedQueue[Int] = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =
+        discard(closedPollerFds.add(pollerFd))
         real.close(pollerFd)
+    end close
 
 end RecordingPollerBackend
 

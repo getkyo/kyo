@@ -644,16 +644,12 @@ class WritePumpTest extends Test:
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
                     // Closing the driver settles every promise the pump awaits; the loop fiber completing is the point past which no callback
-                    // can reach the pump, so the write count read there is final, not a snapshot mid-resurrection.
+                    // can reach the pump, so the write count read there is final, not a snapshot mid-resurrection. A loop that never exits hangs
+                    // the leaf to its cap.
                     spy.close()
-                    Abort.run[Timeout](Async.timeout(10.seconds)(driverLoop.safe.get)).map { exit =>
+                    driverLoop.safe.get.map { _ =>
                         // closeHandle closed clientFd; only peerFd remains to close.
                         discard(sock.close(peerFd))
-                        assert(
-                            exit.isSuccess,
-                            s"the driver loop never exited, so the pump's outstanding callbacks were never delivered and the count below " +
-                                s"would be read off a live pump: $exit"
-                        )
                         val atTeardown = writesAtTeardown.get()
                         val now        = spy.writeCalls.get()
                         assert(

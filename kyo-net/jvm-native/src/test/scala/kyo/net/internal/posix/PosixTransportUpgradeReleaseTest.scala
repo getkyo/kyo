@@ -113,15 +113,6 @@ class PosixTransportUpgradeReleaseTest extends Test:
     private def hasBytes[A](ch: Channel.Unsafe[A])(using AllowUnsafe, Frame): Boolean =
         ch.empty().contains(false)
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(2.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     /** Allocate a real io_uring ring wrapped in a [[RecordingIoUringBindings]] spy, build a driver and a transport over it, run `body`, then
       * close the driver. Mirrors IoUringDriverTest.withRecordingDriver plus the transport layer.
       */
@@ -164,8 +155,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The ReadPump's first recv is now armed (or arming); wait for the SQE to be genuinely kernel-owned.
-                        awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
-                            assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
+                        untilState(handle.recvInFlight).andThen {
                             val reapLatch = recording.awaitReap()
                             // Run the buildEngine-failure upgrade ON THE REAP CARRIER via an engine op, so its release orders on the same
                             // FIFO as the observation without ever parking a thread. The release path (closeUnwiredHandle's synchronous
@@ -233,11 +223,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                             val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                             val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                             assert(plaintext.start(), "the plaintext connection must start")
-                            awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
-                                assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
+                            untilState(handle.recvInFlight).andThen {
                                 val upgrade = transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
-                                awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
-                                    assert(stepped, "the upgrade handshake never reached its first step")
+                                untilState(engine.stepCount.get() >= 1).andThen {
                                     val reapLatch = recording.awaitReap()
                                     val probed    = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
                                     // Abandon the upgrade through the production route, ON THE REAP CARRIER via an engine op, mirroring the
@@ -307,25 +295,22 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, cfg.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
-                        awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
-                            assert(armed, "the pump's first recv never became kernel-owned")
+                        untilState(handle.recvInFlight).andThen {
                             // First byte: recv 1 delivers it, the offer fills the capacity-1 channel, and the pump re-arms exactly once.
                             val c0  = recording.cqeSeenCount.get()
                             val one = Buffer.fromArray[Byte](Array[Byte](1))
                             assert(sock.sendNow(accepted, one, 1L, 0).value == 1L, "peer send 1 must succeed")
-                            awaitCondition(5.seconds)(recording.cqeSeenCount.get() > c0 && handle.recvInFlight).map { rearmed =>
-                                assert(rearmed, "the pump must deliver the first byte and re-arm its recv")
+                            untilState(recording.cqeSeenCount.get() > c0 && handle.recvInFlight).andThen {
                                 // Second byte: recv 2 delivers it, the pump's put parks on the full channel, and no recv is re-armed.
                                 // Once recv 2's CQE has reaped with nothing in flight, the state is stable: the parked put can never
                                 // succeed (capacity 1, held by the first chunk, no consumer), so no re-arm can ever follow.
                                 val two = Buffer.fromArray[Byte](Array[Byte](2))
                                 assert(sock.sendNow(accepted, two, 1L, 0).value == 1L, "peer send 2 must succeed")
-                                awaitCondition(5.seconds)(
+                                untilState(
                                     recording.cqeSeenCount.get() > c0 + 1 && !driver.hasInFlightRead(handle) && !handle.recvInFlight
-                                ).map { drained =>
+                                ).andThen {
                                     one.close()
                                     two.close()
-                                    assert(drained, "the pump must park on the full channel with no recv in flight")
                                     // Order observation (no carrier is ever held): the release's shutdown(SHUT_RDWR) sits immediately before
                                     // it installs the fdCloseSink credit, and IoUringDriver.closeHandle replaces handle.engineFreeSink
                                     // synchronously when the driver close is requested. A client shutdown seen with engineFreeSink already
@@ -362,11 +347,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                                 "the fd-close credit must be installed before the driver close is requested (else its single " +
                                                     "consumer reads the sink Absent and the credit strands, leaking the fd)"
                                             )
-                                            awaitCondition(5.seconds)(spy.closeCounts.getOrDefault(client, 0) >= 1).map { credited =>
-                                                assert(
-                                                    credited,
-                                                    "the release stranded its fd-close credit: the deferred close(fd) never ran (a permanent fd leak)"
-                                                )
+                                            // A release that stranded its fd-close credit never runs the deferred close(fd) (a permanent fd
+                                            // leak), which hangs the leaf to its cap.
+                                            untilState(spy.closeCounts.getOrDefault(client, 0) >= 1).andThen {
                                                 assert(
                                                     spy.closeCounts.getOrDefault(client, 0) == 1,
                                                     s"the abandoned fd must be closed exactly once, counts=${spy.closeCounts}"
@@ -427,10 +410,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                 end match
                                 // The detach already handed the fd to the upgrade, and no engine exists to own it, so the escape path is the
                                 // only thing that can release it: the plaintext connection's own close cannot take an Upgrading fd and this
-                                // transport is never swept. Left open, the fd sits until the peer FINs it into CLOSE_WAIT.
-                                awaitCondition(10.seconds)(handle.readBuffer.isClosed).map { released =>
-                                    assert(released, "the escape path must release the detached fd it was left holding")
-                                }
+                                // transport is never swept. Left open, the fd sits until the peer FINs it into CLOSE_WAIT, and this hangs the
+                                // leaf to its cap.
+                                untilState(handle.readBuffer.isClosed)
                         }
                     }
                 }
@@ -468,38 +450,27 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // Barrier, not a sleep: the bytes must be off the socket and sitting unconsumed in the inbound channel, because that
                         // is exactly what `detachForUpgrade` hands back as `staged`. Upgrading before they land would feed an empty chunk and
                         // silently exercise the leaf above instead of this one.
-                        awaitCondition(
-                            5.seconds
-                        )(hasBytes(plaintext.inbound)).map {
-                            staged =>
-                                assert(
-                                    staged,
-                                    "the peer's bytes never reached the inbound channel, so nothing would be staged for the engine"
-                                )
-                                Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
-                                    outcome =>
-                                        outcome.foreach(_.close())
-                                        outcome match
-                                            case Result.Panic(t) =>
-                                                assert(t eq boom, s"the caller must receive the feed's own throwable, got $t")
-                                            case other =>
-                                                fail(
-                                                    s"a staged-ciphertext feed throwing outside the NetTlsException taxonomy must panic the upgrade, got $other"
-                                                )
-                                        end match
-                                        assert(
-                                            engine.fed.get(),
-                                            "the leaf did not reach `feedStaged`, so it proves nothing about the post-build window"
-                                        )
-                                        // Both obligations, because by this point the upgrade owns both and the fd-only release the pre-build
-                                        // path uses would strand the engine's native memory with no other owner able to reach it.
-                                        awaitCondition(10.seconds)(handle.readBuffer.isClosed && engine.freed.get()).map { released =>
-                                            assert(
-                                                released,
-                                                s"fd released=${handle.readBuffer.isClosed} engine freed=${engine.freed.get()}"
+                        untilState(hasBytes(plaintext.inbound)).andThen {
+                            Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                                outcome =>
+                                    outcome.foreach(_.close())
+                                    outcome match
+                                        case Result.Panic(t) =>
+                                            assert(t eq boom, s"the caller must receive the feed's own throwable, got $t")
+                                        case other =>
+                                            fail(
+                                                s"a staged-ciphertext feed throwing outside the NetTlsException taxonomy must panic the upgrade, got $other"
                                             )
-                                        }
-                                }
+                                    end match
+                                    assert(
+                                        engine.fed.get(),
+                                        "the leaf did not reach `feedStaged`, so it proves nothing about the post-build window"
+                                    )
+                                    // Both obligations, because by this point the upgrade owns both and the fd-only release the pre-build
+                                    // path uses would strand the engine's native memory with no other owner able to reach it; a missing
+                                    // release hangs the leaf to its cap.
+                                    untilState(handle.readBuffer.isClosed && engine.freed.get())
+                            }
                         }
                     }
                 }
@@ -554,13 +525,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                 end match
                                 // The caller was told the upgrade was cancelled, so nobody references the upgraded connection: it must be
                                 // torn down (fd and buffers released), not left Established with running pumps on the never-swept
-                                // process-shared transport. The peer end stays open, so nothing else can ever tear it down.
-                                awaitCondition(10.seconds)(handle.readBuffer.isClosed).map { released =>
-                                    assert(
-                                        released,
-                                        "the orphaned upgraded connection must be closed when the success completion finds the promise already settled"
-                                    )
-                                }
+                                // process-shared transport. The peer end stays open, so nothing else can ever tear it down, and a missing
+                                // close hangs the leaf to its cap.
+                                untilState(handle.readBuffer.isClosed)
                         }
                     }
                 }

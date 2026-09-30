@@ -30,34 +30,49 @@ class ConnectionInitTest extends Test:
         PosixTestSockets.assumePoller()
         ()
 
-    /** Send `payload` to `peerFd` in pieces, retrying on a non-blocking `EAGAIN`, so a slow consumer's backpressure (which fills the kernel
-      * buffers) does not drop bytes: the send resumes as the consumer drains.
+    /** A signal completed on every take by [[drainAll]]: the consumer's progress is what frees kernel buffer space for a blocked sender. */
+    final private class Progress:
+        private val current                   = new java.util.concurrent.atomic.AtomicReference(Promise.Unsafe.init[Unit, Any]())
+        def next(): Promise.Unsafe[Unit, Any] = current.get()
+        def advance(): Unit                   = current.getAndSet(Promise.Unsafe.init[Unit, Any]()).completeDiscard(Result.succeed(()))
+    end Progress
+
+    /** Send `payload` to `peerFd` in pieces, so a slow consumer's backpressure (which fills the kernel buffers) does not drop bytes. On a
+      * non-blocking `EAGAIN` the send waits for the consumer's next take: a full kernel buffer holds unread bytes, so that take always comes.
+      * The wait is taken before the send, so a take landing between the two is not missed.
       */
-    private def sendAll(peerFd: Int, payload: Array[Byte])(using Frame): Unit < Async =
+    private def sendAll(peerFd: Int, payload: Array[Byte], progress: Progress)(using Frame): Unit < Async =
         Loop(0) { sent =>
             if sent >= payload.length then Loop.done(())
             else
                 Sync.defer {
-                    val len = math.min(16 * 1024, payload.length - sent)
-                    val buf = kyo.ffi.Buffer.alloc[Byte](len)
-                    var i   = 0
+                    val next = progress.next()
+                    val len  = math.min(16 * 1024, payload.length - sent)
+                    val buf  = kyo.ffi.Buffer.alloc[Byte](len)
+                    var i    = 0
                     while i < len do
                         buf.set(i, payload(sent + i)); i += 1
                     val n = sock.sendNow(peerFd, buf, len.toLong, 0).value
                     buf.close()
-                    n
-                }.map { n =>
+                    (n, next)
+                }.map { (n, next) =>
                     if n > 0 then Loop.continue(sent + n.toInt)
-                    else Async.sleep(1.millis).andThen(Loop.continue(sent))
+                    else next.safe.get.andThen(Loop.continue(sent))
                 }
         }
     end sendAll
 
-    /** Drain `n` bytes from a connection's inbound channel, concatenated in delivery order. */
-    private def drainAll(channel: Channel.Unsafe[Span[Byte]], n: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =
+    /** Drain `n` bytes from a connection's inbound channel, concatenated in delivery order, signalling `progress` on each take. */
+    private def drainAll(channel: Channel.Unsafe[Span[Byte]], n: Int, progress: Progress)(using
+        Frame
+    ): Array[Byte] < (Async & Abort[Closed]) =
         Loop(Array.emptyByteArray) { acc =>
             if acc.length >= n then Loop.done(acc)
-            else channel.safe.take.map(span => Loop.continue(acc ++ span.toArray))
+            else
+                channel.safe.take.map { span =>
+                    progress.advance()
+                    Loop.continue(acc ++ span.toArray)
+                }
         }
 
     // Anti-flakiness: AtomicBoolean CAS in Connection.init is synchronous; spy counts readable immediately after close.
@@ -124,7 +139,8 @@ class ConnectionInitTest extends Test:
             val payload = Array.tabulate[Byte](128 * 1024)(i => (i % 251).toByte)
 
             conn.start()
-            Async.zip(sendAll(peerFd, payload), drainAll(conn.inbound, payload.length)).map { case (_, got) =>
+            val progress = Progress()
+            Async.zip(sendAll(peerFd, payload, progress), drainAll(conn.inbound, payload.length, progress)).map { case (_, got) =>
                 assert(got.length == payload.length, s"expected ${payload.length} bytes through the wired channel, got ${got.length}")
                 assert(got.sameElements(payload), "the wired inbound channel must deliver every byte in order under backpressure")
                 conn.close()
@@ -154,6 +170,30 @@ class ConnectionInitTest extends Test:
         }
     }
 
+    // kyo-pod bounds a wait on onClosing with Async.timeout and kyo-http reads onClosing.done() as "the connection is closing", so a waiter
+    // that gives up must not settle the signal for every other observer: awaiting a fiber links the awaiter's interrupt to it.
+    "a waiter that gives up on onClosing does not complete it" in {
+        assumePoller()
+        val real = PollerIoDriver.init()
+        val spy  = new RecordingIoDriver(real)
+        discard(spy.start())
+        PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+            val conn   = Connection.init(handle, spy, channelCapacity = 8)
+            conn.start()
+            Async.race(conn.onClosing.safe.get.map(_ => "closing"), Kyo.lift("gave up")).map { winner =>
+                val settled = conn.onClosing.done()
+                val open    = conn.isOpen
+                conn.close()
+                spy.close()
+                discard(sock.close(peerFd))
+                assert(winner == "gave up")
+                assert(!settled, "a waiter giving up on onClosing must leave it pending while the connection is open")
+                assert(open, "the connection must still be open")
+            }
+        }
+    }
+
     // The production trigger: a peer FIN drives the ReadPump to EOF/teardown, which reaches closeFn and completes onClosing.
     "onClosing completes on a peer-driven ReadPump teardown" in {
         assumePoller()
@@ -165,7 +205,7 @@ class ConnectionInitTest extends Test:
             val conn   = Connection.init(handle, spy, channelCapacity = 8)
             conn.start()
             discard(sock.close(peerFd)) // peer FIN -> ReadPump EOF -> teardown -> closeFn
-            Async.timeout(5.seconds)(conn.onClosing.safe.get).andThen {
+            conn.onClosing.safe.get.andThen {
                 assert(conn.onClosing.done(), "onClosing must complete on a peer-driven ReadPump teardown")
                 spy.close()
                 succeed

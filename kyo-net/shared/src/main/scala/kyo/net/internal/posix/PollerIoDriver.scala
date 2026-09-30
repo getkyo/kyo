@@ -581,7 +581,7 @@ final private[net] class PollerIoDriver private[posix] (
                     val self      = task
                     waitFiber.poll() match
                         case Present(Result.Success(_)) =>
-                            dispatchAndContinue(self)
+                            if pollScratch.pollerLost then pollerLost(donePromise) else dispatchAndContinue(self)
                         case Present(_) =>
                             // Wait failed: end the chain. Unreachable through the production backends, which fold every inline outcome into a
                             // Success carrying a ready count, but reachable through a decorator. The crash path is the catch below, not this arm.
@@ -592,7 +592,7 @@ final private[net] class PollerIoDriver private[posix] (
                             // callback instead, which is the handoff a pending wait takes.
                             waitFiber.onComplete {
                                 case Result.Success(_) =>
-                                    try dispatchAndContinue(self)
+                                    try if pollScratch.pollerLost then pollerLost(donePromise) else dispatchAndContinue(self)
                                     catch
                                         case t: Throwable =>
                                             if !closedFlag.get() then Log.live.unsafe.error(s"$label poll cycle crashed", t)
@@ -697,6 +697,24 @@ final private[net] class PollerIoDriver private[posix] (
         freeScratch()
         donePromise.completeDiscard(result)
     end terminal
+
+    /** The exit for a poller whose own fd is gone ([[PollScratch.pollerLost]]): every later wait would fail the same way, so re-polling would
+      * only spin this carrier. Closes the driver the way [[close]] does, so the terminal teardown fails every pending op with a `Closed` naming
+      * the lost poller, but never calls `backend.close(pollerFd)`: the number no longer names this driver's poller and may already name another
+      * descriptor.
+      */
+    private def pollerLost(donePromise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Unit =
+        val lost = Closed(label, Frame.internal, s"poller fd=$pollerFd is no longer valid")
+        Log.live.unsafe.error(s"$label poller fd=$pollerFd is no longer valid; closing the driver")
+        // A close() that already won keeps its own reason; the store precedes the CAS for the reason close()'s doc gives.
+        if !closedFlag.get() then closeReason = lost
+        if closedFlag.compareAndSet(false, true) then
+            val reg = diagRegistration
+            if reg ne null then reg.close()
+        terminalTeardown()
+        freeScratch()
+        donePromise.completeDiscard(Result.succeed(()))
+    end pollerLost
 
     /** The poll loop's terminal-exit teardown, shared by every exit path (JVM/Native's terminal `while`-exit and both JS onComplete terminal
       * branches): set [[terminal]] before the final drain (the ordering [[closeHandle]]'s put-then-recheck relies on), drain once more
@@ -2552,7 +2570,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // Skip the backend register when no registration matched (id == IdNoCheck): there is no pending op to arm and no owner id to tag the
                 // kqueue knote (the udata stale-event cookie). The id is the registering handle's monotonic id, passed to the backend as the knote udata.
                 if id != PollScratch.IdNoCheck then
-                    val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
+                    val rc = backend.registerAccept(pollerFd, fd, id, pollScratch)
                     if rc < 0 then
                         Maybe(pendingAccepts.remove(fd)).foreach { h =>
                             h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(

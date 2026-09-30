@@ -19,15 +19,14 @@ import kyo.net.internal.transport.ReadOutcome
   * `io_uring_submit` call to report a short count without actually flushing the SQE (it returns a count below what was prepared and does NOT
   * delegate, so the prepared recv SQE sits unsubmitted), then every later submit delegates to the real ring. The real socket still holds the
   * peer's bytes, so once the stranded SQE is re-submitted the recv reaps and delivers them. Without the re-submit this leaf FAILS for the right
-  * reason: the recv SQE is dropped, its `pending` entry never reaps, and the read hangs to the `Async.timeout` ceiling.
+  * reason: the recv SQE is dropped, its `pending` entry never reaps, and the read hangs to the leaf cap (libuv #4598).
   *
   * Gate: [[PosixTestSockets.assumeUring]] (a real io_uring ring at production depth). On a non-Linux host or a cgroup-capped container the leaf
   * cancels cleanly (TestCanceled), so it is CI-validated on native Linux.
   *
   * Anti-flakiness: the one-shot short-submit override is armed BEFORE [[IoUringDriver.awaitRead]] prepares the recv SQE, so the very first
   * submit that flushes this driver's recv SQE is the one forced short; nothing else is in flight. The leaf synchronizes on the read promise
-  * resolving (the real reap) rather than a timer; `Async.timeout` is only the deadlock ceiling so a stranded SQE fails the test fast instead of
-  * hanging the suite. No sleep, no busy-spin.
+  * resolving (the real reap) rather than a timer. No sleep, no busy-spin.
   */
 class IoUringDriverShortSubmitTest extends Test:
 
@@ -92,7 +91,7 @@ class IoUringDriverShortSubmitTest extends Test:
                     recording.armShortSubmit()
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                    Abort.run[Closed](promise.safe.get).map { outcome =>
                         drv.closeHandle(acceptedH)
                         discard(sock.close(client))
                         outcome match
@@ -100,10 +99,6 @@ class IoUringDriverShortSubmitTest extends Test:
                                 assert(
                                     got.toArray.toList == payload.toList,
                                     s"the re-submitted recv must deliver the full payload; got ${got.toArray.toList}"
-                                )
-                            case Result.Failure(_: Timeout) =>
-                                fail(
-                                    "the read hung: a short io_uring_submit dropped the recv SQE and it was never re-submitted (libuv #4598)"
                                 )
                             case Result.Failure(c: Closed) =>
                                 fail(s"the recv was failed Closed instead of re-submitted: $c")

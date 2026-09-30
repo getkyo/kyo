@@ -113,12 +113,14 @@ abstract private[kyo] class IoDriver[Handle]:
     def onInboundClosedDuringRead(handle: Handle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit = ()
 
     /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
-      * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state
-      * synchronously) cancels and then closes the fd immediately, today's behavior. The io_uring driver overrides this to run the whole
-      * teardown on its reap carrier BEHIND any accept arm still queued on the engine FIFO: that arm preps its SQE while the fd still names
-      * the listener's socket, the prepped SQEs are flushed, and only then does `closeFd` release the fd number for reuse. Without that
-      * sequencing, a queued arm outlives the fd close, preps an accept against whatever socket RECYCLED the number (typically the next
-      * listener), and each such ghost accept steals one incoming connection for the closed listener's handler.
+      * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers) cancels and then closes the fd immediately.
+      * Only the cancel's promise failures are synchronous: the fd-keyed map removals, and kqueue's `EV_DELETE`, run on the poll carrier
+      * after the close. They are safe there because the removal applies only while the fd's entry still carries this handle's id, and the
+      * change queue applies it before any registration of the recycled number, which is submitted after the close. The io_uring driver
+      * overrides this to run the whole teardown on its reap carrier BEHIND any accept arm still queued on the engine FIFO: that arm preps
+      * its SQE while the fd still names the listener's socket, the prepped SQEs are flushed, and only then does `closeFd` release the fd
+      * number for reuse. Without that sequencing, a queued arm outlives the fd close, preps an accept against whatever socket RECYCLED the
+      * number (typically the next listener), and each such ghost accept steals one incoming connection for the closed listener's handler.
       *
       * `closeFd` runs whatever the cancel does: cancelling fails promises, whose callbacks run inline, and a throw from one of them must
       * not leave the listen fd open with its release never reported.

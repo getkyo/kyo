@@ -147,14 +147,13 @@ class PollerIoDriverStandingReadTest extends Test:
                             val payload = Array.tabulate[Byte](msgSize)(j => (i + j).toByte)
                             sendAll(client, payload).andThen(Loop.continue(i + 1))
                     }.andThen {
-                        Abort.run[Timeout | Closed](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
+                        // A lost re-arm stalls the standing read short of the total, which hangs the leaf to its cap.
+                        Abort.run[Closed](done.safe.get).map { outcome =>
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client))
                             outcome match
                                 case Result.Success(()) =>
                                     assert(acc.size() == total, s"collected ${acc.size()} bytes, expected $total")
-                                case Result.Failure(_: Timeout) =>
-                                    fail(s"lost re-arm: standing read stalled after ${acc.size()} of $total bytes")
                                 case other => fail(s"unexpected standing-read outcome: $other")
                             end match
                         }

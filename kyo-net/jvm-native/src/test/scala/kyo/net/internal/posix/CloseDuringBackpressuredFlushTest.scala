@@ -136,7 +136,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         // churn before the buffers fill and it settles stably true. Sample it as an eventual condition, not a single instant, so a
                         // transient mid-churn false does not flake the precondition; a genuinely lost re-arm (the real-bug shape) keeps it false and
                         // surfaces as the per-test timeout.
-                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
+                        _ <- untilState(handle.flushReArmPending)
                         _ = assert(handle.pendingCipher.exists(_.size > handle.pendingCipherSent), "pendingCipher must hold unsent bytes")
                         // Close while the flush is parked. requestClose defers the free to endWrite; two fifoBarriers prove it ran (the close
                         // submits the deferred free op, which a barrier behind it completes after).
@@ -210,7 +210,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         // through a bounded not-writable->writable churn (the kernel drains a few KB of the loopback into the peer's recv buffer,
                         // firing the EPOLLOUT edge that clears the arm and re-submits the flush) before settling stably true once the buffers fill, so
                         // it is sampled as an eventual condition rather than a single instant. A genuinely lost re-arm keeps it false and times out.
-                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
+                        _ <- untilState(handle.flushReArmPending)
                         // Install the close hook NOW (the initial flush has armed): it fires on the first send of the re-flush.
                         _ = spy.onSend = () =>
                             if closeFired.compareAndSet(false, true) then

@@ -21,7 +21,7 @@ import kyo.net.internal.transport.WriteResult
   *     such a spin would exhaust its retry budget and drop the un-sent tail, so the peer would decrypt fewer bytes than were written.
   *   - Property (b) no blast radius: while connection 1 is backpressured (buffer full, bytes pending), a SECOND connection on the SAME driver
   *     whose small write fits its buffer must still complete. Such a spin would hold the one FIFO worker, so connection 2's engine op could not
-  *     run until connection 1's spin ended, stalling connection 2 until the 15s framework timeout.
+  *     run until connection 1's spin ended, stalling connection 2 to the leaf cap.
   *
   * Both run over REAL loopback socket pairs against the real poller (epoll on Linux, kqueue on macOS/BSD), with a tiny SO_RCVBUF on the peer
   * and SO_SNDBUF on the client, and a REAL BoringSSL engine post-handshake. A large plaintext write encrypts into a similarly large ciphertext
@@ -173,33 +173,31 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                     val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     clientH.tls = Present(clientEngine)
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    Async.timeout(14.seconds) {
-                        for
-                            // Handshake the engines on the FIFO worker so the client encrypt and server decrypt both run on one carrier.
-                            handshakeDone <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
-                            _ = assert(handshakeDone, "the in-memory handshake must complete before the write")
-                            // The write returns Done immediately (the pump never sees backpressure); the FIFO encrypts, appends the
-                            // ciphertext, flushes until EAGAIN, then arms writability. A retry loop would exhaust and abandon the un-sent tail.
-                            w <- Sync.defer(driver.write(clientH, Span.fromUnsafe(plaintext), 0))
-                            _ = assert(w == WriteResult.Done, s"TLS write should return Done, got $w")
-                            // Drain the peer and decrypt until the full plaintext is recovered. A dropping spin would never recover the whole payload
-                            // (bytes dropped) so the 14s bound trips; here every byte arrives as the flush re-arms and re-submits.
-                            got <- drainAndDecrypt(driver, acceptedH, serverEngine, plaintext.length)
-                        yield
-                            // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the fds.
-                            driver.submitEngineOp(() => serverEngine.free())
-                            driver.closeHandle(clientH)
-                            discard(sock.close(accepted))
-                            discard(assert(
-                                got.length == plaintext.length,
-                                s"slow peer recovered ${got.length} of ${plaintext.length} written plaintext bytes"
-                            ))
-                            assert(
-                                got.sameElements(plaintext),
-                                "the decrypted peer bytes must equal the written plaintext exactly (no drop/dup/reorder)"
-                            )
-                        end for
-                    }
+                    for
+                        // Handshake the engines on the FIFO worker so the client encrypt and server decrypt both run on one carrier.
+                        handshakeDone <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
+                        _ = assert(handshakeDone, "the in-memory handshake must complete before the write")
+                        // The write returns Done immediately (the pump never sees backpressure); the FIFO encrypts, appends the
+                        // ciphertext, flushes until EAGAIN, then arms writability. A retry loop would exhaust and abandon the un-sent tail.
+                        w <- Sync.defer(driver.write(clientH, Span.fromUnsafe(plaintext), 0))
+                        _ = assert(w == WriteResult.Done, s"TLS write should return Done, got $w")
+                        // Drain the peer and decrypt until the full plaintext is recovered. A dropping spin would never recover the whole payload
+                        // (bytes dropped), hanging the leaf to its cap; here every byte arrives as the flush re-arms and re-submits.
+                        got <- drainAndDecrypt(driver, acceptedH, serverEngine, plaintext.length)
+                    yield
+                        // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the fds.
+                        driver.submitEngineOp(() => serverEngine.free())
+                        driver.closeHandle(clientH)
+                        discard(sock.close(accepted))
+                        discard(assert(
+                            got.length == plaintext.length,
+                            s"slow peer recovered ${got.length} of ${plaintext.length} written plaintext bytes"
+                        ))
+                        assert(
+                            got.sameElements(plaintext),
+                            "the decrypted peer bytes must equal the written plaintext exactly (no drop/dup/reorder)"
+                        )
+                    end for
                 }
             }
         }
@@ -225,43 +223,41 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                         client2H.tls = Present(clientEngine2)
                         val accepted1H = PosixHandle.socket(accepted1, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val accepted2H = PosixHandle.socket(accepted2, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        Async.timeout(14.seconds) {
-                            for
-                                // Handshake both pairs on the FIFO worker so every client encrypt and server decrypt runs on one carrier.
-                                h1 <- handshakeOnDriver(driver, clientEngine1, serverEngine1).safe.get
-                                h2 <- handshakeOnDriver(driver, clientEngine2, serverEngine2).safe.get
-                                _ = assert(h1 && h2, "both in-memory handshakes must complete before the writes")
-                                // Connection 1: backpressure it (256 KB into a 2 KB buffer). Returns Done; the FIFO appends + flushes to
-                                // EAGAIN + arms. A retry loop would leave the FIFO worker stuck retrying connection 1's full buffer.
-                                w1 <- Sync.defer(driver.write(client1H, Span.fromUnsafe(bigPlain), 0))
-                                _ = assert(w1 == WriteResult.Done, s"connection 1 write should return Done, got $w1")
-                                // Connection 2: a small write that fits in one flush pass. If the FIFO worker were held by connection 1's
-                                // retry loop, this op could not run and connection 2's bytes would never go out, tripping the 14s bound.
-                                w2 <- Sync.defer(driver.write(client2H, Span.fromUnsafe(smallPlain), 0))
-                                _ = assert(w2 == WriteResult.Done, s"connection 2 write should return Done, got $w2")
-                                // Assert connection 2 progressed (recovered its full small payload) WHILE connection 1 is still
-                                // backpressured (we have not drained peer 1 yet). This completes promptly because connection 1's backpressure never holds the FIFO worker.
-                                got2 <- drainAndDecrypt(driver, accepted2H, serverEngine2, smallPlain.length)
-                                _ = assert(
-                                    got2.sameElements(smallPlain),
-                                    s"connection 2 recovered ${got2.length} of ${smallPlain.length} while connection 1 backpressured (blast radius)"
-                                )
-                                // Only NOW drain peer 1, proving connection 2 progressed before connection 1's backpressure was relieved.
-                                got1 <- drainAndDecrypt(driver, accepted1H, serverEngine1, bigPlain.length)
-                            yield
-                                // Free the engines on the FIFO worker (closeHandle routes each client free; the server frees are submitted), then fds.
-                                driver.submitEngineOp(() => serverEngine1.free())
-                                driver.submitEngineOp(() => serverEngine2.free())
-                                driver.closeHandle(client1H)
-                                driver.closeHandle(client2H)
-                                discard(sock.close(accepted1))
-                                discard(sock.close(accepted2))
-                                assert(
-                                    got1.sameElements(bigPlain),
-                                    s"connection 1 recovered ${got1.length} of ${bigPlain.length} after drain"
-                                )
-                            end for
-                        }
+                        for
+                            // Handshake both pairs on the FIFO worker so every client encrypt and server decrypt runs on one carrier.
+                            h1 <- handshakeOnDriver(driver, clientEngine1, serverEngine1).safe.get
+                            h2 <- handshakeOnDriver(driver, clientEngine2, serverEngine2).safe.get
+                            _ = assert(h1 && h2, "both in-memory handshakes must complete before the writes")
+                            // Connection 1: backpressure it (256 KB into a 2 KB buffer). Returns Done; the FIFO appends + flushes to
+                            // EAGAIN + arms. A retry loop would leave the FIFO worker stuck retrying connection 1's full buffer.
+                            w1 <- Sync.defer(driver.write(client1H, Span.fromUnsafe(bigPlain), 0))
+                            _ = assert(w1 == WriteResult.Done, s"connection 1 write should return Done, got $w1")
+                            // Connection 2: a small write that fits in one flush pass. If the FIFO worker were held by connection 1's
+                            // retry loop, this op could not run and connection 2's bytes would never go out, hanging the leaf to its cap.
+                            w2 <- Sync.defer(driver.write(client2H, Span.fromUnsafe(smallPlain), 0))
+                            _ = assert(w2 == WriteResult.Done, s"connection 2 write should return Done, got $w2")
+                            // Assert connection 2 progressed (recovered its full small payload) WHILE connection 1 is still
+                            // backpressured (we have not drained peer 1 yet). This completes promptly because connection 1's backpressure never holds the FIFO worker.
+                            got2 <- drainAndDecrypt(driver, accepted2H, serverEngine2, smallPlain.length)
+                            _ = assert(
+                                got2.sameElements(smallPlain),
+                                s"connection 2 recovered ${got2.length} of ${smallPlain.length} while connection 1 backpressured (blast radius)"
+                            )
+                            // Only NOW drain peer 1, proving connection 2 progressed before connection 1's backpressure was relieved.
+                            got1 <- drainAndDecrypt(driver, accepted1H, serverEngine1, bigPlain.length)
+                        yield
+                            // Free the engines on the FIFO worker (closeHandle routes each client free; the server frees are submitted), then fds.
+                            driver.submitEngineOp(() => serverEngine1.free())
+                            driver.submitEngineOp(() => serverEngine2.free())
+                            driver.closeHandle(client1H)
+                            driver.closeHandle(client2H)
+                            discard(sock.close(accepted1))
+                            discard(sock.close(accepted2))
+                            assert(
+                                got1.sameElements(bigPlain),
+                                s"connection 1 recovered ${got1.length} of ${bigPlain.length} after drain"
+                            )
+                        end for
                     }
                 }
             }

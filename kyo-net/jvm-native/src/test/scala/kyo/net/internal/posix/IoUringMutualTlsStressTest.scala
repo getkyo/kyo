@@ -41,8 +41,8 @@ class IoUringMutualTlsStressTest extends Test:
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
             val payload   = Array.fill[Byte](32768)(42) // spans multiple TLS records (max record ~16KB)
 
-            // Every non-success outcome of an upgrade is recorded here with the stage it stalled at. The race symptom is a Timeout at the "upgrade"
-            // stage; a non-empty record at the end fails the test. The list never being touched on the happy path keeps the success run allocation-free.
+            // Every non-success outcome of an upgrade is recorded here with the stage it failed at; a non-empty record at the end fails the
+            // test. The list never being touched on the happy path keeps the success run allocation-free.
             val stalls = new java.util.concurrent.ConcurrentLinkedQueue[String]()
 
             def startTlsEchoServer(transport: kyo.net.internal.posix.PosixTransport): Listener < (Async & Abort[NetException]) =
@@ -92,10 +92,9 @@ class IoUringMutualTlsStressTest extends Test:
                 tag: String
             ): Unit < (Async & Abort[NetException | Closed]) =
                 val stage = new java.util.concurrent.atomic.AtomicReference[String]("init")
-                // Both connections are wrapped in Sync.ensure (not Scope.ensure: this runs inside Async.foreach under Async.timeout, and
-                // Sync.ensure's underlying Safepoint finalizer fires on interruption too, which is exactly the path a stalled upgrade takes
-                // when the hang-guard timeout below fires). Without it, a put/take failure before the upgrade, or the timeout itself firing mid-upgrade
-                // (the very race this leaf reproduces), would abandon conn/tlsConn with no closer ever reached.
+                // Both connections are wrapped in Sync.ensure (not Scope.ensure: this runs inside Async.foreach, and Sync.ensure's underlying
+                // Safepoint finalizer fires on interruption too). Without it, a put/take failure before the upgrade would abandon conn/tlsConn
+                // with no closer ever reached.
                 val attempt: Array[Byte] < (Async & Abort[NetException | Closed]) =
                     for
                         _      <- Sync.defer(stage.set("connect"))
@@ -119,20 +118,17 @@ class IoUringMutualTlsStressTest extends Test:
                             yield echoed
                         }
                     yield echoed
-                // The per-attempt ceiling is a hang-guard, not an expected-time bound: the tested property is "no upgrade corrupts or strands",
-                // proven by the round-trip outcome, not by how fast it lands. At 60s it fires only on a genuine deadlock across the many
-                // emulated-arch attempts, so a slow-but-progressing attempt under CI/qemu load is not misread as a stall.
-                val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(60.seconds)(attempt))
-                outcome.map {
+                // The tested property is "no upgrade corrupts or strands", proven by the round-trip outcome, not by how fast it lands: a
+                // stranded upgrade hangs the leaf to its cap, whose diagnostics carry the driver's pending ops.
+                Abort.run[NetException | Closed](attempt).map {
                     case Result.Success(echoed) =>
                         assert(
                             echoed.length == payload.length && echoed.sameElements(payload),
                             s"$tag: 32KB round-trip mismatch (${echoed.length})"
                         )
                     case other =>
-                        // The upgrade did not complete its round-trip: record the stage it stalled at (the race manifests as a Timeout at the
-                        // "upgrade" stage). The recorded entries fail the test at the end so a stall is a hard failure, not a swallowed log line.
+                        // The upgrade did not complete its round-trip: record the stage it failed at. The recorded entries fail the test at the
+                        // end so a failure is a hard failure, not a swallowed log line.
                         discard(stalls.add(s"$tag stalled-at=${stage.get} -> $other"))
                 }
             end oneUpgrade

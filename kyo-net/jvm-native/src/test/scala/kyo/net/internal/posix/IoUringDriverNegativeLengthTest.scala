@@ -37,8 +37,8 @@ import kyo.net.internal.transport.ReadOutcome
   * platform-shared C; the leaves need a real ring only to obtain a real SQE pointer to prepare against.
   *
   * Anti-flakiness: the boundary leaf is a synchronous in-memory sequence of prep calls over one freshly-initialized ring (no socket, no peer, no
-  * timer). The driver leaf synchronizes on the read promise via `Async.timeout` as the deadlock ceiling only; the observable rejection completes
-  * the promise synchronously inside `awaitRead`, so it resolves immediately. No sleep, no busy-spin.
+  * timer). The driver leaf awaits the read promise; the observable rejection completes it synchronously inside `awaitRead`, so it resolves
+  * immediately, and a dropped rejection hangs to the leaf cap. No sleep, no busy-spin.
   */
 class IoUringDriverNegativeLengthTest extends Test:
 
@@ -132,11 +132,11 @@ class IoUringDriverNegativeLengthTest extends Test:
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Arm the one-shot prep_recv rejection BEFORE awaitRead, so the recv SQE for this read is refused at the C boundary. The
                     // driver must FAIL the read promise observably (Closed) instead of dropping the SQE silently (which would leave the promise
-                    // waiting on a CQE that never arrives, a hang). The 5s ceiling exists only to turn a regression (hang) into a failed test.
+                    // waiting on a CQE that never arrives, which hangs the leaf to its cap).
                     recording.armReject()
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
-                    Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
+                    Abort.run[Closed](promise.safe.get).map { outcome =>
                         driver.closeHandle(acceptedH)
                         discard(Ffi.load[SocketBindings].close(client))
                         outcome match
@@ -144,7 +144,6 @@ class IoUringDriverNegativeLengthTest extends Test:
                             // through the panic channel with a typed NetConnectionIoException naming the defect, not a plain Closed.
                             case Result.Panic(cause) =>
                                 assert(cause.getMessage.contains("negative length"), s"message=${cause.getMessage}")
-                            case Result.Failure(_: Timeout) => fail("read hung: rejection was silently dropped, no CQE ever arrived")
                             case other => fail(s"expected the read promise to Panic on the rejected negative-length recv, got $other")
                         end match
                     }

@@ -19,15 +19,6 @@ class PollerIoDriverPeerClosedTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     /** Send `n` bytes from the peer so the driver side has data to drain (arming and completing one read, then leaving no read armed). */
     private def sendFromPeer(peerFd: Int, n: Int): Unit =
         val buf = Buffer.alloc[Byte](n)
@@ -57,10 +48,8 @@ class PollerIoDriverPeerClosedTest extends Test:
                     PosixTestSockets.drainPeer(driver, handle, driverFd, 4).map { _ =>
                         assert(!driver.isPeerClosed(handle), "the peer is still live before the FIN")
                         PosixTestSockets.closePeerForEof(sock, peerFd) // FIN with no read armed
-                        awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                            driver.closeHandle(handle)
-                            assert(closed, "the poller must latch a peer FIN arriving with no read armed")
-                        }
+                        // A poller that never latches the FIN hangs the leaf here.
+                        untilState(driver.isPeerClosed(handle)).andThen { driver.closeHandle(handle); succeed }
                     }
                 }
             }
@@ -74,10 +63,8 @@ class PollerIoDriverPeerClosedTest extends Test:
                     sendFromPeer(peerFd, 4)
                     PosixTestSockets.drainPeer(driver, handle, driverFd, 4).map { _ =>
                         PosixTestSockets.resetPeer(sock, peerFd) // RST with no read armed
-                        awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
-                            driver.closeHandle(handle)
-                            assert(closed, "the poller must latch a peer RST through dispatchError")
-                        }
+                        // A poller that never latches the RST through dispatchError hangs the leaf here.
+                        untilState(driver.isPeerClosed(handle)).andThen { driver.closeHandle(handle); succeed }
                     }
                 }
             }

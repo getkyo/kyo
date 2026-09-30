@@ -89,8 +89,7 @@ class IoUringTlsWriteOrderingTest extends Test:
       * the only event that can change the answer is a send CQE reaping, so the next reap is exactly the settle signal (no sleep). The reap
       * latch is registered BEFORE each sample: a sample runs on the reap carrier, so any op it still sees in flight can only reap on a later
       * reap-carrier turn, which completes the already-registered latch; registering after the sample could miss a reap that fired in the gap.
-      * Async.timeout is only the deadlock ceiling, so a handle that never quiesces fails the test loudly rather than hanging, and never
-      * surfaces as a main-source Closed.
+      * A handle that never quiesces hangs the leaf to its cap.
       */
     private def awaitQuiesced(drv: IoUringDriver, recording: RecordingIoUringBindings, handle: PosixHandle)(using
         Frame,
@@ -113,11 +112,9 @@ class IoUringTlsWriteOrderingTest extends Test:
                     }
                 }
             }
-        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(settle)).map {
-            case Result.Success(_)          => ()
-            case Result.Failure(_: Timeout) =>
-                fail(s"awaitQuiesced: handle ${handle.id} did not reach quiescence within the 30s deadlock ceiling")
-            case other =>
+        Abort.run[Closed](settle).map {
+            case Result.Success(_) => ()
+            case other             =>
                 fail(s"awaitQuiesced: awaiting quiescence for handle ${handle.id} failed unexpectedly: $other")
         }
     end awaitQuiesced

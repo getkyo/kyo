@@ -34,7 +34,7 @@ import kyo.net.internal.posix.TestDrivers
   *
   * Gate: PosixTestSockets.assumeUring() (cancels cleanly off Linux or where the production ring cannot init) and
   * TlsRealEngines.assumeTlsReady() (cancels when no TLS provider is staged). Anti-flakiness: all waits use FIFO-barrier promises
-  * (submitEngineOp thunk submitted after the test op); no sleep. Async.timeout is only the deadlock ceiling.
+  * (submitEngineOp thunk submitted after the test op); no sleep, and a barrier that never fires hangs to the leaf cap.
   */
 class IoUringDriverCrossTailSendOrderTest extends Test:
 
@@ -95,7 +95,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                         discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
                         // FIFO barrier: submitted after the writeTls FIFO op, so it fires only after that op has fully run.
-                        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
+                        Abort.run[Closed](fifoBarrier(drv).safe.get).map { _ =>
                             val sendsAfter = recording.sendBufs.size()
                             // Teardown: clear tls before closeHandle so the driver does not free the engine (withEngines owns the free).
                             handle.tls = Absent
@@ -131,7 +131,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                         discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
                         // FIFO barrier 1: confirms the Write 1 FIFO op (appendPending + deferred flushTls) has fully run.
-                        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).flatMap { _ =>
+                        Abort.run[Closed](fifoBarrier(drv).safe.get).flatMap { _ =>
                             assert(
                                 !handle.sendInFlight,
                                 "after the defer: sendInFlight must be false (the TLS SQE was deferred, not submitted)"
@@ -148,7 +148,7 @@ class IoUringDriverCrossTailSendOrderTest extends Test:
                             discard(drv.write(handle, Span.fromUnsafe(plain), 0))
 
                             // FIFO barrier 2: fires after the Write 2 FIFO op runs, which called flushTls and submitted the SQE.
-                            Abort.run[Timeout | Closed](Async.timeout(30.seconds)(fifoBarrier(drv).safe.get)).map { _ =>
+                            Abort.run[Closed](fifoBarrier(drv).safe.get).map { _ =>
                                 val sendsAfter = recording.sendBufs.size()
                                 handle.tls = Absent
                                 drv.closeHandle(handle)

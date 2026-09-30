@@ -105,7 +105,7 @@ class PollerIoDriverRecycledFdTest extends Test:
         // generation differs. A deregister for `stale` (its fd was closed and recycled into `live`) must leave `live`'s registration and kernel
         // filter intact: the HandleId guard skips the removal when activeFds(fd) carries `live`'s id, not `stale`'s. Verified end to end: after the
         // stale deregister, bytes sent to the fd still dispatch to `live`'s read. At base the unconditional deregister evicts `live` and the read
-        // strands (a timeout).
+        // strands, hanging the leaf to its cap.
         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
@@ -129,7 +129,7 @@ class PollerIoDriverRecycledFdTest extends Test:
             discard(sock.sendNow(client, sendBuf, payload.length.toLong, PosixConstants.MSG_NOSIGNAL))
             sendBuf.close()
 
-            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
+            Abort.run[Closed](liveRead.safe.get).map { outcome =>
                 driver.closeHandle(live)
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
@@ -139,8 +139,6 @@ class PollerIoDriverRecycledFdTest extends Test:
                                 got.toArray.sameElements(payload),
                                 s"the live registration must survive the stale deregister and deliver the bytes, got ${got.toArray.toList}"
                             )
-                        case Result.Failure(_: Timeout) =>
-                            fail("the live registration was evicted by the stale deregister: the read stranded")
                         case other =>
                             fail(s"unexpected read outcome for the surviving registration: $other")
                     end match
@@ -156,7 +154,7 @@ class PollerIoDriverRecycledFdTest extends Test:
         // issue a dangling awaitRead after its close. applyRegistration must reject a registration from a closing handle: applying it would overwrite
         // `live`'s activeFds/pendingReads entry and re-arm the kernel under the dead handle's id, so `live`'s read would never dispatch. Verified end
         // to end: after the stale register, bytes sent to the fd still dispatch to `live`. At base (no isClosing guard) the stale register evicts
-        // `live` and the read strands (a timeout).
+        // `live` and the read strands, hanging the leaf to its cap.
         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
             val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real     = PollerBackend.default()
@@ -182,7 +180,7 @@ class PollerIoDriverRecycledFdTest extends Test:
             discard(sock.sendNow(client, sendBuf, payload.length.toLong, PosixConstants.MSG_NOSIGNAL))
             sendBuf.close()
 
-            Abort.run[Timeout | Closed](Async.timeout(5.seconds)(liveRead.safe.get)).map { outcome =>
+            Abort.run[Closed](liveRead.safe.get).map { outcome =>
                 driver.closeHandle(live)
                 discard(sock.close(client))
                 Sync.defer(driver.close()).map { _ =>
@@ -192,8 +190,6 @@ class PollerIoDriverRecycledFdTest extends Test:
                                 got.toArray.sameElements(payload),
                                 s"the live registration must survive the closing handle's stale register and deliver the bytes, got ${got.toArray.toList}"
                             )
-                        case Result.Failure(_: Timeout) =>
-                            fail("the live registration was evicted by the closing handle's dangling read re-arm: the read stranded")
                         case other =>
                             fail(s"unexpected read outcome for the surviving registration: $other")
                     end match

@@ -93,6 +93,11 @@ final private[net] class PosixHandle private (
       */
     @volatile var peerCloseGrace: Duration = Duration.Infinity
 
+    /** The transport's clock, for the waits a driver times on this handle's behalf (the io_uring accept backoff on a listen handle), so a test
+      * under `Clock.withTimeControl` drives them with virtual time. The driver is built before any transport, so it cannot hold the clock itself.
+      */
+    @volatile var clock: Clock = Clock.live
+
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
       * buffer; its CQE then lands on an already-settled (cancelled) promise and the bytes would be lost, hanging the handshake. While

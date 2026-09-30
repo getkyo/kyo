@@ -120,6 +120,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private val pendingStagedDeliveries =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
+    // Test seam, null in production: runs on the selector carrier inside deliverStagedToArm after it saw staged bytes and before it touches
+    // the arm slot, the window in which a caller carrier's pre-arm drain and a fresh arm can land.
+    @volatile private[net] var stagedDeliveryChecked: NioHandle => Unit = null
+
     // Concurrent-collection audit: listener releases deferred to the selector's deregistration pass. releaseListener (any carrier) offers the
     // closed server channel with its release promise; the poll carrier drains after each select(), the closing carrier drains once more after
     // selector.close(), and a releasing carrier that observes the selector closed after its offer drains its own entry. More than one consumer,
@@ -519,6 +523,14 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         loop()
     end stashGraceBytes
 
+    /** Return drained bytes to the FRONT of the staging, ahead of anything staged since, so the next drainer sees them in stream order. */
+    private def restageGraceBytes(handle: NioHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
+        @tailrec def loop(): Unit =
+            val cur = handle.graceStaging.get()
+            if !handle.graceStaging.compareAndSet(cur, Chunk(arr).concat(cur)) then loop()
+        loop()
+    end restageGraceBytes
+
     /** Take and concatenate the staging exactly once (getAndSet: one drainer wins). */
     private def drainGraceStaging(handle: NioHandle)(using AllowUnsafe): Maybe[Array[Byte]] =
         val taken = handle.graceStaging.getAndSet(Chunk.empty)
@@ -654,9 +666,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * the probe consumed the socket, so no readiness ever fires for the armed cell, and every other staging drain sits on a read path that
       * parked before the stash.
       *
-      * Plain: take the cell, drain the staging, complete. A drain that comes up empty after winning the cell means a concurrent
-      * detachForUpgrade salvaged the staging; its cleanupPending found the slot already taken here, so complete the promise Closed the way
-      * that cleanup would have (the plaintext pump must tear down for the upgrade).
+      * Plain: drain the staging, then take the cell and complete. The emptiness check above is not atomic with the caller carriers: an
+      * earlier read's pre-arm drain can take the staging and the pump can arm a fresh read before the cell is read here, so the drain comes
+      * first and an empty drain leaves that cell waiting on the socket. A cell taken by a close, cancel or detach after the drain returns
+      * the bytes to the front of the staging, and an upgrade moves them on to its salvage.
       *
       * TLS: staged bytes are ciphertext; feed them to the engine and complete only if a full record unwraps (or the records ended in the
       * peer's close_notify). A partial record stays parked in netInBuf for the next socket read to extend, exactly like dispatchReadTls's
@@ -666,23 +679,21 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private def deliverStagedToArm(handle: NioHandle)(using AllowUnsafe): Unit =
         given Frame = Frame.internal
         if !handle.upgrading && !handle.graceStaging.get().isEmpty then
+            val seam = stagedDeliveryChecked
+            if seam ne null then seam(handle)
             val cell = handle.readArm.get()
             cell match
                 case Present(armCell) if !armCell.probe =>
                     handle.tls match
                         case Absent =>
-                            if handle.readArm.compareAndSet(cell, Absent) then
-                                discard(pendingReads.remove(handle.channel))
-                                drainGraceStaging(handle) match
-                                    case Present(staged) =>
-                                        armCell.promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(staged))))
-                                    case Absent =>
-                                        armCell.promise.completeDiscard(Result.fail(Closed(
-                                            s"connection ${handleLabel(handle)}",
-                                            handle.createdAt,
-                                            "detached for upgrade during staged delivery"
-                                        )))
-                                end match
+                            drainGraceStaging(handle).foreach { staged =>
+                                if handle.readArm.compareAndSet(cell, Absent) then
+                                    discard(pendingReads.remove(handle.channel))
+                                    armCell.promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(staged))))
+                                else
+                                    restageGraceBytes(handle, staged)
+                                    if handle.upgrading then drainGraceStaging(handle).foreach(stashUpgradeBytes(handle, _))
+                            }
                         case Present(tls) =>
                             if !handle.engineGate.compareAndSet(false, true) then
                                 discard(pendingStagedDeliveries.offer(handle))

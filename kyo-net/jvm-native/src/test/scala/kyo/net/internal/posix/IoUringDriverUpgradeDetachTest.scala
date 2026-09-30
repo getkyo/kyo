@@ -18,18 +18,6 @@ class IoUringDriverUpgradeDetachTest extends Test:
 
     private def sock = kyo.ffi.Ffi.load[SocketBindings]
 
-    /** Bounded await on a read promise: Present(result) when it completes, Absent when nothing completes it within `bound` (the strand). */
-    private def awaitOutcome(p: Promise.Unsafe[ReadOutcome, Abort[Closed]], bound: Duration)(using
-        Frame,
-        kyo.test.AssertScope
-    ): Maybe[Result[Closed, ReadOutcome]] < Async =
-        Abort.run[Closed | Timeout](Async.timeout(bound)(p.safe.get)).map {
-            case Result.Success(outcome)        => Present(Result.succeed(outcome))
-            case Result.Failure(_: Timeout)     => Absent
-            case Result.Failure(closed: Closed) => Present(Result.fail(closed))
-            case Result.Panic(e)                => Present(Result.panic(e))
-        }
-
     private def strandScenario(name: String)(arrange: (IoUringDriver, PosixHandle, Promise.Unsafe[ReadOutcome, Abort[Closed]]) => Unit)(
         using
         Frame,
@@ -47,16 +35,10 @@ class IoUringDriverUpgradeDetachTest extends Test:
                 }) {
                     val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     arrange(driver, handle, p)
-                    awaitOutcome(p, 10.seconds).map {
-                        case Present(Result.Failure(_)) => succeed
-                        case Absent                     =>
-                            assert(
-                                false,
-                                s"$name: the stray read promise was stranded, nothing completed it " +
-                                    s"(pendingReadPromise=${handle.pendingReadPromise.get().isDefined}, upgradeActive=${handle.upgradeActive})"
-                            )
-                        case other =>
-                            assert(false, s"unexpected outcome $other")
+                    // A stranded stray is a promise nothing completes, which hangs the leaf here.
+                    Abort.run[Closed](p.safe.get).map {
+                        case Result.Failure(_) => succeed
+                        case other             => assert(false, s"$name: unexpected outcome $other")
                     }
                 }
             }

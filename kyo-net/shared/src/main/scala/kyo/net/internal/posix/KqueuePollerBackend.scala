@@ -57,6 +57,10 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         // tags the knote with the owning handle id so a stale event for a recycled fd (whose id no longer matches) is dropped by the poll loop.
         change(pollerFd, fd, PosixConstants.EVFILT_READ, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, id, scratch.kqueueData)
 
+    // EV_ADD on an existing knote re-evaluates the filter, so a listen fd with a connection already queued is reported by the plain read arm.
+    def registerAccept(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        registerRead(pollerFd, fd, id, scratch)
+
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         // EV_CLEAR + EV_ENABLE: register enabled and edge-triggered, so the filter reports one event per not-writable-to-writable transition and
         // is never disabled again. udata=id tags the knote with the owning handle id (the stale-event discriminator; EV_ADD on a fresh or
@@ -341,12 +345,14 @@ private[net] object KqueuePollerBackend extends PollerBackend:
       * multi-threaded JVM (a delivered signal) and loses nothing (the kernel state a signal interrupts is un-consumed, so a later successful
       * `kevent` still reports it), so it is silently retried. Anything else is logged: mirrors `IoUringDriver.reapRcContinues`'s rc
       * classification (an unrecognized/fatal rc there gets a named log line instead of a silent swallow), so a genuine backend error here
-      * leaves a trace instead of presenting as an unexplained stalled connection.
+      * leaves a trace instead of presenting as an unexplained stalled connection. `EBADF` is the one permanent failure: the kqueue fd itself is
+      * gone, so it also marks [[PollScratch.pollerLost]] for the driver to stop rather than re-poll.
       */
     private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch, data: KqueuePollData)(using AllowUnsafe, Frame): Int =
         val raw = outcome.value
         if raw < 0 && outcome.errorCode != PosixConstants.EINTR then
             Log.live.unsafe.error(s"kevent failed errno=${outcome.errorCode}")
+        if raw < 0 && outcome.errorCode == PosixConstants.EBADF then scratch.pollerLost = true
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags

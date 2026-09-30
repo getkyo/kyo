@@ -23,8 +23,8 @@ import kyo.net.internal.transport.WriteResult
   *
   * Anti-flakiness: the recv leaf writes the peer bytes and arms the injection BEFORE registering read interest, so the very first recvNow on
   * the fd (after the read-ready event) hits the one-shot injection; the retried recvNow reads the real bytes. The write leaf arms the injection
-  * before the single `driver.write`, so the first send hits it; the retried send writes the bytes the peer then drains. `Async.timeout` is only
-  * the deadlock ceiling. No sleep, no busy-spin.
+  * before the single `driver.write`, so the first send hits it; the retried send writes the bytes the peer then drains. A read that is never
+  * delivered hangs to the leaf cap. No sleep, no busy-spin.
   */
 class PollerIoDriverEintrRetryTest extends Test:
 
@@ -86,8 +86,8 @@ class PollerIoDriverEintrRetryTest extends Test:
                     _           = spy.injectRecvEintrOnce.set(true)
                     readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     _           = driver.awaitRead(handle, readPromise)
-                    // Bounded so the test fails fast rather than hanging if the read is never delivered.
-                    outcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
+                    // A read that is never delivered hangs the leaf to its cap.
+                    outcome <- Abort.run[Closed](readPromise.safe.get)
                     _       <- Sync.defer {
                         driver.closeHandle(handle)
                         driver.close()
@@ -107,8 +107,6 @@ class PollerIoDriverEintrRetryTest extends Test:
                         fail(s"expected ReadOutcome.Bytes, got $other")
                     case Result.Failure(_: Closed) =>
                         fail("EINTR on recv was treated as a hard error and failed the read Closed; it must be retried (POSIX recv)")
-                    case Result.Failure(_: Timeout) =>
-                        fail("the read hung: an EINTR retry never delivered the data")
                     case other => fail(s"unexpected read outcome: $other")
                 end for
             }

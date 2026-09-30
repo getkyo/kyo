@@ -23,7 +23,7 @@ import kyo.net.internal.transport.ReadOutcome
   *     merely below 2R). Each read waits for `backend.registeredRead(fd)` after awaitRead and before sending the byte: for iteration 0 this
   *     synchronizes on the change worker executing epoll_ctl(ADD), ensuring the byte's arrival always triggers an edge; for iterations 1+ the
   *     fd is already registered and the promise is already done (no-op wait). Without this sync, a race between the ADD syscall and byte
-  *     arrival on ARM64 Linux can drop the edge for the first read, causing a 5-second timeout.
+  *     arrival on ARM64 Linux can drop the edge for the first read, parking it forever.
   *   - `halfCloseDrainsRemaining`: confirms that a peer half-close arriving simultaneously with buffered bytes drains the bytes first and
   *     then delivers `Span.empty` without a spurious Closed. On epoll ET, EPOLLRDHUP fires once alongside EPOLLIN; after the data is
   *     consumed via the first recv, the driver sets `readMightHaveMore = true` (because `eofPending` is set) to force re-dispatch on
@@ -42,8 +42,8 @@ import kyo.net.internal.transport.ReadOutcome
   *     silently dropped if unrecorded, and a subsequent consumer `awaitRead` (a MOD-skip re-register, unchanged mask) would park forever. The
   *     driver records the missed edge in `missedReads` and re-dispatches immediately when the consumer's `awaitRead` arrives. On kqueue this is not
   *     observable: EV_ADD|EV_CLEAR re-evaluates buffered data on every `registerRead`. Gated on `assumePoller()`.
-  *   - `wakeLatencyBounded`: confirms that a `awaitRead` submitted while the poll loop is parked wakes the loop (via `backend.wake`) and
-  *     delivers the readiness promptly, not just after the 100ms timeout.
+  *   - `wakeOnSubmit`: confirms that an `awaitRead` submitted while the poll loop is parked wakes the loop (via `backend.wake`) rather
+  *     than waiting out the park timeout.
   *
   * Gate: `PosixTestSockets.assumePoller()` for most leaves; `changelistBatchingNoDeadlock` uses `assumeKqueue()` because it tests the
   * kqueue-specific changelist batching and a second sequential awaitWritable that requires EV_CLEAR re-evaluation semantics
@@ -81,23 +81,18 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         Loop(()) { _ =>
             val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p)
-            Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+            p.safe.get.map {
+                case ReadOutcome.Bytes(span) =>
                     acc.write(span.toArrayUnsafe)
                     Loop.continue(())
-                case Result.Success(Result.Success(_)) =>
-                    Loop.done(acc.toByteArray) // EOF (PeerFin, CleanClose, etc.)
-                case Result.Success(Result.Failure(closed: Closed)) =>
-                    Abort.fail(closed)
                 case _ =>
-                    Abort.fail(Closed("PollerIoDriverEdgeTriggeredTest", summon[Frame], "awaitRead timed out or panicked"))
+                    Loop.done(acc.toByteArray) // EOF (PeerFin, CleanClose, etc.)
             }
         }
     end collectUntilEof
 
     /** Collect bytes from successive awaitRead calls on `handle` until exactly `want` bytes have arrived. The peer must send at least
-      * `want` bytes before this returns; no close or half-close is required. Each awaitRead has a 10-second timeout so a stranded residual
-      * surfaces as a timed-out failure rather than hanging indefinitely.
+      * `want` bytes before this returns; no close or half-close is required. A residual stranded on ET parks an awaitRead forever.
       */
     private def collectExactBytes(
         driver: PollerIoDriver,
@@ -110,20 +105,12 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             else
                 val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
-                Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                    case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                p.safe.get.map {
+                    case ReadOutcome.Bytes(span) =>
                         acc.write(span.toArrayUnsafe)
                         Loop.continue(())
-                    case Result.Success(Result.Success(_)) =>
-                        Loop.done(acc.toByteArray) // EOF
-                    case Result.Success(Result.Failure(closed: Closed)) =>
-                        Abort.fail(closed)
                     case _ =>
-                        Abort.fail(Closed(
-                            "PollerIoDriverEdgeTriggeredTest",
-                            summon[Frame],
-                            "awaitRead timed out (residual stranded on ET)"
-                        ))
+                        Loop.done(acc.toByteArray) // EOF
                 }
         }
     end collectExactBytes
@@ -263,7 +250,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             val sendBuf = Buffer.fromArray[Byte](Array[Byte]((i % 127).toByte))
                             sock.send(clientFd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                                 sendBuf.close()
-                                Abort.run[Timeout](Async.timeout(5.seconds)(p.safe.get)).map {
+                                Abort.run[Closed](p.safe.get).map {
                                     case Result.Success(_) => Loop.continue(i + 1)
                                     case other             => fail(s"$label read $i failed: $other")
                                 }
@@ -303,7 +290,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // data (n < readBufferSize). Because eofPending is true, dispatchReadPlain sets readMightHaveMore=true regardless of buffer fill.
         // The second awaitRead triggers an immediate re-dispatch (consumer-paced drain), which calls recv again and gets 0 (FIN), delivering
         // Span.empty. Without eofPending forcing readMightHaveMore=true, the MOD-skip on re-register would produce no new edge and the
-        // second awaitRead would park until timeout, because EPOLLET fires EPOLLRDHUP only once per transition.
+        // second awaitRead would park forever, because EPOLLET fires EPOLLRDHUP only once per transition.
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
             val real     = PollerBackend.default()
             val pollerFd = real.create()
@@ -345,7 +332,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // call), and at least one poll cycle carried a non-empty changelist (the batched registration submission).
         // Gate: kqueue only. On epoll EPOLLET the fd stays armed and only fires an edge on write-buffer transition (not-writable to
         // writable). A loopback fd that is always writable fires the EPOLLOUT edge exactly once on ADD; a second awaitWritable after
-        // dispatchWritable consumed the first edge finds no new transition and parks until timeout. The changelist batch is also
+        // dispatchWritable consumed the first edge finds no new transition and parks forever. The changelist batch is also
         // kqueue-specific (kqueue accumulates kevent changes and submits them atomically with the wait call; epoll uses separate
         // epoll_ctl syscalls and has no changelist parameter in epoll_wait). Testing this on epoll would require a different
         // protocol (drain the socket buffer to force a real not-writable->writable transition), which is not the subject of this leaf.
@@ -362,16 +349,16 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             // Two sequential write arms on the same fd. Each must resolve (the fd is always writable on a loopback with no backpressure).
             val p1 = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
             driver.awaitWritable(handle, p1)
-            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](p1.safe.get))).map { r1 =>
-                assert(r1.isSuccess, s"first write arm must resolve without timeout: $r1")
-                // Re-arm after the first resolves.
+            Abort.run[Closed | NetException](p1.safe.get).map { r1 =>
+                assert(r1.isSuccess, s"first write arm must resolve: $r1")
+                // Re-arm after the first resolves. A deadlocked poll loop never resolves it.
                 val p2 = Promise.Unsafe.init[Unit, Abort[Closed | NetException]]()
                 driver.awaitWritable(handle, p2)
-                Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](p2.safe.get))).map { r2 =>
+                Abort.run[Closed | NetException](p2.safe.get).map { r2 =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)
-                    assert(r2.isSuccess, s"second write arm must resolve without deadlock or timeout: $r2")
+                    assert(r2.isSuccess, s"second write arm must resolve: $r2")
                     // registerWrite fires once per awaitWritable call: 2 write arms must produce exactly 2 registerWrite calls.
                     val wc = backend.registerWriteCount.get()
                     assert(wc == 2, s"exactly 2 registerWrite calls expected for 2 awaitWritable arms; got $wc")
@@ -416,7 +403,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 driver.closeHandle(handle)
                 // Wait until the deregister is actually processed by the poll loop (the OpDeregister command is in the changeQueue;
                 // the poll loop drains it asynchronously). The deregisteredFd latch fires when deregister() executes on the backend.
-                Abort.run[Timeout](Async.timeout(5.seconds)(backend.deregisteredFd(acceptedFd).safe.get)).map { _ =>
+                backend.deregisteredFd(acceptedFd).safe.get.map { _ =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     // acceptedFd is ALREADY closed: closeHandle above ran closeNow, which closes the OS fd (readFd == writeFd) through the
@@ -462,7 +449,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             sock.send(client2Fd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                                 sendBuf.close()
                                 // The read must deliver exactly the byte we sent, not a stale empty span or a phantom delivery.
-                                Abort.run[Timeout](Async.timeout(5.seconds)(p2.safe.get)).map { outcome =>
+                                Abort.run[Closed](p2.safe.get).map { outcome =>
                                     driver2.close()
                                     PosixTestSockets.closePeerForEof(spy2, client2Fd)
                                     PosixTestSockets.closePeerForEof(spy2, accepted2Fd)
@@ -524,8 +511,8 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 sendAll(clientFd, firstPayload).map { _ =>
                     // Collect the first payload. Because firstPayload.length < readBufferSize, dispatchReadPlain sets
                     // readMightHaveMore=false after this recv. The consumer-paced drain therefore does NOT re-dispatch.
-                    Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p1.safe.get))).map {
-                        case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                    Abort.run[Closed](p1.safe.get).map {
+                        case Result.Success(ReadOutcome.Bytes(span)) =>
                             assert(
                                 span.size == firstPayload.length,
                                 s"first delivery must match firstPayload size: got ${span.size}"
@@ -540,7 +527,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             // On kqueue, this also fires an edge, but registerRead re-evaluates it on re-registration anyway.
                             sendAll(clientFd, secondPayload).map { _ =>
                                 // Resume: call awaitRead to collect the second payload.
-                                // Without the record (epoll): MOD-skip on re-registration produces no new edge; awaitRead times out.
+                                // Without the record (epoll): MOD-skip on re-registration produces no new edge; awaitRead parks forever.
                                 // With it (epoll): missedReads records the dropped edge; dispatchCmd re-dispatches immediately.
                                 // kqueue: EV_ADD|EV_CLEAR re-evaluates buffered data; passes without a missed-edge record.
                                 Abort.run[Closed](collectExactBytes(driver, handle, secondPayload.length)).map { result =>
@@ -551,33 +538,30 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                                         case Result.Success(bytes) =>
                                             assert(
                                                 bytes.length == secondPayload.length,
-                                                s"second delivery must match secondPayload size: got ${bytes.length} of ${secondPayload.length}" +
-                                                    " (data was stranded on ET if short or timed out)"
+                                                s"second delivery must match secondPayload size: got ${bytes.length} of ${secondPayload.length}"
                                             )
                                             assert(
                                                 bytes.toList == secondPayload.toList,
                                                 "second delivery byte content must match secondPayload exactly"
                                             )
                                         case Result.Failure(closed) =>
-                                            fail(s"second delivery got Closed (timed out waiting for stranded data?): $closed")
+                                            fail(s"second delivery got Closed: $closed")
                                     end match
                                 }
                             }
-                        case Result.Success(Result.Failure(closed: Closed)) =>
-                            fail(s"first awaitRead got Closed: $closed")
-                        case _ =>
-                            fail("first awaitRead timed out or panicked")
+                        case other =>
+                            fail(s"first awaitRead must deliver bytes: $other")
                     }
                 }
             }
         }
     }
 
-    "wakeLatencyBounded: awaitRead on a data-ready fd completes promptly via the poll-loop wake" in {
+    "wakeOnSubmit: awaitRead on a data-ready fd wakes the parked poll loop" in {
         PosixTestSockets.assumePoller()
         // Send a byte to make the accepted fd immediately read-ready. Submit awaitRead while the poll loop may be parked.
-        // The wake (backend.wake) must cut the park short so the read delivers within 5 seconds, not just after the 100ms timeout.
-        // The wakeCount assertion pins the wake path (a regression that drops the wake would still deliver after the timeout).
+        // The wake (backend.wake) must cut the park short. The wakeCount assertion pins the wake path: a regression that drops the
+        // wake still delivers once the park times out, so delivery alone proves nothing about latency.
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
             val real     = PollerBackend.default()
             val pollerFd = real.create()
@@ -592,13 +576,13 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 sendBuf.close()
                 val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
-                Abort.run[Timeout](Async.timeout(5.seconds)(p.safe.get)).map { outcome =>
+                Abort.run[Closed](p.safe.get).map { outcome =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     assert(
                         outcome.isSuccess,
-                        s"awaitRead on a data-ready fd must deliver promptly via wake: $outcome"
+                        s"awaitRead on a data-ready fd must deliver: $outcome"
                     )
                     assert(
                         backend.wakeCount.get() > 0,

@@ -38,6 +38,6 @@ private[net] object NioBackend extends Entry:
     def createDriver()(using AllowUnsafe, Frame): NioIoDriver =
         NioIoDriver.init()
 
-    def build()(using AllowUnsafe, Frame): Transport =
-        NioTransport.init()
+    def build(clock: Clock = Clock.live)(using AllowUnsafe, Frame): Transport =
+        NioTransport.init(clock)
 end NioBackend

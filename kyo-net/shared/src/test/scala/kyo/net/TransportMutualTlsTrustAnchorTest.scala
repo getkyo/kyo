@@ -52,8 +52,6 @@ class TransportMutualTlsTrustAnchorTest extends Test:
             val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
             echoListener(transport, serverMtls).map { listener =>
                 val message = "kyo-truststore".getBytes("UTF-8")
-                // Generous hang-guard: a mutual-TLS round-trip verifies a cert chain on both ends and is slow on a cold/loaded runner, so 5s timed
-                // out on every cell at once. A true deadlock still fails within the suite's 60s leaf budget (see kyo.net.Test); mirrors TransportMutualTlsTest.
                 // Scope.ensure guarantees `client` is closed even if the put/collect below aborts before the tuple (and its trailing
                 // client.close() in the success match arm) is ever produced.
                 val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed] & Scope) =
@@ -62,9 +60,7 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
                     }
-                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                    Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
-                outcome.map { outcome =>
+                Abort.run[NetException | Closed](connectAndEcho).map { outcome =>
                     listener.close()
                     outcome match
                         case Result.Success((client, echoed)) =>
@@ -86,27 +82,32 @@ class TransportMutualTlsTrustAnchorTest extends Test:
             val serverMtls = serverTls.copy(
                 trustStorePath = serverTls.certChainPath,
                 caCertPath = Absent,
-                clientAuth = NetTlsConfig.ClientAuth.Required
+                clientAuth = NetTlsConfig.ClientAuth.Required,
+                // No handshake deadline on either end: only the rejection can end the round-trip, so a missing one hangs to the leaf cap.
+                handshakeTimeout = Duration.Infinity
             )
             TlsTestCertShared.writeWrongHostPems.map { case (untrustedCert, untrustedKey) =>
-                val untrustedClient = clientTls.copy(certChainPath = Present(untrustedCert), privateKeyPath = Present(untrustedKey))
+                val untrustedClient = clientTls.copy(
+                    certChainPath = Present(untrustedCert),
+                    privateKeyPath = Present(untrustedKey),
+                    handshakeTimeout = Duration.Infinity
+                )
                 echoListener(transport, serverMtls).map { listener =>
                     val message = "kyo-untrusted".getBytes("UTF-8")
                     // Under TLS 1.3 `connectTls` can succeed even for an untrusted client cert (the server only validates on first use), so
                     // `client` is a real live connection here regardless of how the round-trip below turns out; Scope.ensure guarantees it is
-                    // closed whether the put/collect succeeds, fails Closed, or the round-trip is still pending when Async.timeout fires.
+                    // closed whether the put/collect succeeds or fails Closed. The server's rejection ends the round-trip; one that never ends
+                    // hangs to the leaf cap.
                     val connectAndEcho: Array[Byte] < (Async & Abort[NetException | Closed] & Scope) =
                         transport.connectTls("127.0.0.1", listener.port, untrustedClient).safe.get.map { client =>
                             Scope.ensure(Sync.defer(client.close())).andThen {
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
                             }
                         }
-                    val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < (Async & Scope) =
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(connectAndEcho))
-                    outcome.map { outcome =>
+                    Abort.run[NetException | Closed](connectAndEcho).map { outcome =>
                         listener.close()
                         assert(
-                            outcome.isFailure,
+                            Test.rejected(outcome),
                             s"a server must reject a client cert trustStorePath does not trust, got $outcome"
                         )
                     }
@@ -127,7 +128,6 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                 val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
                 echoListener(transport, serverMtls).map { listener =>
                     val message = "kyo-precedence".getBytes("UTF-8")
-                    // Generous hang-guard (see the trustStorePath leaf above): a cold/loaded mutual-TLS round-trip exceeds a 5s bound.
                     // Scope.ensure guarantees `client` is closed even if the put/collect below aborts before the tuple (and its trailing
                     // client.close() in the success match arm) is ever produced.
                     val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed] & Scope) =
@@ -136,9 +136,7 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                             }
                         }
-                    val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
-                    outcome.map { outcome =>
+                    Abort.run[NetException | Closed](connectAndEcho).map { outcome =>
                         listener.close()
                         outcome match
                             case Result.Success((client, echoed)) =>
