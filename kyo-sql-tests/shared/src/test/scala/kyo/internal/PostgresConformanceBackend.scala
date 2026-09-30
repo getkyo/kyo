@@ -10,7 +10,7 @@ import kyo.internal.postgres.PostgresConnection
   * [[withFreshSchema]] and the capability flags, so the coordinates a conformance body sees are engine-free.
   *
   * The container is shared, not per-test: [[provision]] memoizes one postgres container per process through
-  * [[SqlTestContainers.getOrInit]] over the core [[SqlTestContainers.containers]] table, keyed by the descriptor id `"postgres"`, so a container
+  * [[TestContainers.getOrInit]] over the kyo-pod [[TestContainers.containers]] table, keyed by the descriptor id `"postgres"`, so a container
   * inited here shares the single entry with any other caller for that id. Each leaf then provisions a fresh database inside that shared
   * container and drops it on scope exit, so leaves never collide yet pay the container start once.
   */
@@ -233,8 +233,8 @@ final class PostgresConformanceBackend extends ContainerConformanceBackend:
     ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
         val predefCfg = ContainerPredef.Postgres.Config.default
         for
-            container <- SqlTestContainers.getOrInit(SqlTestContainers.containers, "postgres")(
-                SqlTestContainers.initSingleton(ContainerPredef.Postgres.buildContainerConfig(predefCfg), "postgres")
+            container <- TestContainers.getOrInit(TestContainers.containers, "postgres")(
+                TestContainers.initSingleton(ContainerPredef.Postgres.buildContainerConfig(predefCfg), "postgres")
             )
             port   <- container.mappedPort(predefCfg.port)
             schema <- freshSchemaName

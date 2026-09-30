@@ -25,7 +25,7 @@ import scala.concurrent.duration.Duration
   */
 final private[internal] class SbtTask(
     val taskDef: TaskDef,
-    baseConfig: RunConfig,
+    baseOverlay: RunConfig => RunConfig,
     testClassLoader: ClassLoader,
     results: java.util.concurrent.ConcurrentLinkedQueue[TestReport],
     forked: Boolean
@@ -55,7 +55,7 @@ final private[internal] class SbtTask(
         // Unsafe: Frame.internal at the sbt edge. sbt's Task.execute has no caller Frame to propagate, and
         // SbtTask.scala is not a Frame-deriving file (only *Test/*Bench.scala are). This is the sanctioned
         // sbt-edge boundary (steering.md), matching the AllowUnsafe already used inside runToFuture.
-        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, baseConfig)(using kyo.Frame.internal)
+        val future = kyo.test.runner.TestRunner.runToFuture(nextClass, baseOverlay)(using kyo.Frame.internal)
         Await.result(future, Duration.Inf)
     end runSuite
 

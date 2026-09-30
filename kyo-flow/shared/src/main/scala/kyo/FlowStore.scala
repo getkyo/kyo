@@ -267,14 +267,8 @@ object FlowStore:
       * All state is lost when the process exits. For production, implement the `FlowStore` trait against a durable database (e.g.,
       * PostgreSQL) and pass it to `Flow.runServer(store, flows*)`.
       */
-    def initMemory(using Frame): FlowStore < (Sync & Scope) =
-        AtomicRef.init(MemoryData.empty).map { ref =>
-            Channel.init[Unit](1).map { channel =>
-                Channel.init[Unit](1).map { registrations =>
-                    new MemoryFlowStore(ref, channel, registrations)
-                }
-            }
-        }
+    def initMemory(using Frame): FlowStore < Sync =
+        MemoryFlowStore.init
 
     // --- The claimed capability ---
 

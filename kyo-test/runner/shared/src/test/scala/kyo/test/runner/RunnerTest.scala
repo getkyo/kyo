@@ -3,6 +3,7 @@ package kyo.test.runner
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.test.RunConfig
+import kyo.test.TestFilter
 import kyo.test.TestReport
 import kyo.test.TestResult
 import kyo.test.internal.TestBase
@@ -184,7 +185,9 @@ end RTJoinedFailSuite
 class RTDetachedAfterSuite extends TestBase[Any]:
     "detached-fails-after" in Sync.defer {
         Fiber.initUnscoped {
-            RTDetachedAfterSuite.release.get.andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
+            RTDetachedAfterSuite.release.get
+                .andThen(Abort.run[Throwable](assert(false, "detached fiber asserted after the leaf")))
+                .andThen(RTDetachedAfterSuite.asserted.completeDiscard(Result.succeed(())))
         }
     }.andThen(succeed)
 end RTDetachedAfterSuite
@@ -193,26 +196,66 @@ object RTDetachedAfterSuite:
     // Set by the test before the suite runs; the detached fiber parks on it and asserts only once the test releases it,
     // after the runner has scored the leaf and closed the scope.
     @volatile var release: kyo.Promise[Unit, Any] = null.asInstanceOf[kyo.Promise[Unit, Any]]
+    // Completed by the detached fiber once its assert has recorded into the closed scope.
+    @volatile var asserted: kyo.Promise[Unit, Any] = null.asInstanceOf[kyo.Promise[Unit, Any]]
 end RTDetachedAfterSuite
 
-/** A single leaf slower than a short heartbeat interval, used to prove `onLeafHeartbeat` fires while a leaf is still running. */
+/** A single leaf longer than the heartbeat interval, used to prove `onLeafHeartbeat` fires while a leaf is still running. */
 class RTHeartbeatSuite extends TestBase[Any]:
     "slow-leaf" in Async.sleep(1.second).andThen(succeed)
 end RTHeartbeatSuite
 
-/** A `TestReporter` that records every `onLeafHeartbeat` call (thread-safe) and ignores all other lifecycle events. */
+/** A leaf that parks past its own limit while the heartbeat interval lies far beyond it: the hang dump has to arrive before the timeout. */
+class RTHeartbeatBeforeTimeoutSuite extends TestBase[Any]:
+    "hung".timeout(4.seconds) in Async.sleep(30.seconds).andThen(succeed)
+end RTHeartbeatBeforeTimeoutSuite
+
+/** A suite whose own `config` sets the leaf limit, with a leaf that parks past it: whether the limit survives the caller's flags is
+  * observable as TimedOut versus a 30-second wait.
+  */
+class RTSuiteConfigSuite extends TestBase[Any]:
+    override def config: RunConfig = super.config.timeout(300.millis)
+    "hung" in Async.sleep(30.seconds).andThen(succeed)
+    "quick" in succeed
+end RTSuiteConfigSuite
+
+/** A leaf that records the time its clock reports, telling the caller's controlled clock apart from the live one. */
+class RTClockSuite extends TestBase[Any]:
+    "reads-clock" in Clock.now.map(now => RTClockSuite.observed.set(Maybe(now))).andThen(succeed)
+end RTClockSuite
+
+object RTClockSuite:
+    val observed: java.util.concurrent.atomic.AtomicReference[Maybe[Instant]] =
+        new java.util.concurrent.atomic.AtomicReference(Maybe.empty)
+    def reset(): Unit = observed.set(Maybe.empty)
+end RTClockSuite
+
+/** A `TestReporter` that records every `onLeafHeartbeat` call (thread-safe), signals a leaf's start and each heartbeat, and ignores
+  * all other lifecycle events.
+  */
 final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
+    import kyo.AllowUnsafe.embrace.danger
     private val beats =
         new java.util.concurrent.atomic.AtomicReference[Vector[(Chunk[String], Duration)]](Vector.empty)
+    // Unsafe: the reporter callbacks are plain methods, so they reach the waiting test through the unsafe tier.
+    private val startSignal                                                           = Promise.Unsafe.init[Unit, Any]()
+    private val beatSignal                                                            = Channel.Unsafe.init[Duration](64)
     def onRunStart(info: kyo.test.RunInfo): Unit                                      = ()
     def onSuiteStart(info: kyo.test.SuiteInfo): Unit                                  = ()
-    def onLeafStart(info: kyo.test.LeafInfo): Unit                                    = ()
+    def onLeafStart(info: kyo.test.LeafInfo): Unit                                    = startSignal.completeUnitDiscard()
     def onLeafComplete(info: kyo.test.LeafInfo, result: TestResult): Unit             = ()
     def onSuiteComplete(info: kyo.test.SuiteInfo, report: kyo.test.SuiteReport): Unit = ()
     def onRunComplete(report: TestReport): Unit                                       = ()
     override def onLeafHeartbeat(info: kyo.test.LeafInfo, elapsed: Duration): Unit    =
         beats.updateAndGet(_ :+ (info.path -> elapsed)): Unit
+        discard(beatSignal.offer(elapsed))
     def recorded: Vector[(Chunk[String], Duration)] = beats.get()
+
+    /** Completes once a leaf has started. */
+    def started(using Frame): Unit < Async = startSignal.safe.get
+
+    /** The elapsed time the next heartbeat reports, once it has been recorded. */
+    def nextBeat(using Frame): Duration < (Async & Abort[Closed]) = beatSignal.safe.take
 end RecordingHeartbeatReporter
 
 class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
@@ -226,6 +269,26 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         report.suiteReports.iterator
             .flatMap(_.leafResults.iterator)
             .collectFirst { case (p, r) if p == path => r }
+
+    private def discharge[A](comp: A < (Async & Abort[Throwable] & Scope))(using Frame): Future[A] =
+        val asFuture: Future[A] < Sync =
+            Scope.run(comp).handle(Fiber.initUnscoped).map(_.toFuture)
+        // Unsafe: the test-edge boundary, the same conversion TestRunner.runToFuture performs.
+        import kyo.AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow(asFuture)
+    end discharge
+
+    "Caller context: a leaf observes the clock the caller installed, with the pool already warm" in {
+        RTClockSuite.reset()
+        val run =
+            TestRunner.runReport(classOf[RTTwoLeafSuite]).andThen(
+                Clock.withTimeControl(_ => TestRunner.runReport(classOf[RTClockSuite]))
+            )
+        discharge(run).map { report =>
+            assert(leafByPath(report, Chunk("reads-clock")).exists { case _: TestResult.Passed => true; case _ => false })
+            assert(RTClockSuite.observed.get() == Maybe(Instant.Epoch), s"the leaf read ${RTClockSuite.observed.get()}")
+        }
+    }
 
     "Scenario 1: all leaves run, bounded by the process-global pool" in {
         // Contract change (not a weakening): the old per-suite Meter cap (peak <= 2) is gone by design. Concurrent
@@ -285,12 +348,17 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "Scenario 5: a leaf exceeding its timeout is interrupted and recorded TimedOut" in {
         RTTimeoutSuite.reset()
-        TestRunner.runToFuture(classOf[RTTimeoutSuite], RunConfig.default).map { report =>
-            assert(leafByPath(report, Chunk("slow")).exists {
-                case _: TestResult.TimedOut => true; case _ => false
-            })
-            assert(RTTimeoutSuite.escaped.get() == 0)
-        }
+        discharge(Clock.withTimeControl { control =>
+            for
+                run <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTTimeoutSuite])))
+                // the heartbeat, the leaf limit and the leaf's own sleep
+                _      <- control.awaitPendingSleepers(3)
+                _      <- control.advance(50.millis, Duration.Zero)
+                report <- run.get
+            yield
+                assert(isTimedOut(leafByPath(report, Chunk("slow"))), s"got $report")
+                assert(RTTimeoutSuite.escaped.get() == 0)
+        })
     }
 
     "Scenario 6: per-leaf Scope.run releases a leaf-acquired resource" in {
@@ -382,33 +450,34 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "AssertScope: a detached fiber that fails AFTER the body leaves the leaf Passed" in {
         // The latch releases the parked fiber only after the runner scored the leaf and closed the scope, so its assert
-        // hits the closed branch (stderr warning + process-global collector), not the leaf. The asserted fact: the leaf
-        // stays Passed. The closed->log warning itself is covered by the api AssertScopeTest.
+        // hits the closed branch (stderr warning + process-global collector), not the leaf: the leaf stays Passed and the
+        // record lands in the collector. The closed->log warning itself is covered by the api AssertScopeTest.
         import kyo.AllowUnsafe.embrace.danger
-        val release = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
+        val release  = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
+        val asserted = Sync.Unsafe.evalOrThrow(Promise.init[Unit, Any])
         RTDetachedAfterSuite.release = release
+        RTDetachedAfterSuite.asserted = asserted
         // The after-close collector is process-global; drain any prior leak so this run starts from a clean baseline.
-        val _ = kyo.test.AssertScope.drainLeakedAfterClose()
-        TestRunner.runToFuture(classOf[RTDetachedAfterSuite], RunConfig.default).flatMap { report =>
+        val _   = kyo.test.AssertScope.drainLeakedAfterClose()
+        val run =
+            for
+                report <- TestRunner.runReport(classOf[RTDetachedAfterSuite])
+                _      <- release.completeDiscard(Result.succeed(()))
+                _      <- asserted.get
+                leaked <- Sync.defer(kyo.test.AssertScope.drainLeakedAfterClose())
+            yield (report, leaked)
+        discharge(run).map { (report, leaked) =>
             assert(countResults(report) == 1)
-            val passed = assert(
+            assert(
                 leafByPath(report, Chunk("detached-fails-after")).exists {
                     case _: TestResult.Passed => true; case _ => false
                 },
                 s"expected the detached-after leaf to be Passed but got $report"
             )
-            // Release the parked fiber so its assert records into the now-closed scope, then poll (Kyo-native, not a
-            // blocking sleep, so the single-threaded JS event loop can run the fiber) until the record lands in the
-            // process-global collector, then drain so it does not pollute later tests. The poll is best-effort, never asserted.
-            val settle: Unit < (Async & Abort[Throwable]) =
-                release.completeDiscard(Result.succeed(())).andThen {
-                    Loop(0) { attempt =>
-                        if !kyo.test.AssertScope.leakedAfterClose.isEmpty || attempt >= 500 then Loop.done
-                        else Async.sleep(1.millis).andThen(Loop.continue(attempt + 1))
-                    }
-                }.andThen(Sync.defer(kyo.test.AssertScope.drainLeakedAfterClose(): Unit))
-            val settled: Future[Unit] < Sync = Fiber.initUnscoped(settle).map(_.toFuture)
-            Sync.Unsafe.evalOrThrow(settled).map(_ => passed)
+            assert(
+                leaked.map(_._1).filter(_ == Chunk("detached-fails-after")) == Chunk(Chunk("detached-fails-after")),
+                s"expected one after-close record for the leaf, got $leaked"
+            )
         }
     }
 
@@ -466,30 +535,109 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     "Heartbeat: a leaf slower than the heartbeat interval is reported as still running while it runs" in {
+        // Heartbeats at 300, 600 and 900 ms, then the leaf's 1 s sleep ends; no heartbeat shares an instant with the end.
+        val rec      = new RecordingHeartbeatReporter
+        val config   = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 300.millis)
+        val expected = Chunk(300.millis, 600.millis, 900.millis)
+        discharge(Clock.withTimeControl { control =>
+            for
+                run <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTHeartbeatSuite], config)))
+                _   <- rec.started
+                // the heartbeat and the leaf's own sleep
+                beats <- Kyo.foreach(expected) { _ =>
+                    control.awaitPendingSleepers(2).andThen(control.advance(300.millis, Duration.Zero)).andThen(rec.nextBeat)
+                }
+                finishedEarly <- run.done
+                _             <- control.awaitPendingSleepers(2)
+                _             <- control.advance(100.millis, Duration.Zero)
+                report        <- run.get
+            yield
+                assert(Chunk.from(beats) == expected, s"got $beats")
+                assert(!finishedEarly, "the leaf finished before its 1 s sleep ended")
+                // Assert on the slow leaf itself, not the total count: a detached-fiber leak from another fixture can land in
+                // the process-global collector during this run and be drained as a synthetic leaf (the GOAL B mechanism).
+                assert(leafByPath(report, Chunk("slow-leaf")).exists { case _: TestResult.Passed => true; case _ => false })
+                assert(rec.recorded == expected.map(Chunk("slow-leaf") -> _).toVector, s"got ${rec.recorded}")
+        })
+    }
+
+    private def isTimedOut(result: Option[TestResult]): Boolean =
+        result.exists { case _: TestResult.TimedOut => true; case _ => false }
+
+    // The heartbeat is the only hang diagnostic: the console reporter prints the one-shot thread dump on the first
+    // STUCK leaf. A leaf limit at or below the interval used to time the leaf out first, so the dump never printed
+    // for exactly the leaf that needed it.
+    "Heartbeat: a leaf whose limit is shorter than the interval is reported before it times out" in {
         val rec    = new RecordingHeartbeatReporter
-        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 50.millis)
-        TestRunner.runToFuture(classOf[RTHeartbeatSuite], config).map { report =>
-            // Assert on the slow leaf itself, not the total count: a detached-fiber leak from another fixture can land in the
-            // process-global collector during this suite's 1s window and be drained as a synthetic leaf (the GOAL B mechanism),
-            // which is unrelated to the heartbeat under test.
-            assert(leafByPath(report, Chunk("slow-leaf")).exists { case _: TestResult.Passed => true; case _ => false })
-            val beats = rec.recorded
-            assert(beats.nonEmpty, "expected at least one heartbeat for a leaf that ran far longer than the interval")
-            assert(beats.forall(_._1 == Chunk("slow-leaf")), s"every heartbeat must name the running leaf, got $beats")
-            // Assert the elapsed is monotonic (structural), not a real-time threshold a coarse clock could flip.
-            val elapsed = beats.map(_._2)
-            assert(
-                elapsed.zip(elapsed.drop(1)).forall((a, b) => b >= a),
-                s"heartbeat elapsed must be non-decreasing as the leaf keeps running, got $beats"
-            )
-        }
+        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 1.minutes)
+        discharge(Clock.withTimeControl { control =>
+            for
+                run <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTHeartbeatBeforeTimeoutSuite], config)))
+                _   <- rec.started
+                // the heartbeat, the leaf limit and the leaf's own sleep
+                _                   <- control.awaitPendingSleepers(3)
+                _                   <- control.advance(3.seconds, Duration.Zero)
+                _                   <- rec.nextBeat
+                beatsBeforeLimit    <- Sync.defer(rec.recorded)
+                finishedBeforeLimit <- run.done
+                _                   <- control.advance(1.second, Duration.Zero)
+                report              <- run.get
+            yield
+                assert(beatsBeforeLimit == Vector((Chunk("hung"), 3.seconds)), s"got $beatsBeforeLimit")
+                assert(!finishedBeforeLimit, "the leaf finished before its 4 s limit")
+                assert(isTimedOut(leafByPath(report, Chunk("hung"))), s"got $report")
+                assert(rec.recorded == Vector((Chunk("hung"), 3.seconds)), s"got ${rec.recorded}")
+        })
+    }
+
+    // The sbt, JS, Native and CLI runners hand the runner the flags as an overlay on the suite's own config. Before the
+    // overlay existed any flag replaced the suite's config wholesale, so `testOnly X -- --filter=y` ran X's leaves with
+    // no timeout and none of its ordering.
+    "Overlay: flags apply on top of the suite's own config, so its timeout survives a filter" in {
+        val overlay: RunConfig => RunConfig = _.filter(TestFilter(pathInclude = Chunk("hung")))
+        discharge(Clock.withTimeControl { control =>
+            for
+                run <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTSuiteConfigSuite], overlay)))
+                // the heartbeat, the leaf limit and the leaf's own sleep
+                _      <- control.awaitPendingSleepers(3)
+                _      <- control.advance(300.millis, Duration.Zero)
+                report <- run.get
+            yield
+                assert(isTimedOut(leafByPath(report, Chunk("hung"))), s"got $report")
+                assert(leafByPath(report, Chunk("quick")).isEmpty, "the overlay's filter must still apply")
+        })
+    }
+
+    // The 40 ms interval keeps every heartbeat off the 300 ms limit. At 50 ms the sixth heartbeat and the limit share
+    // one instant, and which of them the leaf observes first is a race between two fibers that one tick wakes.
+    "Overlay: a field the flags set wins over the suite's config" in {
+        val rec                             = new RecordingHeartbeatReporter
+        val overlay: RunConfig => RunConfig = _.reporter(rec).heartbeatInterval(40.millis).filter(TestFilter(pathInclude = Chunk("hung")))
+        val expected                        = Chunk.from(1 to 7).map(i => (i * 40).millis)
+        discharge(Clock.withTimeControl { control =>
+            for
+                run   <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTSuiteConfigSuite], overlay)))
+                _     <- rec.started
+                beats <- Kyo.foreach(expected) { _ =>
+                    control.awaitPendingSleepers(3).andThen(control.advance(40.millis, Duration.Zero)).andThen(rec.nextBeat)
+                }
+                finishedBeforeLimit <- run.done
+                _                   <- control.awaitPendingSleepers(3)
+                _                   <- control.advance(20.millis, Duration.Zero)
+                report              <- run.get
+            yield
+                assert(Chunk.from(beats) == expected, s"got $beats")
+                assert(!finishedBeforeLimit, "the leaf finished before its 300 ms limit")
+                assert(isTimedOut(leafByPath(report, Chunk("hung"))), s"got $report")
+                assert(rec.recorded == expected.map(Chunk("hung") -> _).toVector, s"got ${rec.recorded}")
+        })
     }
 
     "Heartbeat: a fast leaf fires no heartbeat (negative control)" in {
-        val rec = new RecordingHeartbeatReporter
-        // Interval far larger than any leaf's runtime: the forked heartbeat is always interrupted before it can fire.
-        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 30.seconds)
-        TestRunner.runToFuture(classOf[RTThreeLeafSuite], config).map { report =>
+        // The controlled clock never moves, so every leaf finishes at the instant it starts, before its first heartbeat.
+        val rec    = new RecordingHeartbeatReporter
+        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 50.millis)
+        discharge(Clock.withTimeControl(_ => TestRunner.runReport(classOf[RTThreeLeafSuite], config))).map { report =>
             assert(countResults(report) == 3)
             assert(rec.recorded.isEmpty, s"a fast leaf must not trigger any heartbeat, got ${rec.recorded}")
         }

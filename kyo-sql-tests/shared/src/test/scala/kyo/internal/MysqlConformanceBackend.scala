@@ -8,7 +8,7 @@ import kyo.internal.mysql.MysqlConnection
 /** The MySQL conformance descriptor: the one place the MySQL provisioning literals live, so the battery names no engine.
   *
   * Provisioning matches [[SqlSharedContainers.withFreshMysqlSchema]]: a shared MySQL container memoized by the id `"mysql"` through
-  * [[SqlTestContainers.getOrInit]], a freshly-created database per leaf, an admin connection that runs the CREATE/GRANT/DROP SQL, and a
+  * [[TestContainers.getOrInit]], a freshly-created database per leaf, an admin connection that runs the CREATE/GRANT/DROP SQL, and a
   * scoped per-test connection, all dropped on scope exit even when the body fails. The container config carries the same
   * `performance_schema` override [[containerConfig]] documents, so this descriptor and the engine suites share one container for the id
   * whichever inits first.
@@ -256,8 +256,8 @@ final class MysqlConformanceBackend extends ContainerConformanceBackend:
         Frame
     ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
         for
-            container <- SqlTestContainers.getOrInit(SqlTestContainers.containers, "mysql")(
-                SqlTestContainers.initSingleton(ContainerPredef.MySQL.buildContainerConfig(predefCfg), "mysql")
+            container <- TestContainers.getOrInit(TestContainers.containers, "mysql")(
+                TestContainers.initSingleton(ContainerPredef.MySQL.buildContainerConfig(predefCfg), "mysql")
             )
             port   <- container.mappedPort(predefCfg.port)
             schema <- freshSchemaName

@@ -19,8 +19,8 @@ import sbt.testing.SubclassFingerprint
   * Native-specific behaviour:
   *   - Parallelism is kept at 1 by default (our test fixture is single-threaded for simplicity, matching the plan).
   *   - `NativeTask.execute` blocks via `Await.result` (Native supports real threads, unlike JS).
-  *   - [[slaveRunner]] is required by the Scala Native test bridge; kyo-test does not use distributed execution, so it delegates to
-  *     [[runner]].
+  *   - The adapter runs one test process per sbt thread: [[runner]] builds the controller, and [[slaveRunner]] a worker in another
+  *     process, which ships its leaves to the controller so the logged summary counts them (see [[internal.NativeRunner]]).
   */
 @scala.scalanative.reflect.annotation.EnableReflectiveInstantiation
 class NativeFramework extends Framework:
@@ -37,11 +37,8 @@ class NativeFramework extends Framework:
     ): Runner =
         new internal.NativeRunner(args, remoteArgs, testClassLoader)
 
-    /** Required by the Scala Native test bridge.
-      *
-      * kyo-test does not support distributed (master/slave) execution, so this delegates to [[runner]]. The `send` callback (used by the
-      * slave to communicate results back to the master) is ignored; all events flow through the [[sbt.testing.EventHandler]] passed to
-      * [[sbt.testing.Task.execute]] instead.
+    /** The runner for a worker process: events still go to sbt through each task's [[sbt.testing.EventHandler]], and `send` carries the
+      * worker's leaves to the controller's `receiveMessage`, since only the controller's `done()` is logged.
       */
     def slaveRunner(
         args: Array[String],
@@ -49,7 +46,7 @@ class NativeFramework extends Framework:
         testClassLoader: ClassLoader,
         send: String => Unit
     ): Runner =
-        runner(args, remoteArgs, testClassLoader)
+        new internal.NativeRunner(args, remoteArgs, testClassLoader, kyo.Present(send))
 
 end NativeFramework
 

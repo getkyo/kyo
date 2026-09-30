@@ -43,7 +43,8 @@ import scala.util.control.NonFatal
   * channel binding (RFC 5929 tls-server-end-point).
   */
 final private[kyo] class JsTransport private (
-    val pool: IoDriverPool[JsHandle]
+    val pool: IoDriverPool[JsHandle],
+    clock: Clock
 ) extends TransportImpl[JsHandle]:
 
     // Process-wide guard: exactly one stdio connection at a time (fd 0/1 are process-global).
@@ -60,7 +61,7 @@ final private[kyo] class JsTransport private (
       * at construction; the OS does not change under a running process.
       */
     override private[net] val capabilities: TransportCapabilities =
-        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows)
+        TransportCapabilities(Set("node"), unixSockets = !kyo.internal.Platform.isWindows, tlsCloseReason = false)
 
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
       * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
@@ -524,7 +525,8 @@ final private[kyo] class JsTransport private (
                 if tcpNoDelay then discard(socket.setNoDelay(true))
                 val handle = JsHandle.init(socket, driver, frame)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -562,15 +564,19 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectSocket
 
-    /** Install the certHashFn on `connection` by reading the leaf peer certificate from the post-handshake TLS socket and SHA-256-hashing
-      * its DER bytes (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
+    /** Install the certHashFn on `connection` from the leaf peer certificate of the post-handshake TLS socket, SHA-256 over its DER bytes
+      * (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
+      *
+      * The hash is read ONCE here, at handshake completion, and served from that value gated on `connection.isOpen`, as the posix and NIO
+      * transports do. The leaf certificate is fixed for the connection's lifetime, and the socket outlives `close()` by the graceful close's
+      * flush, so the socket's own state is not what "closed" means to a caller.
       *
       * Node's `tls.TLSSocket.getPeerCertificate(true)` returns an object with a `.raw` Buffer holding the DER bytes; Node's `crypto`
       * `createHash("sha256").update(buf).digest()` returns a 32-byte Buffer.
       */
-    private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic): Unit =
-        connection.certHashFn = Present { () =>
-            val cert = tlsSocket.getPeerCertificate(true)
+    private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic)(using AllowUnsafe): Unit =
+        val cert   = tlsSocket.getPeerCertificate(true)
+        val cached =
             if js.isUndefined(cert) || cert == null || js.isUndefined(cert.raw) then Absent
             else
                 val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
@@ -586,8 +592,7 @@ final private[kyo] class JsTransport private (
                     out(i) = typed(i).toByte
                     i += 1
                 Present(Span.from(out))
-            end if
-        }
+        connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
     end installCertHashFn
 
     private def listenServer(
@@ -623,7 +628,8 @@ final private[kyo] class JsTransport private (
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -715,7 +721,8 @@ final private[kyo] class JsTransport private (
                 // Unix sockets do not support TCP_NODELAY: skip setNoDelay
                 val handle = JsHandle.init(socket, driver, frame)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -773,8 +780,8 @@ final private[kyo] class JsTransport private (
     end stdio
 
     /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
-      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` is always false and `destroy` is a
-      * no-op so neither process fd is ever closed.
+      * (`write`, `once`/`removeListener` for drain/close/error) delegates to `process.stdout`. `destroyed` and `writableFinished` are always
+      * false and `end` and `destroy` are no-ops so neither process fd is ever closed or ended.
       */
     private def stdioShim()(using AllowUnsafe): js.Dynamic =
         val process = js.Dynamic.global.process
@@ -790,6 +797,7 @@ final private[kyo] class JsTransport private (
             isReadEvent(event) || name == "close" || name == "error"
         val shim = js.Dynamic.literal()
         shim.destroyed = false
+        shim.writableFinished = false
         shim.on = ({ (event: js.Any, fn: js.Any) =>
             if isReadLifecycle(event) then discard(stdin.on(event, fn))
             else discard(stdout.on(event, fn))
@@ -814,6 +822,10 @@ final private[kyo] class JsTransport private (
         shim.write = ({ (chunk: js.Any) =>
             stdout.write(chunk)
         }: js.Function1[js.Any, js.Any])
+        shim.end = ({ () =>
+            // The process owns fds 0/1; never end stdout. A stdio close tears down only the channels and the registration.
+            shim
+        }: js.Function0[js.Any])
         shim.destroy = ({ () =>
             // The process owns fds 0/1; never close them. Tearing down stdio closes only the channels/registration.
             shim
@@ -846,7 +858,8 @@ final private[kyo] class JsTransport private (
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
                 handle.peerCloseGrace = config.peerCloseGrace
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace)
+                handle.clock = clock
+                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -1138,7 +1151,8 @@ final private[kyo] class JsTransport private (
                     val newHandle = JsHandle.init(tlsSocket, driver, frame)
                     newHandle.peerCloseGrace =
                         handle.peerCloseGrace // the upgraded connection inherits the original connection's reclaim grace
-                    val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace)
+                    newHandle.clock = handle.clock
+                    val newConn = Connection.init(newHandle, driver, channelCapacity, handle.peerCloseGrace, clock = handle.clock)
                     // Preserve the upgrade role on the new TLS connection so a further upgrade does not silently flip client/server.
                     newConn.isServerOrigin = isServerSide
                     // Wire upgrade function on the new TLS connection so further upgrade attempts
@@ -1205,7 +1219,9 @@ private[kyo] object JsTransport:
       * handshake has not settled. The count exists so a test can barrier on registration rather than racing Node's `connection` event.
       */
     final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
-    def init(poolSize: Int = 1)(using AllowUnsafe, Frame): JsTransport =
+
+    /** `clock` times each connection's `peerCloseGrace`, in the ReadPump and in the driver's graceful close. */
+    def init(poolSize: Int = 1, clock: Clock = Clock.live)(using AllowUnsafe, Frame): JsTransport =
         // This is NodeBackend's own transport, so it builds NodeBackend's `JsIoDriver` directly. The registry is now
         // heterogeneous (NodeBackend over `JsHandle` plus the koffi posix backends over `PosixHandle`), so a driver
         // obtained through selection could be a posix driver; each backend builds its OWN transport via `Entry.build`,
@@ -1213,7 +1229,7 @@ private[kyo] object JsTransport:
         val drivers = Array.fill[IoDriver[JsHandle]](poolSize)(kyo.net.internal.backend.NodeBackend.createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start()
-        new JsTransport(pool)
+        new JsTransport(pool, clock)
     end init
 end JsTransport
 

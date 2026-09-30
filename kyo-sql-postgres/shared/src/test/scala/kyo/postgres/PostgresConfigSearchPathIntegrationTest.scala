@@ -2,7 +2,7 @@ package kyo.postgres
 
 import kyo.*
 import kyo.OwnContainer
-import kyo.internal.SqlTestContainers
+import kyo.internal.TestContainers
 
 /** What [[PostgresConfig.searchPath]] does against a live server.
   *
@@ -26,7 +26,7 @@ class PostgresConfigSearchPathIntegrationTest extends SqlContainerTest:
     private def withServer[A](f: String => A < (Async & Abort[SqlException] & Scope))(using
         Frame
     ): A < (Async & Abort[SqlException | ContainerException] & Scope) =
-        SqlTestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-search-path").flatMap { pg =>
+        TestContainers.initScopedPostgres(ContainerPredef.Postgres.Config.default, "postgres-search-path").flatMap { pg =>
             pg.container.mappedPort(pg.config.port).flatMap { port =>
                 val url = s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}"
                 SqlClient.init(url, SqlConfig.default.maxConnections(1)).flatMap { setup =>

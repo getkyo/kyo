@@ -19,11 +19,11 @@ import scala.concurrent.duration.Duration
   */
 private[runner] object CliPlatform:
 
-    def runSuites(suites: Chunk[Class[? <: TestBase[?]]], config: RunConfig): Unit =
+    def runSuites(suites: Chunk[Class[? <: TestBase[?]]], overlay: RunConfig => RunConfig): Unit =
         var anyError = false
 
         for suite <- suites do
-            val fut    = kyo.test.runner.TestRunner.runToFutureAtCliEdge(suite, config)
+            val fut    = kyo.test.runner.TestRunner.runToFutureAtCliEdge(suite, overlay)
             val report =
                 try
                     Await.result(fut, Duration.Inf)

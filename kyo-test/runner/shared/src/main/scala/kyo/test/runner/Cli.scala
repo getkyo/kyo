@@ -83,8 +83,8 @@ object Cli:
                 doExitLocal.get()(2)
 
             case Args.Result.Ok(parsed) =>
-                val config = parsed.config
-                val suites = SuiteDiscoveryPlatform.discover()
+                val overlay = parsed.overlay
+                val suites  = SuiteDiscoveryPlatform.discover()
 
                 if suites.isEmpty then
                     java.lang.System.out.println(
@@ -94,7 +94,7 @@ object Cli:
                     doExitLocal.get()(0)
                 end if
 
-                CliPlatform.runSuites(suites, config)
+                CliPlatform.runSuites(suites, overlay)
     end main
 
 end Cli

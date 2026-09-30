@@ -1,7 +1,9 @@
 package kyo.test.runner.internal
 
 import kyo.Chunk
+import kyo.Duration
 import kyo.Maybe
+import kyo.internal.Ascii
 import kyo.test.RunConfig
 import kyo.test.TestFilter
 import kyo.test.Verbosity
@@ -28,21 +30,33 @@ import scala.annotation.tailrec
   *   - `--quiet`: suppress per-leaf lines, show only failures and summary
   *   - `--count`: discovery only; report the leaf count without executing any leaf body
   *   - `--list`: discovery only; print every leaf's full name path (implies `--count`)
+  *   - `--heartbeat-interval=D`: report a leaf still running after `D` (`30s`, `2 minutes`, `infinity` to disable)
   *   - `--help`: print usage to stdout and exit 0
+  *
+  * The flags are handed to the runner as an overlay over each suite's own `config`, so a flag changes only the field it names and the
+  * suite keeps its timeout, ordering and leak settings.
   */
 private[runner] object Args:
 
     /** Result of a successful parse.
       *
       * @param config
-      *   the resolved [[RunConfig]] (with filter, parallelism, etc. applied)
+      *   the flags applied to [[RunConfig.default]], for a caller that wants a whole config
       * @param reporterArgs
       *   reporter value strings collected from `--reporter=` flags
       * @param positional
       *   non-flag arguments (e.g. fully-qualified class names); when no `--filter=` flag is present these are promoted to
       *   `RunConfig.filter.pathInclude` by [[Args.parse]]
+      * @param overlay
+      *   the flags as one step over a base config: a field no flag named keeps the base's value. The runners apply it to each suite's own
+      *   `config`.
       */
-    final case class Parsed(config: RunConfig, reporterArgs: Chunk[String], positional: Chunk[String]) derives CanEqual
+    final case class Parsed(
+        config: RunConfig,
+        reporterArgs: Chunk[String],
+        positional: Chunk[String],
+        overlay: RunConfig => RunConfig
+    ) derives CanEqual
 
     /** Outcome of [[Args.parse]]. */
     sealed trait Result derives CanEqual
@@ -69,34 +83,75 @@ private[runner] object Args:
             case Some(n) => kyo.Result.succeed(n)
             case None    => kyo.Result.fail(s"invalid seed for $flag: '$s' (expected a long integer)")
 
+    // Parse a duration string (`30s`, `2 minutes`, `infinity`) with the grammar of `Duration.parse`, which is not called because it
+    // takes a Frame and this parser has no caller to take one from.
+    private[runner] def parseDuration(s: String, flag: String): kyo.Result[String, Duration] =
+        val pattern = """(\d+)\s*([a-zA-Z]+)""".r
+        Ascii.toLower(s.trim) match
+            case "infinity" | "inf"   => kyo.Result.succeed(Duration.Infinity)
+            case pattern(value, unit) =>
+                value.toLongOption match
+                    case None        => kyo.Result.fail(s"invalid value for $flag: '$s' (the number does not fit a long)")
+                    case Some(count) =>
+                        Duration.Units.all.find(
+                            _.names.contains(unit)
+                        ).orElse(Duration.Units.all.find(_.names.exists(_.startsWith(unit)))) match
+                            case Some(units) => kyo.Result.succeed(Duration.fromUnits(count, units))
+                            case None        => kyo.Result.fail(s"invalid value for $flag: '$s' (unknown unit '$unit')")
+            case _ => kyo.Result.fail(s"invalid value for $flag: '$s' (expected a duration such as 30s, 2 minutes or infinity)")
+        end match
+    end parseDuration
+
     def parse(args: Array[String]): Result =
 
-        /** Accumulated state for the tail-recursive loop. */
+        /** Accumulated state for the tail-recursive loop. A `Maybe` field is `Absent` until its flag is seen, so the overlay can leave the
+          * base config's value alone.
+          */
         final case class Acc(
-            parallelism: Int,
+            parallelism: Maybe[Int],
             randomize: Maybe[Long],
             pathIncludes: Chunk[String],
             tagsInclude: Set[String],
             tagsExclude: Set[String],
-            verbosity: Verbosity,
+            verbosity: Maybe[Verbosity],
             countOnly: Boolean,
             listOnly: Boolean,
+            heartbeatInterval: Maybe[Duration],
             reporterArgs: Chunk[String],
             positional: Chunk[String]
         )
 
         val initial = Acc(
-            parallelism = 0,
+            parallelism = Maybe.empty,
             randomize = Maybe.empty,
             pathIncludes = Chunk.empty,
             tagsInclude = Set.empty,
             tagsExclude = Set.empty,
-            verbosity = Verbosity.Normal,
+            verbosity = Maybe.empty,
             countOnly = false,
             listOnly = false,
+            heartbeatInterval = Maybe.empty,
             reporterArgs = Chunk.empty,
             positional = Chunk.empty
         )
+
+        def overlayOf(acc: Acc): RunConfig => RunConfig = base =>
+            val filtered =
+                if acc.pathIncludes.isEmpty && acc.tagsInclude.isEmpty && acc.tagsExclude.isEmpty then base
+                else
+                    base.copy(filter =
+                        TestFilter(
+                            pathInclude = acc.pathIncludes,
+                            tagsInclude = acc.tagsInclude,
+                            tagsExclude = acc.tagsExclude
+                        )
+                    )
+            val withParallelism = acc.parallelism.fold(filtered)(n => filtered.copy(parallelism = n))
+            val withRandomize   = acc.randomize.fold(withParallelism)(seed => withParallelism.copy(randomize = Maybe(seed)))
+            val withVerbosity   = acc.verbosity.fold(withRandomize)(v => withRandomize.copy(verbosity = v))
+            val withHeartbeat   = acc.heartbeatInterval.fold(withVerbosity)(d => withVerbosity.copy(heartbeatInterval = d))
+            if acc.countOnly || acc.listOnly then withHeartbeat.copy(countOnly = true, listOnly = acc.listOnly)
+            else withHeartbeat
 
         @tailrec
         def parseLoop(remaining: Chunk[String], acc: Acc, error: Maybe[String]): Result =
@@ -104,19 +159,8 @@ private[runner] object Args:
                 error match
                     case Maybe.Present(msg) => Result.Error(msg)
                     case Maybe.Absent       =>
-                        val config = RunConfig(
-                            filter = TestFilter(
-                                pathInclude = acc.pathIncludes,
-                                tagsInclude = acc.tagsInclude,
-                                tagsExclude = acc.tagsExclude
-                            ),
-                            parallelism = acc.parallelism,
-                            randomize = acc.randomize,
-                            verbosity = acc.verbosity,
-                            countOnly = acc.countOnly || acc.listOnly,
-                            listOnly = acc.listOnly
-                        )
-                        Result.Ok(Parsed(config, acc.reporterArgs, acc.positional))
+                        val overlay = overlayOf(acc)
+                        Result.Ok(Parsed(overlay(RunConfig.default), acc.reporterArgs, acc.positional, overlay))
             else
                 val arg  = remaining.head
                 val rest = remaining.drop(1)
@@ -126,9 +170,9 @@ private[runner] object Args:
                         if arg == "--help" || arg == "-h" then
                             Result.Help
                         else if arg == "--verbose" then
-                            parseLoop(rest, acc.copy(verbosity = Verbosity.Verbose), Maybe.empty)
+                            parseLoop(rest, acc.copy(verbosity = Maybe(Verbosity.Verbose)), Maybe.empty)
                         else if arg == "--quiet" then
-                            parseLoop(rest, acc.copy(verbosity = Verbosity.Quiet), Maybe.empty)
+                            parseLoop(rest, acc.copy(verbosity = Maybe(Verbosity.Quiet)), Maybe.empty)
                         else if arg == "--count" then
                             parseLoop(rest, acc.copy(countOnly = true), Maybe.empty)
                         else if arg == "--list" then
@@ -144,7 +188,13 @@ private[runner] object Args:
                         else if arg.startsWith("--parallel=") then
                             val s = arg.drop("--parallel=".length)
                             parseInt(s, "--parallel") match
-                                case kyo.Result.Success(n)      => parseLoop(rest, acc.copy(parallelism = n), Maybe.empty)
+                                case kyo.Result.Success(n)      => parseLoop(rest, acc.copy(parallelism = Maybe(n)), Maybe.empty)
+                                case kyo.Result.Failure(errMsg) => parseLoop(rest, acc, Maybe(errMsg))
+                            end match
+                        else if arg.startsWith("--heartbeat-interval=") then
+                            val s = arg.drop("--heartbeat-interval=".length)
+                            parseDuration(s, "--heartbeat-interval") match
+                                case kyo.Result.Success(d)      => parseLoop(rest, acc.copy(heartbeatInterval = Maybe(d)), Maybe.empty)
                                 case kyo.Result.Failure(errMsg) => parseLoop(rest, acc, Maybe(errMsg))
                             end match
                         else if arg.startsWith("--filter=") then
@@ -207,7 +257,10 @@ private[runner] object Args:
                         val resolvedReporter =
                             if reporters.size == 1 then Maybe(reporters.head)
                             else Maybe(CombinedReporter(reporters*))
-                        Result.Ok(parsed.copy(config = parsed.config.copy(reporter = resolvedReporter)))
+                        Result.Ok(parsed.copy(
+                            config = parsed.config.copy(reporter = resolvedReporter),
+                            overlay = parsed.overlay.andThen(_.copy(reporter = resolvedReporter))
+                        ))
                 end match
             case other =>
                 other
@@ -229,6 +282,7 @@ private[runner] object Args:
            |  --quiet                 Suppress per-leaf pass/skip/pending lines; show only failures + summary
            |  --count                 Discovery only: enumerate and report the leaf count without executing any leaf body
            |  --list                  Discovery only: print every leaf's full name path (implies --count); for exact name diffs
+           |  --heartbeat-interval=D  Report a leaf still running after D (30s, 2 minutes; infinity disables). Default 1 minute; a leaf whose own limit is shorter is reported at three quarters of it
            |  --help, -h              Print this help message and exit
            |""".stripMargin
 

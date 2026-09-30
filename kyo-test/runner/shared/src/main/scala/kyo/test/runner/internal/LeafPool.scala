@@ -7,10 +7,11 @@ import kyo.Channel
 import kyo.Closed
 import kyo.Fiber
 import kyo.Frame
-import kyo.Kyo
+import kyo.Isolate
 import kyo.Promise
 import kyo.Result
 import kyo.Sync
+import kyo.discard
 import kyo.kernel.<
 
 /** Bounded pool that caps the count of test leaves executing concurrently.
@@ -33,6 +34,12 @@ import kyo.kernel.<
   * needed across jvm/js/native. An instance's channel is never closed, so the `Closed` branch is unreachable
   * (handled defensively). Each submitted `Work` completes its own promise, wrapped in `Sync.ensure` so a hypothetical
   * `runLeaf` panic can never hang a suite's ordered await.
+  *
+  * A `Work` runs under its submitter's context, captured at `submit` and crossed onto the worker the way a fork
+  * would cross it, and the workers themselves start from an empty context. A leaf therefore sees the Locals its
+  * caller bound, a `Clock.withTimeControl` clock included, and nothing from whichever caller happened to make the
+  * first submit: a worker forked inside that caller would keep its bindings, a controlled clock among them, for the
+  * rest of the process.
   */
 final private[runner] class LeafPool(workers: Int, capacity: Int):
 
@@ -61,7 +68,9 @@ final private[runner] class LeafPool(workers: Int, capacity: Int):
     private def ensureStarted(using Frame): Unit < Async =
         started.compareAndSet(false, true).map { won =>
             if won then
-                Kyo.foreachDiscard(0 until workers)(_ => Fiber.initUnscoped(worker).unit)
+                // Unsafe: the unsafe spawn is the one that starts a fiber from an empty context rather than the
+                // first submitter's; the workers outlive every submitter, so no caller's context may stay with them.
+                Sync.Unsafe.defer((0 until workers).foreach(_ => discard(Fiber.Unsafe.init(worker))))
             else ()
         }
 
@@ -91,20 +100,23 @@ final private[runner] class LeafPool(workers: Int, capacity: Int):
       */
     def submit[A](comp: A < Async)(using Frame): Promise[A, Any] < Async =
         ensureStarted.andThen {
-            Promise.init[A, Any].map { promise =>
-                val work: Unit < Async =
-                    // Belt-and-suspenders: complete the promise with a panic if the body ever fails to complete
-                    // it (runLeaf is total by contract, so this never fires). Guarantees the suite's ordered
-                    // await never hangs.
-                    Sync.ensure {
-                        promise.completeDiscard(Result.panic(LeafPool.LeafPoolPanic))
-                    } {
-                        comp.map(a => promise.completeDiscard(Result.succeed(a)))
+            val crossing = summon[Isolate[Any, Async, Any]].crossing
+            crossing.capture { captured =>
+                Promise.init[A, Any].map { promise =>
+                    val work: Unit < Async =
+                        // Belt-and-suspenders: complete the promise with a panic if the body ever fails to complete
+                        // it (runLeaf is total by contract, so this never fires). Guarantees the suite's ordered
+                        // await never hangs.
+                        Sync.ensure {
+                            promise.completeDiscard(Result.panic(LeafPool.LeafPoolPanic))
+                        } {
+                            crossing.run(captured, comp).map(a => promise.completeDiscard(Result.succeed(a)))
+                        }
+                    channel.put(work).handle(Abort.run[Closed]).map { _ =>
+                        // put never fails: the channel is never closed, so the Closed abort is unreachable; discard
+                        // it. put DOES backpressure past capacity (suspends), the intended flow control.
+                        promise
                     }
-                channel.put(work).handle(Abort.run[Closed]).map { _ =>
-                    // put never fails: the channel is never closed, so the Closed abort is unreachable; discard
-                    // it. put DOES backpressure past capacity (suspends), the intended flow control.
-                    promise
                 }
             }
         }
