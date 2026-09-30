@@ -3,7 +3,6 @@ package kyo.website
 
 import kyo.*
 import org.scalajs.dom
-import scala.concurrent.Promise
 import scala.scalajs.js.Thenable.Implicits.*
 
 /** JS-only docs SPA fetch client.
@@ -13,9 +12,8 @@ import scala.scalajs.js.Thenable.Implicits.*
   * call the Markdown transpiler on navigation. Per-route article HTML and heading outlines are
   * fetched from `content.html` files co-located with each route.
   *
-  * The `fetch` helper is `private[website]` so tests can replace `fetchFn` with a stub without
-  * involving the real DOM Fetch API. In production, `fetchFn` is `defaultFetch` (an identity
-  * sentinel) and `fetch` issues a real GET via `org.scalajs.dom.Fetch.fetch`.
+  * Every request goes through [[DocsClient.fetcher]], which issues a real GET via
+  * `org.scalajs.dom.Fetch.fetch` unless a computation binds another function with `fetcher.let`.
   *
   * @see
   *   [[DocsClient.routeTable]] to fetch the versions and module manifest
@@ -40,19 +38,23 @@ object DocsClient:
         headingsBySlug: Map[String, Chunk[DocsSearch.Heading]]
     ) derives CanEqual
 
-    /** Production-default sentinel for `fetchFn`.
+    /** The GET the client issues, as a function from URL to response body.
       *
-      * Its identity (`eq`) is tested by `fetch` to distinguish the production path from a test
-      * stub. When `fetchFn eq defaultFetch`, the real `org.scalajs.dom.Fetch.fetch` browser API
-      * is used. Tests replace `fetchFn` with a synchronous stub; that path wraps the stub in a
-      * Promise so synchronous throws become Future failures on the Async error channel.
+      * A `Local` rather than a module-level var so a replacement is scoped to the computation that
+      * binds it with `fetcher.let` and the fibers it forks: two concurrent computations each see
+      * their own binding, and nothing has to be restored afterwards. The default issues a real GET
+      * through the browser Fetch API.
       */
-    private val defaultFetch: String => String = _ =>
-        throw new RuntimeException("defaultFetch sentinel called directly; this should not happen")
+    private[website] val fetcher: Local[String => Frame ?=> String < Async] = Local.init(url => liveFetch(url))
 
-    // Testability: tests replace this var with a stub before calling fetchArticle/routeTable.
-    // Unsafe: mutable module-level var in a JS bundle entry; the bundle is single-threaded.
-    private[website] var fetchFn: String => String = defaultFetch
+    /** A real GET through the browser Fetch API. A non-2xx status fails the `Async`. */
+    private def liveFetch(url: String)(using Frame): String < Async =
+        Async.fromFuture(
+            dom.Fetch.fetch(url).toFuture.flatMap { response =>
+                if response.ok then response.text().toFuture
+                else scala.concurrent.Future.failed(new RuntimeException(s"HTTP ${response.status}: $url"))
+            }(using scala.concurrent.ExecutionContext.global)
+        )
 
     /** Fetch the pre-rendered article content and heading outline for a docs route.
       *
@@ -148,44 +150,8 @@ object DocsClient:
         Maybe.fromOption(pattern.findFirstMatchIn(obj).flatMap(m => m.group(1).toIntOption))
     end extractInt
 
-    /** Issue a GET and return the response body text as `String < Async`.
-      *
-      * In production (`fetchFn eq defaultFetch`), issues a real GET via
-      * `org.scalajs.dom.Fetch.fetch`, awaits the response, reads `.text()`, and lifts
-      * the result via `Async.fromFuture`. A non-2xx status code fails the `Async`.
-      *
-      * In tests, `fetchFn` is replaced with a synchronous stub before calling the
-      * public methods; the stub result (or throw) is wrapped in a `Promise` so the
-      * Async error channel is preserved for failures.
-      */
-    private[website] def fetch(url: String)(using Frame): String < Async =
-        if fetchFn eq defaultFetch then
-            // Production path: real browser Fetch API via org.scalajs.dom.
-            // dom.Fetch.fetch returns js.Promise[Response]; .toFuture (via Thenable.Implicits)
-            // converts it to scala.concurrent.Future[Response]. .text() similarly returns a
-            // js.Promise[String] converted to Future[String].
-            Async.fromFuture(
-                dom.Fetch.fetch(url).toFuture.flatMap { response =>
-                    if response.ok then response.text().toFuture
-                    else
-                        scala.concurrent.Future.failed(
-                            new RuntimeException(s"HTTP ${response.status}: $url")
-                        )
-                }(using scala.concurrent.ExecutionContext.global)
-            )
-        else
-            // Justified: a boundary adapter that bridges a synchronous stub throw into the Promise
-            // failure (the Async error channel) at the JS Future boundary, not control-flow-by-
-            // exception. Test path: the synchronous stub is wrapped in a Promise so throws become
-            // Future failures.
-            Async.fromFuture {
-                val p = Promise[String]()
-                try p.success(fetchFn(url))
-                catch case e: Throwable => p.failure(e)
-                p.future
-            }
-        end if
-    end fetch
+    private def fetch(url: String)(using Frame): String < Async =
+        fetcher.use(_(url))
 
     /** The parsed `#docs-island` payload the SSG seeds into each docs page.
       *
