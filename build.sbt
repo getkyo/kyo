@@ -3336,7 +3336,8 @@ lazy val `kyo-mcp` =
         // Test-only dep so the JVM demo MCP servers (jvm/src/test/scala/demo) can drive
         // kyo-tasty's runtime reflection (RepoExplorer). kyo-tasty is a sibling, so no cycle.
         .jvmConfigure(_.dependsOn(`kyo-tasty`.jvm % Test))
-        .nativeSettings(`native-settings`)
+        // kyo-net's Native FFI links the TLS shim unconditionally, so a Native test binary needs the SSL link flags.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
@@ -3349,7 +3350,8 @@ lazy val `kyo-lsp` =
         .dependsOn(`kyo-system`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // kyo-net's Native FFI links the TLS shim unconditionally, so a Native test binary needs the SSL link flags.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
@@ -3866,7 +3868,8 @@ lazy val `kyo-markdown` =
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // kyo-net's Native FFI links the TLS shim unconditionally, so a Native test binary needs the SSL link flags.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .jsSettings(
             `js-settings`,
             // kyo-ui links as a CommonJS module (its js-wasm sources import scalajs-dom); a
