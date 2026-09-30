@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Sql.*
+import scala.annotation.tailrec
 import scala.compiletime.testing.Error
 import scala.compiletime.testing.typeCheckErrors
 
@@ -30,11 +31,24 @@ class SqlQualifiedNameStaticTest extends Test:
 
     /** `app`, one quote character, a period, the SAME quote character, `invoice`.
       *
-      * The back-reference is what makes this flavor-agnostic: every dialect on the classpath quotes with a single character, and requiring
-      * the two occurrences to match accepts `"app"."invoice"` and `` `app`.`invoice` `` while rejecting a period that merely sits between
-      * the names.
+      * Requiring the two quote characters to match is what makes this flavor-agnostic: every dialect on the classpath quotes with a single
+      * character, so it accepts `"app"."invoice"` and `` `app`.`invoice` `` while rejecting a period that merely sits between the names.
+      * Checked in code because a regex back-reference does not compile on Scala Native, whose `java.util.regex` is RE2J.
       */
-    private val qualifiedPair = """app(.)\.\1invoice""".r
+    private def qualifiedPair(sql: String): Boolean =
+        @tailrec def from(start: Int): Boolean =
+            val at = sql.indexOf("app", start)
+            at >= 0 && {
+                val quote = at + 3
+                val pairs = quote + 2 < sql.length &&
+                    sql.charAt(quote + 1) == '.' &&
+                    sql.charAt(quote + 2) == sql.charAt(quote) &&
+                    sql.startsWith("invoice", quote + 3)
+                pairs || from(at + 1)
+            }
+        end from
+        from(0)
+    end qualifiedPair
 
     /** The dialects whose folded text does not carry the two names as separate identifiers, each with the text it produced.
       *
@@ -43,7 +57,7 @@ class SqlQualifiedNameStaticTest extends Test:
       */
     private def notQualified(rendered: Sql.Rendered): Seq[String] =
         rendered.perDialect.toSeq
-            .filter((_, d) => qualifiedPair.findFirstIn(d.sql).isEmpty || d.sql.contains("app.invoice"))
+            .filter((_, d) => !qualifiedPair(d.sql) || d.sql.contains("app.invoice"))
             .map((id, d) => s"$id: ${d.sql}")
 
     /** Both halves of the property in one place: something folded, and what it folded to is qualified everywhere. */
