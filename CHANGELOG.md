@@ -27,6 +27,7 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-sql-postgres] `PostgresConfig.searchPath`: the schemas an unqualified name resolves against, sent in the startup packet so every pooled connection agrees and `SqlClient.reset` restores it.
 - [kyo-sql-sqlite] `SqliteAttach`: databases attached to every connection the client opens, so a schema-qualified name resolves on all of them.
 - [kyo-browser] `Browser.heapUsage` and `Browser.collectGarbage`: read the page's JS heap (`Browser.HeapUsage(used, total)`) and force a collection first, so a test measures retained memory rather than collection lag
+- [kyo-schema] `Schema[A].transformVia(construct)(from)`: a schema over another through a smart constructor that may reject (returning the type, or a `Result`, `Maybe`, `Option`, `Either` or `Try` of it), whose rejection is a `ConstructorRejectedException` naming the type
 
 ### Removed
 
