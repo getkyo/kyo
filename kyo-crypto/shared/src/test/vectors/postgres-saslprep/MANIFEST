@@ -1,0 +1,4 @@
+source https://raw.githubusercontent.com/postgres/postgres/5e59290402518db5b2876ecd627c7d79f73eaa44/
+license The PostgreSQL License (the repository's COPYRIGHT, copied beside the file): permission to use, copy, modify and distribute this software and its documentation for any purpose, without fee, provided that the copyright notice and the licence paragraphs appear in all copies; the file is whole and unmodified with its "Portions Copyright (c) 2017-2026, PostgreSQL Global Development Group" notice, and COPYRIGHT carries the paragraphs
+file saslprep.c 5dadb3ae0705c5e02558eb0272582b9b88cfd52e74904b8263516ffdcced8cb6 src/common/saslprep.c
+file COPYRIGHT 3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd COPYRIGHT

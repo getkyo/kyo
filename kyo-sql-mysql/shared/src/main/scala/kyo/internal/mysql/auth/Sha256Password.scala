@@ -5,8 +5,10 @@ import kyo.SqlRequestException
 
 /** sha256_password authentication helper.
   *
-  * Implements the legacy `sha256_password` plugin used by some MySQL 5.7 and 8.0 installations. This plugin lacks the server-side
-  * credential cache that `caching_sha2_password` uses, so every connection performs the full RSA exchange (non-TLS) or cleartext-over-TLS.
+  * Implements the legacy `sha256_password` plugin for MySQL 8.0.5 or later, the versions whose RSA exchange uses OAEP padding. MySQL 5.7
+  * and 8.0.0 to 8.0.4 encrypt with PKCS#1 v1.5, which this module does not implement, so their plaintext RSA exchange is not supported.
+  * This plugin lacks the server-side credential cache that `caching_sha2_password` uses, so every connection performs the full RSA
+  * exchange (non-TLS) or cleartext-over-TLS.
   *
   * Protocol:
   *   - Over TLS: client sends NUL-terminated cleartext password directly (same as `caching_sha2_password` TLS path).
@@ -61,7 +63,7 @@ private[mysql] object Sha256Password:
         publicKeyPem: Span[Byte]
     )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
         val pemStr = new String(publicKeyPem.toArray, java.nio.charset.StandardCharsets.US_ASCII)
-        SecureRandom.get.map(RsaOaep.encrypt(pemStr, CachingSha2Shared.scrambledPlaintext(password, scramble), _))
+        SecureRandom.get.map(PasswordEncryption.encrypt(pemStr, CachingSha2Shared.scrambledPlaintext(password, scramble), _))
     end computeEncryptedResponse
 
 end Sha256Password

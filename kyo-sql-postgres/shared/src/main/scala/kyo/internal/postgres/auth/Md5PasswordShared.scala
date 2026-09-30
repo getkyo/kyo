@@ -1,8 +1,9 @@
 package kyo.internal.postgres.auth
 
 import java.nio.charset.StandardCharsets
+import kyo.Hex
 import kyo.Span
-import kyo.internal.auth.PureHash
+import kyo.crypto.Md5
 
 /** MD5 password hashing for PostgreSQL AuthenticationMD5Password.
   *
@@ -10,8 +11,7 @@ import kyo.internal.auth.PureHash
   *
   * The outer hash concatenates the hex digest of the inner hash with the raw 4-byte salt bytes (not hex-encoded).
   *
-  * Digests come from [[kyo.internal.auth.PureHash.md5Hex]], the pure-Scala MD5, so the same bytes are produced on every platform without
-  * `java.security.MessageDigest`.
+  * Digests come from kyo-crypto's [[kyo.crypto.Md5]], so the same bytes are produced on every platform without `java.security.MessageDigest`.
   *
   * Reference: PostgreSQL §55.2.4 "MD5 Authentication"
   */
@@ -29,10 +29,10 @@ private[kyo] object Md5PasswordShared:
       *   the "md5" + 32-hex-character string to send as the PasswordMessage
       */
     def encode(password: String, user: String, salt: Span[Byte]): String =
-        val inner = PureHash.md5Hex((password + user).getBytes(StandardCharsets.UTF_8))
+        val inner = Hex.encodeArray(Md5.hashArray((password + user).getBytes(StandardCharsets.UTF_8)))
         // outer input: inner hex string bytes + raw salt bytes
         val outerInput = inner.getBytes(StandardCharsets.US_ASCII) ++ salt.toArray
-        "md5" + PureHash.md5Hex(outerInput)
+        "md5" + Hex.encodeArray(Md5.hashArray(outerInput))
     end encode
 
 end Md5PasswordShared

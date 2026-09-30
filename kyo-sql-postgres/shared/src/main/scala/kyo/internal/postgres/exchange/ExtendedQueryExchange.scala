@@ -4,7 +4,7 @@ import kyo.*
 import kyo.SqlCodec.Format
 import kyo.SqlException
 import kyo.SqlRow
-import kyo.internal.auth.PureHash
+import kyo.crypto.Sha256
 import kyo.internal.postgres.*
 
 /** Implements the PostgreSQL extended-query protocol cycle (Parse/Bind/Execute).
@@ -403,7 +403,7 @@ object ExtendedQueryExchange:
         if paramOids.nonEmpty then
             val _ = sb.append('|')
             val _ = sb.append(paramOids.mkString(","))
-        val digest = PureHash.sha256(sb.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        val digest = Sha256.hashArray(sb.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         digest.take(8).map(b => f"${b & 0xff}%02x").mkString
     end cacheKey
 

@@ -27,14 +27,26 @@ All breaking API changes to this project will be documented in this file.
 - [kyo-sql-postgres] `PostgresConfig.searchPath`: the schemas an unqualified name resolves against, sent in the startup packet so every pooled connection agrees and `SqlClient.reset` restores it.
 - [kyo-sql-sqlite] `SqliteAttach`: databases attached to every connection the client opens, so a schema-qualified name resolves on all of them.
 - [kyo-browser] `Browser.heapUsage` and `Browser.collectGarbage`: read the page's JS heap (`Browser.HeapUsage(used, total)`) and force a collection first, so a test measures retained memory rather than collection lag
+- [kyo-crypto] A new module, the pure-Scala cryptography the protocol modules verify, derive and encrypt with, producing the same bytes on JVM, Scala.js, Scala Native and Wasm, in package `kyo.crypto` (reached with `import kyo.crypto.*`, not `import kyo.*`): the digests `Sha1`, `Sha256`, `Sha512` and `Md5`; `Hmac` and `ConstantTime`; the derivations `Pbkdf2` and `Mgf1`, each refusing an argument outside its bounds with its own `Failure`; `Rsa` with its checked `VerificationKey` and `EncryptionKey` and the failures `KeyFailure`, `SpkiFailure`, `BoundsFailure` and `DerFailure`; `RsaPkcs1`, `RsaOaep` and `RsaOaep.Failure`; `Ed25519` with its `VerificationKey` and `KeyFailure`; `Saslprep` and `Saslprep.Failure`, the SCRAM password preparation; and the `UUID.v5` and `UUID.v8Sha256` extensions
+- [kyo-data] `Hex` and `Hex.Failure`: hexadecimal text for bytes, lowercase on encode, decoding failures as values
+- [kyo-data] `Base64.Failure`: why a Base64 input did not decode, with the offset or count that identifies it
+- [kyo-data] `Base64.encodeUrl` and `Base64.decodeUrl`: the unpadded URL-safe alphabet of RFC 4648 section 5, the decoder accepting only the canonical encoding
+- [kyo-sql] `SqlRequestRsaKeyTooSmallException` and `SqlRequestRsaKeyEvenException`: a MySQL server's RSA key refused for a component below its floor or even
+- [kyo-sql] `SqlRsaKeyComponent`: which of the two numbers of an RSA public key a key leaf names
 
 ### Removed
 
 - [kyo-combinators] `.forkScoped`: changed to `.fork`
 - [kyo-core] `LogPlatformSpecific.Unsafe.SLF4J`: removed from JVM module, see above
+- [kyo-data] `Span.constantTimeEquals`: use kyo-crypto's `kyo.crypto.ConstantTime.isEqual`
+- [kyo-data] `Base64.decodeOrThrow`: use `Base64.decode` and handle the `Base64.Failure`
+- [kyo-sql] `SqlRequestRsaKeyTooLargeException.Component`: use `SqlRsaKeyComponent`
 
 ### Changed
 
+- [kyo-sql-postgres] The SCRAM-SHA-256 client salts the password in its SASLprep form, as RFC 5802 requires and PostgreSQL does on both sides, falling back to the raw password when the profile refuses it as libpq does. A role whose password holds a no-break space, a soft hyphen, a fullwidth character or a decomposed accent, which the server stored prepared, now authenticates.
+- [kyo-data] `Base64.decode` fails with a `Base64.Failure` value instead of an `IllegalArgumentException`, and refuses `=` anywhere other than the end of the input
+- [kyo-data] `UUID.v5` and `UUID.v8Sha256` have moved to kyo-crypto, as extension methods on the `UUID` companion in package `kyo.crypto`. Add `"io.getkyo" %% "kyo-crypto"` and `import kyo.crypto.*` to keep using them; the call sites are otherwise unchanged.
 - [kyo-sql] `SqlClient.reset` now drops the connection's prepared-statement cache, once the scrub has returned. A reset releases every server-side prepared statement, and the connection returns to the pool, so a cached entry naming one of them failed for the next borrower rather than for whoever called `reset`. A reset the server refused released nothing and leaves the cache alone, since forgetting the names there would strand the statements for the life of the connection. Affects the PostgreSQL, MySQL and Dolt backends; SQLite never had the failure.
 - [kyo-sql] A PostgreSQL session that reports deallocating every prepared statement now drops the cache before the next statement binds. The command tag is what is read, not the SQL the caller was handed, so a `DEALLOCATE ALL` or `DISCARD ALL` sent through `executeRaw` is seen wherever it came from. Without this the next statement recovered through the retry below instead, at one dead Bind and one re-parse for every entry the cache still named, and inside a transaction block it could not recover at all.
 - [kyo-sql] A PostgreSQL statement the server no longer holds is now parsed again and bound a second time, for the causes the driver cannot see: an external pooler's reset query, or DDL invalidating a cached plan. Only for `26000` from `FetchPreparedStatement` and `0A000` from `RevalidateCachedQuery`, only once, and only while the session is idle, since PostgreSQL aborts the whole block on a statement error. Inside a transaction block the original error is surfaced and the entry is dropped so the next statement heals. The pipeline path drops the entry and reports rather than retrying, because its batch has already run the later statements by the time the failure is read.

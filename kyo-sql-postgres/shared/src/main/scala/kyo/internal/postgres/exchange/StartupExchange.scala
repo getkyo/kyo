@@ -221,8 +221,10 @@ object StartupExchange:
         // Generate client nonce using the ambient kyo.SecureRandom, 24 random bytes, base64-encoded.
         SecureRandom.nextBytes(24).flatMap { nonceBytes =>
             val clientNonce = ScramSha256Shared.encodeNonce(nonceBytes)
-            val scram       = ScramSha256Shared(user, clientNonce, channelBinding)
-            val cfmBytes    = scram.clientFirstMessage.getBytes(StandardCharsets.UTF_8)
+            // The SCRAM name is empty, as libpq and pgx send it: PostgreSQL authenticates the role named in the startup packet and
+            // ignores this attribute, and an empty name needs neither RFC 5802's escaping nor SASLprep.
+            val scram    = ScramSha256Shared("", clientNonce, channelBinding)
+            val cfmBytes = scram.clientFirstMessage.getBytes(StandardCharsets.UTF_8)
 
             // Record the selected mechanism name, if a capture ref was provided.
             val captureEffect: Unit < Sync = mechanismCapture match
