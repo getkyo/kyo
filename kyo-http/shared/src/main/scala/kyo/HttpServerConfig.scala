@@ -40,7 +40,16 @@ import kyo.*
   * @param transportConfig
   *   Low-level I/O tuning: read buffer size, channel capacity, I/O pool size. See [[HttpTransportConfig]].
   * @param idleTimeout
-  *   Duration after which idle keep-alive connections are closed. Defaults to 60 seconds. Set to `Duration.Infinity` to disable.
+  *   How long the server waits on the peer before closing the connection: for a request head to arrive and complete on a new or idle
+  *   keep-alive connection, for the next bytes of a request body once its head is in, and for the peer to read an answer, a buffered one
+  *   or each chunk of a streamed one. A handler's own work is not bounded by it. Defaults to 60 seconds. Set to `Duration.Infinity` to
+  *   disable.
+  * @param lingeringTimeout
+  *   The total time the server spends reading and discarding a request body it will not use, after it has answered and before it
+  *   closes: a body the handler left unread on a `Connection: close` request, or the body of a request it refused. A socket closed with
+  *   unread bytes is reset, and a reset can discard the answer before the peer reads it, so the server reads first; the bound keeps a
+  *   peer that never stops sending from holding a connection that has no purpose left, and when it elapses the close and its reset are
+  *   accepted. Independent of `idleTimeout`. Defaults to 5 seconds.
   * @param autoFilters
   *   Whether ServiceLoader-discovered server filters are applied. Defaults to true.
   *
@@ -66,7 +75,8 @@ case class HttpServerConfig(
     unixSocket: Maybe[String] = Absent,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
     idleTimeout: Duration = 60.seconds,
-    autoFilters: Boolean = true
+    autoFilters: Boolean = true,
+    lingeringTimeout: Duration = 5.seconds
 ) derives CanEqual:
     def port(p: Int): HttpServerConfig                            = copy(port = p)
     def host(h: String): HttpServerConfig                         = copy(host = h)
@@ -81,6 +91,7 @@ case class HttpServerConfig(
     def unixSocket(path: String): HttpServerConfig                = copy(unixSocket = Present(path))
     def transportConfig(v: HttpTransportConfig): HttpServerConfig = copy(transportConfig = v)
     def idleTimeout(v: Duration): HttpServerConfig                = copy(idleTimeout = v)
+    def lingeringTimeout(v: Duration): HttpServerConfig           = copy(lingeringTimeout = v)
     def autoFilters(v: Boolean): HttpServerConfig                 = copy(autoFilters = v)
     def withoutAutoFilters: HttpServerConfig                      = autoFilters(false)
     def openApi(
@@ -110,7 +121,8 @@ object HttpServerConfig:
             unixSocket = Absent,
             transportConfig = HttpTransportConfig.default,
             idleTimeout = 60.seconds,
-            autoFilters = true
+            autoFilters = true,
+            lingeringTimeout = 5.seconds
         )
 
     case class OpenApiEndpoint(

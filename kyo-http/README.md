@@ -154,6 +154,21 @@ val chunks: Stream[Span[Byte], Async & Abort[HttpException]] =
 
 `postStreamBytes` sends a byte array request body and streams the response. To stream a request body, use typed routes with `.bodyStream`, `.bodyNdjson[V]`, or `.bodyMultipartStream`.
 
+A streamed body can fail after some of it arrived: the connection closes before the body its framing declared is complete, its chunk framing is refused, or a line or frame of an NDJSON or SSE body does not decode. Its type says so. Over TLS, a response body framed by the close (no `Content-Length`, not chunked) is complete only when the server's `close_notify` preceded the close; a bare TCP FIN, a reset or a fatal record fails it with `HttpConnectionClosedException` on JVM and Native (RFC 9112 section 9.8). The Node transport on JS and Wasm cannot observe the close reason, so such a body is accepted as complete there. Every streaming body field, on the request and on the response side, is a `Stream[_, Async & Abort[HttpException]]`, so a consumer handles the failure or carries it on its own row; a stream that merely ended is a complete body. A handler declared with no error type handles it in place:
+
+```scala
+val upload = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+
+val handler = upload.handler { req =>
+    Abort.run[HttpException](req.fields.body.run).map {
+        case Result.Success(chunks) => HttpResponse.ok(s"stored ${chunks.map(_.size).sum} bytes")
+        case Result.Failure(_)      => HttpResponse.badRequest("the upload ended early")
+    }
+}
+```
+
+A handler that reads the body under `Async` alone does not compile, so an upload cut short cannot pass for a complete one. A handler that leaves the failure on its row instead of handling it is answered by the server: 400 for a body whose framing was refused, 413 for a chunk control plane over the limit, and nothing for a peer that closed. A response stream that fails once its head is on the wire cannot withdraw the status, so the server closes the connection without the last chunk and the client reads the body as cut short. A producer that builds its request or response where the route's type is expected needs no change: a `Stream[Span[Byte], Async]` is a `Stream[Span[Byte], Async & Abort[HttpException]]`. A request or response held in a value fixes its field types when it is built, so a producer that declares its stream as `Stream[Span[Byte], Async]`, adds it as a field and passes the value to a route later ascribes the stream to the row above.
+
 ### Multipart Uploads
 
 Multipart uploads use typed routes and `HttpRequest.Part`; there is no `postMultipart` convenience API:
@@ -225,6 +240,8 @@ HttpClient.withConfig(
 ```
 
 By default, `retryOn` matches server errors (5xx). Retries are only active when a schedule is provided.
+
+`timeout` (5 seconds by default) bounds the whole request, retries included, until the callback of `sendWith` returns. A streamed body consumed inside that callback is under it. The streams `getStreamBytes`, `getSseJson`, `getSseText` and `getNdJson` return are consumed after their request completed at the head, so `timeout` bounds the head and not the body; a body that stops arriving ends with the connection, or with the consumer's own deadline.
 
 ### Custom Instances
 
@@ -388,7 +405,7 @@ Caution: `trustAll = true` disables all certificate verification and exposes the
 
 ### Transport Tuning
 
-For low-level tuning of the byte-transport pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer in bytes), `maxHeaderSize` (the HTTP header limit the parser enforces), and `handshakeTimeout` (the TLS handshake deadline, off by default):
+For low-level tuning of the byte-transport pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer in bytes, JVM and Native only: on JS and Wasm, Node sizes each read itself, at most 64 KiB), `maxHeaderSize` (the limit on a message head the parser enforces, request or status line through the empty line, with body bytes in the same read not counted on either side; the server answers a request over it with 431, or 414 for a request line alone over it, and `Connection: close`; the client fails a response over it with `HttpProtocolException`), and `handshakeTimeout` (the TLS handshake deadline, off by default):
 
 ```scala
 val server = HttpServer.init(
@@ -404,6 +421,8 @@ val server = HttpServer.init(
 ```
 
 The number of I/O event loops is not a per-client or per-server setting: every component in the process shares one transport, so it is the `kyo.net.ioPoolSize` system property, sized from the scheduler's worker count.
+
+Two server timeouts bound the waits on a peer. `idleTimeout` (60 seconds by default) bounds the wait for a request head to arrive and complete, on a new connection as on an idle keep-alive one, the wait for the next bytes of a request body once its head is in, and the wait for the peer to read an answer, a buffered one or each chunk of a streamed one; a handler's own work is not bounded by it. `lingeringTimeout` (5 seconds by default) bounds, in total, the reading and discarding of a request body the server will not use once it has answered, on a `Connection: close` request the handler left unread and on a request the server refused: a socket closed with unread bytes is reset, and a reset can discard the answer before the peer reads it, so the server reads first and gives up at this bound, accepting the reset for a peer that never stops sending.
 
 ## Describing Endpoints with Routes
 
@@ -554,7 +573,7 @@ val route = HttpRoute
     .response(_.bodyJson[User])
 ```
 
-**File uploads** use `bodyMultipart` to receive uploaded files as `Seq[HttpRequest.Part]`, where each part has `name`, `filename`, `contentType`, and `data` fields. `bodyMultipartStream` consumes `Stream[HttpRequest.Part, Async]` for large uploads. Server route decoding requires inbound multipart bodies to include a valid boundary in `Content-Type`; absent or invalid boundaries fail with `HttpMissingBoundaryException`:
+**File uploads** use `bodyMultipart` to receive uploaded files as `Seq[HttpRequest.Part]`, where each part has `name`, `filename`, `contentType`, and `data` fields. `bodyMultipartStream` consumes `Stream[HttpRequest.Part, Async & Abort[HttpException]]` for uploads of many parts; each part is delivered whole, as one span, and a part over 16 MiB fails the stream with `HttpPayloadTooLargeException`. Server route decoding requires inbound multipart bodies to include a valid boundary in `Content-Type`; absent or invalid boundaries fail with `HttpMissingBoundaryException`:
 
 ```scala
 val route = HttpRoute
@@ -809,17 +828,17 @@ Client operations use `Abort[HttpException]`. The hierarchy has five families:
 
 | Group and family | Leaf exceptions | Use when |
 |------------------|-----------------|----------|
-| Retry or connectivity, `HttpConnectionException` | `HttpConnectException`, `HttpDnsResolutionException`, `HttpUnixConnectException`, `HttpConnectTimeoutException`, `HttpPoolExhaustedException` | Deciding whether a failed connection attempt can be retried, or whether DNS, Unix socket configuration, connect timeout, or pool sizing must be fixed. |
+| Retry or connectivity, `HttpConnectionException` | `HttpConnectException`, `HttpDnsResolutionException`, `HttpUnixConnectException`, `HttpConnectTimeoutException`, `HttpPoolExhaustedException`, `HttpConnectionClosedException` | Deciding whether a failed connection attempt can be retried, or whether DNS, Unix socket configuration, connect timeout, or pool sizing must be fixed. A connection closed before or during a response with bytes still owed is `HttpConnectionClosedException`; its `phase` says whether it closed before the head, during the body, or as a TLS close without `close_notify`. |
 | Request policy and outbound validation, `HttpRequestException` | `HttpTimeoutException`, `HttpRedirectLoopException`, `HttpNonAsciiException`, `HttpInvalidFieldException`, `HttpStatusException` | Handling request policy failures and outbound request validation. |
 | Server operation and handler mapping, `HttpServerException` | `HttpBindException`, `HttpHandlerException` | Handling server startup failures and route handler failures that were not mapped by the endpoint. |
-| Decode, content, and wire shape, `HttpDecodeException` | `HttpUrlParseException`, `HttpMalformedBodyException`, `HttpFieldDecodeException`, `HttpMissingFieldException`, `HttpJsonDecodeException`, `HttpFormDecodeException`, `HttpUnsupportedMediaTypeException`, `HttpStreamingDecodeException`, `HttpMissingBoundaryException`, `HttpProtocolException`, `HttpPayloadTooLargeException`, `HttpConnectionClosedException` | Separating route or body decode failures from HTTP wire, framing, size, and peer-close failures. |
+| Decode, content, and wire shape, `HttpDecodeException` | `HttpUrlParseException`, `HttpMalformedBodyException`, `HttpFieldDecodeException`, `HttpMissingFieldException`, `HttpJsonDecodeException`, `HttpFormDecodeException`, `HttpUnsupportedMediaTypeException`, `HttpStreamingDecodeException`, `HttpMissingBoundaryException`, `HttpProtocolException`, `HttpPayloadTooLargeException` | Separating route or body decode failures from HTTP wire, framing and size failures. |
 | WebSocket upgrade, `HttpWebSocketException` | `HttpWebSocketHandshakeException` | Identifying the public exception leaf for WebSocket upgrade handshake failures. |
 
 Body-only convenience methods (`getText`, `getJson`, `getBinary`, etc.) automatically fail with `HttpStatusException` when the server returns a non-2xx status code. This represents outbound response validation failure: the response arrived, but the selected client method treats that status as an error. Use the `*Response` variants with `failOnError = false` to receive and inspect error responses.
 
 Some request failures happen before the request is sent. Non-ASCII request-line data fails with `HttpNonAsciiException`, invalid field names, field values, request paths, or WebSocket request values fail with `HttpInvalidFieldException`, and redirect chains that exceed the configured limit fail with `HttpRedirectLoopException`.
 
-Decode failures split into two practical groups. Route and content decoding covers URL parse errors, path/query/header/cookie field decoding, missing required fields, JSON or form body decoding, unsupported or absent `Content-Type`, streaming content decoded as a buffered body, and missing multipart boundaries. Wire and framing failures cover malformed chunked bodies, protocol parse errors, oversized payloads, and connections closed while bytes were still expected.
+Decode failures split into two practical groups. Route and content decoding covers URL parse errors, path/query/header/cookie field decoding, missing required fields, JSON or form body decoding, unsupported or absent `Content-Type`, streaming content decoded as a buffered body, and missing multipart boundaries. Wire and framing failures cover malformed chunked bodies, protocol parse errors and oversized payloads. A connection closed while bytes were still expected is the connectivity leaf `HttpConnectionClosedException`. A streamed response body cut short emits the bytes that arrived and then fails with that leaf, so a consumer under `Abort[HttpException]` never mistakes a truncated body for a complete one.
 
 On the server side, failed bind attempts abort with `HttpBindException`. If a handler throws or aborts with an unmapped error, kyo-http represents that failure as `HttpHandlerException`; declared endpoint failures that use `.error[E](status)` are serialized with the declared status.
 

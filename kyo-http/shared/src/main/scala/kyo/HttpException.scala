@@ -39,7 +39,7 @@ end HttpException
 
 // --- Connection (transport-level failures) ---
 
-/** Transport-level failures before a response is received.
+/** Transport-level failures: before a response is received, or a connection closed with bytes still owed.
   *
   * @see
   *   [[kyo.HttpConnectException]] Connection refused or unreachable host
@@ -49,6 +49,8 @@ end HttpException
   *   [[kyo.HttpUnixConnectException]] Connection to a Unix domain socket failed
   * @see
   *   [[kyo.HttpPoolExhaustedException]] All connections to a host are in use
+  * @see
+  *   [[kyo.HttpConnectionClosedException]] The connection closed before or during a response with bytes still owed
   */
 sealed abstract class HttpConnectionException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
@@ -97,6 +99,32 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
            |  Increase maxConnectionsPerHost in HttpClient.init
            |  or reduce concurrent requests to this host.""".stripMargin
     )
+
+/** The connection closed before or during a message with bytes still owed: before its head arrived, before the body its framing declared
+  * was complete, or, over TLS, without a `close_notify` on a close-framed body (RFC 9112 section 9.8): a bare TCP FIN, a reset or a
+  * fatal record. `phase` says which. The bytes of a streamed body that did arrive are delivered before the failure.
+  *
+  * `TlsTruncated` is reported where the transport observes the close reason: the posix and NIO transports on JVM and Native. The Node
+  * transport on JS and Wasm cannot observe it, so a close-framed TLS body is accepted as complete there.
+  */
+case class HttpConnectionClosedException private[kyo] (phase: HttpConnectionClosedException.Phase)(using Frame)
+    extends HttpConnectionException(HttpConnectionClosedException.message(phase))
+
+object HttpConnectionClosedException:
+    /** Where the message stood when the connection closed. */
+    enum Phase derives CanEqual:
+        case BeforeHead
+        case BodyTruncated
+        case TlsTruncated
+    end Phase
+
+    private def message(phase: Phase): String =
+        phase match
+            case Phase.BeforeHead    => "The connection closed before the message head arrived."
+            case Phase.BodyTruncated => "The connection closed before the body its framing declared was complete."
+            case Phase.TlsTruncated  =>
+                "The connection ended without the peer's TLS close_notify, so the close-framed body is incomplete (RFC 9112 section 9.8)."
+end HttpConnectionClosedException
 
 // --- Request (protocol-level failures) ---
 
@@ -456,7 +484,3 @@ case class HttpPayloadTooLargeException private[kyo] (bodySize: Int, maxSize: In
     extends HttpDecodeException(
         s"Response body size $bodySize exceeds the configured maximum $maxSize"
     )
-
-/** Connection closed cleanly (EOF). Not an error, normal keep-alive termination. */
-case class HttpConnectionClosedException private[kyo] ()(using Frame)
-    extends HttpDecodeException("Connection closed")

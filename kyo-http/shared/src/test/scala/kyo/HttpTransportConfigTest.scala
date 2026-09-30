@@ -9,7 +9,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+        client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
             Scope.run {
                 Scope.ensure(client.closeNow(conn)).andThen {
                     client.sendWith(conn, route, request)(identity)
@@ -99,7 +99,8 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "custom maxHeaderSize rejects oversized headers" in {
+    // The leaf timeout bounds only the failing state, in which the server answers nothing; the pass condition is the status alone.
+    "custom maxHeaderSize answers an oversized request head with 431".timeout(30.seconds) in {
         val tc     = HttpTransportConfig.default.maxHeaderSize(128)
         val config = HttpServerConfig.default.port(0).host("127.0.0.1").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -107,22 +108,10 @@ class HttpTransportConfigTest extends BaseHttpTest:
         HttpClient.init().map { httpClient =>
             HttpServer.init(config)(ep).map { server =>
                 HttpClient.let(httpClient) {
-                    val url = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
-                    // Build a request with headers that exceed 128 bytes total
-                    val largeHeaderValue = "x" * 200
-                    val request          = HttpRequest.getRaw(HttpUrl.fromUri("/hello"))
-                        .addHeader("X-Large", largeHeaderValue)
-                    // The server closes the connection when headers exceed maxHeaderSize.
-                    // This manifests as a timeout or connection error on the client side.
-                    Abort.run[Any](
-                        Async.timeout(5.seconds)(send(url, route, request))
-                    ).map { result =>
-                        result match
-                            case Result.Failure(_)    => succeed("expected: oversized headers cause error")
-                            case Result.Panic(_)      => succeed("expected: oversized headers cause panic")
-                            case Result.Success(resp) =>
-                                // If we somehow get a response, it should be an error status
-                                assert(resp.status.isError || resp.status == HttpStatus.BadRequest)
+                    val url     = HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow
+                    val request = HttpRequest.getRaw(HttpUrl.fromUri("/hello")).addHeader("X-Large", "x" * 200)
+                    Abort.run[HttpException](send(url, route, request)).map { result =>
+                        assert(result.map(_.status) == Result.succeed(HttpStatus.RequestHeaderFieldsTooLarge), s"observed: $result")
                     }
                 }
             }
@@ -179,7 +168,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
                 HttpClient.let(httpClient) {
                     Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:${server.port}/big")).map { result =>
                         assert(
-                            result.isFailure || result.isPanic,
+                            result == Result.fail(HttpProtocolException("the response head exceeds 512 bytes")),
                             s"expected the 512-byte client maxHeaderSize to reject the oversized response, got $result"
                         )
                     }

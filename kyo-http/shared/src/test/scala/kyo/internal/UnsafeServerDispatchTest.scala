@@ -52,6 +52,21 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
     private def sendRequest(inbound: Channel.Unsafe[Span[Byte]], request: String): Unit =
         discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
 
+    /** A close hook for `serve` that closes the inbound channel, the close `serve` performs without a hook, and records it, so a leaf awaits
+      * the close as an event instead of polling the channel for it.
+      */
+    final private class CloseProbe(inbound: Channel.Unsafe[Span[Byte]]):
+        private val done = Promise.Unsafe.init[Unit, Any]()
+
+        val hook: Maybe[() => Unit] = Present { () =>
+            discard(inbound.close())
+            done.completeUnitDiscard()
+        }
+
+        /** Completes once the server has closed the connection, with whether the inbound channel is closed. */
+        def closed(using Frame): Boolean < Async = done.safe.get.andThen(inbound.closed())
+    end CloseProbe
+
     /** Waits until the keep-alive idle timer for the next idle period is armed.
       *
       * `restartParserKeepAlive` arms the timer then restarts the parser, so a parser take on inbound is proof the
@@ -203,22 +218,22 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val followUp = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(followUp.getBytes(StandardCharsets.US_ASCII))))
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            val probe = CloseProbe(inbound)
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
 
             collectResponse(outbound).map { response =>
                 assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200 OK, got: $response")
-                // Connection: close registers no keep-alive hook, so once the response is out nothing runs again:
-                // the follow-up span stays queued and unread, nothing more is written.
-                assert(
-                    inbound.size().contains(1),
-                    s"the follow-up request must stay unread after Connection: close, queued=${inbound.size()}"
-                )
-                outbound.poll() match
-                    case Result.Success(Present(span)) =>
-                        fail(s"Expected no more data after Connection: close, but got: ${new String(span.toArray)}")
-                    case _ =>
-                        succeed
-                end match
+                // Connection: close ends the connection with this response: the parser never restarts, so the follow-up span
+                // goes unread and unanswered, and the connection is closed under it.
+                probe.closed.map { closed =>
+                    assert(closed, "the connection must be closed after the final response to a Connection: close request")
+                    outbound.poll() match
+                        case Result.Success(Present(span)) =>
+                            fail(s"Expected no more data after Connection: close, but got: ${new String(span.toArray)}")
+                        case _ =>
+                            succeed
+                    end match
+                }
             }
         }
 
@@ -753,23 +768,42 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
             val router = HttpRouter(Seq(handler), Absent)
 
-            val config   = defaultConfig.maxContentLength(10)
-            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
-            val outbound = Channel.Unsafe.init[Span[Byte]](16)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.maxContentLength(10).idleTimeout(idleTimeout)
+            val inbound     = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound    = Channel.Unsafe.init[Span[Byte]](16)
 
             val request =
                 "POST /echo HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 100\r\nTransfer-Encoding: chunked\r\n\r\n" +
                     "5\r\nhello\r\n0\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
 
-            UnsafeServerDispatch.serve(router, inbound, outbound, config)
+            val probe = CloseProbe(inbound)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
 
-            collectResponse(outbound).map { response =>
-                assert(response.contains("HTTP/1.1 400 Bad Request"), s"Expected 400 for the CL+TE conflict, got: $response")
-                assert(response.contains("Connection: close"), s"the 400 must announce the close (RFC 9112 section 9.6), got: $response")
-                assert(!response.contains("413"), s"the request must be refused on framing, not on the Content-Length cap: $response")
-                assert(!served.get(), "a request with two candidate framings must never reach the handler")
-                assert(inbound.closed(), "the connection must be torn down after an unframeable request")
+                    collectResponse(outbound).map { response =>
+                        assert(response.contains("HTTP/1.1 400 Bad Request"), s"Expected 400 for the CL+TE conflict, got: $response")
+                        assert(
+                            response.contains("Connection: close"),
+                            s"the 400 must announce the close (RFC 9112 section 9.6), got: $response"
+                        )
+                        assert(
+                            !response.contains("413"),
+                            s"the request must be refused on framing, not on the Content-Length cap: $response"
+                        )
+                        assert(!served.get(), "a request with two candidate framings must never reach the handler")
+                        // The body's framing is unknown, so whatever the peer still sends is read and discarded until it stops; then the
+                        // connection is torn down.
+                        pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
+                            assert(draining, "the rest of the request is drained before the connection ends")
+                            tc.advance(idleTimeout).andThen {
+                                probe.closed.map(closed => assert(closed, "the connection must be torn down after an unframeable request"))
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1078,6 +1112,119 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 // Clean up: close inbound to terminate WS fibers
                 discard(inbound.close())
                 ()
+            }
+        }
+
+        "a WebSocket route hit without an upgrade, by a request whose body arrived with its head: 404, the body skipped, the connection kept alive" in {
+            val handler  = HttpHandler.webSocket("ws")(wsEcho)
+            val router   = HttpRouter(Seq(handler), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            sendRequest(
+                inbound,
+                "GET /ws HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhelloGET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            )
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { first =>
+                assert(first.startsWith("HTTP/1.1 404 Not Found"), s"observed: $first")
+                assert(
+                    !first.toLowerCase.contains("connection: close"),
+                    s"a body received with the head leaves nothing on the wire, observed: $first"
+                )
+                collectResponse(outbound).map { second =>
+                    assert(second.startsWith("HTTP/1.1 404 Not Found"), s"the request behind the body must be answered, observed: $second")
+                    assert(!inbound.closed(), "the connection stays open")
+                }
+            }
+        }
+
+        "a WebSocket route hit without an upgrade, by a request whose body is still arriving: 404 with Connection: close, drained, and closed" in {
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val handler  = HttpHandler.webSocket("ws")(wsEcho)
+                    val router   = HttpRouter(Seq(handler), Absent)
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                    val config   = defaultConfig.idleTimeout(200.millis).lingeringTimeout(500.millis)
+                    sendRequest(inbound, "GET /ws HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20\r\n\r\nhello")
+                    val probe = CloseProbe(inbound)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                    collectResponse(outbound).map { response =>
+                        assert(response.startsWith("HTTP/1.1 404 Not Found"), s"observed: $response")
+                        assert(
+                            response.toLowerCase.contains("connection: close"),
+                            s"a body left on the wire must close the connection, observed: $response"
+                        )
+                        pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
+                            assert(draining, "the rest of the body is drained before the close")
+                            tc.advance(200.millis).andThen {
+                                probe.closed.map(closed => assert(closed, "a silent peer is closed at the idle timeout"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "a WebSocket route hit without an upgrade, by a request without a body: 404 and the connection stays keep-alive" in {
+            val handler  = HttpHandler.webSocket("ws")(wsEcho)
+            val router   = HttpRouter(Seq(handler), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            sendRequest(inbound, "GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            sendRequest(inbound, "GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { first =>
+                assert(first.startsWith("HTTP/1.1 404 Not Found"), s"observed: $first")
+                assert(
+                    !first.toLowerCase.contains("connection: close"),
+                    s"a request with no body leaves the connection keep-alive, observed: $first"
+                )
+                collectResponse(outbound).map { second =>
+                    assert(second.startsWith("HTTP/1.1 404 Not Found"), s"the pipelined request must be answered, observed: $second")
+                    assert(!inbound.closed(), "the connection stays open")
+                }
+            }
+        }
+
+        "an upgrade on a route that is not a WebSocket, by a request whose body arrived with its head: 404, the body skipped, the route served next" in {
+            val handler  = HttpHandler.getText("hello")(_ => "world")
+            val router   = HttpRouter(Seq(handler), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            sendRequest(
+                inbound,
+                "GET /hello HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nContent-Length: 5\r\n\r\nhelloGET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            )
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { first =>
+                assert(first.startsWith("HTTP/1.1 404 Not Found"), s"observed: $first")
+                assert(
+                    !first.toLowerCase.contains("connection: close"),
+                    s"a body received with the head leaves nothing on the wire, observed: $first"
+                )
+                collectResponse(outbound).map { second =>
+                    assert(second.startsWith("HTTP/1.1 200 OK") && second.endsWith("world"), s"observed: $second")
+                    assert(!inbound.closed(), "the connection stays open")
+                }
+            }
+        }
+
+        "a WebSocket route hit without an upgrade, by an HTTP/1.0 request: 404 with Connection: close and the connection closed" in {
+            val handler  = HttpHandler.webSocket("ws")(wsEcho)
+            val router   = HttpRouter(Seq(handler), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            sendRequest(inbound, "GET /ws HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            val probe = CloseProbe(inbound)
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+            collectResponse(outbound).map { response =>
+                assert(response.contains("404 Not Found"), s"observed: $response")
+                assert(
+                    response.toLowerCase.contains("connection: close"),
+                    s"an HTTP/1.0 answer must announce the close, observed: $response"
+                )
+                probe.closed.map(closed => assert(closed, "the connection closes after the answer to an HTTP/1.0 request"))
             }
         }
 
@@ -1835,6 +1982,628 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        "the idle timer bounds the wait for the peer, not the handler" - {
+
+            "a connection whose first request head never completes is closed after the idle timeout" in {
+                val handler = HttpHandler.getText("hello")(_ => "world")
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                val probe = CloseProbe(inbound)
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        sendRequest(inbound, "GET /hel")
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+
+                        pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
+                            assert(waiting, "the parser must be waiting for the rest of the head")
+                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                assert(!inbound.closed(), "the connection must stay open until the idle timeout elapses")
+                                tc.advance(1.milli).andThen {
+                                    probe.closed.map { closed =>
+                                        assert(closed, "a head that never completes must not hold the connection past the idle timeout")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "the final response to a Connection: close request announces the close and the connection is then closed" in {
+                val handler = HttpHandler.getText("hello")(_ => "world")
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                val probe = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+
+                collectResponse(outbound).map { response =>
+                    assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
+                    assert(
+                        response.toLowerCase.contains("connection: close"),
+                        s"the final response must carry Connection: close (RFC 9112 section 9.6), got: $response"
+                    )
+                    probe.closed.map { closed =>
+                        assert(closed, "the server must close the connection after the final response to a Connection: close request")
+                    }
+                }
+            }
+
+            "a keep-alive request leaves the connection open for the next request" in {
+                val handler = HttpHandler.getText("hello")(_ => "world")
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                val probe = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+
+                collectResponse(outbound).map { first =>
+                    assert(first.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $first")
+                    assert(!first.toLowerCase.contains("connection: close"), s"a keep-alive answer must not announce a close, got: $first")
+                    assert(!inbound.closed(), "a keep-alive answer must leave the connection open")
+                    sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    collectResponse(outbound).map { second =>
+                        assert(second.contains("HTTP/1.1 200 OK"), s"Expected 200 on the second request, got: $second")
+                        probe.closed.map(closed => assert(closed, "the connection closes after the Connection: close request"))
+                    }
+                }
+            }
+
+            "the response to an HTTP/1.0 request without keep-alive announces the close and the connection is then closed" in {
+                val handler = HttpHandler.getText("hello")(_ => "world")
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                sendRequest(inbound, "GET /hello HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                val probe = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+
+                collectResponse(outbound).map { response =>
+                    assert(response.contains("200 OK") && response.endsWith("world"), s"observed: $response")
+                    assert(
+                        response.toLowerCase.contains("connection: close"),
+                        s"an HTTP/1.0 answer must announce the close, got: $response"
+                    )
+                    probe.closed.map(closed => assert(closed, "the connection closes after the answer to an HTTP/1.0 request"))
+                }
+            }
+
+            // RFC 9112 section 6.1: no Transfer-Encoding in a response to an HTTP/1.0 request; its streamed body is delimited by the close.
+            /** The values of the `Connection` fields of a response head, lower-cased. */
+            def connectionValues(head: String): Seq[String] =
+                head.split("\r\n").toSeq.filter(_.toLowerCase.startsWith("connection:")).map(_.drop("connection:".length).trim.toLowerCase)
+
+            def http10StreamedAnswer(request: String, handlerKeepAlive: Boolean = false)(using
+                Frame,
+                kyo.test.AssertScope
+            ): Unit < (Async & Abort[Closed]) =
+                val route   = HttpRoute.getRaw("events").response(_.bodyStream)
+                val handler = route.handler { _ =>
+                    val body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
+                        Span.fromUnsafe("first".getBytes(StandardCharsets.US_ASCII)),
+                        Span.fromUnsafe("last".getBytes(StandardCharsets.US_ASCII))
+                    ))
+                    val response = HttpResponse.ok.addField("body", body)
+                    if handlerKeepAlive then response.setHeader("Connection", "keep-alive") else response
+                }
+                val router   = HttpRouter(Seq(handler), Absent)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                sendRequest(inbound, request)
+                val probe = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+                probe.closed.map { closed =>
+                    assert(closed, "the connection closes after the close-delimited body")
+                    outbound.safe.drain.map { spans =>
+                        val response  = spans.map(span => new String(span.toArray, StandardCharsets.US_ASCII)).mkString
+                        val headerEnd = response.indexOf("\r\n\r\n")
+                        assert(headerEnd > 0, s"observed: $response")
+                        val head = response.substring(0, headerEnd).toLowerCase
+                        val body = response.substring(headerEnd + 4)
+                        assert(head.contains("200 ok"), s"observed head: $head")
+                        assert(connectionValues(head) == Seq("close"), s"the head announces the close, observed head: $head")
+                        assert(!head.contains("transfer-encoding"), s"no Transfer-Encoding to an HTTP/1.0 request, observed head: $head")
+                        assert(body == "firstlast", s"the body is the raw bytes, observed: $body")
+                    }
+                }
+            end http10StreamedAnswer
+
+            // The head says close whenever the server will close, whatever the handler set (RFC 9112 section 9.6).
+            "a handler's Connection: keep-alive on a streamed answer to an HTTP/1.0 request is replaced by close" in {
+                http10StreamedAnswer("GET /events HTTP/1.0\r\nHost: h\r\n\r\n", handlerKeepAlive = true)
+            }
+
+            "a handler's Connection: keep-alive is replaced by close when the request asked to close" in {
+                val handler = HttpRoute.getRaw("hello").response(_.bodyText).handler(_ =>
+                    HttpResponse.ok("world").setHeader("Connection", "keep-alive")
+                )
+                val router   = HttpRouter(Seq(handler), Absent)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+                val probe = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook)
+                collectResponse(outbound).map { response =>
+                    val head = response.substring(0, response.indexOf("\r\n\r\n"))
+                    assert(response.endsWith("world"), s"observed: $response")
+                    assert(connectionValues(head) == Seq("close"), s"the head announces the close, observed head: $head")
+                    probe.closed.map(closed => assert(closed, "the connection closes after the answer"))
+                }
+            }
+
+            "an HTTP/1.0 request to a streaming route is answered without Transfer-Encoding, the body raw and the connection closed after it" in {
+                http10StreamedAnswer("GET /events HTTP/1.0\r\nHost: h\r\n\r\n")
+            }
+
+            "an HTTP/1.0 keep-alive request to a streaming route is answered the same way, the close announced" in {
+                http10StreamedAnswer("GET /events HTTP/1.0\r\nHost: h\r\nConnection: keep-alive\r\n\r\n")
+            }
+
+            // RFC 9110 section 10.1.1: a 100-continue expectation in an HTTP/1.0 request is ignored.
+            "an HTTP/1.0 request expecting 100-continue gets its final response only" in {
+                val route   = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
+                val handler = route.handler(req => HttpResponse.ok("got " + req.fields.body))
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                sendRequest(inbound, "POST /upload HTTP/1.0\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\nabc")
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                collectResponse(outbound).map { response =>
+                    assert(!response.contains("100 Continue"), s"no interim response to an HTTP/1.0 request, observed: $response")
+                    assert(response.contains("200 OK") && response.endsWith("got abc"), s"observed: $response")
+                }
+            }
+
+            // Each chunk's wait for the peer to take it is a wait on the peer, like the wait for a buffered answer to be read.
+            "a peer that stops reading a streamed response is closed after the idle timeout" in {
+                val route   = HttpRoute.getRaw("events").response(_.bodyStream)
+                val handler = route.handler { _ =>
+                    val chunk = Chunk(Span.fromUnsafe("x".getBytes(StandardCharsets.US_ASCII)))
+                    val body: Stream[Span[Byte], Async & Abort[HttpException]] =
+                        Stream[Span[Byte], Async & Abort[HttpException]](Loop.forever(Emit.value(chunk)))
+                    HttpResponse.ok.addField("body", body)
+                }
+                val router = HttpRouter(Seq(handler), Absent)
+
+                val inbound     = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound    = Channel.Unsafe.init[Span[Byte]](4)
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                val probe = CloseProbe(inbound)
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        sendRequest(inbound, "GET /events HTTP/1.1\r\nHost: h\r\n\r\n")
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                        pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
+                            assert(parked, s"a chunk must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
+                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
+                                tc.advance(1.milli).andThen {
+                                    probe.closed.map(closed =>
+                                        assert(closed, "a peer that stops reading a streamed response must be closed")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a request body that stops arriving is closed after the idle timeout and its handler never runs" in {
+                val ran     = new AtomicBoolean(false)
+                val route   = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
+                val handler = route.handler { req =>
+                    ran.set(true)
+                    HttpResponse.ok("got " + req.fields.body)
+                }
+                val router = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                val probe = CloseProbe(inbound)
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        sendRequest(inbound, "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\nabc")
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+
+                        pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
+                            assert(waiting, "the body read must be waiting for the rest of the body")
+                            tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                assert(!inbound.closed(), "the connection must stay open until the idle timeout elapses")
+                                tc.advance(1.milli).andThen {
+                                    probe.closed.map { closed =>
+                                        assert(closed, "a body that stops arriving must not hold the connection past the idle timeout")
+                                        assert(!ran.get(), "the handler must not run on a body that never completed")
+                                        assert(
+                                            outbound.closed() || outbound.size().contains(0),
+                                            "no response is written for a body that never completed"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a request body that keeps arriving is not closed and is answered once complete" in {
+                val route   = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
+                val handler = route.handler(req => HttpResponse.ok("got " + req.fields.body))
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        sendRequest(inbound, "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\nabc")
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
+
+                        pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
+                            assert(waiting, "the body read must be waiting for the rest of the body")
+                            tc.advance(idleTimeout * 0.75).andThen {
+                                sendRequest(inbound, "def")
+                                // The reader has taken the new bytes once it waits on the channel again.
+                                pollUntil(inbound.pendingTakes().contains(1)).map { waitingAgain =>
+                                    assert(waitingAgain, "the body read must take the bytes and wait for more")
+                                    tc.advance(idleTimeout * 0.75).andThen {
+                                        assert(!inbound.closed(), "a body that keeps arriving must not be closed by the idle timeout")
+                                        sendRequest(inbound, "ghij")
+                                        collectResponse(outbound).map { response =>
+                                            assert(response.contains("HTTP/1.1 200 OK"), s"Expected 200, got: $response")
+                                            assert(
+                                                response.endsWith("got abcdefghij"),
+                                                s"the handler must see the whole body, got: $response"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a chunked body arriving one chunk per three quarters of a window to a fast handler is not closed and is answered once complete" in {
+                val route   = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+                val handler = route.handler { req =>
+                    Abort.run[HttpException](req.fields.body.run).map {
+                        case Result.Success(spans) => HttpResponse.ok(s"got ${spans.foldLeft(0)(_ + _.size)}")
+                        case other                 => HttpResponse.ok(s"failed $other")
+                    }
+                }
+                val router = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        sendRequest(inbound, "POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n")
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
+                        pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
+                            assert(waiting, "the decoder must be waiting for the next chunk")
+                            tc.advance(idleTimeout * 0.75).andThen {
+                                sendRequest(inbound, "1\r\nb\r\n")
+                                pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { again =>
+                                    assert(again, "the decoder must take the chunk and wait for the next")
+                                    tc.advance(idleTimeout * 0.75).andThen {
+                                        assert(
+                                            !inbound.closed(),
+                                            "a chunked body that keeps arriving must not be closed by the idle timeout"
+                                        )
+                                        sendRequest(inbound, "1\r\nc\r\n0\r\n\r\n")
+                                        collectResponse(outbound).map { response =>
+                                            assert(response.contains("200 OK") && response.endsWith("got 3"), s"observed: $response")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a Connection: close request answered by a stream longer than the idle window is closed only when the stream ends" in {
+                Latch.init(1).map { release =>
+                    val route   = HttpRoute.getRaw("events").response(_.bodyStream)
+                    val handler = route.handler { _ =>
+                        val body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream[Span[Byte], Async & Abort[HttpException]] {
+                            Emit.value(Chunk(Span.fromUnsafe("first".getBytes(StandardCharsets.US_ASCII))))
+                                .andThen(release.await)
+                                .andThen(Emit.value(Chunk(Span.fromUnsafe("last".getBytes(StandardCharsets.US_ASCII)))))
+                        }
+                        HttpResponse.ok.addField("body", body)
+                    }
+                    val router = HttpRouter(Seq(handler), Absent)
+
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                    val idleTimeout = 200.millis
+                    val config      = defaultConfig.idleTimeout(idleTimeout)
+
+                    def takeUntil(seen: String, wanted: String): String < (Async & Abort[Closed]) =
+                        if seen.contains(wanted) then seen
+                        else outbound.safe.take.map(span => takeUntil(seen + new String(span.toArray, StandardCharsets.US_ASCII), wanted))
+
+                    val probe = CloseProbe(inbound)
+                    Clock.withTimeControl { tc =>
+                        Clock.use { clock =>
+                            sendRequest(inbound, "GET /events HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+                            UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                            takeUntil("", "first").map { head =>
+                                assert(head.contains("200 OK") && head.toLowerCase.contains("connection: close"), s"observed: $head")
+                                tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
+                                    assert(!inbound.closed(), "a response stream still running is the handler's work, not the peer's wait")
+                                    release.release.andThen {
+                                        takeUntil("", "last").map { tail =>
+                                            assert(tail.contains("last"), s"observed: $tail")
+                                            probe.closed.map(closed => assert(closed, "the connection closes once the stream ends"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a Connection: close request whose body the handler left unread is drained until the peer's EOF, bounded by the idle timeout" in {
+                // Closing with the peer's unread bytes still arriving resets the connection, and a reset can discard the response
+                // before the peer reads it: the server reads and discards the rest of the body first (RFC 9112 section 9.6).
+                val route   = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+                val handler = route.handler(_ => HttpResponse.ok("sunk"))
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                val idleTimeout = 200.millis
+                val config      = defaultConfig.idleTimeout(idleTimeout)
+                val probe       = CloseProbe(inbound)
+
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        // 17 chunks with the head: the decoder delivers 16 into its channel and parks on the 17th, so it never registers a
+                        // take on the connection, and the one take the barrier below counts is the drain's. A take the decoder registered
+                        // before the handler's settle interrupted it stays counted until the next transfer polls it out.
+                        sendRequest(
+                            inbound,
+                            "POST /sink HTTP/1.1\r\nHost: h\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" + "1\r\na\r\n" * 17
+                        )
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+
+                        collectResponse(outbound).map { response =>
+                            assert(response.endsWith("sunk"), s"Expected the answer, got: $response")
+                            (0 until 5).foreach(_ => sendRequest(inbound, "1\r\nb\r\n"))
+                            // The drain has read and counted what arrived once it waits on the connection again.
+                            pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
+                                assert(drained, "the bytes the peer keeps sending must be read and discarded")
+                                assert(!inbound.closed(), "the connection stays open while the peer's body still arrives")
+                                tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                    sendRequest(inbound, "1\r\nc\r\n")
+                                    pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drainedAgain =>
+                                        assert(drainedAgain, "the drain continues while bytes arrive")
+                                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                                            assert(!inbound.closed(), "bytes read within the window keep the connection open")
+                                            tc.advance(idleTimeout).andThen {
+                                                probe.closed.map { closed =>
+                                                    assert(closed, "a peer that stops sending is closed once the idle timeout elapses")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // The drain reads and discards a body the server will not use; it is bounded in total by lingeringTimeout, independently of
+            // the idle timer, so a peer that keeps trickling cannot hold a connection that has no purpose left.
+            def drainOf(idleTimeout: Duration, lingeringTimeout: Duration)(
+                afterAnswer: (Clock.TimeControl, Channel.Unsafe[Span[Byte]], CloseProbe) => Unit < (Async & Abort[Any])
+            )(using kyo.test.AssertScope) =
+                val route   = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+                val handler = route.handler(_ => HttpResponse.ok("sunk"))
+                val router  = HttpRouter(Seq(handler), Absent)
+
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                val config   = defaultConfig.idleTimeout(idleTimeout).lingeringTimeout(lingeringTimeout)
+                val probe    = CloseProbe(inbound)
+
+                Clock.withTimeControl { tc =>
+                    Clock.use { clock =>
+                        // 17 chunks with the head: the decoder delivers 16 into its channel and waits on the 17th, so the only take
+                        // pending on the connection after the answer is the drain's, and the drain takes only once its bound is armed.
+                        sendRequest(
+                            inbound,
+                            "POST /sink HTTP/1.1\r\nHost: h\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" + "1\r\na\r\n" * 17
+                        )
+                        UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                        collectResponse(outbound).map { response =>
+                            assert(response.endsWith("sunk"), s"Expected the answer, got: $response")
+                            pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
+                                assert(draining, "the drain must be waiting on the connection")
+                                afterAnswer(tc, inbound, probe)
+                            }
+                        }
+                    }
+                }
+            end drainOf
+
+            "the drain is bounded in total: a peer that keeps trickling within the idle window is closed at lingeringTimeout" in
+                drainOf(idleTimeout = 200.millis, lingeringTimeout = 500.millis) { (tc, inbound, probe) =>
+                    def trickle(): Unit < (Async & Abort[Any]) =
+                        tc.advance(150.millis).andThen {
+                            sendRequest(inbound, "1\r\nb\r\n")
+                            pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
+                                assert(drained, "the trickle is read and discarded")
+                            }
+                        }
+                    trickle().andThen(trickle()).andThen(trickle()).andThen {
+                        assert(!inbound.closed(), "within the lingering bound a trickling peer keeps the connection")
+                        tc.advance(150.millis).andThen {
+                            probe.closed.map { closed =>
+                                assert(closed, "the lingering bound closes a peer that keeps sending, whatever the idle timer says")
+                            }
+                        }
+                    }
+                }
+
+            "the drain is bounded in total even with the idle timeout disabled" in
+                drainOf(idleTimeout = Duration.Infinity, lingeringTimeout = 500.millis) { (tc, inbound, probe) =>
+                    tc.advance(499.millis).andThen {
+                        assert(!inbound.closed(), "the connection stays open until the lingering bound elapses")
+                        tc.advance(1.milli).andThen {
+                            probe.closed.map { closed =>
+                                assert(closed, "with no idle timer the lingering bound alone closes the drained connection")
+                            }
+                        }
+                    }
+                }
+
+            // The peer's whole chunked body arrives in one read: with the head (the decoder gets it as its initial bytes and never takes
+            // from the connection) or as the one read after the head. A handler slower than the window is the handler's wait, not the
+            // peer's silence: the body is in hand.
+            def wholeBodyInOneRead(bodyWithHead: Boolean)(using kyo.test.AssertScope) =
+                Latch.init(1).map { gate =>
+                    val route   = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+                    val handler = route.handler { req =>
+                        gate.await.andThen {
+                            Abort.run[HttpException](req.fields.body.run).map {
+                                case Result.Success(spans) => HttpResponse.ok(s"got ${spans.foldLeft(0)(_ + _.size)}")
+                                case other                 => HttpResponse.ok(s"failed $other")
+                            }
+                        }
+                    }
+                    val router = HttpRouter(Seq(handler), Absent)
+
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+                    val idleTimeout = 200.millis
+                    val config      = defaultConfig.idleTimeout(idleTimeout)
+                    val chunks      = 40
+                    val head        = "POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    val body        = ("1\r\na\r\n" * chunks) + "0\r\n\r\n"
+
+                    Clock.withTimeControl { tc =>
+                        Clock.use { clock =>
+                            if bodyWithHead then sendRequest(inbound, head + body)
+                            else
+                                sendRequest(inbound, head)
+                                sendRequest(inbound, body)
+                            end if
+                            UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
+                            // The decoder has filled its output and parked; nothing of the body is left on the connection.
+                            pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(0)).map { parked =>
+                                assert(parked, s"the body must be in hand, size ${inbound.size()} takes ${inbound.pendingTakes()}")
+                                tc.advance(idleTimeout).andThen {
+                                    tc.advance(idleTimeout).andThen {
+                                        assert(!inbound.closed(), "a body already in hand is the handler's wait, not the peer's: no close")
+                                        gate.release.andThen {
+                                            collectResponse(outbound).map { response =>
+                                                assert(
+                                                    response.endsWith(s"got $chunks"),
+                                                    s"the handler must read the whole body, got: $response"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+            "a chunked body that arrived whole with its head is not closed while a slow handler reads it" in wholeBodyInOneRead(true)
+
+            "a chunked body that arrived whole in one read after its head is not closed while a slow handler reads it" in
+                wholeBodyInOneRead(false)
+
+            "a handler slow to read a body the peer has fully sent is not closed" in {
+                // The chunked decoder runs ahead of the handler into a bounded channel; once that is full, the peer's remaining
+                // chunks wait on the connection. Bytes waiting to be read are the peer's progress, not the peer's silence.
+                Latch.init(1).map { gate =>
+                    val route   = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+                    val handler = route.handler { req =>
+                        gate.await.andThen {
+                            Abort.run[HttpException](req.fields.body.run).map {
+                                case Result.Success(spans) => HttpResponse.ok(s"got ${spans.foldLeft(0)(_ + _.size)}")
+                                case other                 => HttpResponse.ok(s"failed $other")
+                            }
+                        }
+                    }
+                    val router = HttpRouter(Seq(handler), Absent)
+
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+                    val idleTimeout = 200.millis
+                    val config      = defaultConfig.idleTimeout(idleTimeout)
+                    val chunks      = 40
+
+                    Clock.withTimeControl { tc =>
+                        Clock.use { clock =>
+                            sendRequest(inbound, "POST /upload HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n")
+                            UnsafeServerDispatch.serve(router, inbound, outbound, config, clock = clock)
+                            (0 until chunks).foreach(_ => sendRequest(inbound, "1\r\na\r\n"))
+                            sendRequest(inbound, "0\r\n\r\n")
+
+                            // The decoder stops taking once its output is full and the handler has not started reading.
+                            pollUntil(inbound.size().exists(n => n > 0 && n < chunks) && inbound.pendingTakes().contains(0)).map { parked =>
+                                assert(parked, s"the peer's remaining chunks must be waiting on the connection, size ${inbound.size()}")
+                                tc.advance(idleTimeout).andThen {
+                                    tc.advance(idleTimeout).andThen {
+                                        assert(!inbound.closed(), "bytes waiting on the connection are the peer's progress: no close")
+                                        gate.release.andThen {
+                                            collectResponse(outbound).map { response =>
+                                                assert(
+                                                    response.endsWith(s"got $chunks"),
+                                                    s"the handler must read the whole body, got: $response"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "hoistedClosureSameDispatch" in {
             // Two distinct routes, dispatched in sequence on a keep-alive connection using the hoisted
             // restartParserFn closure. Verifies no stale capture: request B gets handler B's response,
@@ -1966,6 +2735,549 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a request head over the limit (RFC 6585 section 5, RFC 9110 section 15.5.15)" - {
+
+        val smallHead = HttpServerConfig.default.transportConfig(HttpTransportConfig.default.maxHeaderSize(256))
+        val router    = HttpRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
+
+        /** Everything the dispatch has written so far, without waiting. A refusal of the head is written inside the parser's callback, before
+          * the offer that carried the last read returns, so nothing here suspends.
+          */
+        def written(outbound: Channel.Unsafe[Span[Byte]]): String =
+            val sb            = new StringBuilder
+            def drain(): Unit =
+                outbound.poll() match
+                    case Result.Success(Present(span)) =>
+                        sb.append(new String(span.toArray, StandardCharsets.ISO_8859_1))
+                        drain()
+                    case _ => ()
+            drain()
+            sb.toString
+        end written
+
+        def serveOne(request: String): (String, Boolean) =
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            sendRequest(inbound, request)
+            UnsafeServerDispatch.serve(router, inbound, outbound, smallHead)
+            (written(outbound), inbound.closed())
+        end serveOne
+
+        /** The whole answer written for a refused head, with its Date line removed: the status line, the three headers in order, and
+          * the JSON body for the status.
+          */
+        def refusal(status: HttpStatus): String =
+            val body = new String(RouteUtil.encodeErrorBody(status).toArray, StandardCharsets.ISO_8859_1)
+            s"HTTP/1.1 ${status.code} ${Http1StreamContext.reasonPhrase(status)}\r\n" +
+                s"Content-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+        end refusal
+        def withoutDate(answer: String): String = answer.replaceFirst("Date: [^\r]*\r\n", "")
+
+        // A refused request is answered while its peer may still be sending the rest of it; a close at that instant is a reset that can
+        // discard the answer. So the rest is read and discarded first, bounded by the idle timer for a peer that stops and by
+        // lingeringTimeout for one that does not, and the connection closes after.
+        def answeredThenDrained(request: String, expected: HttpStatus)(
+            afterAnswer: (Clock.TimeControl, Channel.Unsafe[Span[Byte]], CloseProbe) => Unit < (Async & Abort[Any])
+        )(using kyo.test.AssertScope) =
+            val config = smallHead.idleTimeout(200.millis).lingeringTimeout(500.millis)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](64)
+                    val probe    = CloseProbe(inbound)
+                    sendRequest(inbound, request)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                    val answer = written(outbound)
+                    assert(withoutDate(answer) == refusal(expected), s"observed: $answer")
+                    assert(!inbound.closed(), "the answer must reach a peer still sending before the connection closes")
+                    // The drain runs on its own fiber; its bound starts once it waits on the connection, so time moves only after that.
+                    pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
+                        assert(draining, "the drain must be waiting on the connection")
+                        afterAnswer(tc, inbound, probe)
+                    }
+                }
+            }
+        end answeredThenDrained
+
+        def drainedUntilTheBound(tc: Clock.TimeControl, inbound: Channel.Unsafe[Span[Byte]], probe: CloseProbe)(using
+            kyo.test.AssertScope
+        ) =
+            def trickle(): Unit < (Async & Abort[Any]) =
+                tc.advance(150.millis).andThen {
+                    sendRequest(inbound, "more of what the peer was sending")
+                    pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
+                        assert(drained, "what the peer keeps sending is read and discarded")
+                    }
+                }
+            trickle().andThen(trickle()).andThen(trickle()).andThen {
+                assert(!inbound.closed(), "within the lingering bound a sending peer keeps the connection")
+                tc.advance(150.millis).andThen {
+                    probe.closed.map(closed => assert(closed, "the lingering bound closes a peer that keeps sending"))
+                }
+            }
+        end drainedUntilTheBound
+
+        def closedWhenSilent(tc: Clock.TimeControl, inbound: Channel.Unsafe[Span[Byte]], probe: CloseProbe)(using kyo.test.AssertScope) =
+            tc.advance(199.millis).andThen {
+                assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
+                tc.advance(1.milli).andThen {
+                    probe.closed.map(closed => assert(closed, "a peer that stops sending is closed at the idle timeout"))
+                }
+            }
+
+        "an oversized head is answered 431 with Connection: close while the peer still sends, the rest is drained, and the bound closes" in
+            answeredThenDrained(
+                "GET /hello HTTP/1.1\r\nHost: localhost\r\nX-Big: " + "x" * 300 + "\r\n\r\n",
+                HttpStatus.RequestHeaderFieldsTooLarge
+            )(
+                drainedUntilTheBound
+            )
+
+        "a request line alone longer than the limit is answered 414 with Connection: close, and a silent peer is closed at the idle timeout" in
+            answeredThenDrained("GET /" + "a" * 300 + " HTTP/1.1\r\nHost: localhost\r\n\r\n", HttpStatus.URITooLong)(closedWhenSilent)
+
+        "a Content-Length over the limit is answered 413 with Connection: close while the body still arrives, drained, and the bound closes" in
+            answeredThenDrained(
+                "POST /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\npart of the body",
+                HttpStatus.PayloadTooLarge
+            )(
+                drainedUntilTheBound
+            )
+
+        "a request without a Host header but with a body is answered 400 with Connection: close, drained, and the bound closes" in
+            answeredThenDrained("GET /hello HTTP/1.1\r\nContent-Length: 20\r\n\r\npart", HttpStatus.BadRequest)(drainedUntilTheBound)
+
+        "a head that never ends is answered once the limit is passed, not when the peer stops sending" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            UnsafeServerDispatch.serve(router, inbound, outbound, smallHead)
+            // 30 bytes of request line and Host, then 50-byte header lines with no blank line: the fifth line carries the head past 256.
+            sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n")
+            val line = "X-" + "a" * 40 + ": bbbb\r\n"
+            assert(line.length == 50)
+            (1 to 4).foreach(_ => sendRequest(inbound, line))
+            assert(written(outbound) == "", "no answer is owed while the head is within the limit")
+            assert(!inbound.closed())
+            sendRequest(inbound, line)
+            val answer = written(outbound)
+            assert(withoutDate(answer) == refusal(HttpStatus.RequestHeaderFieldsTooLarge), s"observed: $answer")
+            assert(!inbound.closed(), "the answer is written before the connection ends; the peer is still sending its head")
+        }
+
+        "a head within the limit in a read larger than the limit is served" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+            val body     = "b" * 1000
+            sendRequest(
+                inbound,
+                s"POST /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: ${body.length}\r\n\r\n$body"
+            )
+            UnsafeServerDispatch.serve(router, inbound, outbound, smallHead)
+            collectResponse(outbound).map { response =>
+                assert(response.startsWith("HTTP/1.1 405 Method Not Allowed"), s"observed: $response")
+            }
+        }
+    }
+
+    // A streamed chunked body is decoded by a fiber of its own while the handler runs. When the handler settles before the decoder reaches the
+    // terminal chunk, or the decoder refuses the framing, the body's remaining bytes are still on the connection, and a keep-alive restart
+    // would read them as the next request (RFC 9112 section 9.3, the unconsumed-body class). The handler, for its part, must not take a body
+    // that ended early for a complete one (RFC 9112 section 8).
+    "a streamed chunked request body that is not fully decoded (RFC 9112 sections 8 and 9.3)" - {
+
+        val sinkRoute  = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+        val sink       = sinkRoute.handler(_ => HttpResponse.ok("sunk"))
+        val drainRoute = HttpRoute.postRaw("drain").request(_.bodyStream).response(_.bodyText)
+        val drain      = drainRoute.handler(req => req.fields.body.run.map(spans => HttpResponse.ok(spans.map(_.size).sum.toString)))
+        val hello      = HttpHandler.getText("hello")(_ => "world")
+        def chunkedHead(path: String) = s"POST /$path HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n"
+
+        def serveWith(config: HttpServerConfig, clock: Clock)(handlers: HttpHandler[?, ?, ?]*)
+            : (Channel.Unsafe[Span[Byte]], Channel.Unsafe[Span[Byte]], CloseProbe) =
+            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound = Channel.Unsafe.init[Span[Byte]](16)
+            val probe    = CloseProbe(inbound)
+            UnsafeServerDispatch.serve(HttpRouter(handlers, Absent), inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+            (inbound, outbound, probe)
+        end serveWith
+
+        "a body decoded to its terminal chunk keeps the connection alive, and the bytes after it are the next request" in {
+            Clock.withTimeControl { _ =>
+                Clock.use { clock =>
+                    val (inbound, outbound, _) = serveWith(defaultConfig, clock)(drain, hello)
+                    sendRequest(inbound, chunkedHead("drain") + "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                    collectResponse(outbound).map { first =>
+                        assert(first.startsWith("HTTP/1.1 200 OK") && first.endsWith("\r\n\r\n5"), s"observed: $first")
+                        collectResponse(outbound).map { second =>
+                            assert(second.endsWith("world"), s"observed: $second")
+                            assert(!inbound.closed())
+                        }
+                    }
+                }
+            }
+        }
+
+        // The body still owed is drained, not reparsed: the connection is never restarted, and it closes at the peer's EOF or once the
+        // idle timeout passes with nothing more arriving.
+        "a handler that answers without reading the body: the connection is closed after the answer, not restarted" in {
+            val idleTimeout = 200.millis
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val (inbound, outbound, probe) = serveWith(defaultConfig.idleTimeout(idleTimeout), clock)(sink, hello)
+                    sendRequest(inbound, chunkedHead("sink") + "5\r\nhello\r\n")
+                    collectResponse(outbound).map { response =>
+                        assert(response.startsWith("HTTP/1.1 200 OK"), s"observed: $response")
+                        sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                        pollUntil(inbound.size().contains(0)).map { drained =>
+                            assert(drained, "bytes after the answer are the body still owed, read and discarded")
+                            // The drained bytes were progress inside the first window; the second window sees none.
+                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
+                                probe.closed.map { closed =>
+                                    assert(closed, "the connection must be closed once the handler settles with the body still undecoded")
+                                    assert(
+                                        outbound.size().contains(0) || outbound.closed(),
+                                        "nothing after the body is parsed as a request"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The handler settles without reading while the decoder runs on its own fiber, so which finishes first is not fixed. Either
+        // order is sound: the decoder reached the terminal chunk first and the GET behind it is answered, or the handler settled first
+        // and the connection is closed with the body's bytes. What is never sound is the GET being lost or misread on a live connection.
+        "a handler that ignores a body followed by a pipelined GET: the GET is answered in order, or the connection is closed" in {
+            val idleTimeout = 200.millis
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val (inbound, outbound, _) = serveWith(defaultConfig.idleTimeout(idleTimeout), clock)(sink, hello)
+                    sendRequest(inbound, chunkedHead("sink") + "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                    collectResponse(outbound).map { first =>
+                        assert(first.startsWith("HTTP/1.1 200 OK") && first.endsWith("sunk"), s"observed: $first")
+                        // The GET's answer, when the decoder won, is written before the handler's completion is observed here; when the
+                        // handler won, the drain reads the GET's bytes as progress inside the first window and the second window, with
+                        // nothing arriving, closes the connection. Either way the bytes are consumed before time moves.
+                        pollUntil(inbound.size().contains(0)).map { consumed =>
+                            assert(consumed, "the bytes behind the body are read by the parser or by the drain")
+                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout))
+                        }.andThen {
+                            pollUntil(inbound.closed() || outbound.size().getOrElse(0) > 0).map { settled =>
+                                assert(settled, "the connection must either answer the GET or close")
+                                if outbound.size().getOrElse(0) > 0 then
+                                    collectResponse(outbound).map(second => assert(second.endsWith("world"), s"observed: $second"))
+                                else succeed
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // A refused body ends the connection, and the peer may still be sending it: the answer announces the close, the rest of what
+        // arrives is read and discarded so the answer is not lost to a reset, and the idle timer closes a peer that goes silent.
+        def refusedStreamedBody(body: String, status: String)(using kyo.test.AssertScope) =
+            val idleTimeout = 200.millis
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val (inbound, outbound, probe) = serveWith(defaultConfig.idleTimeout(idleTimeout), clock)(drain, hello)
+                    sendRequest(inbound, chunkedHead("drain") + body)
+                    collectResponse(outbound).map { response =>
+                        assert(response.startsWith(status), s"observed: $response")
+                        assert(
+                            response.toLowerCase.contains("connection: close"),
+                            s"the answer must announce the close, observed: $response"
+                        )
+                        sendRequest(inbound, "more of the body the peer was still sending")
+                        pollUntil(inbound.size().contains(0) && inbound.pendingTakes().contains(1)).map { drained =>
+                            assert(drained, "what the peer keeps sending is read and discarded")
+                            assert(!inbound.closed(), "the connection stays open while the peer's body still arrives")
+                            tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
+                                probe.closed.map { closed =>
+                                    assert(closed, "the connection must be closed once the peer's body stops arriving")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        end refusedStreamedBody
+
+        "a malformed chunk is answered 400 with Connection: close, the rest of the body is drained, and the connection is closed" in
+            refusedStreamedBody("5\r\nhello\r\nZZ\r\n", "HTTP/1.1 400 Bad Request")
+
+        "a chunk size line over the control-plane limit is answered 413 with Connection: close, drained, and closed" in
+            refusedStreamedBody("F" * (defaultConfig.maxContentLength + 1), "HTTP/1.1 413 Payload Too Large")
+
+        /** A streaming route that records whether its handler started, finished, or was interrupted, and opens `firstRead` after the first
+          * span of its body.
+          */
+        class Observed(firstRead: Latch):
+            val started     = new AtomicBoolean(false)
+            val finished    = new AtomicBoolean(false)
+            val interrupted = new AtomicBoolean(false)
+            val route       = HttpRoute.postRaw("observe").request(_.bodyStream).response(_.bodyText)
+            val handler     = route.handler { req =>
+                Sync.Unsafe.defer(started.set(true)).andThen {
+                    Sync.ensure(Sync.Unsafe.defer(if !finished.get() then interrupted.set(true))) {
+                        req.fields.body.foreach(_ => firstRead.release).map { _ =>
+                            Sync.Unsafe.defer(finished.set(true)).andThen(HttpResponse.ok("done"))
+                        }
+                    }
+                }
+            }
+        end Observed
+
+        // With the head, a partial chunk and the close in one segment, the connection is closing before the request is dispatched: the
+        // handler never runs, no response is written for the request, and the connection is closed, so nothing pipelined behind the
+        // request is answered either.
+        "a connection already closing when the request is dispatched: the handler never runs, no response is written, the connection is closed" in {
+            Latch.init(1).map { firstRead =>
+                val observed = new Observed(firstRead)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                val closing  = Fiber.Promise.Unsafe.init[Unit, Any]()
+                val probe    = CloseProbe(inbound)
+                closing.completeDiscard(Result.succeed(()))
+                UnsafeServerDispatch.serve(
+                    HttpRouter(Seq(observed.handler, hello), Absent),
+                    inbound,
+                    outbound,
+                    defaultConfig,
+                    onClosing = Present(closing),
+                    closeConnection = probe.hook
+                )
+                sendRequest(inbound, chunkedHead("observe") + "5\r\nhel")
+                sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                probe.closed.map { closed =>
+                    assert(closed, "a request dispatched on a closing connection ends the connection")
+                    assert(!observed.started.get(), "the handler must not run against a peer that is gone")
+                    assert(outbound.size().getOrElse(-1) == 0, "no response is written on a closing connection")
+                }
+            }
+        }
+
+        // The handler has read part of the body when the peer closes: the close watcher interrupts it, no response is written, and the
+        // dispatch closes the connection, since the body was not decoded to its end. Nothing follows the partial chunk on the wire: bytes
+        // sent behind an unfinished chunk are that chunk's data to the decoder, and a peer that closes mid-body has nothing framed behind it.
+        "a peer that closes while the handler is reading the body: the handler is interrupted, no response is written, the connection is closed" in {
+            Latch.init(1).map { firstRead =>
+                val observed = new Observed(firstRead)
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                val closing  = Fiber.Promise.Unsafe.init[Unit, Any]()
+                val probe    = CloseProbe(inbound)
+                UnsafeServerDispatch.serve(
+                    HttpRouter(Seq(observed.handler, hello), Absent),
+                    inbound,
+                    outbound,
+                    defaultConfig,
+                    onClosing = Present(closing),
+                    closeConnection = probe.hook
+                )
+                sendRequest(inbound, chunkedHead("observe") + "5\r\nhel")
+                firstRead.await.andThen {
+                    closing.completeDiscard(Result.succeed(()))
+                    probe.closed.map { closed =>
+                        assert(closed, "the connection must be closed once the handler is interrupted with the body undecoded")
+                        assert(observed.interrupted.get(), "the handler must be interrupted")
+                        assert(!observed.finished.get(), "the handler must not complete")
+                        assert(outbound.size().getOrElse(-1) == 0, "no response is written for the interrupted request")
+                    }
+                }
+            }
+        }
+
+        "the body stream of a peer that closes mid-body fails with HttpConnectionClosedException after the bytes that arrived" in {
+            Fiber.Promise.init[(Int, String), Any].map { outcome =>
+                AtomicInt.init.map { seen =>
+                    val observeRoute = HttpRoute.postRaw("observe").request(_.bodyStream).response(_.bodyText)
+                    val observe      = observeRoute.handler { req =>
+                        Abort.run[HttpException](req.fields.body.foreach(span => seen.addAndGet(span.size).unit)).map { result =>
+                            val label = result match
+                                case Result.Success(_) => "complete"
+                                case Result.Failure(e) => e.getClass.getSimpleName
+                                case Result.Panic(e)   => s"panic ${e.getClass.getSimpleName}"
+                            seen.get.map(n => outcome.complete(Result.succeed((n, label))).andThen(HttpResponse.ok("observed")))
+                        }
+                    }
+                    Clock.withTimeControl { _ =>
+                        Clock.use { clock =>
+                            val (inbound, _, _) = serveWith(defaultConfig, clock)(observe)
+                            sendRequest(inbound, chunkedHead("observe") + "5\r\nhel")
+                            discard(inbound.close())
+                            outcome.get.map { case (bytes, label) =>
+                                assert(bytes == 3, s"the handler must keep the bytes that arrived, observed $bytes")
+                                assert(label == "HttpConnectionClosedException", s"observed: $label")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A request the dispatch answers with no handler (a missing route, a wrong method) is answered inside the parser's callback, and the
+    // parser is restarted from there. Each pipelined request must cost a bounded stack, and the answers must wait for the peer to read
+    // them instead of queuing without bound behind a full outbound channel.
+    "pipelined requests answered without a handler" - {
+
+        val router  = HttpRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
+        val missing = "GET /missing HTTP/1.1\r\nHost: h\r\n\r\n"
+
+        /** Takes from `outbound` until `n` answers have gone by. Every answer's head is offered as one span, so a span that starts a status
+          * line is one answer.
+          */
+        def countAnswers(outbound: Channel.Unsafe[Span[Byte]], n: Int)(using Frame): Int < Async =
+            Abort.run[Closed] {
+                Loop(0) { count =>
+                    if count >= n then Loop.done(count)
+                    else
+                        outbound.safe.take.map { span =>
+                            val head = span.size >= 12 && new String(span.toArrayUnsafe, 0, 12, StandardCharsets.US_ASCII) == "HTTP/1.1 404"
+                            Loop.continue(if head then count + 1 else count)
+                        }
+                }
+            }.map(_.getOrElse(-1))
+
+        // A declared body that arrived with its head is received in full: nothing is left on the wire to strand or to drain, so the
+        // answer keeps the connection alive, and a close needs no drain. A chunked body is not decoded on this path, so it is drained.
+        "a keep-alive request to no route whose declared body arrived with its head is answered without a close, and the request behind the body is answered next" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound = Channel.Unsafe.init[Span[Byte]](16)
+            sendRequest(
+                inbound,
+                "POST /missing HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhelloGET /hello HTTP/1.1\r\nHost: h\r\n\r\n"
+            )
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            collectResponse(outbound).map { first =>
+                assert(first.startsWith("HTTP/1.1 404 Not Found"), s"observed: $first")
+                assert(
+                    !first.toLowerCase.contains("connection: close"),
+                    s"a body received in full leaves nothing to strand, observed: $first"
+                )
+                collectResponse(outbound).map { second =>
+                    assert(second.startsWith("HTTP/1.1 200 OK") && second.endsWith("world"), s"observed: $second")
+                    assert(!inbound.closed(), "the connection stays open for the next request")
+                }
+            }
+        }
+
+        "a Connection: close request to no route whose declared body arrived with its head is closed at once: nothing is left to drain" in {
+            Clock.withTimeControl { _ =>
+                Clock.use { clock =>
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    sendRequest(inbound, "POST /missing HTTP/1.1\r\nHost: h\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello")
+                    val probe = CloseProbe(inbound)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, closeConnection = probe.hook, clock = clock)
+                    collectResponse(outbound).map { answer =>
+                        assert(answer.startsWith("HTTP/1.1 404 Not Found"), s"observed: $answer")
+                        assert(answer.toLowerCase.contains("connection: close"), s"observed: $answer")
+                        probe.closed.map(closed => assert(closed, "with the body in hand the close waits for nothing"))
+                    }
+                }
+            }
+        }
+
+        "a keep-alive request to no route with a chunked body in hand is answered with a close and drained: the terminal chunk is not looked for" in {
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    val config   = defaultConfig.idleTimeout(200.millis).lingeringTimeout(500.millis)
+                    sendRequest(inbound, "POST /missing HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+                    val probe = CloseProbe(inbound)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                    collectResponse(outbound).map { answer =>
+                        assert(answer.startsWith("HTTP/1.1 404 Not Found"), s"observed: $answer")
+                        assert(answer.toLowerCase.contains("connection: close"), s"observed: $answer")
+                        assert(!inbound.closed(), "the drain waits for the peer before the close")
+                        pollUntil(inbound.pendingTakes().contains(1)).map { draining =>
+                            assert(draining, "the drain must be waiting on the connection")
+                            tc.advance(200.millis).andThen {
+                                probe.closed.map(closed => assert(closed, "a silent peer is closed at the idle timeout"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "50,000 pipelined requests to no route in one read are each answered" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound = Channel.Unsafe.init[Span[Byte]](16)
+            val n        = 50000
+            Fiber.initUnscoped(countAnswers(outbound, n)).map { counting =>
+                sendRequest(inbound, missing * n)
+                UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                counting.get.map(count => assert(count == n, s"observed $count answers"))
+            }
+        }
+
+        "answers a peer does not read stop the parsing at the outbound channel's capacity, and it resumes as the peer reads" in {
+            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound = Channel.Unsafe.init[Span[Byte]](4)
+            sendRequest(inbound, missing * 50)
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+            // An answer is two spans, its head and its body. Two answers fill the channel, the third's spans wait as pending puts, and
+            // the fourth request is not parsed until the peer takes.
+            assert(outbound.size().getOrThrow == 4, s"observed ${outbound.size()} spans in the channel")
+            assert(outbound.pendingPuts().getOrThrow == 2, s"observed ${outbound.pendingPuts()} spans queued behind the full channel")
+            countAnswers(outbound, 50).map(count => assert(count == 50, s"observed $count answers"))
+        }
+
+        // Waiting for the peer to take an answer is a wait on the peer: the idle timer covers it, so a peer that never reads does not hold
+        // the connection for ever behind its full outbound channel.
+        "a peer that never reads the answers to its pipelined requests is closed after the idle timeout" in {
+            val inbound     = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound    = Channel.Unsafe.init[Span[Byte]](4)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    sendRequest(inbound, missing * 50)
+                    val probe = CloseProbe(inbound)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                    pollUntil(outbound.pendingPuts().contains(2)).map { parked =>
+                        assert(parked, s"the parser must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
+                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                            assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
+                            tc.advance(1.milli).andThen {
+                                probe.closed.map(closed => assert(closed, "a peer that never reads its answers must be closed"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "a peer that never reads the responses of its pipelined handler requests is closed after the idle timeout" in {
+            val inbound     = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound    = Channel.Unsafe.init[Span[Byte]](4)
+            val idleTimeout = 200.millis
+            val config      = defaultConfig.idleTimeout(idleTimeout)
+            Clock.withTimeControl { tc =>
+                Clock.use { clock =>
+                    sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n" * 6)
+                    val probe = CloseProbe(inbound)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+                    pollUntil(outbound.pendingPuts().exists(_ > 0)).map { parked =>
+                        assert(parked, s"a response must be waiting for the peer to read, observed ${outbound.pendingPuts()} queued spans")
+                        tc.advance(idleTimeout.minusOrZero(1.milli)).andThen {
+                            assert(!inbound.closed(), "the connection stays open until the idle timeout elapses")
+                            tc.advance(1.milli).andThen {
+                                probe.closed.map(closed => assert(closed, "a peer that never reads its responses must be closed"))
                             }
                         }
                     }

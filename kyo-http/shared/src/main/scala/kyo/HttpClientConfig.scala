@@ -20,8 +20,10 @@ import kyo.*
   *   Prefix for path-only request URLs. Absent by default, all URLs must be absolute. When set, requests to `/path` resolve to
   *   `baseUrl + /path`. Requests with a scheme (e.g. `https://...`) ignore this field. Also applied to WebSocket connections.
   * @param timeout
-  *   Maximum duration for the entire request lifecycle including retries. Defaults to 5 seconds. Set to `Duration.Infinity` to disable.
-  *   Does not apply to WebSocket connections (they are long-lived by design).
+  *   Maximum duration for the entire request lifecycle including retries, until the callback of `sendWith` returns. Defaults to 5
+  *   seconds. Set to `Duration.Infinity` to disable. A streamed body consumed inside that callback is under it; the streams
+  *   `getStreamBytes`, `getSseJson`, `getSseText` and `getNdJson` return are consumed after their request completed at the head, so the
+  *   timeout bounds the head and not the body. Does not apply to WebSocket connections (they are long-lived by design).
   * @param connectTimeout
   *   Maximum duration for the TCP connect (and TLS handshake if applicable). Defaults to 30 seconds. Set to `Duration.Infinity` to use the
   *   OS TCP timeout instead. Applies to both HTTP and WebSocket connections.

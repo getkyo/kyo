@@ -752,7 +752,16 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         assert(r2.contains("chat"))
     }
 
-    "parseResponseSubprotocol returns None when header absent" in {
+    "upgradeRefusalDetail names the status code of any HTTP/1.x status line, and says so when the line is not one" in {
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 404 Not Found\r\n\r\n") ==
+            "HttpWebSocket upgrade failed: expected 101, got 404")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.0 200 OK\r\n\r\n") == "HttpWebSocket upgrade failed: expected 101, got 200")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 4o4 Not Found\r\n\r\n") ==
+            "HttpWebSocket upgrade failed: expected 101, no status line")
+        assert(WebSocketCodec.upgradeRefusalDetail("<html>\r\n\r\n") == "HttpWebSocket upgrade failed: expected 101, no status line")
+    }
+
+    "parseResponseSubprotocol returns Absent when header absent" in {
         val r = WebSocketCodec.parseResponseSubprotocol(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
         )

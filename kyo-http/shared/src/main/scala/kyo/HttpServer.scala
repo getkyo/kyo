@@ -52,7 +52,10 @@ object HttpServer:
         /** Returns the host the server is bound to. */
         def host: String = self.host
 
-        /** Closes the server with a grace period for in-flight requests. */
+        /** Closes the server gracefully: it stops accepting, ends each connection between requests at once and each other one after its
+          * answer to the request in hand, and completes when every connection has closed. A connection still open when `gracePeriod`
+          * ends is closed then, interrupting its handler.
+          */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
             Sync.Unsafe.defer(self.closeFiber(gracePeriod).safe.get)
 
@@ -147,9 +150,20 @@ object HttpServer:
         val filteredHandlers =
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
+        Clock.use { clock =>
+            initListening(config, serverCell, filteredHandlers, clock)
+        }
+    end initInto
+
+    private def initListening(
+        config: HttpServerConfig,
+        serverCell: AtomicRef.Unsafe[Maybe[HttpServer]],
+        filteredHandlers: Seq[HttpHandler[?, ?, ?]],
+        clock: Clock
+    )(using Frame): HttpServer < (Async & Abort[HttpBindException]) =
         Sync.Unsafe.defer {
             val transport   = kyo.net.NetPlatform.transport
-            val listenFiber = Unsafe.init(transport, config, filteredHandlers)
+            val listenFiber = Unsafe.init(transport, config, filteredHandlers, clock)
             // The bound server reaches the caller through a promise, with the bind failure already translated, so no
             // step separates the join from what the caller registers on the value. A caller stopped at the join settles
             // the promise first; a bind completing afterwards finds nobody to hand the server to and closes it.
@@ -179,7 +193,7 @@ object HttpServer:
             }
             bound.safe.get
         }
-    end initInto
+    end initListening
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
@@ -209,7 +223,7 @@ object HttpServer:
         /** Returns the address the server is bound to. */
         def address: HttpAddress
 
-        /** Closes the server with a grace period for in-flight requests. Returns a fiber that completes when closed. */
+        /** Closes the server as the safe `close` describes. Returns a fiber that completes when every connection has closed. */
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
         /** Returns a fiber that completes when the server closes. */
@@ -229,27 +243,33 @@ object HttpServer:
           *   Server configuration
           * @param handlers
           *   HTTP handlers to register
+          * @param clock
+          *   The clock every connection's idle and lingering timers and the close grace period run on; the safe `init` passes the ambient
+          *   one, so a server started under `Clock.withTimeControl` times its connections on that clock
           * @return
           *   A fiber that completes with the unsafe server once bound
           */
         def init(
             transport: kyo.net.Transport,
             config: HttpServerConfig,
-            handlers: Seq[HttpHandler[?, ?, ?]]
+            handlers: Seq[HttpHandler[?, ?, ?]],
+            clock: Clock
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[NetException]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
             // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
             // the same mechanism HttpClientBackend uses for the connections it creates.
-            val registry                                = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
+            val registry                                = new kyo.internal.ConnectionRegistry[Served]
+            val draining                                = AtomicBoolean.Unsafe.init(false)
             def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
                 // neither served nor left open, and a failing close is contained inside the registry rather than
                 // surfacing on the accept path.
-                registry.pruneClosed(_.isOpen)
-                if registry.register(conn)(_.close()) then
+                registry.pruneClosed(_.connection.isOpen)
+                val served = Served(conn, UnsafeServerDispatch.Drain(draining))
+                if registry.register(served)(_.connection.close()) then
                     // Pass the connection's close signal so a handler parked on a foreign await is interrupted when the
                     // connection closes (kyo.net.Connection.onClosing, completed in closeFn's win branch), plus a close
                     // hook the idle timer routes through so an idle-close also fires that signal (and flushes the
@@ -260,7 +280,9 @@ object HttpServer:
                         conn.outbound,
                         config,
                         Present(conn.onClosing),
-                        Present(() => conn.close())
+                        Present(() => conn.close()),
+                        clock,
+                        Present(served.drain)
                     )
                 else
                     (
@@ -282,11 +304,14 @@ object HttpServer:
                     )(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, clock))
         end init
     end Unsafe
 
     // --- Private implementations ---
+
+    /** An accepted connection and its part in a graceful close. Compared by identity, as the registry's set requires. */
+    final private class Served(val connection: kyo.net.Connection, val drain: UnsafeServerDispatch.Drain)
 
     /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns.
       *
@@ -297,7 +322,9 @@ object HttpServer:
     final private class ListenerUnsafe(
         listener: kyo.net.Listener,
         transport: kyo.net.Transport,
-        registry: kyo.internal.ConnectionRegistry[kyo.net.Connection]
+        registry: kyo.internal.ConnectionRegistry[Served],
+        draining: AtomicBoolean.Unsafe,
+        clock: Clock
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
         private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
@@ -317,7 +344,7 @@ object HttpServer:
             registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
             def forceCloseAndComplete(): Unit =
-                registry.closeAll(_.close())
+                registry.closeAll(_.connection.close())
                 // The transport is NOT closed here. It is process-shared across every client and server using the same settings, so closing it
                 // would take every co-tenant's connections down with this server. What this server owns is its listener (closed above, which
                 // releases the bound port) and its accepted connections (closed just above), and those are what shutting it down must reclaim.
@@ -330,8 +357,24 @@ object HttpServer:
                 // 60s idle timer fires.
                 forceCloseAndComplete()
             else
-                // Graceful: let in-flight connections run for the grace period, then force-close whatever remains.
-                discard(Clock.live.unsafe.sleep(gracePeriod).onComplete(_ => forceCloseAndComplete()))
+                // Graceful: a connection between requests ends now, one with a request in hand after its answer. The close completes
+                // once every connection has begun closing, and what is still open when the grace ends is closed then.
+                draining.set(true)
+                val served          = registry.snapshot
+                val remaining       = AtomicInt.Unsafe.init(served.size + 1)
+                def settled(): Unit =
+                    if remaining.decrementAndGet() == 0 then discard(closedPromise.completeDiscard(Result.succeed(())))
+                val grace = clock.unsafe.sleep(gracePeriod)
+                grace.onComplete {
+                    case Result.Success(_) => forceCloseAndComplete()
+                    case _                 => () // interrupted once every connection closed
+                }
+                closedPromise.onComplete(_ => discard(grace.interrupt()))
+                served.foreach { s =>
+                    s.drain.endIfIdle()
+                    s.connection.onClosing.onComplete(_ => settled())
+                }
+                settled()
             end if
             closedPromise
         end closeFiber

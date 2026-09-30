@@ -94,12 +94,14 @@ private[kyo] object ChunkedBodyDecoder:
         inbound: Channel.Unsafe[Span[Byte]],
         initialBytes: Span[Byte],
         maxBytes: Int,
-        state: DecoderState = new DecoderState
+        state: DecoderState = new DecoderState,
+        onProgress: () => Unit = () => (),
+        onAwait: () => Unit = () => ()
     )(using Frame): Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
         val accumulator = new GrowableByteBuffer
         if !initialBytes.isEmpty then
             state.feedBytes(initialBytes)
-        bufferedLoop(inbound, accumulator, state, maxBytes)
+        bufferedLoop(inbound, accumulator, state, maxBytes, onProgress, onAwait)
     end readBuffered
 
     /** Streaming mode: delivers each decoded chunk to output, then closes output.
@@ -114,11 +116,13 @@ private[kyo] object ChunkedBodyDecoder:
         initialBytes: Span[Byte],
         output: Channel.Unsafe[Span[Byte]],
         maxControlBytes: Int,
-        state: DecoderState = new DecoderState
+        state: DecoderState = new DecoderState,
+        onProgress: () => Unit = () => (),
+        onAwait: () => Unit = () => ()
     )(using Frame): Unit < (Async & Abort[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException]) =
         if !initialBytes.isEmpty then
             state.feedBytes(initialBytes)
-        streamingLoop(inbound, output, state, maxControlBytes)
+        streamingLoop(inbound, output, state, maxControlBytes, onProgress, onAwait)
     end readStreaming
 
     /** Main buffered decode loop. Processes buffer, accumulates data, reads more if needed. Caps the accumulated body
@@ -128,7 +132,9 @@ private[kyo] object ChunkedBodyDecoder:
         inbound: Channel.Unsafe[Span[Byte]],
         accumulator: GrowableByteBuffer,
         state: DecoderState,
-        maxBytes: Int
+        maxBytes: Int,
+        onProgress: () => Unit,
+        onAwait: () => Unit
     )(using Frame): Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
         val pending = accumulator.size + state.pendingSize
         if pending > maxBytes then
@@ -138,13 +144,24 @@ private[kyo] object ChunkedBodyDecoder:
                 case DrainResult.Done =>
                     Span.fromUnsafe(accumulator.toByteArray)
                 case DrainResult.NeedMore =>
-                    inbound.safe.take.map { span =>
-                        state.feedBytes(span)
-                        bufferedLoop(inbound, accumulator, state, maxBytes)
+                    // Bytes already in hand are taken without announcing a wait: the announcement is read by the idle timer on its own
+                    // carrier, and a wait announced for a take that returns at once would read as the peer's silence.
+                    inbound.safe.poll.map {
+                        case Present(span) =>
+                            onProgress()
+                            state.feedBytes(span)
+                            bufferedLoop(inbound, accumulator, state, maxBytes, onProgress, onAwait)
+                        case Absent =>
+                            onAwait()
+                            inbound.safe.take.map { span =>
+                                onProgress()
+                                state.feedBytes(span)
+                                bufferedLoop(inbound, accumulator, state, maxBytes, onProgress, onAwait)
+                            }
                     }
                 case DrainResult.ChunkReady =>
                     // In buffered mode, data is already in accumulator. Continue draining.
-                    bufferedLoop(inbound, accumulator, state, maxBytes)
+                    bufferedLoop(inbound, accumulator, state, maxBytes, onProgress, onAwait)
                 case DrainResult.Invalid(reason) =>
                     Abort.fail(HttpMalformedBodyException(reason))
         end if
@@ -155,10 +172,12 @@ private[kyo] object ChunkedBodyDecoder:
         inbound: Channel.Unsafe[Span[Byte]],
         output: Channel.Unsafe[Span[Byte]],
         state: DecoderState,
-        maxControlBytes: Int
+        maxControlBytes: Int,
+        onProgress: () => Unit,
+        onAwait: () => Unit
     )(using Frame): Unit < (Async & Abort[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException]) =
         val chunkBuf = new GrowableByteBuffer
-        streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes)
+        streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes, onProgress, onAwait)
     end streamingLoop
 
     /** Drains the state buffer, delivering complete chunks via the safe channel API. */
@@ -167,7 +186,9 @@ private[kyo] object ChunkedBodyDecoder:
         output: Channel.Unsafe[Span[Byte]],
         state: DecoderState,
         chunkBuf: GrowableByteBuffer,
-        maxControlBytes: Int
+        maxControlBytes: Int,
+        onProgress: () => Unit,
+        onAwait: () => Unit
     )(using Frame): Unit < (Async & Abort[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException]) =
         state.drain(chunkBuf) match
             case DrainResult.Done =>
@@ -182,7 +203,7 @@ private[kyo] object ChunkedBodyDecoder:
                 val decoded = Span.fromUnsafe(chunkBuf.toByteArray)
                 chunkBuf.reset()
                 output.safe.put(decoded).andThen(
-                    streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes)
+                    streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes, onProgress, onAwait)
                 )
             case DrainResult.NeedMore =>
                 // Deliver any partial data accumulated so far for this chunk, then, before blocking for more input,
@@ -201,9 +222,19 @@ private[kyo] object ChunkedBodyDecoder:
                     if state.pendingSize > maxControlBytes then
                         Abort.fail(HttpPayloadTooLargeException(state.pendingSize, maxControlBytes))
                     else
-                        inbound.safe.take.map { span =>
-                            state.feedBytes(span)
-                            streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes)
+                        // Bytes already in hand are taken without announcing a wait, as in bufferedLoop.
+                        inbound.safe.poll.map {
+                            case Present(span) =>
+                                onProgress()
+                                state.feedBytes(span)
+                                streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes, onProgress, onAwait)
+                            case Absent =>
+                                onAwait()
+                                inbound.safe.take.map { span =>
+                                    onProgress()
+                                    state.feedBytes(span)
+                                    streamingDrainAndDeliver(inbound, output, state, chunkBuf, maxControlBytes, onProgress, onAwait)
+                                }
                         }
                 }
     end streamingDrainAndDeliver
@@ -226,7 +257,7 @@ private[kyo] object ChunkedBodyDecoder:
       *
       * Instances can be reset and reused across multiple responses on the same connection via reset().
       */
-    private[http1] class DecoderState:
+    private[kyo] class DecoderState:
         // Internal buffer of unprocessed bytes
         private var buf: Array[Byte] = new Array[Byte](4096)
         private var readPos: Int     = 0
@@ -271,6 +302,20 @@ private[kyo] object ChunkedBodyDecoder:
           * separately by the caller.
           */
         def pendingSize: Int = (writePos - readPos) + sizeLine.size
+
+        /** The bytes fed but not consumed. After the terminal chunk and trailers they are the start of the next message on the connection.
+          * Empties the buffer.
+          */
+        def takePending(): Span[Byte] =
+            val n = writePos - readPos
+            if n <= 0 then Span.empty[Byte]
+            else
+                val arr = new Array[Byte](n)
+                java.lang.System.arraycopy(buf, readPos, arr, 0, n)
+                readPos = writePos
+                Span.fromUnsafe(arr)
+            end if
+        end takePending
 
         /** Feed new bytes into the internal buffer. */
         def feedBytes(span: Span[Byte]): Unit =
@@ -441,34 +486,36 @@ private[kyo] object ChunkedBodyDecoder:
             end if
         end processReadDataCrlf
 
-        /** Process trailer headers after terminal chunk. Consumes until empty line. */
+        /** Consumes the trailer section after the terminal chunk: field lines, each ended by CRLF, up to and including the empty line that
+          * ends the section (RFC 9112 section 7.1.2). Returns true when the section ended or the framing was refused, false when the next
+          * line is not complete yet. A bare LF or a bare CR is refused as it is in the size line: a recipient that takes a bare LF as a
+          * line end ends the section a byte earlier and reads the bytes after it as the next message.
+          */
         private def processReadTrailer(): Boolean =
-            // We need to find the end of trailers, which is an empty line.
-            // After the terminal "0\r\n", we expect either:
-            //   - "\r\n" immediately (no trailers)
-            //   - "Header: value\r\n...\r\n" (trailers followed by empty line)
-            // Scan for two consecutive line endings (LF LF, with optional CR before each)
-            @tailrec def scan(i: Int, prevWasLf: Boolean): Int =
+            @tailrec def findLf(i: Int): Int =
                 if i >= writePos then -1
-                else if buf(i) == LF then
-                    if prevWasLf then i // Found empty line
-                    else scan(i + 1, true)
-                else if buf(i) == CR then
-                    scan(i + 1, prevWasLf) // CR doesn't reset LF tracking
+                else if buf(i) == LF then i
+                else findLf(i + 1)
+            @tailrec def hasCr(i: Int, end: Int): Boolean =
+                if i >= end then false
+                else if buf(i) == CR then true
+                else hasCr(i + 1, end)
+            @tailrec def lines(): Boolean =
+                val lfPos = findLf(readPos)
+                if lfPos < 0 then false
+                else if lfPos == readPos || buf(lfPos - 1) != CR then fail("trailer line ended with a bare LF")
+                else if hasCr(readPos, lfPos - 1) then fail("embedded CR in trailer line")
                 else
-                    scan(i + 1, false)
-            end scan
-
-            // Start with prevWasLf=true because the chunk size line "0\r\n" already ended with LF.
-            // This way, the very first "\r\n" (no trailers case) is recognized as the empty line.
-            val endPos = scan(readPos, true)
-            if endPos < 0 then
-                false // Need more data
-            else
-                readPos = endPos + 1
-                phase = PhaseDone
-                true
-            end if
+                    val empty = lfPos - 1 == readPos
+                    readPos = lfPos + 1
+                    if empty then
+                        phase = PhaseDone
+                        true
+                    else lines()
+                    end if
+                end if
+            end lines
+            lines()
         end processReadTrailer
 
         /** Compact the internal buffer, shifting unread data to the front. */
@@ -502,7 +549,9 @@ private[kyo] object ChunkedBodyDecoder:
     private val PhaseDone: Int         = 4
     private val PhaseInvalid: Int      = 5
 
-    /** Parse a chunk size line (may contain extensions after ';'). Strips trailing CR. */
+    /** Parses a chunk size line (may contain extensions after ';'), stripping the trailing CR. Returns -1 for a line with no hex digit
+      * before the extension: chunk-size is 1*HEXDIG (RFC 9112 section 7.1), so an empty size is not the last chunk.
+      */
     private def parseChunkSizeLine(lineBytes: Array[Byte]): Int =
         val len0 = lineBytes.length
         // Strip trailing CR
@@ -523,7 +572,7 @@ private[kyo] object ChunkedBodyDecoder:
                     else -1
                 if digit == -1 || acc > 0xfffffffL then -1 // invalid char or overflow
                 else parseHex(i + 1, (acc << 4) | digit)
-        if hexEnd == 0 then 0
+        if hexEnd == 0 then -1
         else parseHex(0, 0L)
     end parseChunkSizeLine
 

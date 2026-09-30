@@ -400,13 +400,20 @@ object Completion:
                                                 }
                                             yield sseStream
                                         }
-                                        _ <- Abort.recover[Closed](_ => ()) {
+                                        // A carrier closed by the consumer ends production quietly; the body stream's own
+                                        // failure (a connection cut mid-stream) is classified like a failure to fetch it.
+                                        _ <- Abort.recover[Closed | HttpException] {
+                                            case _: Closed        => ()
+                                            case e: HttpException => Abort.fail(classifyHttp(config, e))
+                                        } {
                                             sseStream.map { event =>
                                                 // Trace, not debug: the raw SSE payload shows whether a turn
                                                 // emitted a tool-call delta or, as some providers do under a
                                                 // forced tool choice, only reasoning/content deltas that leave
                                                 // the result buffer empty and fail the generation.
-                                                Log.trace(s"kyo-ai stream event ${config.provider.name} ${elideBody(event.data)}").andThen {
+                                                Log.trace(
+                                                    s"kyo-ai stream event ${config.provider.name} ${elideBody(event.data)}"
+                                                ).andThen {
                                                     // An empty event carries no element. A stream may hold the
                                                     // connection open with a keepalive between fragments; handing
                                                     // that to a decoder expecting a chunk fails a healthy generation.
@@ -417,7 +424,8 @@ object Completion:
                                                         // parser skip it into an empty buffer. The substring guard
                                                         // keeps the decode off the hot path for ordinary deltas.
                                                         val streamError =
-                                                            if event.data.contains("\"error\"") then classifyStreamError(config, event.data)
+                                                            if event.data.contains("\"error\"") then
+                                                                classifyStreamError(config, event.data)
                                                             else Absent
                                                         streamError match
                                                             case Present(exc) => Abort.fail(exc)
