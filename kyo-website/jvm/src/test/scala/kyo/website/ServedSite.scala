@@ -30,8 +30,15 @@ private[website] object ServedSite:
         contentTypes.getOrElse(ext, "application/octet-stream")
     end contentTypeOf
 
-    /** Runs `f` with the base URL, no trailing slash. */
-    def serve[A, S](f: String => A < (Async & S))(using
+    /** The served site: its base URL, no trailing slash, and the bytes it serves. */
+    final class Site(val url: String, store: Map[String, Span[Byte]]):
+        /** The emitted file `route` resolves to, as the server would send it, decoded as UTF-8. */
+        def text(route: String): Maybe[String] =
+            resolve(route, store).map((_, bytes) => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+    end Site
+
+    /** Runs `f` with the served site. */
+    def serve[A, S](f: Site => A < (Async & S))(using
         Frame
     ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException] & S) =
         for
@@ -45,7 +52,7 @@ private[website] object ServedSite:
             restHandler = HttpRoute.getRaw(Capture.Rest("path")).response(_.bodyBinary)
                 .handler(req => respond(req.fields.path, store))
             server <- HttpServer.init(0, "localhost")(rootHandler, restHandler)
-            result <- f(s"http://localhost:${server.port}")
+            result <- f(Site(s"http://localhost:${server.port}", store))
         yield result
 
     // Read once up front so the filesystem is never inside a measurement window.
