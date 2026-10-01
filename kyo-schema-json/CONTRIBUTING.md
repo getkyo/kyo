@@ -361,6 +361,10 @@ them:
 - `assertLimitBreach(result, limit, maximum)` pins WHICH limit was applied and
   the value it was applied with. `maxDepth` and `maxCollectionSize` are both
   `Int`, so a transposed argument compiles; this is what catches it.
+- `assertNumberBreach(result)` pins a number limit's `ParseException` at the
+  number's first byte. `maxNumberDigits` and `maxExponent` are both `Int` too, so
+  set only `maxNumberDigits` on a number with no exponent: forwarded as
+  `maxExponent` by mistake, the limit never applies and the record decodes.
 - `byteStream(s, chunkSize)` parameterizes the chunk size. Any test of framing,
   of an abort prefix, or of encoding output should run at more than one chunk
   size, for the reason given above.

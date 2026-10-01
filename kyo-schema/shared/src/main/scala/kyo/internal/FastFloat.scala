@@ -1,7 +1,5 @@
 package kyo.internal
 
-import scala.annotation.tailrec
-
 /** Fast double/float parsing via the Eisel-Lemire algorithm.
   *
   * Algorithm: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
@@ -213,24 +211,6 @@ private[internal] object FastFloat:
         retBits.toInt
     end eiselLemire32
 
-    /** Advances past a JSON-style number starting at `start`. Mirrors the loop in `JsonReader.readNumber`. Returns the end index
-      * (exclusive). The scan is permissive: it accepts any sequence of digits/`.eE+-` bytes and leaves detailed validation to the caller.
-      * Does NOT accept quoted special values (`"NaN"`, `"Infinity"`); those are handled upstream in `JsonReader.double`.
-      */
-    def scanNumberEnd(input: Array[Byte], start: Int, limit: Int): Int =
-        @tailrec def loop(p: Int): Int =
-            if p >= limit then p
-            else
-                val b = input(p)
-                if (b >= '0' && b <= '9') || b == '.' || b == 'e' || b == 'E' || b == '+' || b == '-' then
-                    loop(p + 1)
-                else p
-        // Accept an optional leading '-' (a leading '+' is not valid JSON; we tolerate it in the permissive
-        // loop because the caller re-validates on the fallback path).
-        val p0 = if start < limit && input(start) == '-' then start + 1 else start
-        loop(p0)
-    end scanNumberEnd
-
     // Internal result of `readFloat64` / `readFloat32`-style scan. Packed so callers can distinguish parse
     // failure from "parsed but requires truncation retry" from "parsed cleanly".
     private inline val ScanOk        = 0
@@ -262,8 +242,7 @@ private[internal] object FastFloat:
         var dp            = 0
         var truncated     = false
 
-        // Optional sign. JSON disallows leading '+', but we accept it here: the caller's scanner already
-        // bounded the region, and the fallback path re-validates on failure.
+        // Optional sign. The caller hands over a region it has already held to the JSON number grammar.
         if i < end then
             val c = input(i)
             if c == '+' then i += 1
