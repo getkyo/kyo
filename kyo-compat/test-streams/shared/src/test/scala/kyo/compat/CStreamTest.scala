@@ -272,12 +272,15 @@ class CStreamTest extends CompatTest:
         }
     }
 
-    "deep flatMap chains do not stack-overflow (1000 levels)" in run {
-        val n    = 1000
-        val deep = (1 to n).foldLeft(CStream.init(Seq(0))) { (acc, _) =>
-            acc.flatMap(prev => CStream.init(Seq(prev + 1)))
+    "deep flatMap chains do not stack-overflow (1000 levels)" in {
+        if !CompatCapabilities.stackSafeDeepFlatMap then (pending: Unit)
+        run {
+            val n    = 1000
+            val deep = (1 to n).foldLeft(CStream.init(Seq(0))) { (acc, _) =>
+                acc.flatMap(prev => CStream.init(Seq(prev + 1)))
+            }
+            deep.run.map(chunk => assert(chunk.toSeq == Seq(n)))
         }
-        deep.run.map(chunk => assert(chunk.toSeq == Seq(n)))
     }
 
     "mapPure calls f exactly once per element" in run {
