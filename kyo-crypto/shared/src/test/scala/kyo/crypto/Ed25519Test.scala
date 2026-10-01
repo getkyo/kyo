@@ -481,7 +481,7 @@ class Ed25519Test extends kyo.test.Test[Any]:
             }
         }
 
-        "signatures under generated keys verify in both, and every one-bit mutation of a sample is rejected by both" in {
+        "signatures under generated keys verify in both, and the limb verifier rejects every one-bit mutation of a sample" in {
             val pairs = Seq(1L, 2L, 3L).map(seed => generated(seed, 12))
             pairs.foreach { g =>
                 val key = keyOf(VerificationKey.fromBytes(Span.from(g.publicKey)))
@@ -496,19 +496,19 @@ class Ed25519Test extends kyo.test.Test[Any]:
             val signature = Ed25519Reference.sign(sample.secretKey, message)
             assert(message.length == 35)
             val key = keyOf(VerificationKey.fromBytes(Span.from(sample.publicKey)))
+            // A one-bit mutation of an honest signature, message or key is a forgery, so its verdict is known without the reference. The
+            // reference takes 70 ms a verify on Native: consulting it for the 1048 mutations is past the leaf timeout and tests only the
+            // oracle.
             (0 until 512).foreach { bit =>
                 val mutated = flip(signature, bit)
-                assert(!Ed25519Reference.verify(sample.publicKey, message, mutated), s"signature bit $bit")
                 assert(!Ed25519.verify(key, Span.from(message), Span.from(mutated)), s"signature bit $bit")
             }
             (0 until message.length * 8).foreach { bit =>
                 val mutated = flip(message, bit)
-                assert(!Ed25519Reference.verify(sample.publicKey, mutated, signature), s"message bit $bit")
                 assert(!Ed25519.verify(key, Span.from(mutated), Span.from(signature)), s"message bit $bit")
             }
             (0 until 256).foreach { bit =>
                 val mutated = flip(sample.publicKey, bit)
-                assert(!Ed25519Reference.verify(mutated, message, signature), s"key bit $bit")
                 assert(!verifies(mutated, message, signature), s"key bit $bit")
             }
         }
@@ -604,17 +604,20 @@ class Ed25519Test extends kyo.test.Test[Any]:
                 rfcVectors.map(_.publicKey) ++ Seq(generated(21L, 1).publicKey) ++
                     torsionPoints.map(t => mixedOrderKey(22L, t).publicKey)
             assert(keys.size == rfcVectors.size + 1 + 8)
+            // Each reference multiple is computed once and combined per pair: a BigInt scalar multiplication takes 34 ms on Native, and
+            // recomputing both per pair is 2268 of them, past the leaf timeout.
+            val baseMultiples = scalars.map(s => Ed25519Reference.multiply(s, Ed25519Reference.Base))
             keys.foreach { publicKey =>
-                val key      = keyOf(VerificationKey.fromArray(publicKey))
-                val negatedA = Ed25519Reference.negate(Ed25519Reference.decode(publicKey, 0).get)
-                scalars.foreach { s =>
-                    scalars.foreach { k =>
-                        val expected = Ed25519Reference.add(
-                            Ed25519Reference.multiply(s, Ed25519Reference.Base),
-                            Ed25519Reference.multiply(k, negatedA)
-                        )
-                        val sDigits = new Array[Byte](256)
-                        val kDigits = new Array[Byte](256)
+                val key          = keyOf(VerificationKey.fromArray(publicKey))
+                val negatedA     = Ed25519Reference.negate(Ed25519Reference.decode(publicKey, 0).get)
+                val keyMultiples = scalars.map(k => Ed25519Reference.multiply(k, negatedA))
+                scalars.indices.foreach { si =>
+                    scalars.indices.foreach { ki =>
+                        val s        = scalars(si)
+                        val k        = scalars(ki)
+                        val expected = Ed25519Reference.add(baseMultiples(si), keyMultiples(ki))
+                        val sDigits  = new Array[Byte](256)
+                        val kDigits  = new Array[Byte](256)
                         kyo.internal.crypto.Ed25519Scalar.slide(sDigits, le32(s))
                         kyo.internal.crypto.Ed25519Scalar.slide(kDigits, le32(k))
                         val out = Ed25519.Point()
@@ -636,9 +639,8 @@ class Ed25519Test extends kyo.test.Test[Any]:
         val z = fieldValue(limb.z)
         val t = fieldValue(limb.t)
         assert(z != 0, label)
-        val zInverse = Ed25519Reference.inverse(z)
-        val affine   = Ed25519Reference.Point((x * zInverse).mod(P), (y * zInverse).mod(P), BigInt(1), BigInt(0))
-        assert(Ed25519Reference.samePoint(affine, reference), s"$label: (${affine.x}, ${affine.y})")
+        // Compared projectively: an inverse is a 255-bit modPow, which dominates this check on Native.
+        assert(Ed25519Reference.samePoint(Ed25519Reference.Point(x, y, z, t), reference), s"$label: (x $x, y $y, z $z)")
         assert((t * z).mod(P) == (x * y).mod(P), s"$label: T Z != X Y")
     end assertSamePoint
 
