@@ -26,7 +26,7 @@ import scala.deriving.Mirror
   */
 @implicitNotFound(
     "${A} is not a SQL-storable type.\n" +
-        "Supported: primitives, temporals, UUID, URI/Locale/Currency, Span[Byte], JsonText,\n" +
+        "Supported: primitives, temporals, UUID, URI/Locale, Span[Byte], JsonText,\n" +
         "Chunk[Int]/Chunk[String]/Chunk[JsonText], Maybe/Option of a supported type, and case\n" +
         "classes or tuples whose fields are all single-column types.\n" +
         "For a custom single-column encoding install a given SqlSchema.Column (SqlSchema.of,\n" +
@@ -161,8 +161,6 @@ object SqlSchema extends kyo.internal.LowPrioritySqlSchema:
     // erasure lub cast in the runtime); as a case-class field it is fine.
     given locale: Column[java.util.Locale] =
         new Column((v, w) => w.string(v.toLanguageTag), r => java.util.Locale.forLanguageTag(r.string()))
-    given currency: Column[java.util.Currency] =
-        new Column((v, w) => w.string(v.getCurrencyCode), r => java.util.Currency.getInstance(r.string()))
 
     // --- Sanctioned single-column collections ---
     //

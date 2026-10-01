@@ -65,13 +65,12 @@ class PostgresDialectCastTest extends Test:
     }
 
     // The remaining built-in cast targets, none pinned above: each maps to a Type already covered by another
-    // target's spelling (URI/Locale/Currency reuse TEXT, OffsetDateTime/ZonedDateTime reuse Instant's TIMESTAMPTZ,
+    // target's spelling (URI/Locale reuse TEXT, OffsetDateTime/ZonedDateTime reuse Instant's TIMESTAMPTZ,
     // BigInt reuses BigDecimal's NUMERIC, Chunk[JsonText] is JSONB nested in the array suffix). Pinned so a
     // dropped or mis-mapped `SqlType` given surfaces here rather than silently.
     "the remaining built-in targets reuse their type's spelling" in {
         assert(castSql(idColumn.cast[java.net.URI]).contains("""CAST("r"."id" AS TEXT)"""))
         assert(castSql(idColumn.cast[java.util.Locale]).contains("""CAST("r"."id" AS TEXT)"""))
-        assert(castSql(idColumn.cast[java.util.Currency]).contains("""CAST("r"."id" AS TEXT)"""))
         assert(castSql(idColumn.cast[java.time.OffsetDateTime]).contains("""CAST("r"."id" AS TIMESTAMPTZ)"""))
         assert(castSql(idColumn.cast[java.time.ZonedDateTime]).contains("""CAST("r"."id" AS TIMESTAMPTZ)"""))
         assert(castSql(idColumn.cast[BigInt]).contains("""CAST("r"."id" AS NUMERIC)"""))

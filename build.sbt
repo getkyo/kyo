@@ -4150,10 +4150,12 @@ lazy val `native-settings-base` = Seq(
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // A dependency's bundled FFI C (kyo-net's kyo_uring.c and TLS shims) compiles into THIS Native binary, but
     // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
     // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
@@ -4210,10 +4212,12 @@ lazy val `js-settings` = Seq(
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
     // linker state overflows the 12G sbt heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
@@ -4245,10 +4249,12 @@ lazy val `wasm-settings` = Seq(
     ),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
     scalaJSLinkerConfig := {
         val c = scalaJSLinkerConfig.value
