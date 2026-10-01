@@ -4000,10 +4000,9 @@ class HttpServerTest extends BaseHttpTest:
             def readTables: Chunk[Chunk[String]] < Async =
                 Abort.run[FileSystemException](Path.runReadOnly(Kyo.filter(tables)(_.exists).map(Kyo.foreach(_)(_.readLines))))
                     .map(_.getOrElse(Chunk.empty))
-            def portOf(address: String): Int                                          = Integer.parseInt(address.split(":").last, 16)
             def rowsOn(port: Int)(tables: Chunk[Chunk[String]]): Chunk[Array[String]] =
                 tables.flatMap(_.drop(1)).map(_.trim.split("\\s+")).filter(cols =>
-                    cols.length > 9 && (portOf(cols(1)) == port || portOf(cols(2)) == port)
+                    cols.length > 9 && (socketPort(cols(1)) == port || socketPort(cols(2)) == port)
                 )
             // The descriptor this process holds on each socket inode, from its /proc/<pid>/fd links: a leaked row whose
             // inode has no descriptor here is held by the kernel, not by an open handle.
@@ -4026,12 +4025,13 @@ class HttpServerTest extends BaseHttpTest:
                     if procNetTcp then
                         readTables.map { tables =>
                             val rows        = rowsOn(port)(tables)
-                            val established = rows.count(cols => cols(3) == "01" && portOf(cols(2)) == port)
+                            val established = establishedTo(port)(rows)
                             if established == 0 then (0, "")
                             else
                                 descriptors.map { fds =>
                                     val described = rows.map { c =>
-                                        s"local=${c(1)} remote=${c(2)} state=${c(3)} queues=${c(4)} inode=${c(9)} fd=${fds.getOrElse(c(9), "none")}"
+                                        s"local=${c(1)} remote=${c(2)} state=${c(3)} queues=${c(4)} inode=${c(9)} " +
+                                            s"fd=${fds.getOrElse(c(9), "none")}"
                                     }
                                     (established, described.mkString("\n"))
                                 }
@@ -4094,6 +4094,27 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
         }
+
+        "the socket-table check counts only the loopback client ends connected to the server's port" in {
+            val port = 0x9cd9
+            val rows = Chunk(
+                "0: 0100007F:9CD9 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 101",
+                "1: 0100007F:C26A 0100007F:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 102",
+                "2: 0100007F:9CD9 0100007F:C26A 01 00000000:00000000 00:00000000 00000000 0 0 103",
+                "3: 027FA8C0:0016 017FA8C0:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 104",
+                "4: 0000000000000000FFFF00000100007F:C26B 0000000000000000FFFF00000100007F:9CD9 01 " +
+                    "00000000:00000000 00:00000000 00000000 0 0 105"
+            ).map(_.trim.split("\\s+"))
+            assert(establishedTo(port)(rows) == 2)
+        }
     }
+
+    private def socketPort(address: String): Int = Integer.parseInt(address.split(":").last, 16)
+
+    // The table lists every socket in the network namespace, which under host networking includes connections from other hosts, so a
+    // remote port equal to the server's ephemeral port is not enough: another host's ssh session whose source port equals it would count.
+    // The client connects to 127.0.0.1, written 0100007F in tcp and as the tail of the v4-mapped address in tcp6.
+    private def establishedTo(port: Int)(rows: Chunk[Array[String]]): Int =
+        rows.count(cols => cols(3) == "01" && cols(2).split(":").head.endsWith("0100007F") && socketPort(cols(2)) == port)
 
 end HttpServerTest
