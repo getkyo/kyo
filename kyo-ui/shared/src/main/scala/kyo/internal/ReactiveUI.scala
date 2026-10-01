@@ -786,10 +786,16 @@ private[kyo] object ReactiveUI:
         private[kyo] val handleValidated: ValidatedHandler,
         lastSignalChangeTime: AtomicRef[Instant],
         private val dragSessionCountFn: () => Int < Sync = () => 0,
-        private val dragExpiryWorkerCountFn: () => Int < Sync = () => 0
+        private val dragExpiryWorkerCountFn: () => Int < Sync = () => 0,
+        private val dragLock: Meter = Meter.Noop
     ):
         private[kyo] def dragSessionCount(using Frame): Int < Sync      = dragSessionCountFn()
         private[kyo] def dragExpiryWorkerCount(using Frame): Int < Sync = dragExpiryWorkerCountFn()
+
+        /** Runs `v` under the mutex that serializes drag dispatch and the expiry worker's clock reading and timer arming. A test moves a
+          * controlled clock here so the move never splits the worker's reading from its arming.
+          */
+        private[kyo] def withDragLock[A](v: => A < Async)(using Frame): A < (Async & Abort[Closed]) = dragLock.run(v)
     end Subscription
 
     private enum OwnedFiberState derives CanEqual:
@@ -855,11 +861,10 @@ private[kyo] object ReactiveUI:
             // finalizers run last-registered-first, so registering this BEFORE the worker is started puts it
             // after the worker's own teardown and makes "closed scope implies no worker" hold on every exit.
             _ <- Scope.ensure(expiryWorkers.set(0))
+            _ <- expiryWorkers.set(1)
             _ <- startOwnedFiber(
                 Abort.run[Any] {
-                    Sync.ensure(expiryWorkers.set(0)) {
-                        expiryWorkers.set(1).andThen(expiryScheduler(dragSessions, dragMutex, expiryWake))
-                    }
+                    Sync.ensure(expiryWorkers.set(0))(expiryScheduler(dragSessions, dragMutex, expiryWake))
                 }.unit
             )
             _ <- subscribeScoped(rui, exchange, signalChangeTime)
@@ -872,7 +877,8 @@ private[kyo] object ReactiveUI:
             validatedHandle,
             signalChangeTime,
             () => dragSessions.get.map(_.size),
-            () => expiryWorkers.get
+            () => expiryWorkers.get,
+            dragMutex
         )
 
     private def dragHandle(
@@ -1023,25 +1029,27 @@ private[kyo] object ReactiveUI:
         expiryWake: Channel[Unit]
     )(using Frame): Unit < (Async & Abort[Closed]) =
         Loop.foreach {
-            sessions.get.map { current =>
-                current.valuesIterator.map(_.expiresAt).reduceOption(_.min(_)) match
-                    case None =>
-                        Abort.runPartial[Closed](expiryWake.take).map {
-                            case Result.Success(_) => Loop.continue
-                            case Result.Failure(_) => Loop.done
-                        }
-                    case Some(expiresAt) =>
-                        Clock.nowMonotonic.map { now =>
-                            val wait                = expiresAt.minusOrZero(now)
-                            val sleep: Unit < Async = if wait > Duration.Zero then Clock.sleep(wait).map(_.get) else ()
-                            Abort.runPartial[Closed](Async.race(sleep, expiryWake.take.unit)).map {
-                                case Result.Success(_) =>
-                                    Clock.nowMonotonic.map(expireNow => mutex.run(expireSessions(expireNow, sessions)))
-                                        .andThen(Loop.continue)
-                                case Result.Failure(_) => Loop.done
-                            }
-                        }
+            mutex.run(expireAndArm(sessions)).map { timer =>
+                val next: Unit < (Async & Abort[Closed]) = timer match
+                    case Present(timer) => Async.race(timer.get, expiryWake.take.unit)
+                    case Absent         => expiryWake.take
+                Abort.runPartial[Closed](next).map {
+                    case Result.Success(_) => Loop.continue
+                    case Result.Failure(_) => Loop.done
+                }
             }
+        }
+
+    // The clock reading, the expiry pass, and the arming of the next timer form one section under the drag mutex, which
+    // also serializes every session admission. A clock moved while holding the same mutex never lands between the reading
+    // and the arming, so the armed deadline is exactly the earliest remaining expiry.
+    private def expireAndArm(sessions: AtomicRef[Map[String, DragSession]])(using Frame): Maybe[Fiber[Unit, Any]] < Async =
+        Clock.nowMonotonic.map { now =>
+            expireSessions(now, sessions).andThen(sessions.get.map { current =>
+                current.valuesIterator.map(_.expiresAt).reduceOption(_.min(_)) match
+                    case None            => Maybe.empty
+                    case Some(expiresAt) => Clock.sleep(expiresAt.minusOrZero(now)).map(Maybe(_))
+            })
         }
 
     private def expireSessions(now: Duration, sessions: AtomicRef[Map[String, DragSession]])(using Frame): Unit < Async =
