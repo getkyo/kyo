@@ -500,4 +500,90 @@ class HttpHeadersTest extends BaseHttpTest:
         }
     }
 
+    "retryAfter" - {
+        val now = Instant.parse("1994-11-06T08:49:07Z").getOrThrow
+
+        def headers(retryAfter: String, date: Maybe[String] = Absent): HttpHeaders =
+            date.fold(HttpHeaders.empty)(d => HttpHeaders.empty.add("Date", d)).add("Retry-After", retryAfter)
+
+        "reads delta-seconds" in {
+            assert(headers("120").retryAfter(now) == Present(120.seconds))
+            assert(headers("0").retryAfter(now) == Present(Duration.Zero))
+            assert(headers(" 7 ").retryAfter(now) == Present(7.seconds))
+        }
+
+        "reads an HTTP date as the time from now to it" in {
+            assert(headers("Sun, 06 Nov 1994 08:49:37 GMT").retryAfter(now) == Present(30.seconds))
+            assert(headers("Sunday, 06-Nov-94 08:49:37 GMT").retryAfter(now) == Present(30.seconds))
+            assert(headers("Sun Nov  6 08:49:37 1994").retryAfter(now) == Present(30.seconds))
+        }
+
+        "a date that has passed is a zero wait" in {
+            assert(headers("Sun, 06 Nov 1994 08:48:00 GMT").retryAfter(now) == Present(Duration.Zero))
+        }
+
+        "a date is read against the response's Date header when it has one" in {
+            val serverNow = "Sun, 06 Nov 1994 08:49:27 GMT"
+            assert(headers("Sun, 06 Nov 1994 08:49:37 GMT", Present(serverNow)).retryAfter(now) == Present(10.seconds))
+            assert(headers("Sun, 06 Nov 1994 08:49:37 GMT", Present(serverNow)).retryAfter(Instant.Epoch) == Present(10.seconds))
+            assert(headers("Sun, 06 Nov 1994 08:49:37 GMT", Present("not a date")).retryAfter(now) == Present(30.seconds))
+            assert(headers("120", Present(serverNow)).retryAfter(now) == Present(120.seconds))
+        }
+
+        "is Absent for a missing header and for a value that is neither form" in {
+            assert(HttpHeaders.empty.retryAfter(now) == Absent)
+            assert(headers("").retryAfter(now) == Absent)
+            assert(headers("-1").retryAfter(now) == Absent)
+            assert(headers("+1").retryAfter(now) == Absent)
+            assert(headers("1.5").retryAfter(now) == Absent)
+            assert(headers("1 0").retryAfter(now) == Absent)
+            assert(headers("abc").retryAfter(now) == Absent)
+            assert(headers("١٢").retryAfter(now) == Absent)
+            assert(headers("Sun, 06 Nov 1994 08:49:37 UTC").retryAfter(now) == Absent)
+        }
+
+        "a delta past what a Duration holds is Infinity" in {
+            assert(headers("99999999999999999999").retryAfter(now) == Present(Duration.Infinity))
+            assert(headers("9223372037").retryAfter(now) == Present(Duration.Infinity))
+            assert(headers("9223372036").retryAfter(now) == Present(9223372036L.seconds))
+        }
+
+        "the effectful reading uses the ambient clock" in {
+            Clock.withTimeControl { tc =>
+                tc.set(now).andThen {
+                    headers("Sun, 06 Nov 1994 08:49:37 GMT").retryAfter.map { wait =>
+                        assert(wait == Present(30.seconds))
+                    }
+                }
+            }
+        }
+    }
+
+    "name lookup folds ASCII case only" - {
+        "a header named with U+017F (long s) does not answer a Set-Cookie lookup" in {
+            val h = HttpHeaders.empty.add("ſet-Cookie", "a=1").add("X-Other", "x")
+            assert(h.get("Set-Cookie") == Absent)
+            assert(h.getAll("Set-Cookie").isEmpty)
+            assert(!h.contains("Set-Cookie"))
+            assert(h.remove("Set-Cookie").get("ſet-Cookie") == Present("a=1"))
+            assert(h.set("Set-Cookie", "b=2").get("ſet-Cookie") == Present("a=1"))
+        }
+
+        "a header named with U+212A (Kelvin sign) does not answer a Keep-Alive lookup" in {
+            val h = HttpHeaders.empty.add("Keep-Alive", "timeout=5")
+            assert(h.get("Keep-Alive") == Absent)
+            assert(h.getAll("Keep-Alive").isEmpty)
+            assert(!h.contains("Keep-Alive"))
+            assert(h.remove("Keep-Alive").get("Keep-Alive") == Present("timeout=5"))
+        }
+
+        "ASCII letters fold in both directions" in {
+            val h = HttpHeaders.empty.add("Set-Cookie", "a=1")
+            assert(h.get("SET-COOKIE") == Present("a=1"))
+            assert(h.get("set-cookie") == Present("a=1"))
+            assert(h.contains("sEt-CoOkIe"))
+            assert(h.remove("SET-COOKIE").isEmpty)
+        }
+    }
+
 end HttpHeadersTest

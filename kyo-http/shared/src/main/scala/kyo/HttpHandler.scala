@@ -66,12 +66,14 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
         internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, maxPartSize, path, Present(method))
             .map(request => this(request))
 
-    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    /** Encode a successful response to wire format using RouteUtil callbacks. Fails when the response's multipart boundary cannot go on
+      * the wire.
+      */
     final private[kyo] def encodeResponse[A, S](response: HttpResponse[Out])(
         onEmpty: (HttpStatus, HttpHeaders) => A < S,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S,
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S
-    )(using Frame): A < (S & Sync) =
+    )(using Frame): A < (S & Sync & Abort[HttpException]) =
         internal.server.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
 
     /** Try to encode a typed error via the route's error mappings. */

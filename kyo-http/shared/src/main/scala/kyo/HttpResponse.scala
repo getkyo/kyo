@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.mime.Parameters
 import scala.annotation.targetName
 
 /** An HTTP response carrying status, headers, and a typed `Record` of route-declared fields.
@@ -49,14 +50,27 @@ case class HttpResponse[Fields](
         val quoted = if value.startsWith("\"") then value else s""""$value""""
         setHeader("ETag", quoted)
 
-    def contentDisposition(filename: String, isInline: Boolean = false): HttpResponse[Fields] =
+    /** Sets `Content-Disposition` (RFC 6266) to `attachment` or `inline` with `filename`: a printable ASCII name as a quoted string with
+      * `"` and `\` as quoted pairs, so a name cannot close the quotes and start a second parameter (CVE-2026-59921). A name with any other
+      * character is written as RFC 6266 Appendix D has it: a quoted `filename` fallback for an agent that reads only `filename`, with `_`
+      * for each such character and for `"`, `\` and `%`, which the appendix advises against there, then `filename*=UTF-8''...` (RFC 8187,
+      * through kyo-mime), which every browser prefers when present.
+      */
+    def contentDisposition(filename: String, isInline: Boolean = false)(using Frame): HttpResponse[Fields] =
         val disposition = if isInline then "inline" else "attachment"
-        // Escape the quoted-string metacharacters so a filename cannot break out of the quotes and inject a second
-        // disposition parameter (RFC 6266). A raw '"' would close the quoted-string and a filename like
-        // `x"; filename="evil` would smuggle a second filename an intermediary or browser may honour (CVE-2026-59921).
-        // Backslash is escaped first so an existing '\' is not conflated with the escapes added for '"'.
-        val escaped = filename.replace("\\", "\\\\").replace("\"", "\\\"")
-        setHeader("Content-Disposition", s"""$disposition; filename="$escaped"""")
+        val printable   = filename.forall(c => c >= ' ' && c <= '~')
+        val parameters  =
+            if printable then "filename=\"" + filename.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+            else
+                val fallback = "filename=\"" + filename.map(c => if c >= ' ' && c <= '~' && "\"\\%".indexOf(c) < 0 then c else '_') + "\""
+                // `write` fails only for a parameter name that is not a token or holds `*`; for the literal `filename` it cannot, and the
+                // fallback alone is a valid header, so no failure leaves this method.
+                Parameters.write("filename", filename, Parameters.Style.Http) match
+                    case Result.Success(units) => fallback + "; " + units.mkString("; ")
+                    case Result.Failure(_)     => fallback
+                    case Result.Panic(t)       => throw t
+                end match
+        setHeader("Content-Disposition", s"$disposition; $parameters")
     end contentDisposition
 
 end HttpResponse

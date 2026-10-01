@@ -201,9 +201,13 @@ final private[kyo] class Http1StreamContext(
             headerBuf.writeBytes(Http1StreamContext.CRLF, 0, Http1StreamContext.CRLF.length)
         end if
         // Inject Date header automatically on every response (RFC 9110 section 6.6.1)
-        headerBuf.writeBytes(Http1StreamContext.DatePrefix, 0, Http1StreamContext.DatePrefix.length)
-        headerBuf.writeAscii(UnsafeServerDispatch.currentDate())
-        headerBuf.writeBytes(Http1StreamContext.CRLF, 0, Http1StreamContext.CRLF.length)
+        UnsafeServerDispatch.currentDate() match
+            case Present(date) =>
+                headerBuf.writeBytes(Http1StreamContext.DatePrefix, 0, Http1StreamContext.DatePrefix.length)
+                headerBuf.writeAscii(date)
+                headerBuf.writeBytes(Http1StreamContext.CRLF, 0, Http1StreamContext.CRLF.length)
+            case Absent =>
+        end match
         headers.writeToBuffer(headerBuf)
         headerBuf.writeBytes(Http1StreamContext.CRLF, 0, Http1StreamContext.CRLF.length)
         offerOrLog(Span.fromUnsafe(headerBuf.toByteArray), "Http1StreamContext respond")

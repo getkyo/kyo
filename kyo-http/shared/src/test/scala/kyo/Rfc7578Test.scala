@@ -57,6 +57,24 @@ class Rfc7578Test extends BaseHttpTest:
         }
     }
 
+    "Section 4.2 - a non-ASCII filename and one with a quote reach the server intact" in {
+        val route = HttpRoute.postRaw("upload")
+            .request(_.bodyMultipart)
+            .response(_.bodyText)
+        val ep = route.handler { req =>
+            HttpResponse.ok(req.fields.body.map(p => s"${p.name}=${p.filename.getOrElse("")}").mkString("|"))
+        }
+        withServer(ep) { port =>
+            val parts = Seq(
+                HttpRequest.Part("a", Present("résumé.pdf"), Present("application/pdf"), Span.fromUnsafe("1".getBytes("UTF-8"))),
+                HttpRequest.Part("b", Present("x\"; filename=\"evil.exe"), Absent, Span.fromUnsafe("2".getBytes("UTF-8")))
+            )
+            send(port, route, HttpRequest.postRaw(HttpUrl.fromUri("/upload")).addField("body", parts)).map { resp =>
+                assert(resp.fields.body == "a=résumé.pdf|b=x\"; filename=\"evil.exe", resp.fields.body)
+            }
+        }
+    }
+
     "Section 4.2 - Part without filename" in {
         val route = HttpRoute.postRaw("upload")
             .request(_.bodyMultipart)

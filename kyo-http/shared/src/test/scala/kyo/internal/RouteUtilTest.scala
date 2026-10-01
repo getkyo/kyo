@@ -84,10 +84,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .addField("body", parts)
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                = false
+            var headers                                        = HttpHeaders.empty
+            var body                                           = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpException]) =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -124,7 +124,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpException])         =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -216,7 +216,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             }
         }
 
-        "buffered multipart replaces an unquoted request boundary containing a MIME tspecial" in {
+        "buffered multipart keeps an unquoted request boundary containing a MIME tspecial and writes it quoted" in {
             val uuid      = UUID.parse("00112233-4455-4677-a899-aabbccddeeff").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
@@ -240,12 +240,11 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                     onStreaming = (_, _, _) => fail("expected buffered")
                 )
             }.map { _ =>
-                val boundary = uuid.show
-                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
-                assert(generator.calls == 1)
-                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
-                assert(encoded.contains(s"--$boundary\r\n"))
-                assert(!encoded.contains("--abc:def"))
+                val encoded = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 0)
+                assert(headers.get("Content-Type") == Present("multipart/form-data; boundary=\"abc:def\""))
+                assert(encoded.contains("--abc:def\r\n"))
+                assert(encoded.endsWith("--abc:def--\r\n"))
             }
         }
 
@@ -601,10 +600,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
             )
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                = false
+            var headers                                        = HttpHeaders.empty
+            var body                                           = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpException]) =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -650,7 +649,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpException])         =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -757,7 +756,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             }
         }
 
-        "buffered multipart replaces an unquoted response boundary containing whitespace" in {
+        "buffered multipart keeps an unquoted response boundary containing whitespace and writes it quoted" in {
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
             type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
@@ -788,12 +787,11 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                     onStreaming = (_, _, _) => fail("expected buffered")
                 )
             }.map { _ =>
-                val boundary = uuid.show
-                val encoded  = new String(body.toArrayUnsafe, "UTF-8")
-                assert(generator.calls == 1)
-                assert(headers.get("Content-Type").contains(s"multipart/form-data; boundary=$boundary"))
-                assert(encoded.contains(s"--$boundary\r\n"))
-                assert(!encoded.contains("--abc def"))
+                val encoded = new String(body.toArrayUnsafe, "UTF-8")
+                assert(generator.calls == 0)
+                assert(headers.get("Content-Type") == Present("multipart/form-data; boundary=\"abc def\""))
+                assert(encoded.contains("--abc def\r\n"))
+                assert(encoded.endsWith("--abc def--\r\n"))
             }
         }
 
@@ -1227,6 +1225,49 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case Result.Failure(err) => fail(s"expected success for null body, got failure: $err")
                 case p: Result.Panic     => throw p.exception
             end match
+        }
+    }
+
+    "request Content-Type check compares the media type, not a prefix" - {
+        val jsonRoute = HttpRoute.postRaw("users").request(_.bodyJson[User])
+        val formRoute = HttpRoute.postRaw("login").request(_.bodyForm[LoginForm])
+        val jsonBody  = """{"name":"a","age":1}"""
+        val formBody  = "username=a&password=b"
+
+        def decode[In](route: HttpRoute[In, ?, ?], contentType: Maybe[String], body: String): Result[HttpException, HttpRequest[In]] =
+            val headers = contentType.fold(HttpHeaders.empty)(ct => HttpHeaders.empty.add("Content-Type", ct))
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, Span.fromUnsafe(body.getBytes("UTF-8")))
+
+        def assertUnsupported[A](result: Result[HttpException, A], contentType: String)(using kyo.test.AssertScope) =
+            result match
+                case Result.Failure(_: HttpUnsupportedMediaTypeException) => succeed
+                case other => fail(s"'$contentType' must be refused as an unsupported media type, got $other")
+
+        "application/jsonx is not application/json" in {
+            assertUnsupported(decode(jsonRoute, Present("application/jsonx"), jsonBody), "application/jsonx")
+        }
+
+        "application/json-patch+json is not application/json" in {
+            assertUnsupported(decode(jsonRoute, Present("application/json-patch+json"), jsonBody), "application/json-patch+json")
+        }
+
+        "application/x-www-form-urlencodedx is not a form" in {
+            assertUnsupported(
+                decode(formRoute, Present("application/x-www-form-urlencodedx"), formBody),
+                "application/x-www-form-urlencodedx"
+            )
+        }
+
+        "the media type folds ASCII case and ignores its parameters and the OWS around them" in {
+            assert(decode(jsonRoute, Present("Application/JSON; charset=utf-8"), jsonBody).isSuccess)
+            assert(decode(jsonRoute, Present("application/json ;charset=utf-8"), jsonBody).isSuccess)
+            assert(decode(jsonRoute, Present(" application/json"), jsonBody).isSuccess)
+            assert(decode(formRoute, Present("application/x-www-form-urlencoded; charset=UTF-8"), formBody).isSuccess)
+        }
+
+        "an absent Content-Type is accepted" in {
+            assert(decode(jsonRoute, Absent, jsonBody).isSuccess)
+            assert(decode(formRoute, Absent, formBody).isSuccess)
         }
     }
 
@@ -1870,7 +1911,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 }
             }
 
-            "a boundary string inside part data is not a delimiter unless it follows CRLF" in {
+            "a boundary string inside part data is not a delimiter unless it starts a line" in {
                 val body =
                     "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx--b y\r\n--b\r\nContent-Disposition: form-data; name=\"g\"\r\n\r\nz\r\n--b--\r\n"
                 parts(spans(body)).map { ps =>
@@ -1921,6 +1962,279 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             end match
         }
 
+        "decodeBufferedRequest reads part header names in any ASCII case" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val body  =
+                "--b\r\nCONTENT-DISPOSITION: form-data; name=\"file\"; filename=\"test.txt\"\r\ncontent-type: text/plain\r\n\r\nhello\r\n--b--\r\n"
+            val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Success(request) =>
+                    val parts = request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                    assert(parts.size == 1)
+                    assert(parts(0).name == "file")
+                    assert(parts(0).filename == Present("test.txt"))
+                    assert(parts(0).contentType == Present("text/plain"))
+                case Result.Failure(err) => fail(s"decode failed: $err")
+                case p: Result.Panic     => throw p.exception
+            end match
+        }
+
+        "part Content-Disposition is read in the HTML standard's form-data encoding" - {
+            def partsOf(sections: String*)(using kyo.test.AssertScope): Seq[HttpRequest.Part] =
+                val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+                val body    = sections.map(s => s"--b\r\n$s").mkString("", "", "--b--\r\n")
+                val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
+                val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+                RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                    case Result.Success(request) => request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                    case Result.Failure(err)     => fail(s"decode failed: $err")
+                    case p: Result.Panic         => throw p.exception
+                end match
+            end partsOf
+
+            def streamedPartsOf(sections: String*)(using Frame): Seq[HttpRequest.Part] < (Async & Abort[HttpException]) =
+                val route   = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+                val body    = sections.map(s => s"--b\r\n$s").mkString("", "", "--b--\r\n")
+                val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
+                val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+                Abort.get(RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize))
+                    .map(_.fields.body.run)
+            end streamedPartsOf
+
+            "a backslash is a backslash, and %22, %0D and %0A read as a quote, CR and LF" in {
+                val parts = partsOf("Content-Disposition: form-data; name=\"f%22\"; filename=\"C:\\docs\\%22q3%22%0D%0A.pdf\"\r\n\r\nx\r\n")
+                assert(parts.map(p => (p.name, p.filename)) == Seq(("f\"", Present("C:\\docs\\\"q3\"\r\n.pdf"))))
+            }
+
+            "a raw UTF-8 filename reads intact" in {
+                val parts = partsOf("Content-Disposition: form-data; name=\"f\"; filename=\"résumé.pdf\"\r\n\r\nx\r\n")
+                assert(parts.map(_.filename) == Seq(Present("résumé.pdf")))
+            }
+
+            "a disposition in another shape leaves its part nameless, and the part is dropped with the others kept" in {
+                val parts = partsOf(
+                    "Content-Disposition: form-data; filename=\"a.txt\"; name=\"f\"\r\n\r\nx\r\n",
+                    "Content-Disposition: form-data;name=f;filename=a.txt\r\n\r\nx\r\n",
+                    "Content-Disposition: form-data; name=\"g\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf\r\n\r\nx\r\n",
+                    "Content-Disposition: ;;; not a disposition\r\n\r\nx\r\n",
+                    "Content-Disposition: form-data; name=\"kept\"\r\n\r\ny\r\n"
+                )
+                assert(parts.map(_.name) == Seq("kept"))
+            }
+
+            "the streaming reader reads the same dispositions" in {
+                streamedPartsOf(
+                    "Content-Disposition: form-data; filename=\"a.txt\"; name=\"dropped\"\r\n\r\nx\r\n",
+                    "Content-Disposition: form-data; name=\"g\"; filename=\"C:\\a%22b.txt\"\r\n\r\ny\r\n"
+                ).map { parts =>
+                    assert(parts.map(p => (p.name, p.filename)) == Seq(("g", Present("C:\\a\"b.txt"))))
+                }
+            }
+        }
+
+        "the part writer writes name and filename in the HTML standard's form-data encoding" - {
+            // Encodes one part through the client's request encoder and reads the wire back through the server's reader.
+            def roundTrip(part: HttpRequest.Part)(using Frame): (String, Seq[HttpRequest.Part]) < (Sync & Abort[HttpException]) =
+                val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+                val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow).addField("body", Seq(part))
+                var headers = HttpHeaders.empty
+                var body    = Span.empty[Byte]
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => (),
+                    onBuffered = (_, actualHeaders, actualBody) =>
+                        headers = actualHeaders
+                        body = actualBody
+                    ,
+                    onStreaming = (_, _, _) => ()
+                ).map { _ =>
+                    val wire = new String(body.toArrayUnsafe, "UTF-8")
+                    RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, body) match
+                        case Result.Success(decoded) => (wire, decoded.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]])
+                        case other                   => throw new IllegalStateException(s"decode failed: $other")
+                }
+            end roundTrip
+
+            "a quote in a filename is %22 and cannot start a second parameter (CVE-2026-59921's class)" in {
+                val filename = "x\"; filename=\"evil.exe"
+                roundTrip(HttpRequest.Part("f", Present(filename), Absent, Span.fromUnsafe("d".getBytes("UTF-8")))).map { (wire, parts) =>
+                    assert(wire.contains("Content-Disposition: form-data; name=\"f\"; filename=\"x%22; filename=%22evil.exe\"\r\n"), wire)
+                    assert(parts.map(_.filename) == Seq(Present(filename)))
+                }
+            }
+
+            "a backslash is written as it is, as a browser writes a Windows path, and reads back" in {
+                roundTrip(HttpRequest.Part("f", Present("C:\\docs\\a.txt"), Absent, Span.fromUnsafe("d".getBytes("UTF-8")))).map {
+                    (wire, parts) =>
+                        assert(wire.contains("; filename=\"C:\\docs\\a.txt\"\r\n"), wire)
+                        assert(parts.map(_.filename) == Seq(Present("C:\\docs\\a.txt")))
+                }
+            }
+
+            "a non-ASCII filename goes out as raw UTF-8 in the quoted string (RFC 7578 section 4.2 forbids filename*) and reads back intact" in {
+                roundTrip(HttpRequest.Part("f", Present("résumé.pdf"), Absent, Span.fromUnsafe("d".getBytes("UTF-8")))).map {
+                    (wire, parts) =>
+                        assert(wire.contains("; filename=\"résumé.pdf\"\r\n"), wire)
+                        assert(!wire.contains("filename*"), wire)
+                        assert(parts.map(_.filename) == Seq(Present("résumé.pdf")))
+                }
+            }
+
+            "a CR or LF in a filename is written as %0D and %0A, never as a line break in the part's headers, and reads back (CVE-2026-59921)" in {
+                val filename = "a\r\nContent-Type: text/evil\r\n\r\nb"
+                val written  = "a%0D%0AContent-Type: text/evil%0D%0A%0D%0Ab"
+                roundTrip(HttpRequest.Part("f", Present(filename), Present("text/plain"), Span.fromUnsafe("d".getBytes("UTF-8")))).map {
+                    (wire, parts) =>
+                        val headerBlock = wire.substring(0, wire.indexOf("\r\n\r\n"))
+                        val headerLines = headerBlock.split("\r\n").toSeq
+                        assert(headerLines.length == 3, wire) // the delimiter line, Content-Disposition, Content-Type
+                        assert(headerLines.last == "Content-Type: text/plain", wire)
+                        assert(headerBlock.contains(s"filename=\"$written\""), wire)
+                        assert(parts.map(p => (p.filename, p.contentType)) == Seq((Present(filename), Present("text/plain"))))
+                }
+            }
+
+            "a part Content-Type that is not a media type fails the encode and never reaches the wire" in {
+                val forged = Seq("text/plain\r\nX-Injected: 1", "text/plain\r\n\r\nforged", "text/plain\nX-Injected: 1", "not a type")
+                Kyo.foreach(forged) { contentType =>
+                    Abort.run[HttpException](
+                        roundTrip(HttpRequest.Part("f", Absent, Present(contentType), Span.fromUnsafe("d".getBytes("UTF-8"))))
+                    ).map(result => (contentType, result))
+                }.map { results =>
+                    results.foreach { (contentType, result) =>
+                        assert(
+                            result match
+                                case Result.Failure(_: HttpInvalidFieldException) => true
+                                case _                                            => false
+                            ,
+                            s"$contentType: $result"
+                        )
+                    }
+                    succeed
+                }
+            }
+
+            "a part whose data holds the boundary at the start of a line fails the encode, since it would read back split" in {
+                val route     = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+                val colliding = Seq("--b\r\nforged", "x\r\n--b\r\ny", "x\n--b--")
+                Kyo.foreach(colliding) { data =>
+                    val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                        .setHeader("Content-Type", "multipart/form-data; boundary=b")
+                        .addField("body", Seq(HttpRequest.Part("f", Absent, Absent, Span.fromUnsafe(data.getBytes("UTF-8")))))
+                    Abort.run[HttpException](RouteUtil.encodeRequest(route, request)(
+                        onEmpty = (_, _) => (),
+                        onBuffered = (_, _, _) => (),
+                        onStreaming = (_, _, _) => ()
+                    )).map(result => (data, result))
+                }.map { results =>
+                    results.foreach { (data, result) =>
+                        assert(
+                            result match
+                                case Result.Failure(_: HttpInvalidFieldException) => true
+                                case _                                            => false
+                            ,
+                            s"${data.replace("\r", "\\r").replace("\n", "\\n")}: $result"
+                        )
+                    }
+                    succeed
+                }
+            }
+
+            "data holding the boundary mid-line is written and reads back whole" in {
+                val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+                val data    = "a --b--\r\n x--b"
+                val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
+                    .setHeader("Content-Type", "multipart/form-data; boundary=b")
+                    .addField("body", Seq(HttpRequest.Part("f", Absent, Absent, Span.fromUnsafe(data.getBytes("UTF-8")))))
+                var headers = HttpHeaders.empty
+                var body    = Span.empty[Byte]
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => (),
+                    onBuffered = (_, h, b) =>
+                        headers = h
+                        body = b
+                    ,
+                    onStreaming = (_, _, _) => ()
+                ).map { _ =>
+                    val decoded = RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, body)
+                        .map(_.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]].map(p => new String(p.data.toArrayUnsafe, "UTF-8")))
+                    assert(decoded == Result.succeed(Seq(data)), s"$decoded")
+                }
+            }
+
+            "a part Content-Type is written as kyo-mime renders the media type" in {
+                roundTrip(HttpRequest.Part("f", Absent, Present("text/plain;charset=utf-8"), Span.fromUnsafe("d".getBytes("UTF-8")))).map {
+                    (wire, parts) =>
+                        assert(wire.contains("\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nd\r\n"), wire)
+                        assert(parts.map(_.contentType) == Seq(Present("text/plain; charset=utf-8")))
+                }
+            }
+
+            "a quote in a name is %22 and reads back" in {
+                roundTrip(HttpRequest.Part("na\"me", Absent, Absent, Span.fromUnsafe("d".getBytes("UTF-8")))).map { (wire, parts) =>
+                    assert(wire.contains("name=\"na%22me\"\r\n"), wire)
+                    assert(parts.map(_.name) == Seq("na\"me"))
+                }
+            }
+
+            "a plain part is written with both values quoted, as a browser writes them" in {
+                roundTrip(HttpRequest.Part(
+                    "file",
+                    Present("report.txt"),
+                    Present("text/plain"),
+                    Span.fromUnsafe("d".getBytes("UTF-8"))
+                )).map {
+                    (wire, _) =>
+                        assert(
+                            wire.contains(
+                                "Content-Disposition: form-data; name=\"file\"; filename=\"report.txt\"\r\nContent-Type: text/plain\r\n\r\nd\r\n"
+                            ),
+                            wire
+                        )
+                }
+            }
+        }
+
+        "a delimiter is `--boundary` at the start of a line (RFC 2046 section 5.1.1)" - {
+            def partsOfBody(body: String)(using kyo.test.AssertScope): Seq[(String, String)] =
+                val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+                val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
+                val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+                RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                    case Result.Success(request) =>
+                        request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                            .map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8")))
+                    case Result.Failure(err) => fail(s"decode failed: $err")
+                    case p: Result.Panic     => throw p.exception
+                end match
+            end partsOfBody
+
+            "the delimiter bytes in the middle of a line are data" in {
+                val parts = partsOfBody("--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx--b y\r\n--b--\r\n")
+                assert(parts == Seq(("f", "x--b y")))
+            }
+
+            "the delimiter bytes at the start of a line inside a part end it, after a bare LF too" in {
+                val parts = partsOfBody(
+                    "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nline1\n--b\r\nContent-Disposition: form-data; name=\"g\"\r\n\r\ny\r\n--b--\r\n"
+                )
+                assert(parts == Seq(("f", "line1"), ("g", "y")))
+            }
+
+            "a part's data keeps the CR LF it ends with, only the delimiter's own line end is removed" in {
+                val parts = partsOfBody("--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx\r\n\r\n--b--\r\n")
+                assert(parts == Seq(("f", "x\r\n")))
+            }
+
+            "a preamble holding the delimiter bytes mid-line is skipped, and the close delimiter may carry padding" in {
+                val parts = partsOfBody(
+                    "preamble --b here\r\n--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx\r\n--b--  \r\nepilogue\r\n"
+                )
+                assert(parts == Seq(("f", "x")))
+            }
+        }
+
         "decodeBufferedRequest accepts a quoted case-insensitive boundary after another parameter" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
             val body  =
@@ -1954,20 +2268,115 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             end match
         }
 
-        "decodeBufferedRequest rejects an unquoted boundary containing a MIME tspecial" in {
+        "decodeBufferedRequest reads an unquoted boundary containing a MIME tspecial, since the body was written with it" in {
             val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
             val body    = "--abc:def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc:def--\r\n"
             val bytes   = Span.fromUnsafe(body.getBytes("UTF-8"))
             val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc:def")
 
             RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
+                case Result.Success(request) =>
+                    val parts = request.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]]
+                    assert(parts.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))) == Seq(("field", "value")))
+                case other => fail(s"expected the unquoted boundary to be read as written, got $other")
+            end match
+        }
+
+        "decodeBufferedRequest rejects a Content-Type that is not a media type" in {
+            val route   = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            val bytes   = Span.fromUnsafe("--abc\r\n\r\n--abc--\r\n".getBytes("UTF-8"))
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart; boundary=abc")
+
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, headers, bytes) match
                 case Result.Failure(_: HttpMissingBoundaryException) => succeed
-                case other => fail(s"expected an unquoted MIME tspecial to fail with HttpMissingBoundaryException, got $other")
+                case other => fail(s"expected a value with no subtype to fail with HttpMissingBoundaryException, got $other")
             end match
         }
     }
 
     "multipart streaming decoding" - {
+        val boundaryHeaders = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+
+        def streamedParts(body: Array[Byte], chunkSize: Int)(using
+            Frame,
+            kyo.test.AssertScope
+        ): Result[HttpException, Seq[HttpRequest.Part]] < Async =
+            val route  = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val chunks = body.grouped(chunkSize).map(c => Span.fromUnsafe(c)).toSeq
+            val stream = Stream.init[Span[Byte], Async & Abort[HttpException]](chunks)
+            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, boundaryHeaders, stream, maxPartSize) match
+                case Result.Success(request) => Abort.run[HttpException](request.fields.body.run).map(_.map(_.toSeq))
+                case other                   => fail(s"decode failed: $other")
+        end streamedParts
+
+        def bufferedParts(body: Array[Byte])(using kyo.test.AssertScope): Result[HttpException, Seq[HttpRequest.Part]] =
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipart)
+            RouteUtil.decodeBufferedRequest(route, Dict.empty[String, String], Absent, boundaryHeaders, Span.fromUnsafe(body))
+                .map(_.fields.dict("body").asInstanceOf[Seq[HttpRequest.Part]])
+        end bufferedParts
+
+        def shape(parts: Seq[HttpRequest.Part]): Seq[(String, Maybe[String], Maybe[String], Seq[Byte])] =
+            parts.map(p => (p.name, p.filename, p.contentType, p.data.toArrayUnsafe.toSeq))
+
+        "a delimiter is `--boundary` at the start of a line, after CRLF or a bare LF (RFC 2046 section 5.1.1)" in {
+            val body = "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx--b y\nline2\n--b\r\n" +
+                "Content-Disposition: form-data; name=\"g\"\r\n\r\nz\r\n--b--\r\n"
+            streamedParts(body.getBytes("UTF-8"), 7).map { result =>
+                assert(result.map(_.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8")))) ==
+                    Result.succeed(Seq(("f", "x--b y\nline2"), ("g", "z"))))
+            }
+        }
+
+        "every chunking of a body reads the parts the buffered reader reads" in {
+            val binary = Array[Byte](0, -1, 13, 10, 45, 45, 98, -61, -87, 13)
+            val body   =
+                "preamble --b\r\n--b\r\nContent-Disposition: form-data; name=\"a\"; filename=\"résumé.bin\"\r\n" +
+                    "Content-Type: application/octet-stream\r\n\r\n"
+            val rest =
+                "\r\n--b\r\nContent-Disposition: form-data; name=\"t\"\r\n\r\n  padded été  \r\n\r\n" +
+                    "--b\nContent-Disposition: form-data; name=\"u\"\r\n\r\nafter a bare LF\r\n--b--  \r\nepilogue --b\r\n"
+            val bytes    = body.getBytes("UTF-8") ++ binary ++ rest.getBytes("UTF-8")
+            val unclosed = body.getBytes("UTF-8") ++ binary ++
+                "\r\n--b\nContent-Disposition: form-data; name=\"u\"\r\n\r\nno close\r\n"
+                    .getBytes("UTF-8")
+            val bodies = Seq(bytes, unclosed)
+            assert(bufferedParts(bytes).map(_.map(_.name)) == Result.succeed(Seq("a", "t", "u")))
+            assert(bufferedParts(unclosed).map(_.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))).last) ==
+                Result.succeed(("u", "no close\r\n")))
+            Kyo.foreach(bodies) { b =>
+                Kyo.foreach(1 to b.length)(size => streamedParts(b, size).map(result => (b, size, result)))
+            }.map { results =>
+                results.flatten.foreach { (b, size, result) =>
+                    assert(
+                        result.map(shape) == bufferedParts(b).map(shape),
+                        s"chunk size $size of a ${b.length}-byte body: streamed ${result.map(shape)}, buffered ${bufferedParts(b).map(shape)}"
+                    )
+                }
+                succeed
+            }
+        }
+
+        "a CR or LF in a part header outside a CRLF fails the body, streamed and buffered" in {
+            val body = "--b\r\nContent-Disposition: form-data; name=\"f\"\r\nContent-Type: text/plain\nX-Injected: 1\r\n\r\nd\r\n--b--\r\n"
+            val buffered = bufferedParts(body.getBytes("UTF-8"))
+            assert(
+                buffered match
+                    case Result.Failure(_: HttpMalformedBodyException) => true
+                    case _                                             => false
+                ,
+                s"$buffered"
+            )
+            streamedParts(body.getBytes("UTF-8"), 5).map { streamed =>
+                assert(
+                    streamed match
+                        case Result.Failure(_: HttpMalformedBodyException) => true
+                        case _                                             => false
+                    ,
+                    s"$streamed"
+                )
+            }
+        }
+
         "decodeStreamingRequest accepts a quoted case-insensitive boundary after another parameter" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val body  =
@@ -1988,7 +2397,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             end match
         }
 
-        "decodeStreamingRequest rejects a quoted boundary with invalid trailing whitespace" in {
+        "decodeStreamingRequest reads a quoted boundary with trailing whitespace without it (RFC 2046: a boundary cannot end in a space)" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val body  =
                 "--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n"
@@ -1997,12 +2406,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc \"")
 
             RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
-                case Result.Failure(_: HttpMissingBoundaryException) => succeed
-                case other => fail(s"expected an invalid quoted boundary to fail with HttpMissingBoundaryException, got $other")
+                case Result.Success(request) =>
+                    request.fields.body.run.map { parts =>
+                        assert(parts.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))) == Seq(("field", "value")))
+                    }
+                case other => fail(s"expected the boundary to be read as abc, got $other")
             end match
         }
 
-        "decodeStreamingRequest rejects an unquoted boundary containing whitespace" in {
+        "decodeStreamingRequest reads an unquoted boundary containing whitespace, since the body was written with it" in {
             val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val body  =
                 "--abc def\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc def--\r\n"
@@ -2010,8 +2422,11 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc def")
 
             RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
-                case Result.Failure(_: HttpMissingBoundaryException) => succeed
-                case other => fail(s"expected unquoted whitespace to fail with HttpMissingBoundaryException, got $other")
+                case Result.Success(request) =>
+                    request.fields.body.run.map { parts =>
+                        assert(parts.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))) == Seq(("field", "value")))
+                    }
+                case other => fail(s"expected the unquoted boundary to be read as written, got $other")
             end match
         }
     }
@@ -2104,6 +2519,41 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                     assert(all.contains("--"), "should contain boundary markers")
                     val lastBoundaryIdx = all.lastIndexOf("--")
                     assert(all.substring(lastBoundaryIdx - 2).contains("--\r\n"), "should end with closing boundary --boundary--")
+                }
+            }
+        }
+
+        "a streamed part whose Content-Type is not a media type fails the stream after the parts before it" in {
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val parts: kyo.Stream[HttpRequest.Part, kyo.Async & Abort[HttpException]] = kyo.Stream.init(Seq(
+                HttpRequest.Part("ok", Absent, Present("text/plain"), Span.fromUnsafe("a".getBytes("UTF-8"))),
+                HttpRequest.Part("bad", Absent, Present("text/plain\r\nX-Injected: 1"), Span.fromUnsafe("b".getBytes("UTF-8")))
+            ))
+            val request = HttpRequest(
+                HttpMethod.POST,
+                HttpUrl.parse("http://localhost/upload").getOrThrow,
+                HttpHeaders.empty,
+                Record.empty
+            ).addField("body", parts)
+
+            var stream: kyo.Stream[Span[Byte], kyo.Async & Abort[HttpException]] = null
+            RouteUtil.encodeRequest(route, request)(
+                onEmpty = (_, _) => fail("expected streaming"),
+                onBuffered = (_, _, _) => fail("expected streaming"),
+                onStreaming = (_, _, s) => stream = s
+            ).map { _ =>
+                val written = new StringBuilder
+                Abort.run[HttpException](stream.foreach(span => discard(written.append(new String(span.toArrayUnsafe, "UTF-8"))))).map {
+                    result =>
+                        assert(
+                            result match
+                                case Result.Failure(_: HttpInvalidFieldException) => true
+                                case _                                            => false
+                            ,
+                            s"$result"
+                        )
+                        assert(written.toString.contains("name=\"ok\""), written.toString)
+                        assert(!written.toString.contains("X-Injected"), written.toString)
                 }
             }
         }

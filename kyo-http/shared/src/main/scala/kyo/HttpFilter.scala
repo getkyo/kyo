@@ -131,7 +131,7 @@ object HttpFilter:
                 )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     request.fields.authorization match
                         case Present(auth)
-                            if auth.length > 6 && auth.regionMatches(true, 0, "Basic ", 0, 6) =>
+                            if auth.length > 6 && kyo.internal.Ascii.startsWithIgnoreCase(auth, "Basic ") =>
                             try
                                 val decoded = new String(
                                     java.util.Base64.getDecoder.decode(auth.substring(6)),
@@ -165,7 +165,7 @@ object HttpFilter:
                 )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     request.fields.authorization match
                         case Present(auth)
-                            if auth.length > 7 && auth.regionMatches(true, 0, "Bearer ", 0, 7) =>
+                            if auth.length > 7 && kyo.internal.Ascii.startsWithIgnoreCase(auth, "Bearer ") =>
                             validate(auth.substring(7)).map { valid =>
                                 if valid then next(request)
                                 else Abort.fail(unauthorizedBearer)

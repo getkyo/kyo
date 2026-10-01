@@ -1,6 +1,7 @@
 package kyo.internal.codec
 
 import kyo.*
+import kyo.internal.Ascii
 import scala.annotation.publicInBinary
 import scala.quoted.*
 
@@ -402,11 +403,11 @@ private[kyo] object OpenApiMacro:
         val parts = path.split("/").filter(_.nonEmpty).map { segment =>
             if segment.startsWith("{") && segment.endsWith("}") then
                 val name = segment.drop(1).dropRight(1)
-                name.take(1).toUpperCase + name.drop(1)
+                Ascii.toUpper(name.take(1)) + name.drop(1)
             else
-                segment.take(1).toUpperCase + segment.drop(1)
+                Ascii.toUpper(segment.take(1)) + segment.drop(1)
         }
-        method.toLowerCase + parts.mkString
+        Ascii.toLower(method) + parts.mkString
     end generateOperationName
 
 end OpenApiMacro

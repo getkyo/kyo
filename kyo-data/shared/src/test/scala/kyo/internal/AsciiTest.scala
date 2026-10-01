@@ -7,6 +7,7 @@ class AsciiTest extends kyo.test.Test[Any]:
     private val dottedCapitalI  = 'İ'
     private val dotlessSmallI   = 'ı'
     private val kelvinSign      = '\u212a'
+    private val longS           = '\u017f'
     private val arabicIndicOne  = '١'
     private val fullwidthDigit1 = '\uff11'
 
@@ -91,6 +92,21 @@ class AsciiTest extends kyo.test.Test[Any]:
             assert(Ascii.parseDigits(s"$arabicIndicOne") == Absent)
             assert(Ascii.parseDigits(s"$fullwidthDigit1") == Absent)
             assert(Ascii.parseDigits("1234567890") == Absent)
+        }
+    }
+
+    "startsWithIgnoreCase" - {
+        "folds ASCII letters over the prefix's length" in {
+            assert(Ascii.startsWithIgnoreCase("Content-Type: text/plain", "content-type:"))
+            assert(Ascii.startsWithIgnoreCase("CONTENT-TYPE: text/plain", "content-type:"))
+            assert(Ascii.startsWithIgnoreCase("abc", "abc"))
+            assert(Ascii.startsWithIgnoreCase("abc", ""))
+        }
+        "rejects a shorter text, a different prefix and non-ASCII folds" in {
+            assert(!Ascii.startsWithIgnoreCase("content-typ", "content-type:"))
+            assert(!Ascii.startsWithIgnoreCase("content-type text", "content-type:"))
+            assert(!Ascii.startsWithIgnoreCase(s"${kelvinSign}eep-alive:", "keep-alive:"))
+            assert(!Ascii.startsWithIgnoreCase(s"${longS}et-cookie:", "set-cookie:"))
         }
     }
 

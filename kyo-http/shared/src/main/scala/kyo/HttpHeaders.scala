@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.Ascii
 import scala.annotation.tailrec
 
 /** Immutable HTTP header collection with zero-copy parsing and case-insensitive name lookups.
@@ -37,6 +38,15 @@ object HttpHeaders:
 
     /** The `tchar` symbols of RFC 9110 section 5.6.2, alongside DIGIT and ALPHA. */
     private val TokenSymbols = "!#$%&'*+-.^_`|~"
+
+    private val MaxWholeSeconds = Long.MaxValue / 1000000000L
+
+    // `digits` is a non-empty string of ASCII digits; a value a Duration cannot hold saturates rather than wrapping.
+    private def deltaSeconds(digits: String): Duration =
+        if digits.length > 18 then Duration.Infinity
+        else
+            val seconds = digits.toLong
+            if seconds > MaxWholeSeconds then Duration.Infinity else seconds.seconds
 
     val empty: HttpHeaders = Chunk.empty[String]
 
@@ -106,8 +116,8 @@ object HttpHeaders:
             @tailrec def loop(i: Int): Boolean =
                 if i >= len then true
                 else
-                    val a = (packed(off + i) & 0xff).toChar.toLower
-                    val b = name.charAt(i).toLower
+                    val a = Ascii.toLower((packed(off + i) & 0xff).toChar)
+                    val b = Ascii.toLower(name.charAt(i))
                     if a != b then false
                     else loop(i + 1)
             loop(0)
@@ -194,7 +204,7 @@ object HttpHeaders:
                 built =>
                     @tailrec def loop(i: Int): Maybe[String] =
                         if i >= built.length then Absent
-                        else if built(i).equalsIgnoreCase(name) then Present(built(i + 1))
+                        else if Ascii.equalsIgnoreCase(built(i), name) then Present(built(i + 1))
                         else loop(i + 2)
                     loop(0)
                 ,
@@ -203,7 +213,7 @@ object HttpHeaders:
                         if !it.hasNext then Absent
                         else
                             val kv = it.next()
-                            if kv._1.equalsIgnoreCase(name) then Present(kv._2)
+                            if Ascii.equalsIgnoreCase(kv._1, name) then Present(kv._2)
                             else loop(it)
                     loop(pairs.iterator)
             )
@@ -231,14 +241,14 @@ object HttpHeaders:
                 built =>
                     @tailrec def loop(i: Int): Unit =
                         if i < built.length then
-                            if built(i).equalsIgnoreCase(name) then
+                            if Ascii.equalsIgnoreCase(built(i), name) then
                                 discard(builder += built(i + 1))
                             loop(i + 2)
                     loop(0)
                 ,
                 pairs =>
                     pairs.foreach { kv =>
-                        if kv._1.equalsIgnoreCase(name) then
+                        if Ascii.equalsIgnoreCase(kv._1, name) then
                             discard(builder += kv._2)
                     }
             )
@@ -263,11 +273,11 @@ object HttpHeaders:
                 built =>
                     @tailrec def loop(i: Int): Boolean =
                         if i >= built.length then false
-                        else if built(i).equalsIgnoreCase(name) then true
+                        else if Ascii.equalsIgnoreCase(built(i), name) then true
                         else loop(i + 2)
                     loop(0)
                 ,
-                pairs => pairs.exists(_._1.equalsIgnoreCase(name))
+                pairs => pairs.exists(kv => Ascii.equalsIgnoreCase(kv._1, name))
             )
         end contains
 
@@ -287,7 +297,7 @@ object HttpHeaders:
             val builder                     = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
                 if i < chunk.length then
-                    if !chunk(i).equalsIgnoreCase(name) then
+                    if !Ascii.equalsIgnoreCase(chunk(i), name) then
                         discard(builder += chunk(i))
                         discard(builder += chunk(i + 1))
                     loop(i + 2)
@@ -312,7 +322,7 @@ object HttpHeaders:
             val builder                     = ChunkBuilder.init[String]
             @tailrec def loop(i: Int): Unit =
                 if i < chunk.length then
-                    if !chunk(i).equalsIgnoreCase(name) then
+                    if !Ascii.equalsIgnoreCase(chunk(i), name) then
                         discard(builder += chunk(i))
                         discard(builder += chunk(i + 1))
                     loop(i + 2)
@@ -442,6 +452,32 @@ object HttpHeaders:
                 pairs => pairs.foldLeft(init)((acc, kv) => f(acc, kv._1, kv._2))
             )
         end foldLeft
+
+        // --- Retry-After ---
+
+        /** The wait a `Retry-After` header (RFC 9110 section 10.2.3) asks for, read against `now`: delta-seconds as they are, an HTTP date
+          * as the time from the reference to it, zero when it has passed. `Absent` when the header is missing or is neither form.
+          *
+          * The reference for a date is the response's own `Date` header when it parses, else `now`: the wait a server means is its date
+          * minus its own notion of now, which `Date` carries, so reading it against `now` alone would turn the skew between the two clocks
+          * into a wrong wait (RFC 9111 section 4.2.3 corrects `Age` the same way). delta-seconds is digits only, no sign, and a value past
+          * what a `Duration` holds is `Duration.Infinity`.
+          */
+        def retryAfter(now: Instant): Maybe[Duration] =
+            self.get("Retry-After").flatMap { value =>
+                val text = value.trim
+                if text.nonEmpty && text.forall(Ascii.isDigit) then Present(deltaSeconds(text))
+                else
+                    HttpDate.parse(text).map { at =>
+                        val reference = self.get("Date").flatMap(HttpDate.parse).getOrElse(now)
+                        at.minusOrZero(reference)
+                    }
+                end if
+            }
+
+        /** [[retryAfter]] against the ambient clock's now. */
+        def retryAfter(using Frame): Maybe[Duration] < Sync =
+            Clock.now.map(now => self.retryAfter(now))
 
         // --- Cookies ---
 

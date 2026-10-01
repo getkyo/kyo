@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.Ascii
 import scala.annotation.tailrec
 
 /** Parsed URL with structured access to scheme, host, port, path, and query parameters.
@@ -138,7 +139,7 @@ object HttpUrl:
 
     /** True for the schemes that ride TLS: `https` and the secure WebSocket scheme `wss`. */
     private[kyo] def isTlsScheme(scheme: String): Boolean =
-        scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("wss")
+        Ascii.equalsIgnoreCase(scheme, "https") || Ascii.equalsIgnoreCase(scheme, "wss")
 
     /** The default port for a scheme: 443 for the TLS schemes (`https`, `wss`), 80 otherwise (`http`, `ws`). */
     private def schemeDefaultPort(scheme: String): Int =
@@ -216,13 +217,13 @@ object HttpUrl:
                 // SSRF surface, so only the HTTP family, the WebSocket schemes HttpClient.webSocket upgrades from, and the urllib3
                 // Unix-socket variants are accepted.
                 if !isScheme(scheme) then Result.fail(Reason.InvalidScheme)
-                else if !SupportedSchemes.contains(scheme.toLowerCase) then Result.fail(Reason.UnsupportedScheme(scheme))
+                else if !SupportedSchemes.contains(Ascii.toLower(scheme)) then Result.fail(Reason.UnsupportedScheme(scheme))
                 else
                     val start = schemeEnd + 3
                     val end   = authorityEnd(url, start)
                     checkComponents(url, end).flatMap { _ =>
                         val remaining = if end >= url.length then "/" else url.substring(end)
-                        if scheme.toLowerCase.endsWith("+unix") then unixUrl(url, scheme, start, end, remaining)
+                        if Ascii.toLower(scheme).endsWith("+unix") then unixUrl(url, scheme, start, end, remaining)
                         else tcpUrl(url, scheme, start, end, remaining)
                     }
                 end if
@@ -290,7 +291,7 @@ object HttpUrl:
         if end == start then Result.fail(Reason.EmptyHost)
         else
             checkChars(url, start, end, isRegName, Reason.InvalidAuthority(_)).map { _ =>
-                val normalized = scheme.toLowerCase.stripSuffix("+unix")
+                val normalized = Ascii.toLower(scheme).stripSuffix("+unix")
                 val socketPath = internal.PercentEncoding.decode(url.substring(start, end), internal.PercentEncoding.Mode.Component)
                 splitPathQuery(remaining) { (path, query) =>
                     HttpUrl(Present(normalized), "localhost", schemeDefaultPort(normalized), path, query, Present(socketPath))

@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.Http1ClientConnection
+import kyo.internal.server.RouteUtil
 import kyo.net.Connection.Status
 import kyo.net.TestChannelTransport
 import kyo.net.internal.transport.Connection as TransportConnection
@@ -629,7 +630,7 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
                             if streaming then
                                 val route = HttpRoute.getRaw("s").response(_.bodyStream)
                                 val req   = HttpRequest.getRaw(HttpUrl.fromUri("/s"))
-                                backend.sendStreaming(conn, route, req, 1 << 20, Absent, Absent).safe.get.map(
+                                backend.sendStreaming(conn, route, req, 1 << 20, RouteUtil.BodyPlan.Direct, Absent).safe.get.map(
                                     _.fields.body.foreach(span =>
                                         received.updateAndGet(_ + new String(span.toArrayUnsafe, StandardCharsets.US_ASCII)).unit
                                     )
@@ -637,7 +638,9 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
                             else
                                 val route = HttpRoute.getRaw("b").response(_.bodyText)
                                 val req   = HttpRequest.getRaw(HttpUrl.fromUri("/b"))
-                                backend.sendBuffered(conn, route, req, 1 << 20, Absent).safe.get.map(res => received.set(res.fields.body))
+                                backend.sendBuffered(conn, route, req, 1 << 20, RouteUtil.BodyPlan.Direct).safe.get.map(res =>
+                                    received.set(res.fields.body)
+                                )
                         Abort.run[HttpException](exchange).map(result => received.get.map(text => (text, result)))
                     }
                 }

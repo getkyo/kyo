@@ -202,7 +202,7 @@ val responseText =
     }
 ```
 
-Outbound multipart encoding generates one boundary and applies it to both the `Content-Type` header and body, so callers normally should not set `Content-Type` manually. Valid supplied boundaries are preserved; invalid supplied boundaries are replaced.
+Outbound multipart encoding generates one boundary and applies it to both the `Content-Type` header and body, so callers normally should not set `Content-Type` manually. A supplied boundary is preserved and written quoted when it is not a token; one that cannot be a boundary at all (RFC 2046: empty, over 70 characters, a character outside its set) is replaced, and trailing whitespace inside a quoted one is dropped. A part's `name` and `filename` go out the way a browser writes them, in the HTML standard's form-data encoding: quoted, in UTF-8, with `"`, CR and LF as `%22`, `%0D` and `%0A` and nothing else escaped, so a Windows path keeps its backslashes; on the way in, `Content-Disposition` is read the same way. A part whose `Content-Type` is not a media type, or whose data holds `--boundary` at the start of a line, fails the encode with `HttpInvalidFieldException`.
 
 ### Configuration
 
@@ -246,6 +246,17 @@ HttpClient.withConfig(
 By default, `retryOn` matches server errors (5xx). Retries are only active when a schedule is provided.
 
 `timeout` (5 seconds by default) bounds the whole request, retries included, until the callback of `sendWith` returns. A streamed body consumed inside that callback is under it. The streams `getStreamBytes`, `getSseJson`, `getSseText` and `getNdJson` return are consumed after their request completed at the head, so `timeout` bounds the head and not the body; a body that stops arriving ends with the connection, or with the consumer's own deadline.
+
+A 429 or 503 often says when to come back. `HttpHeaders.retryAfter` reads the `Retry-After` header as a `Maybe[Duration]`, delta-seconds or an HTTP date, the date against the response's own `Date` header when it has one so the two clocks' skew does not change the wait; pass the instant to read it against, or call it with no argument to read against the ambient `Clock`. `HttpDate` parses the three date forms of RFC 9110 and renders the one a sender writes:
+
+```scala
+HttpClient.getTextResponse("/users/1", failOnError = false).map { response =>
+    response.headers.retryAfter.map {
+        case Present(wait) => Async.sleep(wait)
+        case Absent        => Kyo.unit
+    }
+}
+```
 
 ### Custom Instances
 
@@ -903,7 +914,7 @@ val echo =
     }
 ```
 
-Call `ws.close(code, reason)` to initiate a close handshake (defaults to code `1000`). After the connection closes, `put` and `take` fail with `Abort[Closed]`, and `ws.closeReason` returns the code and reason sent by the peer. `HttpWebSocket.Config` tunes the connection: `bufferSize` (channel capacity, default 32), `maxFrameSize` (default 16 MiB), `autoPingInterval` for keep-alive pings, `closeTimeout`, and `subprotocols`. Pass it to either `HttpClient.webSocket(url, headers, config)` or `HttpHandler.webSocket(path, config)`.
+Call `ws.close(code, reason)` to initiate a close handshake (defaults to code `1000`). After the connection closes, `put` and `take` fail with `Abort[Closed]`, and `ws.closeReason` returns the code and reason sent by the peer. `HttpWebSocket.Config` tunes the connection: `bufferSize` (channel capacity, default 32), `maxFrameSize` (default 16 MiB), `maxMessageSize` (the bound on a message reassembled from fragments, default 16 MiB), `autoPingInterval` for keep-alive pings, `closeTimeout`, and `subprotocols`. Pass it to either `HttpClient.webSocket(url, headers, config)` or `HttpHandler.webSocket(path, config)`.
 
 WebSocket-specific failures are represented by `HttpWebSocketException`. A server that answers the upgrade with any status other than 101 fails the client with `HttpWebSocketHandshakeException`, carrying the URL (without its query) and that status; an answer that is not an HTTP/1.x status line, or a 101 with a wrong `Sec-WebSocket-Accept` or an unoffered subprotocol, is an `HttpProtocolException`. A client filter or `Halt` that rejects the upgrade surfaces `HttpStatusException`.
 

@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.*
+import kyo.internal.server.RouteUtil
 import kyo.net.TestChannelTransport
 import kyo.net.internal.transport.Connection as TransportConnection
 import scala.language.implicitConversions
@@ -57,7 +58,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber                = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, Absent, Present(bodyOutcome))
+            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { requestSpan =>
                 assert(spanToString(requestSpan).startsWith("GET /drip HTTP/1.1\r\n"))
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
@@ -74,7 +75,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                         resp.fields.body.run.map { chunks =>
                             assert(chunks.foldLeft("")(_ + spanToString(_)) == "chunk1chunk2")
                             // A clean connection serves a subsequent buffered request correctly.
-                            val respFiber2 = backend.sendBuffered(conn, plainRoute, plainReq, 1024 * 1024, Absent)
+                            val respFiber2 = backend.sendBuffered(conn, plainRoute, plainReq, 1024 * 1024, RouteUtil.BodyPlan.Direct)
                             serverConn.inbound.safe.take.map { _ =>
                                 discard(serverConn.outbound.offer(spanOf(plainHeaders)))
                                 discard(serverConn.outbound.offer(spanOf(plainBody)))
@@ -94,7 +95,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber                = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, Absent, Present(bodyOutcome))
+            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { _ =>
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
                 // Enough body chunks to fill the decoded channel and leave the decoder blocked in `put`, and deliberately no
@@ -136,7 +137,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber                = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, Absent, Present(bodyOutcome))
+            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { _ =>
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
                 discard(serverConn.outbound.offer(spanOf(chunk1)))

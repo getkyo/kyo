@@ -195,27 +195,43 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
 
     "encodeFrameHeader" - {
         "small payload (< 126)" in {
-            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, mask = false)
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, Absent)
             assert(h.size == 2)
             assert((h(0) & 0xff) == 0x81) // FIN + text
             assert((h(1) & 0xff) == 5)
         }
 
         "medium payload (126-65535)" in {
-            val h = WebSocketCodec.encodeFrameHeader(0x1, 300, mask = false)
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 300, Absent)
             assert(h.size == 4)
             assert((h(1) & 0x7f) == 126)
         }
 
         "large payload (> 65535)" in {
-            val h = WebSocketCodec.encodeFrameHeader(0x1, 70000, mask = false)
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 70000, Absent)
             assert(h.size == 10)
             assert((h(1) & 0x7f) == 127)
         }
 
-        "mask adds 4 bytes" in {
-            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, mask = true)
-            assert(h.size == 2 + 4) // header + mask key
+        "a masking key sets the mask bit and follows the length, most significant byte first" in {
+            val h = WebSocketCodec.encodeFrameHeader(0x1, 5, Present(0x12345678))
+            assert(h.size == 2 + 4)
+            assert((h(1) & 0x80) == 0x80)
+            assert(h.slice(2, 6).toArrayUnsafe.toSeq == Seq[Byte](0x12, 0x34, 0x56, 0x78))
+        }
+
+        "the masking key is the first four drawn bytes; a short draw leaves the rest zero instead of failing" in {
+            assert(WebSocketCodec.maskKey(Span.fromUnsafe(Array[Byte](0x12, 0x34, 0x56, 0x78, -0x66))) == 0x12345678)
+            assert(WebSocketCodec.maskKey(Span.fromUnsafe(Array[Byte](-1, 1))) == 0xff010000)
+            assert(WebSocketCodec.maskKey(Span.empty[Byte]) == 0)
+        }
+
+        "mask and unmask with the same key's bytes agree" in {
+            val payload = Span.fromUnsafe("hello, frame".getBytes("UTF-8"))
+            val masked  = WebSocketCodec.maskPayload(payload, 0x12345678)
+            val bytes   = Span.fromUnsafe(Array[Byte](0x12, 0x34, 0x56, 0x78))
+            assert(WebSocketCodec.unmask(masked, bytes).toArrayUnsafe.toSeq == payload.toArrayUnsafe.toSeq)
+            assert(masked.toArrayUnsafe.toSeq != payload.toArrayUnsafe.toSeq)
         }
     }
 
@@ -243,32 +259,91 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
 
     // ── Fragmented messages (continuation frames) ──────────────
 
-    "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
-            "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
-        ) in {
-            // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
-            // The first frame carries the opcode (text or binary) with FIN=0; subsequent
-            // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
-            // opcode 0x0 with FIN=1. WebSocketCodec.readFrameWith should reassemble
-            // the concatenated payload and yield a single Payload value with the
-            // original text opcode.
-            //
-            // Current behavior: readFrameWith delivers each frame raw (opcode 0x1 for
-            // the first, 0x0 for the continuations), and maxFrameSize is checked per
-            // individual frame. The kyo-http 16 MiB default is a per-frame pragmatic
-            // ceiling; proper reassembly is the follow-up.
-            val frame1 = makeFrame(opcode = 0x1, fin = false, payload = "AAA".getBytes(Utf8))
-            val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
-            val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
-            val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
-            WebSocketCodec.readFrameWith(mock.read, mock) { (payload, _) =>
-                payload match
-                    case HttpWebSocket.Payload.Text(s) =>
-                        assert(s == "AAABBBCCC")
-                    case other =>
-                        fail(s"expected Text payload with reassembled content, got $other")
+    // Frames here are unmasked server frames, so they are read in the client role (mask = true).
+    private def readClientMessage(bytes: Array[Byte], maxFrameSize: Int = Int.MaxValue, maxMessageSize: Int = Int.MaxValue)(using
+        Frame
+    ): (Result[Closed, HttpWebSocket.Payload], MockConn) < Async =
+        val conn = new MockConn(bytes)
+        Abort.run[Closed](
+            WebSocketCodec.readFrameWith(conn.read, conn, maxFrameSize, maxMessageSize, _ => Kyo.unit, mask = true)((frame, _) => frame)
+        ).map(result => (result, conn))
+    end readClientMessage
+
+    "fragmented messages (continuation frames) reassemble into a single message (RFC 6455 section 5.4)" - {
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1" in {
+            val frames = makeFrame(0x1, fin = false, "AAA".getBytes(Utf8)) ++
+                makeFrame(0x0, fin = false, "BBB".getBytes(Utf8)) ++
+                makeFrame(0x0, fin = true, "CCC".getBytes(Utf8))
+            readClientMessage(frames).map { (result, _) =>
+                assert(result == Result.succeed(HttpWebSocket.Payload.Text("AAABBBCCC")), s"got $result")
             }
+        }
+
+        "a binary message keeps its opcode and every fragment's bytes" in {
+            val frames = makeFrame(0x2, fin = false, Array[Byte](1, 2, 3)) ++ makeFrame(0x0, fin = true, Array[Byte](4, 5, 6))
+            readClientMessage(frames).map {
+                case (Result.Success(HttpWebSocket.Payload.Binary(data)), _) =>
+                    assert(data.toArrayUnsafe.toSeq == Seq[Byte](1, 2, 3, 4, 5, 6))
+                case (other, _) => fail(s"expected one Binary message, got $other")
+            }
+        }
+
+        "a UTF-8 character split across fragments decodes whole" in {
+            // U+20AC is E2 82 AC; the first fragment ends inside it.
+            val frames = makeFrame(0x1, fin = false, Array[Byte](0x61, 0xe2.toByte)) ++
+                makeFrame(0x0, fin = true, Array[Byte](0x82.toByte, 0xac.toByte, 0x62))
+            readClientMessage(frames).map { (result, _) =>
+                assert(result == Result.succeed(HttpWebSocket.Payload.Text("a€b")), s"got $result")
+            }
+        }
+
+        "a Ping between fragments is answered and the message still reassembles" in {
+            val frames = makeFrame(0x1, fin = false, "AB".getBytes(Utf8)) ++
+                makeFrame(0x9, fin = true, "p".getBytes(Utf8)) ++
+                makeFrame(0x0, fin = true, "CD".getBytes(Utf8))
+            readClientMessage(frames).map { (result, conn) =>
+                assert(result == Result.succeed(HttpWebSocket.Payload.Text("ABCD")), s"got $result")
+                assert(conn.written.headOption.contains((0x80 | 0xa).toByte), "the Ping is answered with a Pong")
+            }
+        }
+
+        // Each malformed stream below is followed by a valid text frame, so a reader that tolerates the violation delivers
+        // "abc" and the assertion discriminates.
+
+        "a continuation frame with no message to continue is a protocol error" in {
+            val frames = makeFrame(0x0, fin = true, "xyz".getBytes(Utf8)) ++ makeFrame(0x1, fin = true, "abc".getBytes(Utf8))
+            readClientMessage(frames).map { (result, _) =>
+                assert(result.isFailure, s"an orphan continuation must fail the connection, got $result")
+            }
+        }
+
+        "a new data frame before the fragmented message completes is a protocol error" in {
+            val frames = makeFrame(0x1, fin = false, "AB".getBytes(Utf8)) ++ makeFrame(0x1, fin = true, "abc".getBytes(Utf8))
+            readClientMessage(frames).map { (result, _) =>
+                assert(result.isFailure, s"a data frame inside a fragmented message must fail the connection, got $result")
+            }
+        }
+
+        "a reassembled message larger than maxMessageSize is refused though every frame fits maxFrameSize" in {
+            val frames = makeFrame(0x1, fin = false, "AAA".getBytes(Utf8)) ++
+                makeFrame(0x0, fin = false, "BBB".getBytes(Utf8)) ++
+                makeFrame(0x0, fin = true, "CCC".getBytes(Utf8))
+            for
+                over <- readClientMessage(frames, maxFrameSize = 4, maxMessageSize = 8)
+                fits <- readClientMessage(frames, maxFrameSize = 4, maxMessageSize = 9)
+            yield
+                assert(over._1.isFailure, s"a 9-byte message must be refused under an 8-byte cap, got ${over._1}")
+                assert(fits._1 == Result.succeed(HttpWebSocket.Payload.Text("AAABBBCCC")), s"got ${fits._1}")
+            end for
+        }
+    }
+
+    // RFC 6455 section 5.2: RSV1-3 MUST be 0 unless an extension defining them was negotiated, and kyo-http negotiates none.
+    "a frame with a reserved bit set is a protocol error" in {
+        val rsv1   = Array[Byte]((0x80 | 0x40 | 0x01).toByte, 3) ++ "xyz".getBytes(Utf8)
+        val frames = rsv1 ++ makeFrame(0x1, fin = true, "abc".getBytes(Utf8))
+        readClientMessage(frames).map { (result, _) =>
+            assert(result.isFailure, s"a frame with RSV1 set must fail the connection, got $result")
         }
     }
 
@@ -281,7 +356,14 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 val readConn = new MockConn(writeConn.written)
                 // The written frame is unmasked (a server-to-client frame), so it is read in the client role (mask =
                 // true), which expects unmasked incoming frames per RFC 6455 section 5.1.
-                Abort.run[Closed](WebSocketCodec.readFrameWith(readConn.read, readConn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                Abort.run[Closed](WebSocketCodec.readFrameWith(
+                    readConn.read,
+                    readConn,
+                    Int.MaxValue,
+                    Int.MaxValue,
+                    _ => Kyo.unit,
+                    mask = true
+                )(
                     (
                         frame,
                         _
@@ -326,7 +408,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             // a 4-byte cap, so the SIZE check is what fires.
             val frame = makeFrame(0x1, fin = true, "hello".getBytes(Utf8))
             val conn  = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
                 result =>
                     assert(result.isFailure)
             }
@@ -391,7 +475,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         "rejects a masked server frame in the client role (Tomcat Bug 69844)" in {
             val masked = makeMaskedFrame(0x1, fin = true, "hello".getBytes(Utf8))
             val conn   = new MockConn(masked)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)(
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, Int.MaxValue, _ => Kyo.unit, mask = true)(
                 (
                     frame,
                     _
@@ -417,8 +501,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 0x00.toByte
             )
             val conn = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map { result =>
                 assert(result.isFailure)
             }
@@ -445,8 +530,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             )
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map {
                 case Result.Failure(_: Closed) => succeed("a negative declared length was rejected")
                 case other                     => fail(s"a negative declared length was accepted, got $other")
@@ -473,8 +559,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             ) ++ payload
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the length check fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-                frame
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, Int.MaxValue, _ => Kyo.unit, mask = true)(
+                (frame, _) =>
+                    frame
             )).map {
                 case Result.Failure(_: Closed) => succeed("a length exceeding Int range was rejected")
                 case other                     => fail(s"a 2^32+100 length was truncated to 100 and accepted, got $other")
@@ -498,7 +585,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             )
             val conn = new MockConn(frame)
             // Client role (mask = true) so the unmasked attack frame passes the masking check and the cap is what fires.
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = true)((frame, _) => frame)).map {
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+                frame
+            )).map {
                 case Result.Failure(_: Closed) => succeed("a 65536-byte frame was rejected against a 4-byte cap")
                 case other                     => fail(s"a 65536-byte frame passed a 4-byte cap, got $other")
             }
@@ -703,8 +792,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         val textFrame   = Array[Byte]((0x80 | 0x01).toByte, textPayload.length.toByte) ++ textPayload
 
         val conn = new MockConn(pingFrame ++ textFrame)
-        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
-            frame
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, Int.MaxValue, _ => Kyo.unit, mask = true)(
+            (frame, _) =>
+                frame
         )).map {
             case Result.Success(HttpWebSocket.Payload.Text(text)) =>
                 assert(text == "after-ping")
@@ -803,6 +893,71 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
     "parseResponseSubprotocol returns Absent when header absent" in {
         val r = WebSocketCodec.parseResponseSubprotocol(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+        )
+        assert(r.isEmpty)
+    }
+
+    "keys come from the ambient SecureRandom (RFC 6455 section 5.3)" - {
+        // Hands out the bytes 0, 1, 2, ... across calls, so a leaf can name the bytes the codec must have drawn and in which order.
+        def counting: SecureRandom =
+            var next = 0
+            SecureRandom(
+                new SecureRandom.Unsafe:
+                    def nextBytes(length: Int)(using AllowUnsafe): Span[Byte] =
+                        val bytes = Array.tabulate(length)(i => (next + i).toByte)
+                        next += length
+                        Span.fromUnsafe(bytes)
+                    end nextBytes
+            )
+        end counting
+
+        "the client's Sec-WebSocket-Key is the base64 of 16 bytes from the generator" in {
+            val conn = new MockConn(Array.empty[Byte])
+            SecureRandom.let(counting) {
+                Abort.run[HttpException] {
+                    WebSocketCodec.requestUpgradeWith(conn, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                }
+            }.map { _ =>
+                val expected = java.util.Base64.getEncoder.encodeToString(Array.tabulate(16)(_.toByte))
+                assert(conn.writtenString.contains(s"Sec-WebSocket-Key: $expected\r\n"), conn.writtenString)
+            }
+        }
+
+        "a client frame's masking key is the next 4 bytes from the generator, and the payload is masked with it" in {
+            val conn = new MockConn(Array.empty[Byte])
+            val data = Span.fromUnsafe(Array[Byte](10, 20, 30, 40, 50))
+            SecureRandom.let(counting) {
+                WebSocketCodec.writeFrame(conn, HttpWebSocket.Payload.Binary(data), mask = true)
+            }.map { _ =>
+                val written = conn.written
+                assert(written.length == 2 + 4 + 5, written.toSeq.toString)
+                assert(written(1) == (0x80 | 5).toByte)
+                assert(written.slice(2, 6).toSeq == Seq[Byte](0, 1, 2, 3))
+                assert(written.slice(6, 11).toSeq == Seq(10 ^ 0, 20 ^ 1, 30 ^ 2, 40 ^ 3, 50 ^ 0).map(_.toByte))
+            }
+        }
+
+        "a server frame draws nothing" in {
+            val conn  = new MockConn(Array.empty[Byte])
+            var drew  = false
+            val noisy = SecureRandom(
+                new SecureRandom.Unsafe:
+                    def nextBytes(length: Int)(using AllowUnsafe): Span[Byte] =
+                        drew = true
+                        Span.fromUnsafe(new Array[Byte](length))
+            )
+            SecureRandom.let(noisy) {
+                WebSocketCodec.writeFrame(conn, HttpWebSocket.Payload.Text("hi"), mask = false)
+            }.map { _ =>
+                assert(!drew)
+                assert(conn.written.length == 2 + 2)
+            }
+        }
+    }
+
+    "parseResponseSubprotocol does not read a header named with U+212A (Kelvin sign) as Sec-WebSocket-Protocol" in {
+        val r = WebSocketCodec.parseResponseSubprotocol(
+            "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocKet-Protocol: chat\r\n\r\n"
         )
         assert(r.isEmpty)
     }

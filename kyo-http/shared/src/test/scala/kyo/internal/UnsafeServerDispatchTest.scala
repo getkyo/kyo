@@ -642,19 +642,65 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
-        "Date header cached per second" in {
-            val date1 = UnsafeServerDispatch.currentDate()
-            val date2 = UnsafeServerDispatch.currentDate()
-            // Two calls within the same second should return the exact same String reference
-            assert(date1 eq date2, s"Expected cached (same reference) Date strings, got '$date1' and '$date2'")
+        "a response whose multipart part Content-Type cannot go on the wire is answered 500, none of it written" in {
+            type MultipartOutput = "body" ~ Seq[HttpRequest.Part]
+            val base                                            = HttpRoute.getRaw("parts")
+            val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
+                base.method,
+                base.request,
+                HttpRoute.ResponseDef[MultipartOutput](
+                    fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.Multipart, ""))
+                )
+            )
+            val handler = route.handler { _ =>
+                HttpResponse.ok.addField(
+                    "body",
+                    Seq(HttpRequest.Part("f", Absent, Present("text/plain\r\nX-Injected: 1"), Span.fromUnsafe("d".getBytes("UTF-8"))))
+                )
+            }
+            val router   = HttpRouter(Seq(handler), Absent)
+            val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+            val outbound = Channel.Unsafe.init[Span[Byte]](16)
+
+            val request = "GET /parts HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            discard(inbound.offer(Span.fromUnsafe(request.getBytes(StandardCharsets.US_ASCII))))
+
+            Clock.withTimeControl { _ =>
+                Clock.use { clock =>
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, clock = clock)
+
+                    collectResponse(outbound).map { response =>
+                        assert(response.startsWith("HTTP/1.1 500 "), response)
+                        assert(!response.contains("X-Injected"), response)
+                        assert(!response.contains("form-data"), response)
+                    }
+                }
+            }
         }
 
-        "Date header format matches RFC 9110" in {
-            val date = UnsafeServerDispatch.currentDate()
-            // RFC 9110 date format: "Wed, 09 Jun 2021 10:18:14 GMT"
-            // Pattern: 3-letter day, comma, space, 2-digit day, space, 3-letter month, space, 4-digit year, space, HH:MM:SS, space, GMT
-            val rfc9110Pattern = """[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT""".r
-            assert(rfc9110Pattern.findFirstIn(date).isDefined, s"Date '$date' does not match RFC 9110 format")
+        "Date header value is the IMF-fixdate of the second (RFC 9110 section 5.6.7)" in {
+            val cache = new UnsafeServerDispatch.DateCache
+            assert(cache.at(784111777L) == Present("Sun, 06 Nov 1994 08:49:37 GMT"))
+            assert(cache.at(784111778L) == Present("Sun, 06 Nov 1994 08:49:38 GMT"))
+        }
+
+        "Date header value is rendered once per second and shared within it" in {
+            val cache  = new UnsafeServerDispatch.DateCache
+            val first  = cache.at(1623233894L)
+            val again  = cache.at(1623233894L)
+            val next   = cache.at(1623233895L)
+            val before = cache.at(1623233894L)
+            assert(first == Present("Wed, 09 Jun 2021 10:18:14 GMT"))
+            assert(first.exists(a => again.exists(_ eq a)), s"expected the cached reference, got $first and $again")
+            assert(next == Present("Wed, 09 Jun 2021 10:18:15 GMT"))
+            assert(before == first, "a second asked again after another renders the same text")
+        }
+
+        "no Date header value for a second outside the years an HTTP date names" in {
+            val cache = new UnsafeServerDispatch.DateCache
+            assert(cache.at(253402300800L) == Absent)
+            assert(cache.at(Long.MaxValue) == Absent)
+            assert(cache.at(Long.MinValue + 1) == Absent)
         }
 
         "Content-Length exceeds max returns 413" in {

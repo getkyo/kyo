@@ -3199,7 +3199,7 @@ lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`, `kyo-crypto`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`, `kyo-crypto`, `kyo-mime`)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(

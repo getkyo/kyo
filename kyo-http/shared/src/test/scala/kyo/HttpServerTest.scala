@@ -4068,23 +4068,37 @@ class HttpServerTest extends BaseHttpTest:
     }
 
     "init under interruption" - {
-        // A listener nobody closes holds its port for good, so the re-bind never succeeds and the leaf ends as its timeout.
-        "a server whose owning fiber is interrupted releases its port".times(80) in {
-            val route                            = HttpRoute.getRaw("test").response(_.bodyText)
-            val handler                          = route.handler(_ => HttpResponse.ok("hello"))
-            def bind(port: Int): Boolean < Async =
-                Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
+        "a server's close completes once its listener's descriptor is released, not before" in {
+            import AllowUnsafe.embrace.danger
+            val gate      = Promise.Unsafe.init[Unit, Any]()
+            val transport = new kyo.net.GatedReleaseTransport(kyo.net.NetPlatform.transport, gate)
+            val handler   = HttpRoute.getRaw("test").response(_.bodyText).handler(_ => HttpResponse.ok("hello"))
             for
-                bound <- Promise.init[Int, Any]
+                server  <- HttpServer.Unsafe.init(transport, loopback, Seq(handler), Clock.live).safe.get
+                closing <- Sync.Unsafe.defer(server.closeFiber(Duration.Zero))
+                early   <- Sync.Unsafe.defer(closing.done())
+                _       <- Sync.Unsafe.defer(gate.completeDiscard(Result.succeed(())))
+                _       <- closing.safe.get
+            yield assert(!early, "the server's close completed while its listener's descriptor was still held")
+            end for
+        }
+
+        // The server's close completes only once its listener has released the port (the leaf above), so the close completing is the
+        // release; a listener nobody closes never completes it and the leaf ends at its cap. Binding the port again would race any
+        // concurrent leaf that the OS hands the freed ephemeral port.
+        "a server whose owning fiber is interrupted releases its port".times(80) in {
+            val handler = HttpRoute.getRaw("test").response(_.bodyText).handler(_ => HttpResponse.ok("hello"))
+            for
+                bound <- Promise.init[HttpServer, Any]
                 fiber <- Fiber.initUnscoped(Scope.run(
-                    HttpServer.init(loopback)(handler).map(server => bound.completeDiscard(Result.succeed(server.port))).andThen(
+                    HttpServer.init(loopback)(handler).map(server => bound.completeDiscard(Result.succeed(server))).andThen(
                         Async.never
                     )
                 ))
-                port <- bound.get
-                _    <- fiber.interrupt
-                _    <- fiber.getResult
-                _    <- assertEventually(bind(port))
+                server <- bound.get
+                _      <- fiber.interrupt
+                _      <- fiber.getResult
+                _      <- server.await
             yield succeed
             end for
         }

@@ -152,4 +152,37 @@ class HttpFilterTest extends BaseHttpTest:
         }
     }
 
+    "server auth schemes fold ASCII case only" - {
+        val credentials = java.util.Base64.getEncoder.encodeToString("u:p".getBytes("UTF-8"))
+
+        def basic(authorization: String)(using Frame): Result[Any, Maybe[String]] < Async =
+            val request = req.addField("authorization", Present(authorization): Maybe[String])
+            Abort.run[Any](
+                HttpFilter.server.basicAuth((_, _) => true)(request, r => HttpResponse.ok.setHeader("X-User", r.fields.user))
+            ).map(_.map(_.headers.get("X-User")))
+        end basic
+
+        def bearer(authorization: String)(using Frame): Result[Any, Unit] < Async =
+            val request = req.addField("authorization", Present(authorization): Maybe[String])
+            Abort.run[Any](HttpFilter.server.bearerAuth(_ => true)(request, _ => HttpResponse.ok)).map(_.unit)
+        end bearer
+
+        "Basic in any ASCII case is accepted" in {
+            basic(s"bAsIc $credentials").map(result => assert(result == Result.succeed(Present("u"))))
+        }
+
+        "Basic spelled with U+017F (long s) or U+0131 (dotless i) is refused" in {
+            for
+                longS    <- basic(s"Baſic $credentials")
+                dotlessI <- basic(s"BASıC $credentials")
+            yield
+                assert(longS.isFailure, s"$longS")
+                assert(dotlessI.isFailure, s"$dotlessI")
+        }
+
+        "Bearer in any ASCII case is accepted" in {
+            bearer("bEaReR token").map(result => assert(result == Result.unit))
+        }
+    }
+
 end HttpFilterTest

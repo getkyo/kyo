@@ -222,4 +222,20 @@ class HttpUrlTest extends BaseHttpTest:
         }
     }
 
+    "scheme" - {
+        "folds ASCII case" in {
+            val url = HttpUrl.parse("HTTPS://example.com/").getOrThrow
+            assert(url.ssl)
+            assert(url.port == 443)
+        }
+
+        "a scheme spelled with U+017F (long s) is not https" in {
+            assert(reason("http\u017F://example.com/") == Present(Reason.InvalidScheme))
+        }
+
+        "a Unix socket scheme spelled with U+017F (long s) is not https+unix" in {
+            assert(reason("http\u017F+unix://%2Ftmp%2Fsock/") == Present(Reason.InvalidScheme))
+        }
+    }
+
 end HttpUrlTest

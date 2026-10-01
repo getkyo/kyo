@@ -1032,4 +1032,24 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    "sameOrigin folds ASCII case only" - {
+        "scheme and host fold ASCII letters" in {
+            val a = HttpUrl.parse("HTTPS://Example.com/a").getOrThrow
+            val b = HttpUrl.parse("https://example.COM/b").getOrThrow
+            assert(HttpClientBackend.sameOrigin(a, b))
+        }
+
+        "a host spelled with U+017F (long s) is another origin" in {
+            val a = HttpUrl.parse("https://host.example/").getOrThrow
+            val b = HttpUrl.parse("https://hoſt.example/").getOrThrow
+            assert(!HttpClientBackend.sameOrigin(a, b))
+        }
+
+        "a host spelled with U+212A (Kelvin sign) is another origin" in {
+            val a = HttpUrl.parse("https://kyo.example/").getOrThrow
+            val b = HttpUrl.parse("https://Kyo.example/").getOrThrow
+            assert(!HttpClientBackend.sameOrigin(a, b))
+        }
+    }
+
 end HttpClientBackendTest

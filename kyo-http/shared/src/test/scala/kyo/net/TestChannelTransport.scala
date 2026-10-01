@@ -179,3 +179,63 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
     private[net] def capabilities: TransportCapabilities =
         TransportCapabilities(Set.empty, unixSockets = false, tlsCloseReason = false)
 end DeferredConnectTransport
+
+/** A real transport whose TCP listeners report `released` only once the OS has released the descriptor and the test has completed
+  * `gate`, so a leaf can hold a listener's release open and observe what waits on it.
+  */
+final class GatedReleaseTransport(underlying: Transport, gate: Fiber.Unsafe[Unit, Any]) extends Transport:
+
+    def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] = underlying.connect(host, port, connectTimeout, config)
+
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: NetConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] = underlying.connectTls(host, port, tls, connectTimeout, config)
+
+    def connectUnix(path: String, connectTimeout: Duration, config: NetConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] = underlying.connectUnix(path, connectTimeout, config)
+
+    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] = underlying.stdio(channelCapacity, readChunkSize)
+
+    def listen(host: String, port: Int, backlog: Int, config: NetConfig)(handler: Connection => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Listener, Abort[NetException]] =
+        underlying.listen(host, port, backlog, config)(handler).map(listener => GatedReleaseListener(listener, gate))
+
+    def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: NetConfig)(handler: Connection => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Listener, Abort[NetException]] = underlying.listenTls(host, port, backlog, tls, config)(handler)
+
+    def listenUnix(path: String, backlog: Int, config: NetConfig)(handler: Connection => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Listener, Abort[NetException]] = underlying.listenUnix(path, backlog, config)(handler)
+
+    def upgradeToTls(conn: Connection, tls: NetTlsConfig, channelCapacity: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] = underlying.upgradeToTls(conn, tls, channelCapacity)
+
+    private[net] def capabilities: TransportCapabilities = underlying.capabilities
+end GatedReleaseTransport
+
+final class GatedReleaseListener(underlying: Listener, gate: Fiber.Unsafe[Unit, Any])(using AllowUnsafe) extends Listener:
+    private val gated = Promise.Unsafe.init[Unit, Any]()
+    underlying.released.onComplete(_ => gate.onComplete(_ => gated.completeDiscard(Result.succeed(()))))
+
+    def port: Int                                            = underlying.port
+    def host: String                                         = underlying.host
+    def address: NetAddress                                  = underlying.address
+    def close()(using AllowUnsafe, Frame): Unit              = underlying.close()
+    def released(using AllowUnsafe): Fiber.Unsafe[Unit, Any] = gated
+end GatedReleaseListener

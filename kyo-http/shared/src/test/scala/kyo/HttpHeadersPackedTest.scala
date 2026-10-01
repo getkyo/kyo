@@ -210,4 +210,11 @@ class HttpHeadersPackedTest extends BaseHttpTest:
         }
     }
 
+    "name lookup folds ASCII case only, the same as the chunk form" in {
+        val h = parsedHeaders("ſet-Cookie" -> "a=1", "Keep-Alive" -> "timeout=5", "Content-Type" -> "text/plain")
+        assert(h.get("Set-Cookie") == Absent)
+        assert(h.get("Keep-Alive") == Absent)
+        assert(h.get("CONTENT-TYPE") == Present("text/plain"))
+    }
+
 end HttpHeadersPackedTest

@@ -353,13 +353,14 @@ object HttpUrlParseException:
     end Reason
 end HttpUrlParseException
 
-/** A message body could not be decoded because its transfer framing is malformed: a chunk-size line with an embedded
-  * CR or LF, a bare-LF line ending, an invalid chunk size, or a missing CRLF after chunk data. Accepting such framing
-  * lets a recipient disagree with an upstream about where the body ends, a request-smuggling desync (RFC 9112 section
-  * 7.1.1; CVE-2025-22871, CVE-2026-2332, CVE-2026-33870).
+/** A message body could not be decoded because its framing is malformed: a chunk-size line with an embedded CR or LF, a
+  * bare-LF line ending, an invalid chunk size, or a missing CRLF after chunk data; or a multipart part whose header block
+  * holds a CR or LF outside a CRLF or never ends in CRLF CRLF. Accepting such framing lets a recipient disagree with an
+  * upstream about where the body ends, a request-smuggling desync (RFC 9112 section 7.1.1; CVE-2025-22871, CVE-2026-2332,
+  * CVE-2026-33870), or which headers a part carries.
   */
 case class HttpMalformedBodyException private[kyo] (detail: String)(using Frame)
-    extends HttpDecodeException(s"Malformed chunked body framing: $detail.")
+    extends HttpDecodeException(s"Malformed body framing: $detail.")
 
 /** Failed to decode a path capture, query parameter, header, or cookie field. */
 case class HttpFieldDecodeException private (

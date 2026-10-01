@@ -1,11 +1,6 @@
 package kyo.internal.server
 
 import java.nio.charset.StandardCharsets
-import java.time.Instant
-import java.time.ZonedDateTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.http1.*
@@ -45,25 +40,37 @@ private[kyo] object UnsafeServerDispatch:
 
     // -- Date header caching (RFC 9110 section 6.6.1) --
 
-    private val dateFormatter: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.ENGLISH)
+    /** The Date header value of the last second asked for, so every response in one second shares one rendered string. */
+    final private[internal] class DateCache:
+        // One value, so a reader never pairs one second with another second's text.
+        @volatile private var line: DateCache.Line = DateCache.Line(Long.MinValue, Absent)
 
-    @volatile private var cachedDateSecond: Long  = 0L
-    @volatile private var cachedDateValue: String = ""
+        /** The Date header value for `epochSecond`; `Absent` outside the years an HTTP date can name. */
+        def at(epochSecond: Long): Maybe[String] =
+            val cached = line
+            if cached.second == epochSecond then cached.value
+            else
+                val inJavaRange =
+                    epochSecond >= java.time.Instant.MIN.getEpochSecond && epochSecond <= java.time.Instant.MAX.getEpochSecond
+                val value =
+                    if inJavaRange then HttpDate.render(Instant.fromJava(java.time.Instant.ofEpochSecond(epochSecond)))
+                    else Absent
+                line = DateCache.Line(epochSecond, value)
+                value
+            end if
+        end at
+    end DateCache
 
-    /** Returns the current Date header value, cached per second. */
-    private[internal] def currentDate(): String =
-        val nowSecond = java.lang.System.currentTimeMillis() / 1000
-        if nowSecond != cachedDateSecond then
-            val dt = ZonedDateTime.ofInstant(
-                Instant.ofEpochSecond(nowSecond),
-                ZoneOffset.UTC
-            )
-            cachedDateValue = dateFormatter.format(dt)
-            cachedDateSecond = nowSecond
-        end if
-        cachedDateValue
-    end currentDate
+    private[internal] object DateCache:
+        final case class Line(second: Long, value: Maybe[String])
+
+    private val dateCache = new DateCache
+
+    /** The Date header value for the current second; `Absent` when the clock is outside the years an HTTP date can name, and an origin
+      * server without a usable clock sends no Date (RFC 9110 section 6.6.1).
+      */
+    private[internal] def currentDate(): Maybe[String] =
+        dateCache.at(java.lang.System.currentTimeMillis() / 1000)
 
     /** Set up parser-driven dispatch for a connection.
       *
@@ -576,6 +583,7 @@ private[kyo] object UnsafeServerDispatch:
                                     stream,
                                     conn,
                                     wsHandler.wsConfig.maxFrameSize,
+                                    wsHandler.wsConfig.maxMessageSize,
                                     (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
                                     mask = false
                                 ) { (frame, remaining) =>
@@ -895,70 +903,19 @@ private[kyo] object UnsafeServerDispatch:
         // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag.
         Abort.run[Any](handlerComputation).map {
             case Result.Success(response) =>
-                endpoint.encodeResponse(response)(
-                    onEmpty = (status, hdrs) =>
-                        Sync.Unsafe.defer {
-                            // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk
-                            // terminator (which belongs only to a chunked response and would desync the next response).
-                            discard(streamCtx.respond(status, hdrs.add("Content-Length", "0")))
-                        },
-                    onBuffered = (status, hdrs, responseBody) =>
-                        Sync.Unsafe.defer {
-                            val withLen = hdrs.add("Content-Length", responseBody.size)
-                            val writer  = streamCtx.respond(status, withLen)
-                            // A HEAD response is bodyless (RFC 9112 section 6.3); the Content-Length head frames it, so
-                            // write the body only for a non-HEAD request and never a chunked terminator.
-                            if !isHead then writer.writeBody(responseBody)
-                        },
-                    onStreaming = (status, hdrs, responseStream) =>
-                        // A response to an HTTP/1.0 request carries no Transfer-Encoding (RFC 9112 section 6.1): its body is the raw
-                        // bytes, delimited by the close that follows it, which the head announces whatever the request asked.
-                        val http10 = streamCtx.request.isHttp10
-                        if isHead then
-                            Sync.Unsafe.defer {
-                                // HEAD mirrors GET's framing header but writes no body and no last-chunk terminator; a HEAD response
-                                // is terminated by the blank line after the head (RFC 9112 section 6.3, RFC 9110 section 9.3.2).
-                                val framed = if http10 then hdrs else hdrs.add("Transfer-Encoding", "chunked")
-                                discard(streamCtx.respond(status, framed))
-                            }
-                        else
-                            Sync.Unsafe.defer {
-                                val framed = if http10 then hdrs else hdrs.add("Transfer-Encoding", "chunked")
-                                if http10 then streamCtx.requestConnectionClose()
-                                val writer = streamCtx.respond(status, framed)
-                                Abort.run[Any](
-                                    responseStream.foreach { chunk =>
-                                        // Closed is NOT swallowed here: it must propagate so a disconnected client aborts the
-                                        // foreach instead of the handler stream being pulled forever into a dead outbound.
-                                        val bytes = if http10 then chunk else Http1StreamContext.formatChunkSpan(chunk)
-                                        putWithinIdleTimeout(streamCtx.outbound, bytes, config.idleTimeout, clock)
-                                    }
-                                ).map { result =>
-                                    // A stream that fails after the head is written has no way to withdraw the 200: the body stays
-                                    // unterminated and the connection is closed, so the peer reads a body cut short (RFC 9112 section
-                                    // 8) instead of a complete one ending in the last chunk.
-                                    result match
-                                        case Result.Panic(t) =>
-                                            Log.error("UnsafeServerDispatch: streaming response error", t).andThen(
-                                                Sync.Unsafe.defer(streamCtx.requestConnectionClose())
-                                            )
-                                        case Result.Failure(_: Closed) =>
-                                            // Routine peer disconnect mid-stream: not an error, so no log noise.
-                                            Sync.Unsafe.defer(if !http10 then writer.finish())
-                                        case Result.Failure(_: Timeout) =>
-                                            // The peer took nothing for a whole window: closed like a peer that stops reading a
-                                            // buffered answer, without an error log.
-                                            Sync.Unsafe.defer(streamCtx.requestConnectionClose())
-                                        case Result.Failure(e) =>
-                                            Log.error(s"UnsafeServerDispatch: streaming response aborted: $e").andThen(
-                                                Sync.Unsafe.defer(streamCtx.requestConnectionClose())
-                                            )
-                                        case Result.Success(_) =>
-                                            Sync.Unsafe.defer(if !http10 then writer.finish())
-                                }
-                            }
-                        end if
-                )
+                // Encoding fails before the head is written, for a multipart part whose Content-Type cannot go on the wire; like an
+                // invalid response header (Http1StreamContext.respond), it fails closed with a bare 500 and a log line.
+                Abort.run[HttpException](encodeResponse(endpoint, response, streamCtx, isHead, config, clock)).map {
+                    case Result.Success(()) => Kyo.unit
+                    case Result.Failure(e)  =>
+                        Log.error(s"UnsafeServerDispatch: cannot encode the response: $e").andThen(
+                            Sync.Unsafe.defer(writeInternalError(streamCtx))
+                        )
+                    case Result.Panic(t) =>
+                        Log.error("UnsafeServerDispatch: response encoding panic", t).andThen(
+                            Sync.Unsafe.defer(writeInternalError(streamCtx))
+                        )
+                }
             case Result.Failure(error) =>
                 error match
                     case halt: HttpResponse.Halt =>
@@ -1077,6 +1034,83 @@ private[kyo] object UnsafeServerDispatch:
                     writePayloadTooLarge(streamCtx)
                 }
             case _ => Kyo.unit
+
+    /** Writes a handler's successful response through the route's encoder: framed by Content-Length when buffered, chunked when
+      * streamed (raw and closed for HTTP/1.0), bodyless for a HEAD request.
+      */
+    private def encodeResponse[Out, E](
+        endpoint: HttpHandler[?, Out, E],
+        response: HttpResponse[Out],
+        streamCtx: Http1StreamContext,
+        isHead: Boolean,
+        config: HttpServerConfig,
+        clock: Clock
+    )(using Frame): Unit < (Async & Abort[HttpException]) =
+        endpoint.encodeResponse(response)(
+            onEmpty = (status, hdrs) =>
+                Sync.Unsafe.defer {
+                    // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk
+                    // terminator (which belongs only to a chunked response and would desync the next response).
+                    discard(streamCtx.respond(status, hdrs.add("Content-Length", "0")))
+                },
+            onBuffered = (status, hdrs, responseBody) =>
+                Sync.Unsafe.defer {
+                    val withLen = hdrs.add("Content-Length", responseBody.size)
+                    val writer  = streamCtx.respond(status, withLen)
+                    // A HEAD response is bodyless (RFC 9112 section 6.3); the Content-Length head frames it, so
+                    // write the body only for a non-HEAD request and never a chunked terminator.
+                    if !isHead then writer.writeBody(responseBody)
+                },
+            onStreaming = (status, hdrs, responseStream) =>
+                // A response to an HTTP/1.0 request carries no Transfer-Encoding (RFC 9112 section 6.1): its body is the raw
+                // bytes, delimited by the close that follows it, which the head announces whatever the request asked.
+                val http10 = streamCtx.request.isHttp10
+                if isHead then
+                    Sync.Unsafe.defer {
+                        // HEAD mirrors GET's framing header but writes no body and no last-chunk terminator; a HEAD response
+                        // is terminated by the blank line after the head (RFC 9112 section 6.3, RFC 9110 section 9.3.2).
+                        val framed = if http10 then hdrs else hdrs.add("Transfer-Encoding", "chunked")
+                        discard(streamCtx.respond(status, framed))
+                    }
+                else
+                    Sync.Unsafe.defer {
+                        val framed = if http10 then hdrs else hdrs.add("Transfer-Encoding", "chunked")
+                        if http10 then streamCtx.requestConnectionClose()
+                        val writer = streamCtx.respond(status, framed)
+                        Abort.run[Any](
+                            responseStream.foreach { chunk =>
+                                // Closed is NOT swallowed here: it must propagate so a disconnected client aborts the
+                                // foreach instead of the handler stream being pulled forever into a dead outbound.
+                                val bytes = if http10 then chunk else Http1StreamContext.formatChunkSpan(chunk)
+                                putWithinIdleTimeout(streamCtx.outbound, bytes, config.idleTimeout, clock)
+                            }
+                        ).map { result =>
+                            // A stream that fails after the head is written has no way to withdraw the 200: the body stays
+                            // unterminated and the connection is closed, so the peer reads a body cut short (RFC 9112 section
+                            // 8) instead of a complete one ending in the last chunk.
+                            result match
+                                case Result.Panic(t) =>
+                                    Log.error("UnsafeServerDispatch: streaming response error", t).andThen(
+                                        Sync.Unsafe.defer(streamCtx.requestConnectionClose())
+                                    )
+                                case Result.Failure(_: Closed) =>
+                                    // Routine peer disconnect mid-stream: not an error, so no log noise.
+                                    Sync.Unsafe.defer(if !http10 then writer.finish())
+                                case Result.Failure(_: Timeout) =>
+                                    // The peer took nothing for a whole window: closed like a peer that stops reading a
+                                    // buffered answer, without an error log.
+                                    Sync.Unsafe.defer(streamCtx.requestConnectionClose())
+                                case Result.Failure(e) =>
+                                    Log.error(s"UnsafeServerDispatch: streaming response aborted: $e").andThen(
+                                        Sync.Unsafe.defer(streamCtx.requestConnectionClose())
+                                    )
+                                case Result.Success(_) =>
+                                    Sync.Unsafe.defer(if !http10 then writer.finish())
+                        }
+                    }
+                end if
+        )
+    end encodeResponse
 
     /** Write a router-level error response (404, 405, OPTIONS). */
     private def writeErrorResponse(streamCtx: Http1StreamContext, error: HttpRouter.FindError)(using AllowUnsafe, Frame): Unit =

@@ -34,6 +34,9 @@ private[kyo] object Ascii:
     def equalsIgnoreCase(a: String, b: String): Boolean =
         a.length == b.length && a.indices.forall(i => toLower(a.charAt(i)) == toLower(b.charAt(i)))
 
+    def startsWithIgnoreCase(text: String, prefix: String): Boolean =
+        text.length >= prefix.length && prefix.indices.forall(i => toLower(text.charAt(i)) == toLower(prefix.charAt(i)))
+
     /** The value of a non-empty string of ASCII digits, when it is one and fits in an `Int`. */
     def parseDigits(text: String): Maybe[Int] =
         if text.isEmpty || text.length > 9 || !text.forall(isDigit) then Absent

@@ -1,6 +1,7 @@
 package kyo.internal.client
 
 import kyo.*
+import kyo.internal.Ascii
 import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.server.RouteUtil
@@ -124,11 +125,11 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
         maxResponseLength: Int,
-        multipartBoundary: Maybe[String]
+        bodyPlan: RouteUtil.BodyPlan
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
+            encodeAndSendDirectWith(conn, route, request, bodyPlan)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
                 onBodyFailure = error => resultPromise.completeDiscard(error),
                 f = (responsePromise, path) =>
@@ -156,12 +157,12 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
         maxResponseLength: Int,
-        multipartBoundary: Maybe[String],
+        bodyPlan: RouteUtil.BodyPlan,
         bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request, multipartBoundary)(
+            encodeAndSendDirectWith(conn, route, request, bodyPlan)(
                 onInvalid = ex =>
                     bodyOutcome.foreach(_.completeDiscard(Result.succeed(false)))
                     resultPromise.completeDiscard(Result.fail(ex))
@@ -250,16 +251,16 @@ final private[kyo] class HttpClientBackend private (
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+        RouteUtil.bodyPlanForRequest(route, request).map { bodyPlan =>
             Sync.Unsafe.defer {
                 val fiber =
                     if request.method == HttpMethod.HEAD then
-                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                        sendBuffered(conn, route, request, maxResponseLength, bodyPlan)
                     else if RouteUtil.isStreamingResponse(route) then
                         // Caller-scoped connection (not pooled): no pool-reuse obligation to defer.
-                        sendStreaming(conn, route, request, maxResponseLength, multipartBoundary, Absent)
+                        sendStreaming(conn, route, request, maxResponseLength, bodyPlan, Absent)
                     else
-                        sendBuffered(conn, route, request, maxResponseLength, multipartBoundary)
+                        sendBuffered(conn, route, request, maxResponseLength, bodyPlan)
                 Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                     onRelease(error)
                 } {
@@ -323,7 +324,7 @@ final private[kyo] class HttpClientBackend private (
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        multipartBoundary: Maybe[String]
+        bodyPlan: RouteUtil.BodyPlan
     )(
         inline onInvalid: HttpException => A,
         inline onBodyFailure: Result.Error[HttpException] => Unit,
@@ -341,7 +342,7 @@ final private[kyo] class HttpClientBackend private (
                 if isDefaultPort || host.isEmpty then host else s"$host:$port"
             else
                 conn.hostHeaderValue
-        RouteUtil.encodeRequestWithBoundary(route, request, multipartBoundary)(
+        RouteUtil.encodeRequestWith(route, request, bodyPlan)(
             onEmpty = (path, headers) =>
                 unsendableField(path, hostHeader, headers) match
                     case Present(ex) => onInvalid(ex)
@@ -1062,6 +1063,7 @@ final private[kyo] class HttpClientBackend private (
                                     stream,
                                     transportStream,
                                     config.maxFrameSize,
+                                    config.maxMessageSize,
                                     (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
                                     mask = true
                                 ) { (frame, remaining) =>
@@ -1369,7 +1371,7 @@ final private[kyo] class HttpClientBackend private (
       * An idle pooled connection can close at any moment, including as it is handed to this request, and the request then meets the close
       * with no response. Such a request is sent once more on a fresh connection when the retry cannot apply it twice to any effect the
       * peer acknowledged (RFC 9110 section 9.2.2): no response byte arrived, its method is idempotent, and its body is re-encoded from the
-      * same request value and boundary rather than a stream. A request on a fresh connection, and the retry itself, are never retried.
+      * same request value and body plan rather than a stream. A request on a fresh connection, and the retry itself, are never retried.
       */
     private def poolWithImpl[In, Out, A](
         route: HttpRoute[In, Out, Any],
@@ -1380,7 +1382,7 @@ final private[kyo] class HttpClientBackend private (
     )(using Frame): A < (Async & Abort[HttpException]) =
         val url = request.url
         val key = request.url.address
-        RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
+        RouteUtil.bodyPlanForRequest(route, request).map { bodyPlan =>
             def answer(
                 lease: Lease,
                 conn: HttpConnection,
@@ -1390,7 +1392,7 @@ final private[kyo] class HttpClientBackend private (
                 responseFiber.safe.use(f).map(result => Sync.Unsafe.defer(lease.release(conn, bodyOutcome)).andThen(result))
 
             def send(lease: Lease, conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, bodyPlan)
                 answer(lease, conn, responseFiber, bodyOutcome)
 
             def sendFresh(lease: Lease)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
@@ -1401,7 +1403,7 @@ final private[kyo] class HttpClientBackend private (
                     Abort.fail(HttpPoolExhaustedException(h, p, maxConnectionsPerHost, clientFrame))
 
             def sendReused(lease: Lease, conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, bodyPlan)
                 responseFiber.safe.getResult.map { result =>
                     Sync.Unsafe.defer {
                         result match
@@ -1477,19 +1479,19 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
         maxResponseLength: Int,
-        multipartBoundary: Maybe[String]
+        bodyPlan: RouteUtil.BodyPlan
     )(using AllowUnsafe, Frame): (Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]], Maybe[Promise.Unsafe[Boolean, Any]]) =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
         if request.method == HttpMethod.HEAD then
-            (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
+            (sendBuffered(conn, route, request, maxResponseLength, bodyPlan), Absent)
         else if RouteUtil.isStreamingResponse(route) then
             // A streaming response body outlives the response fiber (lazy stream at headers time), so its reuse decision travels
             // as a separate promise (true = reusable, false = discard); buffered routes complete their body first, so no obligation (Absent).
             val bodyOutcome = Promise.Unsafe.init[Boolean, Any]()
-            (sendStreaming(conn, route, request, maxResponseLength, multipartBoundary, Present(bodyOutcome)), Present(bodyOutcome))
+            (sendStreaming(conn, route, request, maxResponseLength, bodyPlan, Present(bodyOutcome)), Present(bodyOutcome))
         else
-            (sendBuffered(conn, route, request, maxResponseLength, multipartBoundary), Absent)
+            (sendBuffered(conn, route, request, maxResponseLength, bodyPlan), Absent)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
@@ -1531,16 +1533,16 @@ private[kyo] object HttpClientBackend:
       * Host is compared case-insensitively because a DNS name is case-insensitive. Port needs no default-filling here because `HttpUrl.parse`
       * already resolves an absent port to the scheme's default, so `https://h` and `https://h:443` arrive equal.
       */
-    private[client] def sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
+    private[kyo] def sameOrigin(a: HttpUrl, b: HttpUrl): Boolean =
         // Scheme and host are both compared case-insensitively (RFC 3986 sections 3.1 and 3.2.2 make both case-insensitive, and `HttpUrl`
         // stores the scheme as written rather than normalized). Comparing the scheme exactly would read "HTTPS://host" redirecting to
         // "https://host" as a change of origin and silently strip credentials from a hop that never left it.
         val schemeMatches =
             (a.scheme, b.scheme) match
-                case (Present(x), Present(y)) => x.equalsIgnoreCase(y)
+                case (Present(x), Present(y)) => Ascii.equalsIgnoreCase(x, y)
                 case (Absent, Absent)         => true
                 case _                        => false
-        schemeMatches && a.host.equalsIgnoreCase(b.host) && a.port == b.port
+        schemeMatches && Ascii.equalsIgnoreCase(a.host, b.host) && a.port == b.port
     end sameOrigin
 
     /** The pool's check before it hands out an idle connection. Nothing was requested on an idle connection, so any byte waiting on it

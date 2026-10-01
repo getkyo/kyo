@@ -4272,6 +4272,32 @@ class HttpClientTest extends BaseHttpTest:
         }
     }
 
+    "header argument" - {
+        // The convenience methods take `HttpHeaders | Seq[(String, String)]`, and HttpHeaders is a Chunk at runtime, so a Chunk of pairs
+        // is the case a type test on HttpHeaders cannot tell apart.
+        "a Chunk, a List and an HttpHeaders of the same pairs all reach the server" - {
+            val echo   = HttpRoute.postRaw("echo-header").request(_.bodyText).response(_.bodyText)
+            val getRte = HttpRoute.getRaw("echo-header").response(_.bodyText)
+            val postEp = echo.handler(req => HttpResponse.ok.addField("body", req.headers.get("X-Test").getOrElse("none")))
+            val getEp  = getRte.handler(req => HttpResponse.ok(req.headers.get("X-Test").getOrElse("none")))
+            runServer(postEp, getEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val target = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo-header"
+                    for
+                        viaChunk   <- HttpClient.postText(target, "x", headers = Chunk("X-Test" -> "chunk"))
+                        viaList    <- HttpClient.postText(target, "x", headers = List("X-Test" -> "list"))
+                        viaHeaders <- HttpClient.postText(target, "x", headers = HttpHeaders.empty.add("X-Test", "headers"))
+                        viaGet     <- HttpClient.getText(target, headers = Chunk("X-Test" -> "get"))
+                    yield assert(
+                        (viaChunk, viaList, viaHeaders, viaGet) == ("chunk", "list", "headers", "get"),
+                        s"echoed $viaChunk, $viaList, $viaHeaders, $viaGet"
+                    )
+                    end for
+                }
+            }
+        }
+    }
+
     "connectRaw" - {
         // connectRaw serializes the caller's path and header block straight through sendDirect, the one client send that
         // did not pass the header guard. A CRLF in a header value ends the header line early, so "X-Injected: 1" becomes a

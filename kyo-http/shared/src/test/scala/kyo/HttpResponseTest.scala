@@ -358,6 +358,34 @@ class HttpResponseTest extends BaseHttpTest:
             val res = HttpResponse.ok.contentDisposition("image.png", isInline = true)
             assert(res.headers.get("Content-Disposition") == Present("""inline; filename="image.png""""))
         }
+
+        "a non-ASCII filename is written as an ASCII filename fallback then filename* (RFC 6266 Appendix D, RFC 8187) and reads back" in {
+            val res = HttpResponse.ok.contentDisposition("résumé.pdf")
+            assert(res.headers.get("Content-Disposition") ==
+                Present("attachment; filename=\"r_sum_.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"))
+            val parsed = kyo.mime.Disposition.parse(res.headers.get("Content-Disposition").getOrElse("")).getOrThrow
+            assert(parsed.kind == "attachment")
+            assert(parsed.filename == Present("résumé.pdf"))
+        }
+
+        "the fallback of a non-ASCII filename replaces a quote, a backslash and a percent sign too (RFC 6266 Appendix D)" in {
+            val res = HttpResponse.ok.contentDisposition("a\"é\\b%.txt", isInline = true)
+            assert(res.headers.get("Content-Disposition") ==
+                Present("inline; filename=\"a___b_.txt\"; filename*=UTF-8''a%22%C3%A9%5Cb%25.txt"))
+            val parsed = kyo.mime.Disposition.parse(res.headers.get("Content-Disposition").getOrElse("")).getOrThrow
+            assert(parsed.filename == Present("a\"é\\b%.txt"))
+        }
+
+        "an all-ASCII filename writes filename alone" in {
+            val res = HttpResponse.ok.contentDisposition("report (final).pdf")
+            assert(res.headers.get("Content-Disposition") == Present("attachment; filename=\"report (final).pdf\""))
+        }
+
+        "a quote and a backslash in an ASCII filename are quoted pairs that read back" in {
+            val res    = HttpResponse.ok.contentDisposition("a\"b\\c.txt")
+            val parsed = kyo.mime.Disposition.parse(res.headers.get("Content-Disposition").getOrElse("")).getOrThrow
+            assert(parsed.filename == Present("a\"b\\c.txt"))
+        }
     }
 
     "immutability" in {
