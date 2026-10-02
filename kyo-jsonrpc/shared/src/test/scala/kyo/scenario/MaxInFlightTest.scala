@@ -10,6 +10,15 @@ class MaxInFlightTest extends JsonRpcTest:
     case class PingResp(n: Int) derives Schema, CanEqual
     case class LogMsg(text: String) derives Schema, CanEqual
 
+    // A "ping" route that never replies, so the requestTimeout is the only exit. The timeout arm registers its
+    // sleeper before the request is encoded and sent, and a timeout that fires before the send has no request
+    // to cancel. `received` completes once the peer holds the request: advancing the fake clock only after it
+    // makes the timeout land on a request that is in flight on the wire.
+    private def blockingPing(received: Fiber.Promise[Unit, Any])(using Frame): JsonRpcRoute[PingReq, PingResp, Nothing] =
+        JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
+            received.completeUnitDiscard.andThen(Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) })
+        }
+
     // CapturingTransport records every envelope it forwards. When `signalOn` matches an envelope, the
     // transport completes `signal`, giving the test a deterministic latch to await delivery of a specific
     // wire message (instead of polling the accumulated list with a timing-sensitive sleep).
@@ -167,31 +176,27 @@ class MaxInFlightTest extends JsonRpcTest:
         // requestTimeout firing. Clock.withTimeControl drives the deterministic timeout: Async.timeout
         // routes through Clock.sleep, so advancing the fake clock past requestTimeout fires the timeout
         // arm. control.advance settles real async work via a wall-clock delay, letting the call resolve.
-        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
-            // Block forever; timeout is the only exit
-            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
-        }
-
         val cfg = JsonRpcHandler.Config(
             requestTimeout = 100.millis,
             cancellation = Absent
         )
 
-        Clock.withTimeControl { control =>
-            JsonRpcTransport.inMemory.map { (ta, tb) =>
-                JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
-                    JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
-                        Fiber.initUnscoped(
-                            Abort.run[JsonRpcError | Closed](
-                                endpointA.call[PingReq, PingResp]("ping", PingReq(0))
-                            )
-                        ).map { callFib =>
-                            // Advance the fake clock past requestTimeout to fire the timeout arm.
-                            control.advance(200.millis).andThen {
-                                callFib.get.map {
-                                    case Result.Failure(e: JsonRpcError) =>
-                                        assert(e.code == -32800, s"expected cancelled code -32800, got ${e.code}")
-                                    case other => fail(s"expected JsonRpcError.cancelled, got $other")
+        Fiber.Promise.init[Unit, Any].map { received =>
+            Clock.withTimeControl { control =>
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                        JsonRpcHandler.init(tb, Seq(blockingPing(received)), cfg).map { _ =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[PingReq, PingResp]("ping", PingReq(0))
+                                )
+                            ).map { callFib =>
+                                received.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(200.millis)).andThen {
+                                    callFib.get.map {
+                                        case Result.Failure(e: JsonRpcError) =>
+                                            assert(e.code == -32800, s"expected cancelled code -32800, got ${e.code}")
+                                        case other => fail(s"expected JsonRpcError.cancelled, got $other")
+                                    }
                                 }
                             }
                         }
@@ -202,11 +207,6 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in {
-        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
-            // Block forever; timeout is the only exit
-            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
-        }
-
         // cancelMethod="$/cancelRequest", expectReply=true
         case class CancelByIdParams(id: JsonRpcId) derives Schema, CanEqual
         val cfg = JsonRpcHandler.Config(
@@ -230,7 +230,8 @@ class MaxInFlightTest extends JsonRpcTest:
         // The cancel notification is enqueued before the call fails, but the writer fiber delivers it
         // asynchronously. cancelSent is completed by the capturing transport the instant it forwards the
         // $/cancelRequest, so the test awaits delivery deterministically instead of polling with a sleep.
-        Fiber.Promise.init[Unit, Any].map { cancelSent =>
+        Kyo.zip(Fiber.Promise.init[Unit, Any], Fiber.Promise.init[Unit, Any]).map { (cancelSent, received) =>
+            val pingOnB = blockingPing(received)
             Clock.withTimeControl { control =>
                 JsonRpcTransport.inMemory.map { (ta, tb) =>
                     val capA = new CapturingTransport(
@@ -248,9 +249,9 @@ class MaxInFlightTest extends JsonRpcTest:
                                     endpointA.call[PingReq, PingResp]("ping", PingReq(0))
                                 )
                             ).map { callFib =>
-                                // Advance the fake clock past requestTimeout to fire the timeout arm, then
-                                // wait for the call to resolve with a failure.
-                                control.advance(200.millis).andThen {
+                                received.get.andThen(control.awaitPendingSleepers(1)).andThen(
+                                    control.advance(200.millis)
+                                ).andThen {
                                     callFib.get.map {
                                         case Result.Failure(_: JsonRpcError) => ()
                                         case other                           => fail(s"expected failure, got $other")
@@ -275,44 +276,40 @@ class MaxInFlightTest extends JsonRpcTest:
     }
 
     "requestTimeout fires with cancellation = Absent: no cancel notification sent" in {
-        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
-            // Block forever; timeout is the only exit
-            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
-        }
-
         val cfg = JsonRpcHandler.Config(
             requestTimeout = 100.millis,
             cancellation = Absent
         )
 
-        Clock.withTimeControl { control =>
-            JsonRpcTransport.inMemory.map { (ta, tb) =>
-                val capA = new CapturingTransport(ta)
-                JsonRpcHandler.init(capA, Seq.empty, cfg).map { endpointA =>
-                    JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
-                        Fiber.initUnscoped(
-                            Abort.run[JsonRpcError | Closed](
-                                endpointA.call[PingReq, PingResp]("ping", PingReq(0))
-                            )
-                        ).map { callFib =>
-                            // Advance the fake clock past requestTimeout to fire the timeout arm. With
-                            // cancellation = Absent, no cancel notification is ever enqueued; once the call
-                            // fiber has resolved the timeout path has fully run, so the count is final.
-                            control.advance(200.millis).andThen {
-                                callFib.get.map { result =>
-                                    val cancelNotifications =
-                                        capA.sentList.count {
-                                            case _: JsonRpcNotification => true
-                                            case _                      => false
-                                        }
-                                    result match
-                                        case Result.Failure(e: JsonRpcError) =>
-                                            assert(
-                                                e.code == -32800 && cancelNotifications == 0,
-                                                s"expected -32800 with 0 cancel notifications, got code=${e.code} notifications=$cancelNotifications"
-                                            )
-                                        case other => fail(s"expected failure, got $other")
-                                    end match
+        Fiber.Promise.init[Unit, Any].map { received =>
+            Clock.withTimeControl { control =>
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val capA = new CapturingTransport(ta)
+                    JsonRpcHandler.init(capA, Seq.empty, cfg).map { endpointA =>
+                        JsonRpcHandler.init(tb, Seq(blockingPing(received)), cfg).map { _ =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[PingReq, PingResp]("ping", PingReq(0))
+                                )
+                            ).map { callFib =>
+                                // With cancellation = Absent, no cancel notification is ever enqueued; once the call
+                                // fiber has resolved the timeout path has fully run, so the count is final.
+                                received.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(200.millis)).andThen {
+                                    callFib.get.map { result =>
+                                        val cancelNotifications =
+                                            capA.sentList.count {
+                                                case _: JsonRpcNotification => true
+                                                case _                      => false
+                                            }
+                                        result match
+                                            case Result.Failure(e: JsonRpcError) =>
+                                                assert(
+                                                    e.code == -32800 && cancelNotifications == 0,
+                                                    s"expected -32800 with 0 cancel notifications, got code=${e.code} notifications=$cancelNotifications"
+                                                )
+                                            case other => fail(s"expected failure, got $other")
+                                        end match
+                                    }
                                 }
                             }
                         }

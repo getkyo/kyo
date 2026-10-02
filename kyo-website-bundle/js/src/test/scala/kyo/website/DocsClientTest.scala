@@ -2,32 +2,24 @@ package kyo.website
 
 import kyo.*
 
-/** Tests for [[DocsClient]] using a stubbed fetch function.
-  *
-  * Runs in JS only (JS placement via `kyo-website-bundle/js/src/test/`). The real
-  * `DocsClient.fetchFn` is replaced with a synchronous stub before each test; it is
-  * restored to a no-op after each test to avoid cross-test interference.
-  */
+/** Tests for [[DocsClient]] with `DocsClient.fetcher` bound to an in-memory stub. */
 class DocsClientTest extends kyo.test.Test[Any]:
 
-    private def withFetch[A](responses: Map[String, String])(block: => A < Async)(using Frame): A < Async =
-        // Install the stub, run the block to completion, then restore. The restore must run AFTER the
-        // suspended Async finishes, so it is sequenced inside the effect (a plain try/finally around
-        // the suspension would restore before the async fetches execute, leaking the stub).
-        Sync.defer {
-            val saved = DocsClient.fetchFn
-            DocsClient.fetchFn = url =>
-                responses.getOrElse(url, throw new RuntimeException(s"Unexpected fetch: $url"))
-            Abort.run[Throwable](Abort.catching[Throwable](block)).map { result =>
-                DocsClient.fetchFn = saved
-                result match
-                    case Result.Success(a) => a
-                    case Result.Failure(e) => throw e
-                    case Result.Panic(e)   => throw e
-                end match
+    // An unknown URL fails the same way the live fetch fails on a non-2xx response: a failed Future.
+    private def withFetch[A](responses: Map[String, String])(block: A < Async)(using Frame): A < Async =
+        DocsClient.fetcher.let { url =>
+            responses.get(url) match
+                case Some(body) => body
+                case None       => Async.fromFuture(scala.concurrent.Future.failed(new RuntimeException(s"Unexpected fetch: $url")))
+        }(block)
+    end withFetch
+
+    private def recordingFetch[A](body: String)(block: A < Async)(using Frame): (Chunk[String], A) < Async =
+        AtomicRef.init(Chunk.empty[String]).map { urls =>
+            DocsClient.fetcher.let(url => urls.updateAndGet(_.append(url)).andThen(body))(block).map { a =>
+                urls.get.map((_, a))
             }
         }
-    end withFetch
 
     // fetchArticle parses html + headings into Article
     "fetchArticle parses html and headings into Article" in {
@@ -45,6 +37,33 @@ class DocsClientTest extends kyo.test.Test[Any]:
             )
             end for
         }
+    }
+
+    // Two overlapping stub scopes on concurrent fibers. B installs its stub first, A installs its own
+    // while B is still inside its scope, B fetches and leaves its scope, then A fetches. Each fetch
+    // must reach the stub of the scope it runs in, whatever the other scope did in between.
+    "overlapping fetch stubs on concurrent fibers each reach their own stub" in {
+        val route = "/latest/kyo-core/"
+        val url   = "/latest/kyo-core/content.html"
+        val bodyA = """{"html": "<p>A</p>", "headings": []}"""
+        val bodyB = """{"html": "<p>B</p>", "headings": []}"""
+        for
+            bInstalled <- Latch.init(1)
+            aInstalled <- Latch.init(1)
+            fiberB     <- Fiber.initUnscoped(withFetch(Map(url -> bodyB)) {
+                bInstalled.release.andThen(aInstalled.await).andThen(DocsClient.fetchArticle(route))
+            })
+            _ <- bInstalled.await
+            a <- withFetch(Map(url -> bodyA)) {
+                aInstalled.release.andThen(fiberB.get).andThen(
+                    Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle(route)))
+                )
+            }
+            b <- fiberB.get
+        yield
+            assert(b == DocsClient.Article("<p>B</p>", Chunk.empty), s"fiber B must read its own stub, got: $b")
+            assert(a == Result.succeed(DocsClient.Article("<p>A</p>", Chunk.empty)), s"fiber A must read its own stub, got: $a")
+        end for
     }
 
     // routeTable parses versions.json + manifest.json
@@ -347,31 +366,15 @@ class DocsClientTest extends kyo.test.Test[Any]:
 
     // fetchArticle requests <route>content.html
     "fetchArticle requests route/content.html" in {
-        var capturedUrl = ""
-        Sync.defer {
-            val saved = DocsClient.fetchFn
-            DocsClient.fetchFn = url =>
-                capturedUrl = url
-                """{"html": "", "headings": []}"""
-            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-core/"))).map { _ =>
-                DocsClient.fetchFn = saved
-                assert(capturedUrl == "/latest/kyo-core/content.html", s"Expected /latest/kyo-core/content.html, got: $capturedUrl")
-            }
+        recordingFetch("""{"html": "", "headings": []}""")(DocsClient.fetchArticle("/latest/kyo-core/")).map { (urls, _) =>
+            assert(urls == Chunk("/latest/kyo-core/content.html"), s"Expected /latest/kyo-core/content.html, got: $urls")
         }
     }
 
     // fetchArticle normalizes route without trailing slash
     "fetchArticle normalizes route without trailing slash" in {
-        var capturedUrl = ""
-        Sync.defer {
-            val saved = DocsClient.fetchFn
-            DocsClient.fetchFn = url =>
-                capturedUrl = url
-                """{"html": "", "headings": []}"""
-            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-core"))).map { _ =>
-                DocsClient.fetchFn = saved
-                assert(capturedUrl == "/latest/kyo-core/content.html", s"Expected /latest/kyo-core/content.html, got: $capturedUrl")
-            }
+        recordingFetch("""{"html": "", "headings": []}""")(DocsClient.fetchArticle("/latest/kyo-core")).map { (urls, _) =>
+            assert(urls == Chunk("/latest/kyo-core/content.html"), s"Expected /latest/kyo-core/content.html, got: $urls")
         }
     }
 
@@ -498,16 +501,8 @@ class DocsClientTest extends kyo.test.Test[Any]:
 
     // fetchArticle uses exactly one fetch (html + headings are co-located)
     "fetchArticle uses exactly one fetch call" in {
-        var fetchCount = 0
-        Sync.defer {
-            val saved = DocsClient.fetchFn
-            DocsClient.fetchFn = _ =>
-                fetchCount += 1
-                """{"html": "<p>x</p>", "headings": []}"""
-            Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchArticle("/latest/kyo-data/"))).map { _ =>
-                DocsClient.fetchFn = saved
-                assert(fetchCount == 1, s"fetchArticle must issue exactly one fetch, issued: $fetchCount")
-            }
+        recordingFetch("""{"html": "<p>x</p>", "headings": []}""")(DocsClient.fetchArticle("/latest/kyo-data/")).map { (urls, _) =>
+            assert(urls.size == 1, s"fetchArticle must issue exactly one fetch, issued: $urls")
         }
     }
 

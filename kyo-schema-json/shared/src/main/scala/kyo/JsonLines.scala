@@ -509,8 +509,8 @@ object JsonLines:
 
     /** Decodes one framed record.
       *
-      * Routes through `Codec.decodeFully`, so a record holding trailing content after a complete value is rejected rather than silently
-      * truncated. A failure is wrapped with the record's position so the caller can locate it in the original input.
+      * Routes through the decode [[Json.decode]] uses, so a record holding trailing content after a complete value is rejected rather than
+      * silently truncated. A failure is wrapped with the record's position so the caller can locate it in the original input.
       *
       * @param record
       *   the framed line to decode
@@ -518,15 +518,21 @@ object JsonLines:
       *   maximum nesting depth for objects/arrays (default `Json.DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   the decoded value, or a `RecordDecodeException` carrying the record's index and byte offset
       */
     def decodeRecord[A](
         record: Line,
         maxDepth: Int = Json.DefaultMaxDepth,
-        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        json.decodeFully[A](record.bytes, maxDepth, maxCollectionSize).mapFailure { cause =>
+        Json.decodeWithin[A](json, record.bytes, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent).mapFailure { cause =>
             RecordDecodeException(record.index, record.byteOffset, cause)
         }
     end decodeRecord
@@ -541,6 +547,10 @@ object JsonLines:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   every decoded value in order, or the first decode or framing failure encountered
       */
@@ -548,13 +558,17 @@ object JsonLines:
         input: String,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = DefaultMaxLineSize
+        maxLineSize: ByteSize = DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
         decodeAllBytes[A](
             Span.from(input.getBytes(StandardCharsets.UTF_8)),
             maxDepth,
             maxCollectionSize,
-            maxLineSize
+            maxLineSize,
+            maxNumberDigits,
+            maxExponent
         )
     end decodeAll
 
@@ -568,6 +582,10 @@ object JsonLines:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   every decoded value in order, or the first decode or framing failure encountered
       */
@@ -575,9 +593,11 @@ object JsonLines:
         input: Span[Byte],
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = DefaultMaxLineSize
+        maxLineSize: ByteSize = DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Frame): Result[DecodeException, Chunk[A]] =
-        foldResults(decodeAllBytesResults[A](input, maxDepth, maxCollectionSize, maxLineSize))
+        foldResults(decodeAllBytesResults[A](input, maxDepth, maxCollectionSize, maxLineSize, maxNumberDigits, maxExponent))
     end decodeAllBytes
 
     /** Decodes every record, returning one `Result` per record instead of failing the whole input.
@@ -599,6 +619,10 @@ object JsonLines:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   one result per record, including one failure per record skipped for exceeding `maxLineSize`; an oversized trailing residual,
       *   which finds no record boundary, is appended as a final failure element after every record decoded before it
@@ -607,16 +631,18 @@ object JsonLines:
         input: Span[Byte],
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = DefaultMaxLineSize
+        maxLineSize: ByteSize = DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
         Framer.init(maxLineSize).feed(input) match
             case Framed.Continued(framer, lines) =>
-                val decoded = decodeLines[A](lines, maxDepth, maxCollectionSize)
+                val decoded = decodeLines[A](lines, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
                 framer.finishLine match
                     case Absent       => decoded
-                    case Present(rec) => decoded :+ decodeRecord[A](rec, maxDepth, maxCollectionSize)
+                    case Present(rec) => decoded :+ decodeRecord[A](rec, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
             case Framed.Halted(lines, breach) =>
-                decodeLines[A](lines, maxDepth, maxCollectionSize) :+ Result.fail(breach)
+                decodeLines[A](lines, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent) :+ Result.fail(breach)
         end match
     end decodeAllBytesResults
 
@@ -628,10 +654,12 @@ object JsonLines:
     private def decodeLines[A](
         lines: Chunk[Result[LimitExceededException, Line]],
         maxDepth: Int,
-        maxCollectionSize: Int
+        maxCollectionSize: Int,
+        maxNumberDigits: Int,
+        maxExponent: Int
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
         lines.map {
-            case Result.Success(record) => decodeRecord[A](record, maxDepth, maxCollectionSize)
+            case Result.Success(record) => decodeRecord[A](record, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
             case Result.Failure(breach) => Result.fail(breach)
             case Result.Panic(ex)       => Result.panic(ex)
         }

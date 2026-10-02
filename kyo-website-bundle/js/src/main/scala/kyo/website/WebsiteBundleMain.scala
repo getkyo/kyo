@@ -380,8 +380,8 @@ object WebsiteBundleMain:
       * `Abort` widening, matching the `Fiber.initUnscoped` call site in [[build]].
       *
       * Exposed `private[website]` so the eager-wiring path can be tested directly without a full DOM
-      * `build()` mount (the test stubs `DocsClient.fetchFn`, seeds a `SignalRef`, calls this method,
-      * and asserts the ref upgraded or retained the seed).
+      * `build()` mount (the test binds a stub with `DocsClient.fetcher.let`, seeds a `SignalRef`,
+      * calls this method, and asserts the ref upgraded or retained the seed).
       */
     private[website] def refreshSearchIndex(searchIndex: SignalRef[DocsSearch.Index], activePrefix: String)(using Frame): Unit < Async =
         Abort.run[Throwable](Abort.catching[Throwable](DocsClient.fetchSearchIndex(activePrefix))).map {

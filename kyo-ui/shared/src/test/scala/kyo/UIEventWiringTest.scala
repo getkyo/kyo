@@ -57,17 +57,17 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
 
     private def withDispatch[A](ui: UI)(f: ((Seq[String], UIEvent) => Boolean < Async) => A < (Async & Scope))(using
         Frame
-    ): A < Async =
+    ): A < (Async & Abort[Closed]) =
         withDispatch(ui, ReactiveUI.DragSessionLimits())(f)
 
     private def withDispatch[A](ui: UI, limits: ReactiveUI.DragSessionLimits)(
         f: ((Seq[String], UIEvent) => Boolean < Async) => A < (Async & Scope)
-    )(using Frame): A < Async =
+    )(using Frame): A < (Async & Abort[Closed]) =
         withSubscription(ui, limits)(subscription => f(subscription.handle))
 
     private def withSubscription[A](ui: UI, limits: ReactiveUI.DragSessionLimits)(
-        f: ReactiveUI.Subscription => A < (Async & Scope)
-    )(using Frame): A < Async =
+        f: ReactiveUI.Subscription => A < (Async & Scope & Abort[Closed])
+    )(using Frame): A < (Async & Abort[Closed]) =
         Scope.run {
             for
                 root         <- ReactiveUI.normalize(ui, Seq.empty)
@@ -698,11 +698,15 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
         val expired  = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
         Clock.withTimeControl { control =>
             for
+                expiry      <- Latch.init(1)
                 starts      <- AtomicRef.init(Chunk.empty[String])
                 resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
-                ui = UI.div.onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event.sessionId)).unit)
-                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
-                    withDispatch(ui, limits) { dispatch =>
+                ui   = UI.div.onDragStart((event: Drag.Event) => starts.getAndUpdate(_.append(event.sessionId)).unit)
+                sink = (id: String, decision: Drag.Decision) =>
+                    resolutions.getAndUpdate(_.append((id, decision))).andThen(if decision == expired then expiry.release else ())
+                _ <- DragCommands.resolveSink.let(Present(sink)) {
+                    withSubscription(ui, limits) { subscription =>
+                        val dispatch = subscription.handle
                         for
                             _ <- dispatch(Seq.empty, start("first"))
                             _ <- dispatch(Seq.empty, start("full"))
@@ -711,17 +715,18 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                                 UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("first", Drag.Operation.Copy, cancelled = true))
                             )
                             _ <- dispatch(Seq.empty, start("after-end"))
-                            _ <- control.advance(Duration.Zero, 100.millis)
-                            _ <- control.advance(1.second, 100.millis)
+                            _ <- subscription.withDragLock(control.advance(1.second, Duration.Zero))
+                            _ <- expiry.await
                             _ <- dispatch(Seq.empty, start("after-end"))
                         yield ()
+                        end for
                     }
                 }
                 actualStarts      <- starts.get
                 actualResolutions <- resolutions.get
             yield
-                assert(actualStarts == Chunk("first", "after-end", "after-end"))
-                assert(actualResolutions == Chunk("full" -> capacity, "after-end" -> expired))
+                assert(actualStarts == Chunk("first", "after-end", "after-end"), s"actual: $actualStarts")
+                assert(actualResolutions == Chunk("full" -> capacity, "after-end" -> expired), s"actual: $actualResolutions")
         }
     }
 
@@ -741,21 +746,25 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
                 })
                 Clock.let(clock) {
                     for
+                        expiry      <- Latch.init(1)
                         resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
-                        _           <- DragCommands.resolveSink.let(Present((id, decision) =>
-                            resolutions.getAndUpdate(_.append((id, decision))).unit
-                        )) {
-                            withDispatch(UI.div, limits) { dispatch =>
+                        sink = (id: String, decision: Drag.Decision) =>
+                            resolutions.getAndUpdate(_.append((id, decision))).andThen(if decision == expired then expiry.release else ())
+                        _ <- DragCommands.resolveSink.let(Present(sink)) {
+                            withSubscription(UI.div, limits) { subscription =>
+                                val dispatch = subscription.handle
                                 for
                                     _ <- dispatch(Seq.empty, start)
-                                    _ <- control.advance(Duration.Zero, 100.millis)
                                     _ <- Sync.defer(stepped.set(true))
-                                    _ <- control.advance(1.second, 100.millis)
+                                    _ <- subscription.withDragLock(control.advance(1.second, Duration.Zero))
+                                    _ <- expiry.await
+                                    _ <- dispatch(Seq.empty, start)
                                 yield ()
+                                end for
                             }
                         }
                         actual <- resolutions.get
-                    yield assert(actual == Chunk("stepped" -> expired))
+                    yield assert(actual == Chunk("stepped" -> expired), s"actual: $actual")
                 }
             }
         }
@@ -825,7 +834,7 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
     }
 
     "terminal expiry is silent and a stale timer cannot remove a reused identifier" in {
-        val limits            = ReactiveUI.DragSessionLimits(maxSessions = 2, lifetime = 2.seconds)
+        val limits            = ReactiveUI.DragSessionLimits(maxSessions = 4, lifetime = 2.seconds)
         def start(id: String) = UIEvent.DragStart(
             Seq.empty,
             DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
@@ -838,35 +847,60 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             UI.Modifiers.none,
             Absent
         )
+        val expired = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
         Clock.withTimeControl { control =>
             for
+                firstPass   <- Latch.init(1)
+                secondPass  <- Latch.init(1)
                 drops       <- AtomicRef.init(0)
                 resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
-                ui = UI.div.onDrop(drops.getAndUpdate(_ + 1).andThen(Drag.Decision.Accept))
-                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
-                    withDispatch(ui, limits) { dispatch =>
+                ui   = UI.div.onDrop(drops.getAndUpdate(_ + 1).andThen(Drag.Decision.Accept))
+                sink = (id: String, decision: Drag.Decision) =>
+                    resolutions.getAndUpdate(_.append((id, decision))).andThen {
+                        if decision != expired then ()
+                        else if id == "first-witness" then firstPass.release
+                        else if id == "second-witness" then secondPass.release
+                        else ()
+                    }
+                _ <- DragCommands.resolveSink.let(Present(sink)) {
+                    withSubscription(ui, limits) { subscription =>
+                        val dispatch = subscription.handle
+                        // Each witness shares a silent session's deadline, so its expiry marks the pass that removed that session.
                         for
                             _ <- dispatch(Seq.empty, start("terminal"))
+                            _ <- dispatch(Seq.empty, start("first-witness"))
                             _ <- dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("terminal")))
                             _ <- dispatch(Seq.empty, start("reuse"))
-                            _ <- control.advance(1.second, 100.millis)
+                            _ <- subscription.withDragLock(control.advance(1.second, Duration.Zero))
                             _ <- dispatch(
                                 Seq.empty,
                                 UIEvent.DragEnd(Seq.empty, DragProtocol.EndData("reuse", Drag.Operation.Copy, cancelled = true))
                             )
                             _ <- dispatch(Seq.empty, start("reuse"))
-                            _ <- control.advance(1.second, 100.millis)
+                            _ <- dispatch(Seq.empty, start("second-witness"))
+                            _ <- subscription.withDragLock(control.advance(1.second, Duration.Zero))
+                            _ <- firstPass.await
                             _ <- dispatch(Seq.empty, UIEvent.Drop(Seq.empty, target("reuse")))
-                            _ <- control.advance(1.second, 100.millis)
+                            _ <- subscription.withDragLock(control.advance(1.second, Duration.Zero))
+                            _ <- secondPass.await
                             _ <- dispatch(Seq.empty, start("terminal"))
                         yield ()
+                        end for
                     }
                 }
                 actualDrops       <- drops.get
                 actualResolutions <- resolutions.get
             yield
-                assert(actualDrops == 2)
-                assert(actualResolutions == Chunk("terminal" -> Drag.Decision.Accept, "reuse" -> Drag.Decision.Accept))
+                assert(actualDrops == 2, s"actual: $actualDrops")
+                assert(
+                    actualResolutions == Chunk(
+                        "terminal"       -> Drag.Decision.Accept,
+                        "first-witness"  -> expired,
+                        "reuse"          -> Drag.Decision.Accept,
+                        "second-witness" -> expired
+                    ),
+                    s"actual: $actualResolutions"
+                )
         }
     }
 
@@ -933,26 +967,35 @@ class UIEventWiringTest extends kyo.test.Test[Any]:
             Seq.empty,
             DragProtocol.StartData(id, Chunk.empty, Drag.Operation.Copy, Absent, Drag.Point(0, 0), UI.Modifiers.none)
         )
-        val expired = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+        val expired   = Drag.Decision.Reject(Drag.Rejection.Application("The drag session expired."))
+        val duplicate = Drag.Decision.Reject(Drag.Rejection.Application("A drag session with this identifier is already active."))
         Clock.withTimeControl { control =>
             for
+                expiry      <- Latch.init(1)
                 resolutions <- AtomicRef.init(Chunk.empty[(String, Drag.Decision)])
-                _ <- DragCommands.resolveSink.let(Present((id, decision) => resolutions.getAndUpdate(_.append((id, decision))).unit)) {
-                    withDispatch(UI.div, limits) { dispatch =>
+                sink = (id: String, decision: Drag.Decision) =>
+                    resolutions.getAndUpdate(_.append((id, decision))).andThen(if decision == expired then expiry.release else ())
+                _ <- DragCommands.resolveSink.let(Present(sink)) {
+                    withSubscription(UI.div, limits) { subscription =>
+                        val dispatch = subscription.handle
                         // The controlled clock moving back is the only way a later session gets an earlier deadline. It stays
-                        // past Epoch because the controlled monotonic reading floors there.
+                        // past Epoch because the controlled monotonic reading floors there. The worker must be asleep on the
+                        // later deadline before the earlier session arrives; otherwise its first reading already sees both.
                         for
-                            _ <- control.set(Instant.Epoch + 3.hours, 100.millis)
+                            _ <- subscription.withDragLock(control.set(Instant.Epoch + 3.hours, Duration.Zero))
                             _ <- dispatch(Seq.empty, start("later"))
-                            _ <- control.advance(Duration.Zero, 100.millis)
-                            _ <- control.set(Instant.Epoch + 1.hour, 100.millis)
+                            _ <- control.awaitPendingSleepers(1)
+                            _ <- subscription.withDragLock(control.set(Instant.Epoch + 1.hour, Duration.Zero))
                             _ <- dispatch(Seq.empty, start("earlier"))
-                            _ <- control.advance(1.hour, 100.millis)
+                            _ <- subscription.withDragLock(control.advance(1.hour, Duration.Zero))
+                            _ <- expiry.await
+                            _ <- dispatch(Seq.empty, start("later"))
                         yield ()
+                        end for
                     }
                 }
                 actual <- resolutions.get
-            yield assert(actual == Chunk("earlier" -> expired))
+            yield assert(actual == Chunk("earlier" -> expired, "later" -> duplicate), s"actual: $actual")
         }
     }
 

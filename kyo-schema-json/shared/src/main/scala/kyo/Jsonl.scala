@@ -50,13 +50,19 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a pipe emitting one value per record, aborting with the first decode or framing failure
       */
     def pipe[A](
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Pipe[Byte, A, Abort[DecodeException]] =
         Pipe:
             Loop(Json.Lines.Framer.init(maxLineSize)) { framer =>
@@ -65,11 +71,13 @@ object Jsonl:
                         framer.finishLine match
                             case Absent          => Loop.done
                             case Present(record) =>
-                                Abort.get(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)).map { value =>
+                                Abort.get(
+                                    Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
+                                ).map { value =>
                                     Emit.valueWith(Chunk(value))(Loop.done)
                                 }
                     case Present(chunk) =>
-                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize) match
+                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize, maxNumberDigits, maxExponent) match
                             case Framing.Continued(results, advanced) =>
                                 val (values, failure) = splitAtFailure(results)
                                 failure match
@@ -106,13 +114,19 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a pipe emitting one result per record
       */
     def pipeResults[A](
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Tag[Emit[Chunk[Result[DecodeException, A]]]], Frame): Pipe[Byte, Result[DecodeException, A], Any] =
         Pipe:
             Loop(Json.Lines.Framer.init(maxLineSize)) { framer =>
@@ -121,9 +135,11 @@ object Jsonl:
                         framer.finishLine match
                             case Absent          => Loop.done
                             case Present(record) =>
-                                Emit.valueWith(Chunk(Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)))(Loop.done)
+                                val decoded =
+                                    Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
+                                Emit.valueWith(Chunk(decoded))(Loop.done)
                     case Present(chunk) =>
-                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize) match
+                        frameChunk[A](framer, Span.from(chunk), maxDepth, maxCollectionSize, maxNumberDigits, maxExponent) match
                             case Framing.Continued(results, advanced) => emitNonEmpty(results)(Loop.continue(advanced))
                             case Framing.Halted(results, breach)      =>
                                 // No record boundary was found for the pending bytes and no rewind can arrive on a
@@ -147,6 +163,10 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a stream of decoded values, aborting with the first decode or framing failure
       */
@@ -154,9 +174,11 @@ object Jsonl:
         path: Path,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using Json, Schema[A], Tag[Emit[Chunk[A]]], Frame): Stream[A, PathRead & Scope & Sync & Abort[DecodeException]] =
-        path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineSize))
+        path.readBytesStream.into(pipe[A](maxDepth, maxCollectionSize, maxLineSize, maxNumberDigits, maxExponent))
 
     /** Reads a JSONL file as a stream of per-record `Result`s, surviving undecodable records.
       *
@@ -170,6 +192,10 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a stream of per-record results
       */
@@ -177,14 +203,16 @@ object Jsonl:
         path: Path,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using
         Json,
         Schema[A],
         Tag[Emit[Chunk[Result[DecodeException, A]]]],
         Frame
     ): Stream[Result[DecodeException, A], PathRead & Scope & Sync] =
-        path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineSize))
+        path.readBytesStream.into(pipeResults[A](maxDepth, maxCollectionSize, maxLineSize, maxNumberDigits, maxExponent))
 
     /** Streams a JSONL file's records, continuing to emit as records are appended.
       *
@@ -231,6 +259,10 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a stream of decoded values that runs until interrupted, aborting with the first decode or framing failure
       */
@@ -240,7 +272,9 @@ object Jsonl:
         pollDelay: Duration = 100.millis,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using
         Json,
         Schema[A],
@@ -248,7 +282,16 @@ object Jsonl:
         Tag[Emit[Chunk[A]]],
         Frame
     ): Stream[A, PathRead & Scope & Async & Abort[DecodeException]] =
-        watchResults[A](path, from, pollDelay, maxDepth, maxCollectionSize, maxLineSize).flatMapChunk { results =>
+        watchResults[A](
+            path,
+            from,
+            pollDelay,
+            maxDepth,
+            maxCollectionSize,
+            maxLineSize,
+            maxNumberDigits,
+            maxExponent
+        ).flatMapChunk { results =>
             val (values, failure) = splitAtFailure(results)
             failure match
                 case Absent => Stream[A, Any](emitNonEmpty(values)(()))
@@ -286,6 +329,10 @@ object Jsonl:
       *   maximum number of entries in maps, sets, or arrays (default `Json.DefaultMaxCollectionSize`)
       * @param maxLineSize
       *   the largest record the framer will accept (default `Json.Lines.DefaultMaxLineSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `Json.DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `Json.DefaultMaxExponent` (default `Json.DefaultMaxExponent`)
       * @return
       *   a stream of per-record results that runs until interrupted, or until the pending bytes outgrow `maxLineSize`
       */
@@ -295,7 +342,9 @@ object Jsonl:
         pollDelay: Duration = 100.millis,
         maxDepth: Int = Json.DefaultMaxDepth,
         maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
-        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize
+        maxLineSize: ByteSize = Json.Lines.DefaultMaxLineSize,
+        maxNumberDigits: Int = Json.DefaultMaxNumberDigits,
+        maxExponent: Int = Json.DefaultMaxExponent
     )(using
         Json,
         Schema[A],
@@ -315,7 +364,7 @@ object Jsonl:
             // The watch loop reuses `buffer` across reads, so the framer, which retains what it
             // cannot yet frame, is handed an array nothing else holds.
             val chunk = Span.fromUnsafe(java.util.Arrays.copyOf(buffer, bytesRead))
-            frameChunk[A](framer, chunk, maxDepth, maxCollectionSize) match
+            frameChunk[A](framer, chunk, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent) match
                 case Framing.Continued(results, advanced) => Path.Step.Continue(results, advanced)
                 case Framing.Halted(results, breach)      =>
                     // Nothing can be framed from this file again, so the loop stops rather than polling
@@ -516,12 +565,15 @@ object Jsonl:
         framer: Json.Lines.Framer,
         chunk: Span[Byte],
         maxDepth: Int,
-        maxCollectionSize: Int
+        maxCollectionSize: Int,
+        maxNumberDigits: Int,
+        maxExponent: Int
     )(using Json, Schema[A], Frame): Framing[A] =
         framer.feed(chunk) match
             case Json.Lines.Framed.Continued(advanced, lines) =>
-                Framing.Continued(decodeLines[A](lines, maxDepth, maxCollectionSize), advanced)
-            case Json.Lines.Framed.Halted(lines, breach) => Framing.Halted(decodeLines[A](lines, maxDepth, maxCollectionSize), breach)
+                Framing.Continued(decodeLines[A](lines, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent), advanced)
+            case Json.Lines.Framed.Halted(lines, breach) =>
+                Framing.Halted(decodeLines[A](lines, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent), breach)
     end frameChunk
 
     /** Decodes every kept line and turns every skipped one into the failure a consumer sees in its place.
@@ -533,10 +585,13 @@ object Jsonl:
     private def decodeLines[A](
         lines: Chunk[Result[LimitExceededException, Json.Lines.Line]],
         maxDepth: Int,
-        maxCollectionSize: Int
+        maxCollectionSize: Int,
+        maxNumberDigits: Int,
+        maxExponent: Int
     )(using Json, Schema[A], Frame): Chunk[Result[DecodeException, A]] =
         lines.map {
-            case Result.Success(record) => Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize)
+            case Result.Success(record) =>
+                Json.Lines.decodeRecord[A](record, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
             case Result.Failure(breach) => Result.fail(breach)
             case Result.Panic(ex)       => Result.panic(ex)
         }
