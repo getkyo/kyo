@@ -278,6 +278,28 @@ class SchemaFieldTransformTest extends kyo.test.Test[Any]:
             assert(Json.encode(DefaultFlatten(SA27bMode.Draft, FieldTransformInner(1, 2))) == """{"mode":"draft","x":1,"y":2}""")
             assert(Json.decode[DefaultFlatten]("""{"x":1,"y":2}""") == Result.succeed(DefaultFlatten(inner = FieldTransformInner(1, 2))))
         }
+
+        "a field whose sum is derived inline, a variant with a transformed field" in {
+            val value = SumHolder(SumLeaf("ab"), 1)
+            assert(Json.encode(value) == """{"s":{"SumLeaf":{"code":"AB"}}}""")
+            assert(Json.decode[SumHolder]("""{"s":{"SumLeaf":{"code":"AB"}},"n":1}""").map(_.s) == Result.succeed(SumLeaf("ab")))
+        }
+
+        "the structure, a by-name argument, with a documented and defaulted field" in {
+            Schema[Structured].structure match
+                case Structure.Type.Product(_, _, _, fields, _) =>
+                    val a = fields.find(_.name == "a")
+                    assert(a.map(_.default) == Some(Present(Structure.Value.Integer(1))), fields.toString)
+                    assert(a.map(_.doc) == Some(Present("the a field")), fields.toString)
+                case other => fail(s"expected a product, got $other")
+            end match
+            assert(Json.encode(Structured(2, 3)) == """{"a":2}""")
+        }
+
+        "a field whose record is derived inline, with an omit.When field" in {
+            assert(Json.encode(NestedOmit(NestedOmitInner(-1, 2), 3)) == """{"inner":{"b":2},"m":3}""")
+            assert(Json.encode(NestedOmit(NestedOmitInner(1, 2), 3)) == """{"inner":{"a":1,"b":2},"m":3}""")
+        }
     }
 
 end SchemaFieldTransformTest
@@ -338,6 +360,21 @@ object FieldTransformOps:
     ) derives CanEqual
     object DefaultFlatten:
         given Schema[DefaultFlatten] = Schema[DefaultFlatten].flatten(_.inner)
+
+    final case class Structured(@kyo.schema.doc("the a field") a: Int = 1, n: Int) derives CanEqual
+    object Structured:
+        given Schema[Structured] = Schema[Structured].drop("n")
+
+    sealed trait SumShape derives CanEqual
+    final case class SumLeaf(@transform(FieldTransformUpper) code: String) extends SumShape derives CanEqual
+    final case class SumHolder(s: SumShape, n: Int) derives CanEqual
+    object SumHolder:
+        given Schema[SumHolder] = Schema[SumHolder].drop("n")
+
+    final case class NestedOmitInner(@kyo.schema.omit(kyo.schema.omit.When(Negative)) a: Int, b: Int) derives CanEqual
+    final case class NestedOmit(inner: NestedOmitInner, n: Int) derives CanEqual
+    object NestedOmit:
+        given Schema[NestedOmit] = Schema[NestedOmit].rename("n", "m")
 
     final case class Folded(@transform(FieldTransformUpper) code: String, n: Int)
 

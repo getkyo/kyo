@@ -2065,7 +2065,8 @@ import scala.quoted.*
                 case _ => false
         }
 
-        // Per-field default Structure.Value thunks, consumed by structureExpr.
+        // Per-field default Structure.Value thunks, consumed by structureExpr through one hoisted val. A default is written by the
+        // field's own schema, so it is the value that schema writes (an `Absent` default is Null), not the value's `toString`.
         val defaultStructureValuesExpr: Expr[Array[() => kyo.Maybe[kyo.Structure.Value]]] =
             val elems: List[Expr[() => kyo.Maybe[kyo.Structure.Value]]] = fields.zipWithIndex.map { (field, idx) =>
                 val rawType = tpe.memberType(field)
@@ -2073,22 +2074,27 @@ import scala.quoted.*
                     case Some(defVal) =>
                         rawType.asType match
                             case '[t] =>
-                                Expr.summon[kyo.Tag[t]] match
-                                    case Some(tagExpr) =>
-                                        '{
-                                            () =>
-                                                kyo.Maybe(
-                                                    Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using $tagExpr)
-                                                )
-                                        }
-                                    case None =>
-                                        '{ () => kyo.Maybe.empty[kyo.Structure.Value] }
+                                val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[t]]
+                                '{
+                                    () =>
+                                        val writer = kyo.internal.StructureValueWriter()
+                                        kyo.internal.writeField[t]($fieldSchemaRef, $defVal.asInstanceOf[t], writer)
+                                        kyo.Maybe(writer.getResult)
+                                }
                     case None =>
                         '{ () => kyo.Maybe.empty[kyo.Structure.Value] }
                 end match
             }
             '{ Array[() => kyo.Maybe[kyo.Structure.Value]](${ Varargs(elems) }*) }
         end defaultStructureValuesExpr
+        val defaultStructuresSym =
+            Symbol.newVal(
+                hoistOwner,
+                "_defaultStructures",
+                TypeRepr.of[Array[() => kyo.Maybe[kyo.Structure.Value]]],
+                Flags.EmptyFlags,
+                Symbol.noSymbol
+            )
 
         // Per-field effective schema term for a given compile-time type T. The tied-knot parentSelf
         // closes the cycle for a variant field whose effective type equals the sealed parent.
@@ -2345,7 +2351,7 @@ import scala.quoted.*
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)
                 val nameExpr = Expr(f.name)
                 val optExpr  = Expr(isOpt)
-                val defVal   = defaultStructureValuesExpr
+                val defVal   = Ref(defaultStructuresSym).asExprOf[Array[() => kyo.Maybe[kyo.Structure.Value]]]
                 val idxExpr  = Expr(idx)
                 val docExpr  = ctorDocs.get(f.name) match
                     case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
@@ -2393,35 +2399,56 @@ import scala.quoted.*
         val cfg     = desugarProductConfig[A](sym, tpe)
         val writeFn = writeFnExpr[A](writeBody)
         val readFn  = readFnExpr[A](readBody)
-        // The field transforms and omit policies carry closures (a transform's getter and codecs, an omit.When predicate), bound
-        // for the reason `_sourceFields` is: a transform macro such as `flatten` relocates this expansion, and a closure left in
-        // the Schema.init parameter binding keeps an owner the binding no longer has. Each val takes its expression's own type,
-        // since naming the private[kyo] element type would not compile for a type outside package kyo.
-        def hoisted(name: String, expr: Expr[?]): (Symbol, Statement) =
-            val valSym = Symbol.newVal(hoistOwner, name, expr.asTerm.tpe.widen, Flags.EmptyFlags, Symbol.noSymbol)
-            (valSym, ValDef(valSym, Some(expr.asTerm.changeOwner(valSym))))
-        val (fieldTransformsSym, fieldTransformsDef) = hoisted("_fieldTransforms", cfg.fieldTransforms)
-        val (omitPoliciesSym, omitPoliciesDef)       = hoisted("_omitPolicies", cfg.omitPolicies)
-        val schemaInitTerm: Term                     =
+        // Every by-value Schema.init argument that is not a literal is bound to a val owned by the expansion: a transform macro
+        // such as `flatten` relocates this expansion, and a closure left in the Schema.init parameter binding keeps an owner the
+        // binding no longer has. Each val takes its expression's own type, since naming a private[kyo] element type would not
+        // compile for a type outside package kyo. The by-name `structure` stays an argument: a local lazy val adds an initializer
+        // method and a holder to every class holding a derivation, user code included, and a class with a few hundred
+        // derivations already sits at 60808 of the JVM's 65535 constant-pool entries.
+        val boundArgDefs                                         = scala.collection.mutable.ListBuffer.empty[Statement]
+        def bound[T: Type](name: String, expr: Expr[T]): Expr[T] =
+            expr.asTerm match
+                case Inlined(_, Nil, _: Literal) | _: Literal => expr
+                case term                                     =>
+                    val valSym = Symbol.newVal(hoistOwner, name, term.tpe.widen, Flags.EmptyFlags, Symbol.noSymbol)
+                    boundArgDefs += ValDef(valSym, Some(term.changeOwner(valSym)))
+                    Ref(valSym).asExprOf[T]
+        val writeFnRef           = bound("_writeFn", writeFn)
+        val readFnRef            = bound("_readFn", readFn)
+        val renamedRef           = bound("_renamedFields", cfg.renamedFields)
+        val droppedRef           = bound("_droppedFields", cfg.droppedFields)
+        val documentationRef     = bound("_documentation", cfg.documentation)
+        val fieldDocsRef         = bound("_fieldDocs", cfg.fieldDocs)
+        val fieldIdsRef          = bound("_fieldIdOverrides", cfg.fieldIdOverrides)
+        val variantNamingRef     = bound("_variantNaming", cfg.variantNaming)
+        val omitPoliciesRef      = bound("_omitPolicies", cfg.omitPolicies)
+        val omitNoneRef          = bound("_omitNoneAll", cfg.omitNoneAll)
+        val omitEmptyRef         = bound("_omitEmptyCollectionsAll", cfg.omitEmptyCollectionsAll)
+        val materializedRef      = bound("_fieldMaterializedDefaults", cfg.fieldMaterializedDefaults)
+        val fieldTransformsRef   = bound("_fieldTransforms", cfg.fieldTransforms)
+        val structureArg         = structureExpr
+        val schemaInitTerm: Term =
             '{
                 Schema.init[A](
-                    writeFn = $writeFn,
-                    readFn = $readFn,
+                    writeFn = $writeFnRef,
+                    readFn = $readFnRef,
                     sourceFields = ${ Ref(sourceFieldsSym).asExprOf[Seq[kyo.Field[?, ?]]] },
-                    renamedFields = ${ cfg.renamedFields },
-                    droppedFields = ${ cfg.droppedFields },
-                    documentation = ${ cfg.documentation },
-                    fieldDocs = ${ cfg.fieldDocs },
-                    fieldIdOverrides = ${ cfg.fieldIdOverrides },
-                    variantNaming = ${ cfg.variantNaming },
-                    omitPolicies = ${ Ref(omitPoliciesSym).asExprOf[Chunk[(String, Schema.OmitPolicy)]] },
-                    omitNoneAll = ${ cfg.omitNoneAll },
-                    omitEmptyCollectionsAll = ${ cfg.omitEmptyCollectionsAll },
-                    fieldMaterializedDefaults = ${ cfg.fieldMaterializedDefaults },
-                    fieldTransforms = ${ Ref(fieldTransformsSym).asExprOf[Chunk[(String, Schema.FieldTransform[A])]] },
-                    structure = ${ structureExpr }
+                    renamedFields = $renamedRef,
+                    droppedFields = $droppedRef,
+                    documentation = $documentationRef,
+                    fieldDocs = $fieldDocsRef,
+                    fieldIdOverrides = $fieldIdsRef,
+                    variantNaming = $variantNamingRef,
+                    omitPolicies = $omitPoliciesRef,
+                    omitNoneAll = $omitNoneRef,
+                    omitEmptyCollectionsAll = $omitEmptyRef,
+                    fieldMaterializedDefaults = $materializedRef,
+                    fieldTransforms = $fieldTransformsRef,
+                    structure = $structureArg
                 )
             }.asTerm
+        val defaultStructuresDef: Statement =
+            ValDef(defaultStructuresSym, Some(defaultStructureValuesExpr.asTerm.changeOwner(defaultStructuresSym)))
         val hoistedSchemaValDefs: List[Statement] = hoistedSchemas.toList.map { (t, sym) =>
             t.asType match
                 case '[tt] => ValDef(sym, Some('{ summonInline[Schema[tt]] }.asTerm))
@@ -2444,7 +2471,7 @@ import scala.quoted.*
         }
         val namesDef: Statement             = ValDef(namesSym, Some(namesExpr.asTerm.changeOwner(namesSym)))
         val hoistedValDefs: List[Statement] =
-            sourceFieldsDef :: fieldTransformsDef :: omitPoliciesDef :: hoistedSchemaValDefs ++ hoistedNameByteDefs :+ namesDef
+            (sourceFieldsDef :: hoistedSchemaValDefs ++ hoistedNameByteDefs :+ namesDef :+ defaultStructuresDef) ++ boundArgDefs.toList
         Block(hoistedValDefs, schemaInitTerm).asExprOf[Schema[A]]
     end emitProductSchemaStatic
 
@@ -2680,6 +2707,9 @@ import scala.quoted.*
                 structure = ${ structureExpr }
             )
         }
+        // The arguments stay in the sum's own lazy right-hand side, already owned by `_self`. A strict val between `_self` and the
+        // lazy variants is a forward reference, and a val per argument inside `_self` grows every class holding sum derivations:
+        // one with a few hundred went past the JVM's 65535 constant-pool entries.
         val selfDef = ValDef(selfSym, Some(selfRhs.asTerm.changeOwner(selfSym)))
 
         val variantDefs: List[ValDef] = children.zip(childTypes).zipWithIndex.map { case ((child, childType), idx) =>
