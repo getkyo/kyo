@@ -1397,6 +1397,7 @@ val stage4: Boolean < (Async & Abort[Closed]) =
 
             auditObserved <- auditQueue.drain
             fraudObserved <- fraudQueue.drain
-            // linearized guarantees both observers agree on the same total order.
+        // linearized guarantees both observers agree on the same total order.
         yield auditObserved == fraudObserved.map(_.tx)
     }
+```
