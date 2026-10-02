@@ -460,7 +460,7 @@ private[kyo] object SchemaSerializer:
                             case Schema.UnionRepresentation.Untagged => requireTopLevelCapable(writer, "Untagged")
                             case _                                   => ()
                         end match
-                        Maybe(catchAllEncode(selected, slots, fields))
+                        Maybe(catchAllEncode(selected, slots, fields, catchAll))
                     case _ => Maybe.empty
                 end match
             case _ => Maybe.empty
@@ -734,9 +734,10 @@ private[kyo] object SchemaSerializer:
             throw TransformFailedException(
                 s"catch-all variant '${catchAll.variant}' does not fit the $rep representation, which needs $needs."
             )
-        val numericTag = schema.variantNaming.numbered && rep != Schema.UnionRepresentation.External
+        val tags       = tagsOf(schema)
+        val numericTag = tags.numbered && rep != Schema.UnionRepresentation.External
         val tagField   = if numericTag then "an Int or Long field" else "a String field"
-        val tagFits    = catchAll.tagIndex >= 0 && catchAll.numericTag == numericTag
+        val tagFits    = catchAll.tagIndex >= 0 && tags.catchAllTagIsNumber == numericTag
         rep match
             case Schema.UnionRepresentation.Untagged =>
                 if catchAll.arity == 1 then (-1, 0) else unfit("a variant with one field, which receives the whole value")
@@ -790,12 +791,26 @@ private[kyo] object SchemaSerializer:
     def readWithCatchAll[A](schema: Schema[A], reader: Reader, rep: Schema.UnionRepresentation, catchAll: CatchAll): A =
         given Frame = reader.frame
         val slots   = catchAllSlots(schema, rep, catchAll)
-        val tree    = reader.captureValue() match
-            case ir: Codec.IntrospectingReader => ir.readStructure()
-            case _                             =>
-                throw SchemaNotSerializableException(
-                    "a sum with a catch-all variant decodes only from a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
-                )
+        reader match
+            case _: Codec.IntrospectingReader =>
+                reader.captureValue() match
+                    case ir: Codec.IntrospectingReader => readCatchAllTree(schema, reader, rep, catchAll, slots, ir.readStructure())
+                    case other                         => notIntrospecting(other)
+            case _ =>
+                // Without per-value types the input cannot be held for the catch-all, so the representation's own reader decodes a
+                // known variant and refuses an unknown tag with a typed failure.
+                readForRepresentation(schema, reader, rep)
+        end match
+    end readWithCatchAll
+
+    private def readCatchAllTree[A](
+        schema: Schema[A],
+        reader: Reader,
+        rep: Schema.UnionRepresentation,
+        catchAll: CatchAll,
+        slots: (Int, Int),
+        tree: Structure.Value
+    )(using Frame): A =
         def known(): A =
             val fresh = new StructureValueReader(tree)
             fresh.schemaTransformOverrides = reader.schemaTransformOverrides
@@ -813,20 +828,13 @@ private[kyo] object SchemaSerializer:
                         Result.catching[DecodeException](caught(Maybe(tag), Maybe(payload))).foldOrThrow(identity, _ => throw failure)
                 )
         // The catch-all's own name is not a known tag: its encode writes the tag it holds, never its name.
-        val scalaNames                  = Schema.variantScalaNames(schema.structure).toSet - catchAll.variant
-        lazy val wireNames: Set[String] =
-            val resolveWire = resolveVariantWire(schema)
-            val aliases     = schema.variantNaming.variantAliases.collect {
-                case (alias, primary) if primary != resolveWire(catchAll.variant) => alias
-            }
-            scalaNames.map(resolveWire) ++ aliases
-        end wireNames
+        val tags       = tagsOf(schema)
+        val scalaNames = tags.entries.collect { case entry if entry.tag.nonEmpty => entry.scalaName }.toSet
         // A tag of the other kind (a string for a numbered sum) is malformed input, which the representation's own reader reports.
-        val numbered                                    = schema.variantNaming.numbered
         def unknownTag(value: Structure.Value): Boolean =
-            capturedTag(numbered, value).exists(tag => !wireNames.contains(tag))
+            tags.captured(value).exists(tag => !tags.known.contains(tag))
         def knownTag(value: Structure.Value): Boolean =
-            capturedTag(numbered, value).exists(wireNames.contains)
+            tags.captured(value).exists(tags.known.contains)
         def field(fields: Chunk[(String, Structure.Value)], key: String): Maybe[Structure.Value] =
             Maybe.fromOption(fields.collectFirst { case (k, v) if k == key => v })
         (rep, tree) match
@@ -856,28 +864,34 @@ private[kyo] object SchemaSerializer:
                 Result.catching[NoVariantMatchException](known()).foldOrThrow(identity, _ => caught(Maybe.empty, Maybe(tree)))
             case _ => known()
         end match
-    end readWithCatchAll
+    end readCatchAllTree
 
     /** The wire value of a catch-all variant: the tag and the input it holds, back in the representation's shape. A value built by
-      * hand whose tag or input disagrees is written as held.
+      * hand whose input disagrees is written as held. The tag must be one a tag can be, a name or a number, and a name under the
+      * wrapper object, whose key it becomes.
       */
     private def catchAllEncode(
         rep: Schema.UnionRepresentation,
         slots: (Int, Int),
-        fields: Chunk[(String, Structure.Value)]
-    ): Structure.Value =
+        fields: Chunk[(String, Structure.Value)],
+        catchAll: CatchAll
+    )(using Frame): Structure.Value =
         def at(index: Int): Structure.Value = if index >= 0 && index < fields.size then fields(index)._2 else Structure.Value.Null
-        val tag                             = at(slots._1) match
-            case tag @ (_: Structure.Value.Str | _: Structure.Value.Integer) => tag
-            case _                                                           => Structure.Value.Str("")
+        def refused(needs: String): Nothing =
+            throw TransformFailedException(
+                s"catch-all variant '${catchAll.variant}' holds the tag ${wireKind(at(slots._1))}, which $rep cannot write: it needs $needs."
+            )
+        def tag: Structure.Value =
+            at(slots._1) match
+                case held @ (_: Structure.Value.Str | _: Structure.Value.Integer) => held
+                case _                                                            => refused("a name or a number")
         rep match
             case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
                 Structure.Value.Record(Chunk(tagKey -> tag, contentKey -> at(slots._2)))
             case Schema.UnionRepresentation.External =>
-                val key = tag match
-                    case Structure.Value.Str(t) => t
-                    case _                      => ""
-                Structure.Value.Record(Chunk(key -> at(slots._2)))
+                at(slots._1) match
+                    case Structure.Value.Str(name) => Structure.Value.Record(Chunk(name -> at(slots._2)))
+                    case _                         => refused("a name, the wrapper object's key")
             case Schema.UnionRepresentation.TagOnly => tag
             case _                                  => at(slots._2)
         end match
@@ -890,7 +904,7 @@ private[kyo] object SchemaSerializer:
       */
     private def readWithDiscriminatorField[A](schema: Schema[A], reader: Reader, tagKey: String): A =
         given Frame    = reader.frame
-        val discReader = discriminatorReader(reader, tagKey, variantReverse(schema))
+        val discReader = discriminatorReader(reader, tagKey, tagsOf(schema))
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
         else
@@ -1049,72 +1063,25 @@ private[kyo] object SchemaSerializer:
                 throw SchemaNotSerializableException(
                     "tagOnly decode requires a self-describing reader (such as: Json, Yaml, Ion, MsgPack)"
                 )
-        val numbered = schema.variantNaming.numbered
-        capturedTag(numbered, tree) match
-            case Maybe.Present(wire) =>
-                val scalaName = variantReverse(schema)(wire)
+        val tags = tagsOf(schema)
+        tags.captured(tree) match
+            case Maybe.Present(tag) =>
+                val scalaName = tags(tag)
                 val wrapper   = new StructureValueReader(
                     Structure.Value.Record(Chunk(scalaName -> Structure.Value.Record(Chunk.empty)))
                 )
                 wrapper.schemaTransformOverrides = reader.schemaTransformOverrides
                 schema.rawSerializeRead(wrapper)
             case _ =>
-                throw TypeMismatchException(Seq.empty, if numbered then "number" else "string", wireKind(tree))
+                throw TypeMismatchException(Seq.empty, if tags.numbered then "number" else "string", wireKind(tree))
         end match
     end readTagOnly
 
     private def wireKind(value: Structure.Value): String = StructureValueReader.kindOf(value)
 
-    /** Builds the variant forward resolver, from Scala variant name to wire name. */
-    private def resolveVariantWire[A](schema: Schema[A])(using Frame): String => String =
-        if schema.variantNaming.numbered then numberedVariantWire(schema)
-        else namedVariantWire(schema)
-
-    /** The tag a variant writes: its wire name, as an integer for a numbered sum. */
+    /** The value each variant writes as its tag. */
     private def resolveVariantTag[A](schema: Schema[A])(using Frame): String => Structure.Value =
-        val resolveWire = resolveVariantWire(schema)
-        val numbered    = schema.variantNaming.numbered
-        scalaName => tagValue(numbered, resolveWire(scalaName))
-    end resolveVariantTag
-
-    /** A numbered sum's resolver: each variant's number, as decimal text. Every variant except the catch-all needs a number, checked
-      * here rather than at `variantNumbers` because the catch-all builder may come after it.
-      */
-    private def numberedVariantWire[A](schema: Schema[A])(using Frame): String => String =
-        val numbers    = schema.variantNaming.variantNumbers.map((name, number) => name -> number.toString).toMap
-        val unnumbered = Schema.variantScalaNames(schema.structure).filterNot(name =>
-            numbers.contains(name) || schema.catchAll.exists(_.variant == name)
-        )
-        if unnumbered.nonEmpty then
-            throw TransformFailedException(
-                s"variantNumbers numbers some variants, so every variant except the catch-all needs a number; these have none: " +
-                    s"${unnumbered.mkString(", ")}."
-            )
-        end if
-        scalaName => numbers.getOrElse(scalaName, scalaName)
-    end numberedVariantWire
-
-    /** A named sum's resolver: explicit pair wins, then the renameAll convention, else the raw Scala name. Collision among
-      * convention-derived names is checked here, at the first serialize where the full derived name set is known.
-      */
-    private def namedVariantWire[A](schema: Schema[A])(using Frame): String => String =
-        val naming        = schema.variantNaming
-        val explicitPairs = naming.variantPairs.toMap
-        val conventionFn  = naming.variantCase.map(nc => NameCaseConversion.convert(nc))
-        if conventionFn.nonEmpty then
-            val variantNames = Schema.variantScalaNames(schema.structure)
-            val derived      = variantNames.map(n => n -> explicitPairs.getOrElse(n, conventionFn.get(n)))
-            val byWire       = derived.groupBy(_._2)
-            byWire.foreach { (wire, group) =>
-                val sources = group.map(_._1).distinct
-                if sources.size > 1 then throw VariantNameCollisionException(wire, Chunk.from(sources.toSeq.sorted))
-            }
-        end if
-        (scalaName: String) =>
-            explicitPairs.get(scalaName)
-                .orElse(conventionFn.fold(None: Option[String])(fn => Some(fn(scalaName))))
-                .getOrElse(scalaName)
-    end namedVariantWire
+        tagsOf(schema).written
 
     /** Threads a schema's field-id overrides onto a field-id-aware reader, mirroring what `Protobuf.decode`
       * does for its own entry point. `readFrom` calls this once for the outermost schema passed to
@@ -1531,7 +1498,7 @@ private[kyo] object SchemaSerializer:
                 // whose key is the variant name, symmetric with reading a single-field object as a Record(name, value).
                 // Wire round-trips through the shape-aware identity Schema therefore canonicalize to Record on read;
                 // a StructureValueWriter target keeps the VariantCase identity.
-                writer.variantStart(name, name, name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                writer.variantStart(name, name, name.getBytes(java.nio.charset.StandardCharsets.UTF_8), CodecMacro.fieldId(name))
                 writeStructureValue(writer, v, Maybe.empty, pairArrayFramed, fieldIdOverridesOf)
                 writer.variantEnd()
             case Structure.Value.Str(s)     => writer.string(s)
@@ -1671,7 +1638,7 @@ private[kyo] object SchemaSerializer:
     def readWithDiscriminator[A](schema: Schema[A], reader: Reader): A =
         given Frame    = reader.frame
         val discField  = schema.discriminatorField.get
-        val discReader = discriminatorReader(reader, discField, variantReverse(schema))
+        val discReader = discriminatorReader(reader, discField, tagsOf(schema))
         // The macro-generated sealedReadBody expects wrapper format, which DiscriminatorReader provides
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
@@ -1690,8 +1657,8 @@ private[kyo] object SchemaSerializer:
         val adjReader =
             reader match
                 case _: Codec.IntrospectingReader =>
-                    new AdjacentReader(reader, tagKey, contentKey, reader.frame, variantReverse(schema)) with IntrospectingWrapper
-                case _ => new AdjacentReader(reader, tagKey, contentKey, reader.frame, variantReverse(schema))
+                    new AdjacentReader(reader, tagKey, contentKey, reader.frame, tagsOf(schema)) with IntrospectingWrapper
+                case _ => new AdjacentReader(reader, tagKey, contentKey, reader.frame, tagsOf(schema))
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, adjReader)
         else
@@ -1707,8 +1674,8 @@ private[kyo] object SchemaSerializer:
         given Frame   = reader.frame
         val tupReader =
             reader match
-                case _: Codec.IntrospectingReader => new TupleReader(reader, reader.frame, variantReverse(schema)) with IntrospectingWrapper
-                case _                            => new TupleReader(reader, reader.frame, variantReverse(schema))
+                case _: Codec.IntrospectingReader => new TupleReader(reader, reader.frame, tagsOf(schema)) with IntrospectingWrapper
+                case _                            => new TupleReader(reader, reader.frame, tagsOf(schema))
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, tupReader)
         else
@@ -1729,8 +1696,8 @@ private[kyo] object SchemaSerializer:
         val tfReader        =
             reader match
                 case _: Codec.IntrospectingReader =>
-                    new TupleFlatReader(reader, reader.frame, variantReverse(schema), fieldsByVariant) with IntrospectingWrapper
-                case _ => new TupleFlatReader(reader, reader.frame, variantReverse(schema), fieldsByVariant)
+                    new TupleFlatReader(reader, reader.frame, tagsOf(schema), fieldsByVariant) with IntrospectingWrapper
+                case _ => new TupleFlatReader(reader, reader.frame, tagsOf(schema), fieldsByVariant)
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, tfReader)
         else
@@ -1838,13 +1805,9 @@ private[kyo] object SchemaSerializer:
         end if
     end readUnionMultiProbe
 
-    /** The variant wire names in declaration order, for the NoVariantMatchException list. Reuses the
-      * forward resolver so the names match what encode would emit for each variant.
-      */
+    /** The variant tags in declaration order, as the NoVariantMatchException list names them: what encode writes for each variant. */
     private def untaggedVariantWireNames[A](schema: Schema[A])(using Frame): Chunk[String] =
-        val resolveWire = resolveVariantWire(schema)
-        Schema.variantScalaNames(schema.structure).map(resolveWire)
-    end untaggedVariantWireNames
+        tagsOf(schema).entries.map(entry => entry.tag.fold(entry.scalaName)(_.show))
 
     /** Maps each Scala variant name to its declaration-ordered field names, read from the schema's
       * materialized Structure.Type.Sum variants. Used by TupleFlat decode to restore the field
@@ -1862,43 +1825,12 @@ private[kyo] object SchemaSerializer:
             case _ => Map.empty
     end tupleFlatFieldNames
 
-    /** Builds the variant reverse-map (wire primary or alias -> Scala variant name). An
-      * unresolved wire string is `UnknownVariantException` here: passed on as is, it would
-      * match the variant whose Scala name it spells even when that variant is renamed.
-      */
-    private def variantReverse[A](schema: Schema[A])(using Frame): VariantTags =
-        val resolveWire    = resolveVariantWire(schema)
-        val variantNames   = Schema.variantScalaNames(schema.structure)
-        val wireToScala    = variantNames.map(n => resolveWire(n) -> n).toMap
-        val aliasToPrimary = schema.variantNaming.variantAliases.toMap
-        VariantTags(
-            schema.variantNaming.numbered,
-            (wire: String) =>
-                wireToScala.get(wire)
-                    .orElse(aliasToPrimary.get(wire).flatMap(wireToScala.get))
-                    .getOrElse(throw UnknownVariantException(Seq.empty, wire))
-        )
-    end variantReverse
-
-    /** A sum's tags on the wire: read off a reader, then resolved to the Scala variant name. A numbered sum's tag is an integer and
-      * its wire name the integer's decimal text, so a string where the integer belongs fails as the reader's type mismatch.
-      */
-    final private[internal] class VariantTags(numbered: Boolean, resolve: String => String):
-        def read(reader: Reader): String = if numbered then reader.long().toString else reader.string()
-        def apply(wire: String): String  = resolve(wire)
-    end VariantTags
-
-    /** The tag written for a wire name: an integer for a numbered sum, else the name. */
-    private def tagValue(numbered: Boolean, wire: String): Structure.Value =
-        if numbered then Structure.Value.Integer(wire.toLong) else Structure.Value.Str(wire)
-
-    /** The wire name a captured tag spells, or empty when it is not of the sum's tag kind. Ion captures an integer as a `BigNum`. */
-    private def capturedTag(numbered: Boolean, value: Structure.Value): Maybe[String] =
-        value match
-            case Structure.Value.Str(tag) if !numbered                  => Maybe(tag)
-            case Structure.Value.Integer(n) if numbered                 => Maybe(n.toString)
-            case Structure.Value.BigNum(n) if numbered && n.isValidLong => Maybe(n.toLong.toString)
-            case _                                                      => Maybe.empty
+    /** The schema's tag table, after the checks that wait for the first codec use. */
+    private def tagsOf[A](schema: Schema[A])(using Frame): VariantTags =
+        val tags = schema.variantTags
+        tags.checked()
+        tags
+    end tagsOf
 
     /** A reader wrapper that can read the next value as a `Structure.Value` through the reader it wraps. */
     private[internal] trait StructureSource:
@@ -2159,7 +2091,7 @@ private[kyo] object SchemaSerializer:
         // PhaseVariantReturned: variant field returned, inner object about to start
         // PhaseInnerStarted: inner object started, iterating buffered fields
         // PhaseDone: done
-        private var variantName: Maybe[String]                     = Maybe.empty
+        private var variantName: Maybe[VariantTag]                 = Maybe.empty
         private var bufferedFields: Maybe[Array[(String, Reader)]] = Maybe.empty
         private var fieldIdx: Int                                  = 0
         private var innerFieldCount: Int                           = 0
@@ -2173,10 +2105,10 @@ private[kyo] object SchemaSerializer:
                     // field tag's numeric ID against CodecMacro.fieldId(name). Without this routing the
                     // Protobuf path would compare numeric tag-strings (e.g. "12345") against the literal
                     // discriminator name ("type") and never find it.
-                    val _                           = inner.objectStart()
-                    val fields                      = scala.collection.mutable.ListBuffer[(String, Reader)]()
-                    var foundVariant: Maybe[String] = Maybe.empty
-                    val discFieldBytes              = discField.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                    val _                               = inner.objectStart()
+                    val fields                          = scala.collection.mutable.ListBuffer[(String, Reader)]()
+                    var foundVariant: Maybe[VariantTag] = Maybe.empty
+                    val discFieldBytes                  = discField.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                     while inner.hasNextField() do
                         inner.fieldParse()
                         if inner.matchField(discFieldBytes) then
@@ -2229,7 +2161,7 @@ private[kyo] object SchemaSerializer:
                 phase match
                     case PhaseOuterStarted =>
                         phase = PhaseVariantReturned
-                        resolveVariant(variantName.get)
+                        resolveVariant(variantName.get)(using _frame)
                     case PhaseInnerStarted =>
                         val arr = bufferedFields.get
                         if fieldIdx < arr.length then
@@ -2360,11 +2292,11 @@ private[kyo] object SchemaSerializer:
         private var content: Maybe[Reader]     = Maybe.empty
 
         private def readWire(): Unit =
-            val _                   = inner.objectStart()
-            var tag: Maybe[String]  = Maybe.empty
-            var body: Maybe[Reader] = Maybe.empty
-            val tagBytes            = tagKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            val contentBytes        = contentKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val _                      = inner.objectStart()
+            var tag: Maybe[VariantTag] = Maybe.empty
+            var body: Maybe[Reader]    = Maybe.empty
+            val tagBytes               = tagKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val contentBytes           = contentKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)
             while inner.hasNextField() do
                 inner.fieldParse()
                 if inner.matchField(tagBytes) then tag = Maybe(resolveVariant.read(inner))
@@ -2375,7 +2307,7 @@ private[kyo] object SchemaSerializer:
             end while
             inner.objectEnd()
             if tag.isEmpty then throw MissingTagKeyException(Seq.empty, tagKey)(using _frame)
-            variantName = Maybe(resolveVariant(tag.get))
+            variantName = Maybe(resolveVariant(tag.get)(using _frame))
             content = Maybe(body.getOrElse(new StructureValueReader(Structure.Value.Record(Chunk.empty))(using _frame)))
         end readWire
 
@@ -2452,7 +2384,7 @@ private[kyo] object SchemaSerializer:
             val body = inner.captureValue()
             while inner.hasNextElement() do inner.skip()
             inner.arrayEnd()
-            variantName = Maybe(resolveVariant(tag))
+            variantName = Maybe(resolveVariant(tag)(using _frame))
             content = Maybe(body)
         end readWire
 
@@ -2532,7 +2464,7 @@ private[kyo] object SchemaSerializer:
             if !inner.hasNextElement() then
                 throw MissingFieldException(Seq.empty, "<tupleFlat tag>")(using _frame)
             val tag      = resolveVariant.read(inner)
-            val resolved = resolveVariant(tag)
+            val resolved = resolveVariant(tag)(using _frame)
             val expected = fieldsByVariant.getOrElse(resolved, Chunk.empty)
             val captured = scala.collection.mutable.ListBuffer[Reader]()
             while inner.hasNextElement() do captured += inner.captureValue()

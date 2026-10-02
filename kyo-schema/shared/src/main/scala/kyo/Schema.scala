@@ -80,7 +80,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         Chunk.empty[(String, Schema.FieldTransform[A])],
     @publicInBinary private[kyo] val fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
     @publicInBinary private[kyo] val flattenedFields: Chunk[internal.FlattenedField] = Chunk.empty,
-    @publicInBinary private[kyo] val catchAll: Maybe[internal.CatchAll] = Maybe.empty
+    @publicInBinary private[kyo] val catchAll: Maybe[internal.CatchAll] = Maybe.empty,
+    @publicInBinary private[kyo] val variantNames: Chunk[String] = Chunk.empty
 ):
 
     /** The structural representation type. Set by factory/transforms. */
@@ -285,6 +286,17 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** The tables a transform-aware read consults; lazy because they read `structure`, which a recursive schema cannot force here. */
     @publicInBinary private[kyo] lazy val readTables: internal.SchemaSerializer.ReadTables[A] = internal.SchemaSerializer.readTables(this)
+
+    /** The sum's tag table. A derived sum names its variants in `variantNames`; a sum built by hand leaves it empty, and its variants
+      * are read from the structure, which is why this is lazy.
+      */
+    @publicInBinary private[kyo] lazy val variantTags: internal.VariantTags =
+        internal.VariantTags(
+            if variantNames.nonEmpty then variantNames else Schema.variantScalaNames(structure),
+            variantNaming,
+            catchAll,
+            structure
+        )
 
     /** The variants of a sum that have fields, which tagOnly cannot write; lazy since only a tagOnly schema asks. */
     @publicInBinary private[kyo] lazy val fieldBearingVariants: Chunk[String] =
@@ -768,7 +780,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     def renameAllVariants(nameCase: Schema.NameCase)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
         Schema.rejectNamesWithNumbers(variantNaming, "renameAllVariants")
         val updatedNaming   = variantNaming.copy(variantCase = Maybe(nameCase))
-        val newEffectiveSet = Schema.effectiveVariantWires(structure, updatedNaming).toSet
+        val newEffectiveSet = Schema.effectiveVariantWires(Schema.variantScalaNames(structure), updatedNaming).toSet
         Schema.checkVariantAliases(newEffectiveSet, variantNaming.variantAliases)
         Schema.copyWith(this)(
             variantNaming = updatedNaming
@@ -792,7 +804,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     def variantAlias(variantWireName: String, aliases: String*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
         Schema.rejectNamesWithNumbers(variantNaming, "variantAlias")
-        val wires = Schema.effectiveVariantWires(structure, variantNaming)
+        val wires = Schema.effectiveVariantWires(Schema.variantScalaNames(structure), variantNaming)
         Schema.checkVariantWireExists(wires, variantWireName)
         val added        = Chunk.from(aliases).map(a => (a, variantWireName))
         val merged       = variantNaming.variantAliases ++ added
@@ -1942,7 +1954,7 @@ object Schema:
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
-        variantEffectivePrimaries: Set[String] = Set.empty,
+        variantNames: Chunk[String] = Chunk.empty,
         catchAll: Maybe[internal.CatchAll] = Maybe.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
@@ -1953,14 +1965,15 @@ object Schema:
         lazy val _absentDefaultValue = absentDefaultValue
         // Annotation-baked variant aliases arrive in variantNaming at Schema.init time, so a
         // collision raises here rather than passing through as a last-write-wins map and
-        // surfacing as MissingFieldException at decode time. variantEffectivePrimaries is the
-        // compile-time-baked set of effective variant wire names (accounting for @rename on each
-        // variant) passed by the macro; it matches the set that the programmatic .variantAlias
-        // builder computes via effectiveVariantWires, without forcing the lazy _structure and
-        // breaking recursive-schema init cycles. Field aliases are checked by the schema's
-        // WireLayout, which every constructor builds.
+        // surfacing as MissingFieldException at decode time. The lazy structure is never forced
+        // by this check: the variants come from the names the macro passes, which a recursive
+        // schema reaches before its given is initialized. Field aliases are checked by the
+        // schema's WireLayout, which every constructor builds.
         if variantNaming.variantAliases.nonEmpty then
-            Schema.checkVariantAliases(variantEffectivePrimaries, variantNaming.variantAliases)(using Frame.internal)
+            Schema.checkVariantAliases(Schema.effectiveVariantWires(variantNames, variantNaming).toSet, variantNaming.variantAliases)(
+                using Frame.internal
+            )
+        end if
         new Schema[A](
             segments,
             examples,
@@ -1987,7 +2000,8 @@ object Schema:
             fieldDefaults,
             fieldTransforms,
             fieldMaterializedDefaults,
-            catchAll = catchAll
+            catchAll = catchAll,
+            variantNames = variantNames
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 val writeWriter           = writerForAnnotations(writer)
@@ -2507,8 +2521,8 @@ object Schema:
       * the existing `renamedFields: Chunk[(String, String)]` transform slot. A separate
       * slot from `renamedFields` so variant/field wire-casing never corrupts a field
       * `rename` chain. Empty by default, contributing nothing to the serialization hot
-      * path. `variantNumbers` replaces the variant names: a numbered sum's wire name is the
-      * number's decimal text, written to the wire as an integer.
+      * path. `variantNumbers` replaces the variant names: a numbered sum's tag is its number,
+      * written to the wire as an integer (see `internal.VariantTags`).
       */
     private[kyo] case class VariantNaming(
         variantPairs: Chunk[(String, String)] = Chunk.empty,
@@ -2661,14 +2675,14 @@ object Schema:
             case Structure.Type.Sum(_, _, _, variants, _, _) => variants.map(_.name)
             case _                                           => Chunk.empty
 
-    /** The effective wire name of each variant: the explicit pair if present, else the
+    /** The effective wire name of each of `variantNames`: the explicit pair if present, else the
       * convention-derived name if a case is set, else the raw Scala name. Mirrors the
       * encode-side resolution so `variantAlias` validates against the same vocabulary.
       */
-    private[kyo] def effectiveVariantWires(structure: Structure.Type, naming: VariantNaming): Chunk[String] =
+    private[kyo] def effectiveVariantWires(variantNames: Chunk[String], naming: VariantNaming): Chunk[String] =
         val explicit   = naming.variantPairs.toMap ++ naming.variantNumbers.map((name, number) => name -> number.toString)
         val convention = naming.variantCase.map(nc => internal.NameCaseConversion.convert(nc))
-        variantScalaNames(structure).map { scalaName =>
+        variantNames.map { scalaName =>
             explicit.get(scalaName)
                 .orElse(convention.fold(None: Option[String])(fn => Some(fn(scalaName))))
                 .getOrElse(scalaName)
@@ -3955,6 +3969,7 @@ object Schema:
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
         flattenedFields0: Chunk[internal.FlattenedField] = Chunk.empty,
         catchAll0: Maybe[internal.CatchAll] = Maybe.empty,
+        variantNames0: Chunk[String] = Chunk.empty,
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
@@ -3987,7 +4002,8 @@ object Schema:
             fieldTransforms,
             fieldMaterializedDefaults,
             flattenedFields0,
-            catchAll0
+            catchAll0,
+            variantNames0
         ):
             type Focused = E
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
@@ -4051,6 +4067,7 @@ object Schema:
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = self.fieldMaterializedDefaults,
         flattenedFields: Chunk[internal.FlattenedField] = self.flattenedFields,
         catchAll: Maybe[internal.CatchAll] = self.catchAll,
+        variantNames: Chunk[String] = self.variantNames,
         absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
@@ -4086,6 +4103,7 @@ object Schema:
             fieldMaterializedDefaults = fieldMaterializedDefaults,
             flattenedFields0 = flattenedFields,
             catchAll0 = catchAll,
+            variantNames0 = variantNames,
             absentDefaultValue = absentDefaultValue,
             structure = structure
         )

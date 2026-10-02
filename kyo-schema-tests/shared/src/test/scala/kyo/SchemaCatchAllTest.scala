@@ -203,11 +203,9 @@ class SchemaCatchAllTest extends kyo.test.Test[Any]:
         }
     }
 
-    "a codec without a self-describing reader cannot decode a sum with a catch-all" in {
+    "a codec without a self-describing reader decodes a known variant of a sum with a catch-all" in {
         val bytes = Schema[SCAEvent].encode[Protobuf](SCAClick(1))
-        Schema[SCAEvent].decode[Protobuf](bytes) match
-            case Result.Panic(ex) if ex.isInstanceOf[SchemaNotSerializableException] => assert(ex.getMessage.contains("self-describing"))
-            case other => fail(s"expected SchemaNotSerializableException, got $other")
+        assert(Schema[SCAEvent].decode[Protobuf](bytes) == Result.succeed(SCAClick(1)))
     }
 
     "a catch-all whose tag does not write as a name is refused under the wrapper object, not written under an empty key" in {

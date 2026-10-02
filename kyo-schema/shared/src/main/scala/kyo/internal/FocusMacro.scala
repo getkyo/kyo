@@ -671,7 +671,7 @@ import scala.quoted.*
         representation: Expr[Schema.UnionRepresentation],
         variantNaming: Expr[Schema.VariantNaming],
         documentation: Expr[Maybe[String]],
-        variantEffectivePrimaries: Expr[Set[String]],
+        variantNames: Expr[kyo.Chunk[String]],
         catchAll: Expr[Maybe[CatchAll]]
     )
 
@@ -681,7 +681,7 @@ import scala.quoted.*
             representation = '{ kyo.Schema.UnionRepresentation.External },
             variantNaming = '{ kyo.Schema.VariantNaming() },
             documentation = '{ kyo.Maybe.empty[String] },
-            variantEffectivePrimaries = '{ Set.empty[String] },
+            variantNames = '{ kyo.Chunk.empty[String] },
             catchAll = '{ kyo.Maybe.empty[kyo.internal.CatchAll] }
         )
     end SumConfig
@@ -1219,13 +1219,11 @@ import scala.quoted.*
             MethodType(List("values"))(_ => List(TypeRepr.of[kyo.Chunk[kyo.Structure.Value]]), _ => TypeRepr.of[Any]),
             (owner, params) => build(params.head.asInstanceOf[Term].asExprOf[kyo.Chunk[kyo.Structure.Value]]).asTerm.changeOwner(owner)
         ).asExprOf[kyo.Chunk[kyo.Structure.Value] => Any]
-        val numericTag = tagIndex >= 0 && stringIndex < 0
         '{
             kyo.internal.CatchAll(
                 ${ Expr(childName) },
                 ${ Expr(fieldTypes.size) },
                 ${ Expr(tagIndex) },
-                ${ Expr(numericTag) },
                 $onFailure,
                 $construct
             )
@@ -1275,7 +1273,6 @@ import scala.quoted.*
         var docOpt: Option[Expr[String]]                                = None
         var variantPairs: List[Expr[(String, String)]]                  = Nil
         var variantAliasPairs: List[Expr[(String, String)]]             = Nil
-        var effectiveWireNames: List[String]                            = Nil
 
         sym.annotations.foreach { term =>
             if term.tpe <:< TypeRepr.of[kyo.schema.discriminator] then
@@ -1380,22 +1377,16 @@ import scala.quoted.*
                 case term if term.tpe <:< TypeRepr.of[kyo.schema.rename] =>
                     firstStringArg(term)
             }.flatten
-            val effectiveChildWire = variantNumbers.collectFirst { case (numbered, number) if numbered.equals(child) => number.toString }
-                .orElse(childRenameOpt).getOrElse(childName)
-
-            // Collect effective wire name for the alias-vs-primary collision check at Schema.init
-            // time. The check needs the full set without forcing the lazy structure; baking the
-            // set here (compile time) mirrors what effectiveVariantWires computes at runtime.
-            effectiveWireNames = effectiveChildWire :: effectiveWireNames
-
             childRenameOpt.foreach { wire =>
                 variantPairs = '{ (${ Expr(childName) }, ${ Expr(wire) }) } :: variantPairs
             }
 
+            // A numbered sum refuses @alias above, so an alias targets the variant's name.
+            val primary = childRenameOpt.getOrElse(childName)
             child.annotations.foreach { term =>
                 if term.tpe <:< TypeRepr.of[kyo.schema.alias] then
                     varargStrings(term).foreach { a =>
-                        variantAliasPairs = '{ (${ Expr(a) }, ${ Expr(effectiveChildWire) }) } :: variantAliasPairs
+                        variantAliasPairs = '{ (${ Expr(a) }, ${ Expr(primary) }) } :: variantAliasPairs
                     }
             }
         }
@@ -1429,15 +1420,11 @@ import scala.quoted.*
                     else '{ kyo.Chunk.from[(String, String)](Array[(String, String)](${ Varargs(variantAliasPairs.reverse) }*)) }
                 '{ kyo.Schema.VariantNaming(variantPairs = $pairsChunk, variantAliases = $aliasChunk) }
 
-        // Bake the effective primary wire names into the check at Schema.init time. This is the
-        // same set that effectiveVariantWires computes at runtime, but computed at compile time
-        // so that Schema.init does not need to force the lazy structure (which would break
-        // recursive-schema initialization cycles).
-        val effectivePrimariesExpr: Expr[Set[String]] =
-            if effectiveWireNames.isEmpty then '{ Set.empty[String] }
-            else
-                val nameExprs = effectiveWireNames.reverse.map(Expr(_))
-                '{ Set[String](${ Varargs(nameExprs) }*) }
+        // The variants' Scala names, in the order the structure lists them, so the constructor builds the tag table without
+        // forcing the lazy structure, which a recursive schema reaches before its given is initialized.
+        val variantNamesExpr: Expr[kyo.Chunk[String]] =
+            if children.isEmpty then '{ kyo.Chunk.empty[String] }
+            else '{ kyo.Chunk.from[String](Array[String](${ Varargs(children.map(c => Expr(c.name.stripSuffix("$")))) }*)) }
 
         val catchAllChildren = children.filter(_.annotations.exists(_.tpe <:< TypeRepr.of[kyo.schema.catchAll]))
         if catchAllChildren.sizeIs > 1 then
@@ -1472,7 +1459,7 @@ import scala.quoted.*
             representation = representationExpr,
             variantNaming = variantNamingExpr,
             documentation = documentationExpr,
-            variantEffectivePrimaries = effectivePrimariesExpr,
+            variantNames = variantNamesExpr,
             catchAll = catchAllExpr
         )
     end desugarSumConfig
@@ -2742,7 +2729,7 @@ import scala.quoted.*
                 representation = ${ cfg.representation },
                 variantNaming = ${ cfg.variantNaming },
                 documentation = ${ cfg.documentation },
-                variantEffectivePrimaries = ${ cfg.variantEffectivePrimaries },
+                variantNames = ${ cfg.variantNames },
                 catchAll = ${ cfg.catchAll },
                 structure = ${ structureExpr }
             )

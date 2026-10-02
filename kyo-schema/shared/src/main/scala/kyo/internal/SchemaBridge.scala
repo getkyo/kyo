@@ -134,8 +134,9 @@ def readPairSideAt[A](s: Schema[A], r: Reader, index: Int, side: String): A =
 /** The variant a sum decodes input no other variant matches into, from `@catchAll()` or `catchAll`.
   *
   * The variant has `arity` fields (one or two); `tagIndex` is the position of its first `String` field, else of its first `Int` or
-  * `Long` field (`numericTag`), or -1. A numeric tag field serves only a sum with numbered variants, a `String` one only a sum with
-  * named variants. Which field takes the tag and which the unmatched input depends on the representation
+  * `Long` field, or -1. A numeric tag field serves only a sum with numbered variants, a `String` one only a sum with named variants,
+  * which `VariantTags` checks against the field's type. Which field takes the tag and which the unmatched input depends on the
+  * representation
   * (`SchemaSerializer.catchAllSlots`), so one carrier serves every representation the variant's shape fits. `construct` builds the
   * variant from one captured value per field, in declaration order, each read through the field's own schema. `onFailure` also
   * routes a known tag whose variant fails to decode to it. Public in `kyo.internal` because the sum derivation emits it at the
@@ -145,7 +146,6 @@ final case class CatchAll(
     variant: String,
     arity: Int,
     tagIndex: Int,
-    numericTag: Boolean,
     onFailure: Boolean,
     construct: kyo.Chunk[kyo.Structure.Value] => Any
 )

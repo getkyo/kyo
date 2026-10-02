@@ -214,12 +214,20 @@ object IonSchema:
                     if seen.contains(sum.name) then TypeExpr.AnyType
                     else
                         val nextSeen = seen + sum.name
-                        val wires    = Schema.effectiveVariantWires(sum, schema.variantNaming)
                         // Numbers and the catch-all are configured on the root schema and name its own variants only.
                         val ownSum = schema.structure match
                             case root: Structure.Type.Sum => root.name == sum.name
                             case _                        => false
-                        val numbered        = ownSum && schema.variantNaming.numbered
+                        // The wrapper object's key is the Scala name; every other representation writes the tag.
+                        val wires =
+                            if !ownSum then Schema.effectiveVariantWires(sum.variants.map(_.name), schema.variantNaming)
+                            else
+                                val tags = schema.variantTags
+                                sumRepresentation(schema) match
+                                    case Schema.UnionRepresentation.External => sum.variants.map(_.name)
+                                    case _ => sum.variants.map(v => tags.tagOf(v.name).fold(v.name)(_.show))
+                                end match
+                        val numbered        = ownSum && schema.variantTags.numbered
                         val catchAllVariant = if ownSum then schema.catchAll.map(_.variant) else Maybe.empty
                         val anyTag          = TypeExpr.Scalar(if numbered then "int" else "string")
                         val options         = sum.variants.zip(wires).map { (variant, wireName) =>
