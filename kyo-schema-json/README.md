@@ -91,6 +91,16 @@ assert(rejected.isFailure)
 
 > **Note:** `Json.DefaultMaxDepth` and `Json.DefaultMaxCollectionSize` are the defaults for nesting and collection or object entry limits. They do not bound document or JSONL record byte length.
 
+The reader accepts RFC 8259 JSON and nothing looser: a leading zero, a raw control character inside a string, or two members without a comma between them fail as a `ParseException` at the offending byte, including inside a field the schema ignores. A number is bounded as well, by two settings every decode entry point takes beside `maxDepth`: `maxNumberDigits` (default `Json.DefaultMaxNumberDigits`, 1000) bounds the significand, since converting a number costs time quadratic in its digits, and `maxExponent` (default `Json.DefaultMaxExponent`, 999999999) bounds the exponent's magnitude. A number past either fails at its first character. The exponent can be lowered but not raised, because 999999999 is the largest magnitude that keeps a number's scale inside an `Int` on every platform; a larger value fails the decode with a `LimitExceededException`, as does a digit limit that would let the scale overflow.
+
+```scala doctest:expect=runs
+val long = "9" * 1500
+
+assert(Json.decode[BigDecimal]("\"" + long + "\"").isFailure)
+assert(Json.decode[BigDecimal]("\"" + long + "\"", maxNumberDigits = 2000) == Result.succeed(BigDecimal(long)))
+assert(Json.decode[Double]("1e10", maxExponent = 9).isFailure)
+```
+
 A failure remains a value until the caller chooses how to handle it:
 
 ```scala doctest:expect=runs

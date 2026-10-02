@@ -61,6 +61,18 @@ class JsonlTest extends kyo.test.Test[Any]:
             }
         )
 
+    /** `{"name":"a","count":12345}`: a five-digit number, so a `maxNumberDigits` of 4 rejects it and 5 accepts it. */
+    private val countLine = "{\"name\":\"a\",\"count\":12345}"
+
+    /** Asserts that `result` is a record whose number at `count` was refused by a number limit, at that number's first byte. */
+    private def assertNumberBreach[A](result: Result[DecodeException, A])(using kyo.test.AssertScope): Unit =
+        result match
+            case Result.Failure(e: RecordDecodeException) =>
+                e.cause match
+                    case cause: ParseException => assert(cause.position == 20)
+                    case other                 => fail(s"unexpected cause $other")
+            case other => fail(s"unexpected result $other")
+
     /** Asserts that `result` is the write failure a missing parent directory of `path` raises.
       *
       * Pins which write failure was raised and the file it names, not merely that writing failed. A test whose subject is the missing
@@ -265,6 +277,25 @@ class JsonlTest extends kyo.test.Test[Any]:
             end for
         }
 
+        "applies maxNumberDigits and maxExponent to terminated and unterminated records" in {
+            for
+                terminated   <- Abort.run[DecodeException](byteStream(countLine + "\n").into(Jsonl.pipe[Event](maxNumberDigits = 4)).run)
+                unterminated <- Abort.run[DecodeException](byteStream(countLine).into(Jsonl.pipe[Event](maxNumberDigits = 4)).run)
+                exponent     <- Abort.run[DecodeException](
+                    byteStream("{\"name\":\"a\",\"count\":1e1}").into(Jsonl.pipe[Event](maxExponent = 0)).run
+                )
+                results <- byteStream(countLine + "\n" + countLine).into(Jsonl.pipeResults[Event](maxNumberDigits = 4)).run
+                within  <- byteStream(countLine).into(Jsonl.pipe[Event](maxNumberDigits = 5)).run
+            yield
+                assertNumberBreach(terminated)
+                assertNumberBreach(unterminated)
+                assertNumberBreach(exponent)
+                assert(results.size == 2)
+                results.foreach(assertNumberBreach)
+                assert(within == Chunk(Event("a", 12345)))
+            end for
+        }
+
         "applies maxDepth and maxCollectionSize to an unterminated final record" in {
             // No trailing newline, so the record is completed by the framer's `finish` rather than by a
             // record boundary inside a chunk. That is a second decode call site with its own pair of limit
@@ -447,6 +478,25 @@ class JsonlTest extends kyo.test.Test[Any]:
                     assertLimitBreach(collection(0), "Collection size", 4)
                     assert(within.size == 1)
                     assert(within(0).getOrThrow == bag)
+                end for
+            }
+        }
+
+        "read and readResults apply maxNumberDigits" in {
+            Path.run {
+                for
+                    dir <- Path.tempDir("kyo-jsonl-read-number-limits")
+                    file = dir / "count.jsonl"
+                    _       <- file.write(countLine + "\n")
+                    strict  <- Abort.run[DecodeException](Scope.run(Jsonl.read[Event](file, maxNumberDigits = 4).run))
+                    results <- Scope.run(Jsonl.readResults[Event](file, maxNumberDigits = 4).run)
+                    within  <- Scope.run(Jsonl.read[Event](file, maxNumberDigits = 5).run)
+                    _       <- dir.removeAll
+                yield
+                    assertNumberBreach(strict)
+                    assert(results.size == 1)
+                    assertNumberBreach(results(0))
+                    assert(within == Chunk(Event("a", 12345)))
                 end for
             }
         }
@@ -1083,6 +1133,27 @@ class JsonlTest extends kyo.test.Test[Any]:
                     assertLimitBreach(collection(0), "Collection size", 4)
                     assert(within.size == 1)
                     assert(within(0).getOrThrow == bag)
+                end for
+            }
+        }
+
+        "watch and watchResults apply maxNumberDigits" in {
+            Path.run {
+                for
+                    dir <- Path.tempDir("kyo-jsonl-watch-number-limits")
+                    file = dir / "count.jsonl"
+                    _      <- file.write(countLine + "\n")
+                    strict <- Abort.run[DecodeException](
+                        Scope.run(Jsonl.watch[Event](file, pollDelay = pollDelay, maxNumberDigits = 4).take(1).run)
+                    )
+                    results <- Scope.run(Jsonl.watchResults[Event](file, pollDelay = pollDelay, maxNumberDigits = 4).take(1).run)
+                    within  <- Scope.run(Jsonl.watch[Event](file, pollDelay = pollDelay, maxNumberDigits = 5).take(1).run)
+                    _       <- dir.removeAll
+                yield
+                    assertNumberBreach(strict)
+                    assert(results.size == 1)
+                    assertNumberBreach(results(0))
+                    assert(within == Chunk(Event("a", 12345)))
                 end for
             }
         }

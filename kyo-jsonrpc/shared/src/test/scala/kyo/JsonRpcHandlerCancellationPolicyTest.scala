@@ -620,34 +620,39 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         // The handler blocks on a never-completed gate so the requestTimeout is the only exit. Clock.withTimeControl
         // drives it deterministically: Async.timeout routes through Clock.sleep, so advancing the fake clock past
         // requestTimeout fires the timeout arm. Once the call fiber resolves the timeout path has fully run.
-        val neverReturns = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
-            (_, _) => Fiber.Promise.init[Unit, Any].map { gate => gate.get.andThen(EchoResp("never")) }
-        }
-        Clock.withTimeControl { control =>
-            JsonRpcTransport.inMemory.map { (ta, tb) =>
-                val capA            = new CapturingTransport(ta)
-                val timeoutNoPolicy = JsonRpcHandler.Config(
-                    cancellation = Absent,
-                    requestTimeout = 150.millis
-                )
-                JsonRpcHandler.init(capA, Seq.empty, timeoutNoPolicy).map { endpointA =>
-                    JsonRpcHandler.init(tb, Seq(neverReturns)).map { _ =>
-                        Fiber.initUnscoped(
-                            Abort.run[JsonRpcError | Closed](
-                                endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"))
-                            )
-                        ).map { callFib =>
-                            control.advance(300.millis).andThen {
-                                callFib.get.map {
-                                    case Result.Failure(_: JsonRpcError) =>
-                                        Sync.defer {
-                                            val noCancelSent = capA.sentList.forall {
-                                                case JsonRpcNotification(_, _, _) => false
-                                                case _                            => true
+        // The timeout arm registers its sleeper before the request is sent, and a timeout that fires first has no
+        // request to cancel, so the clock advances only once the peer holds the request.
+        Fiber.Promise.init[Unit, Any].map { received =>
+            val neverReturns = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+                (_, _) =>
+                    received.completeUnitDiscard.andThen(Fiber.Promise.init[Unit, Any].map { gate => gate.get.andThen(EchoResp("never")) })
+            }
+            Clock.withTimeControl { control =>
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val capA            = new CapturingTransport(ta)
+                    val timeoutNoPolicy = JsonRpcHandler.Config(
+                        cancellation = Absent,
+                        requestTimeout = 150.millis
+                    )
+                    JsonRpcHandler.init(capA, Seq.empty, timeoutNoPolicy).map { endpointA =>
+                        JsonRpcHandler.init(tb, Seq(neverReturns)).map { _ =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"))
+                                )
+                            ).map { callFib =>
+                                received.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(300.millis)).andThen {
+                                    callFib.get.map {
+                                        case Result.Failure(_: JsonRpcError) =>
+                                            Sync.defer {
+                                                val noCancelSent = capA.sentList.forall {
+                                                    case JsonRpcNotification(_, _, _) => false
+                                                    case _                            => true
+                                                }
+                                                assert(noCancelSent, "no cancel notification should be sent when cancellation is Absent")
                                             }
-                                            assert(noCancelSent, "no cancel notification should be sent when cancellation is Absent")
-                                        }
-                                    case other => fail(s"expected JsonRpcError failure, got $other")
+                                        case other => fail(s"expected JsonRpcError failure, got $other")
+                                    }
                                 }
                             }
                         }

@@ -283,7 +283,7 @@ object WebsiteGenerator:
                 prefix,
                 fixedRoute,
                 outlines,
-                rendered.article,
+                articleSlot(rendered),
                 Signal.initConst(false)
             )
             view <- siteShell(versions, docsHome(c, prefix), body)
@@ -323,7 +323,7 @@ object WebsiteGenerator:
                 prefix,
                 fixedRoute,
                 outlines,
-                rendered.article,
+                articleSlot(rendered),
                 Signal.initConst(false)
             )
             view <- siteShell(versions, docsHome(c, prefix), body)
@@ -376,6 +376,12 @@ object WebsiteGenerator:
                 Signal.initConst(body)
             )
         yield view
+
+    // The bundle mounts the article as a reactive slot holding the pre-rendered HTML it swaps on navigation. The SSG emits that same
+    // slot around that same HTML, not the article subtree: the subtree renders without the slot's range markers and with its
+    // `data-kyo-path` values rooted in the page, so the mount would replace a different DOM than the one first painted.
+    private def articleSlot(rendered: DocsMarkdownRender.Rendered)(using Frame): UI =
+        UI.Ast.Reactive(Signal.initConst[UI](UI.rawHtml(rendered.articleHtml)))
 
     /** The header "Get started" target for content `c` served under `prefix`: the first module's route
       * `/<prefix>/<firstSlug>/`, falling back to the prefix root `/<prefix>/` when the version has no

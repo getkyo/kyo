@@ -380,6 +380,23 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
+    "the gap chart's line geometry is the same text on every platform" in {
+        // The SSG renders this on the JVM and the bundle re-renders it in the browser; one differing digit breaks hydration parity.
+        val gapLinePath = """id="gap-line"[^>]* d="([^"]*)"""".r
+        renderLanding.map { html =>
+            val d = gapLinePath.findFirstMatchIn(html).map(_.group(1))
+            assert(
+                d == Some(
+                    "M16 107.6 L50.22222222222222 95.35999999999999 L84.44444444444444 84.95599999999999 " +
+                        "L118.66666666666666 76.11259999999999 L152.88888888888889 68.59571 L187.11111111111111 62.20635349999999 " +
+                        "L221.33333333333331 56.775400474999984 L255.55555555555557 52.159090403749985 " +
+                        "L289.77777777777777 48.23522684318749 L324 44.89994281670937"
+                ),
+                s"gap-line d: $d"
+            )
+        }
+    }
+
     "key copy is present without JS (SSR)" in {
         renderLanding.map { html =>
             // Hero lead, the gap framing and its stat, the layered-safety ladder, the platforms heading,

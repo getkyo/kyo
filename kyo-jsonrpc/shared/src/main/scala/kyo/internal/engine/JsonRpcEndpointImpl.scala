@@ -76,7 +76,6 @@ final class JsonRpcEndpointImpl private[kyo] (
     private[kyo] val tokenToDeadline: ConcurrentHashMap[Structure.Value, AtomicLong.Unsafe]
 ) extends JsonRpcHandler.Unsafe:
 
-    // Internal delegator: referenced by initEngine's Reject-close branches. Forwards to LifecycleEngine.
     private[kyo] def closeEffect(gracePeriod: Duration)(using Frame): Unit < Async =
         LifecycleEngine.closeEffect(
             gracePeriod,
@@ -95,12 +94,12 @@ final class JsonRpcEndpointImpl private[kyo] (
 
     // --- Public Unsafe interface: every method returns Fiber.Unsafe wrapping the effect ---
 
-    def call[In: Schema, Out: Schema](
+    private[kyo] def callEffect[In: Schema, Out: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[Out, Abort[JsonRpcError | Closed]] =
-        Fiber.Unsafe.init(CallEngine.callEffect[In, Out](
+    )(using Frame): Out < (Async & Abort[JsonRpcError | Closed]) =
+        CallEngine.callEffect[In, Out](
             method,
             params,
             extras,
@@ -111,14 +110,36 @@ final class JsonRpcEndpointImpl private[kyo] (
             writerChannel,
             exchange,
             config
-        ))
+        )
+
+    def call[In: Schema, Out: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Out, Abort[JsonRpcError | Closed]] =
+        Fiber.Unsafe.init(callEffect[In, Out](method, params, extras))
+
+    private[kyo] def notifyEffect[In: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        CallEngine.notifyEffect[In](method, params, extras, writerChannel)
 
     def notify[In: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Fiber.Unsafe.init(CallEngine.notifyEffect[In](method, params, extras, writerChannel))
+        Fiber.Unsafe.init(notifyEffect[In](method, params, extras))
+
+    private[kyo] def sendUnmatchedEffect[In: Schema](
+        method: String,
+        params: In,
+        id: JsonRpcId,
+        extras: JsonRpcExtrasEncoder
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        CallEngine.sendUnmatchedEffect[In](method, params, id, extras, writerChannel)
 
     def sendUnmatched[In: Schema](
         method: String,
@@ -126,14 +147,21 @@ final class JsonRpcEndpointImpl private[kyo] (
         id: JsonRpcId,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Fiber.Unsafe.init(CallEngine.sendUnmatchedEffect[In](method, params, id, extras, writerChannel))
+        Fiber.Unsafe.init(sendUnmatchedEffect[In](method, params, id, extras))
 
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[JsonRpcHandler.Pending[Out], Abort[JsonRpcError | Closed]] =
-        Fiber.Unsafe.init(CallEngine.callWithProgressEffect[In, Out](
+        Fiber.Unsafe.init(callWithProgressEffect[In, Out](method, params, extras))
+
+    private[kyo] def callWithProgressEffect[In: Schema, Out: Schema](
+        method: String,
+        params: In,
+        extras: JsonRpcExtrasEncoder
+    )(using Frame): JsonRpcHandler.Pending[Out] < (Async & Abort[JsonRpcError | Closed]) =
+        CallEngine.callWithProgressEffect[In, Out](
             method,
             params,
             extras,
@@ -147,7 +175,7 @@ final class JsonRpcEndpointImpl private[kyo] (
             progressPolicy,
             progressStreams,
             tokenToDeadline
-        ))
+        )
 
     def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
@@ -172,20 +200,23 @@ final class JsonRpcEndpointImpl private[kyo] (
     def subscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Stream[Structure.Value, Async & Abort[Closed]] =
         Sync.Unsafe.evalOrThrow(ProgressEngine.subscribeProgressEffect(token, progressPolicy, progressStreams, initFrame))
 
+    private[kyo] def unsubscribeProgressEffect(token: Structure.Value)(using Frame): Unit < Async =
+        ProgressEngine.unsubscribeProgressEffect(token, progressStreams)
+
     def unsubscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        Fiber.Unsafe.init(ProgressEngine.unsubscribeProgressEffect(token, progressStreams))
+        Fiber.Unsafe.init(unsubscribeProgressEffect(token))
+
+    private[kyo] def cancelEffect(id: JsonRpcId, reason: Maybe[String])(using Frame): Unit < (Async & Abort[Closed]) =
+        CancellationEngine.cancelEffect(id, reason, callerRegistry, config, writerChannel)
 
     def cancel(id: JsonRpcId, reason: Maybe[String])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Fiber.Unsafe.init(CancellationEngine.cancelEffect(
-            id,
-            reason,
-            callerRegistry,
-            config,
-            writerChannel
-        ))
+        Fiber.Unsafe.init(cancelEffect(id, reason))
+
+    private[kyo] def awaitDrainEffect(using Frame): Unit < Async =
+        LifecycleEngine.awaitDrainEffect(inFlight, drainSignal)
 
     def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        Fiber.Unsafe.init(LifecycleEngine.awaitDrainEffect(inFlight, drainSignal))
+        Fiber.Unsafe.init(awaitDrainEffect)
 
     def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         Fiber.Unsafe.init(closeEffect(gracePeriod))

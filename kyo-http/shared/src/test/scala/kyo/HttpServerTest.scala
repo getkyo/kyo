@@ -3988,56 +3988,133 @@ class HttpServerTest extends BaseHttpTest:
 
         // The request is stopped while its handler is parked, so its connection is established and in use. The leaf then
         // closes the client's scope and reads the operating system's view of the sockets connected to the server's port:
-        // a connection the client tracks closes with it, an untracked one stays, which the leaf timeout reports.
+        // a connection the client tracks closes with it, an untracked one stays. The server stays bound until that check
+        // ends, because closing it first moves a leaked client socket out of ESTABLISHED and hides it. Each repetition
+        // closes its own server: the runner keeps one scope across all repetitions.
         "a request stopped in flight leaves no connection behind once its client closes".times(300) in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
-            // Linux exposes the socket table as /proc/net/tcp: one row per socket, the state in column 4 (01 is
-            // ESTABLISHED) and the remote address in column 3 as hex ip:port. Elsewhere lsof answers the same question.
+            // Linux exposes the socket table as /proc/net/tcp: one row per socket, the local and remote address as hex
+            // ip:port in columns 2 and 3, the state in column 4 (01 is ESTABLISHED), the transmit:receive queues in
+            // column 5 and the inode in column 10. Elsewhere lsof answers the same question.
             val tables                                   = Chunk(Path("/proc/net/tcp"), Path("/proc/net/tcp6"))
             def readTables: Chunk[Chunk[String]] < Async =
                 Abort.run[FileSystemException](Path.runReadOnly(Kyo.filter(tables)(_.exists).map(Kyo.foreach(_)(_.readLines))))
                     .map(_.getOrElse(Chunk.empty))
-            def establishedTo(port: Int)(rows: Chunk[Chunk[String]]): Int =
-                rows.map(_.drop(1).count { line =>
-                    val cols = line.trim.split("\\s+")
-                    cols.length > 3 && cols(3) == "01" && Integer.parseInt(cols(2).split(":").last, 16) == port
-                }).sum
+            def rowsOn(port: Int)(tables: Chunk[Chunk[String]]): Chunk[Array[String]] =
+                tables.flatMap(_.drop(1)).map(_.trim.split("\\s+")).filter(cols =>
+                    cols.length > 9 && (socketPort(cols(1)) == port || socketPort(cols(2)) == port)
+                )
+            // The descriptor this process holds on each socket inode, from its /proc/<pid>/fd links: a leaked row whose
+            // inode has no descriptor here is held by the kernel, not by an open handle.
+            def descriptors: Map[String, String] < Async =
+                Abort.run[FileSystemException](Path.runReadOnly(Path("/proc/self").realPath)).map {
+                    case Result.Success(self) =>
+                        Abort.run[CommandException](Command("ls", "-l", s"$self/fd").textWithExitCode).map {
+                            case Result.Success((out, _)) =>
+                                out.linesIterator.flatMap { line =>
+                                    "(\\d+) -> socket:\\[(\\d+)\\]".r.findFirstMatchIn(line).map(m => m.group(2) -> m.group(1))
+                                }.toMap
+                            case _ => Map.empty
+                        }
+                    case _ => Map.empty
+                }
             readTables.map { initial =>
-                val procNetTcp                          = initial.nonEmpty
-                def connectedTo(port: Int): Int < Async =
-                    if procNetTcp then readTables.map(establishedTo(port))
+                val procNetTcp = initial.nonEmpty
+                // How many client ends are still ESTABLISHED to `port`, with the socket table rows that show it.
+                def snapshot(port: Int): (Int, String) < Async =
+                    if procNetTcp then
+                        readTables.map { tables =>
+                            val rows        = rowsOn(port)(tables)
+                            val established = establishedTo(port)(rows)
+                            if established == 0 then (0, "")
+                            else
+                                descriptors.map { fds =>
+                                    val described = rows.map { c =>
+                                        s"local=${c(1)} remote=${c(2)} state=${c(3)} queues=${c(4)} inode=${c(9)} " +
+                                            s"fd=${fds.getOrElse(c(9), "none")}"
+                                    }
+                                    (established, described.mkString("\n"))
+                                }
+                            end if
+                        }
                     else
                         Abort.run[CommandException](Command("lsof", "-nP", s"-iTCP:$port", "-sTCP:ESTABLISHED").textWithExitCode).map {
-                            case Result.Success((out, _)) => out.linesIterator.count(_.contains(s"->127.0.0.1:$port"))
-                            case _                        => -1
+                            case Result.Success((out, _)) => (out.linesIterator.count(_.contains(s"->127.0.0.1:$port")), out)
+                            case other                    => (-1, s"lsof did not run: $other")
                         }
+                // A declared exception to the no-real-clock rule: this bounds the kernel's socket teardown, which no kyo event
+                // observes. 20 s is far above that teardown (all 300 repetitions take 43 s under the CI caps) and below the leaf
+                // timeout, so a leak fails here with the rows, the descriptor on each socket and the I/O drivers' state. The
+                // bound is on elapsed time, not a poll count: one lsof poll takes about a second.
+                def awaitClosed(port: Int): Unit < Async =
+                    def poll: Unit < Async =
+                        snapshot(port).map {
+                            case (0, _) => Kyo.unit
+                            case _      => Async.sleep(10.millis).andThen(poll)
+                        }
+                    Abort.run[Timeout](Async.timeout(20.seconds)(poll)).map {
+                        case Result.Success(_) => Kyo.unit
+                        case _                 =>
+                            snapshot(port).map {
+                                case (0, _)              => Kyo.unit
+                                case (established, rows) =>
+                                    fail(
+                                        s"$established connection(s) to $port still established after the client closed:\n$rows\n" +
+                                            kyo.internal.Diagnostics.dumpAll()
+                                    )
+                            }
+                    }
+                end awaitClosed
                 val probe: Result[CommandException, (String, ExitCode)] < Async =
                     if procNetTcp then Result.succeed(("", ExitCode.Success))
                     else Abort.run[CommandException](Command("lsof", "-v").textWithExitCode)
                 probe.map { probe =>
                     if probe.isFailure then cancel("neither /proc/net/tcp nor lsof is available, so the socket table cannot be read")
-                    for
-                        entered <- Latch.init(1)
-                        gate    <- Latch.init(1)
-                        handler = route.handler(_ => entered.release.andThen(gate.await).andThen(HttpResponse.ok("hello")))
-                        server <- HttpServer.init(0, "127.0.0.1")(handler)
-                        port = server.port
-                        url  = s"http://127.0.0.1:$port/test"
-                        stopped <- Abort.run[Throwable](Scope.run {
-                            HttpClient.init(maxConnectionsPerHost = 2).map { client =>
-                                Fiber.initUnscoped(HttpClient.let(client)(Abort.run[HttpException](HttpClient.getText(url)))).map { fiber =>
-                                    entered.await.andThen(fiber.interrupt).andThen(fiber.getResult.map(_.isPanic))
+                    Scope.run {
+                        for
+                            entered <- Latch.init(1)
+                            gate    <- Latch.init(1)
+                            handler = route.handler(_ => entered.release.andThen(gate.await).andThen(HttpResponse.ok("hello")))
+                            server <- HttpServer.init(0, "127.0.0.1")(handler)
+                            port = server.port
+                            url  = s"http://127.0.0.1:$port/test"
+                            stopped <- Abort.run[Throwable](Scope.run {
+                                HttpClient.init(maxConnectionsPerHost = 2).map { client =>
+                                    Fiber.initUnscoped(HttpClient.let(client)(Abort.run[HttpException](HttpClient.getText(url)))).map {
+                                        fiber => entered.await.andThen(fiber.interrupt).andThen(fiber.getResult.map(_.isPanic))
+                                    }
                                 }
-                            }
-                        })
-                        _ <- gate.release
-                        _ = assert(stopped.contains(true), s"the stopped request or the client's scope did not end cleanly: $stopped")
-                        _ <- assertEventually(connectedTo(port).map(_ == 0))
-                    yield succeed
-                    end for
+                            })
+                            _ <- gate.release
+                            _ = assert(stopped.contains(true), s"the stopped request or the client's scope did not end cleanly: $stopped")
+                            _ <- awaitClosed(port)
+                        yield succeed
+                        end for
+                    }
                 }
             }
         }
+
+        "the socket-table check counts only the loopback client ends connected to the server's port" in {
+            val port = 0x9cd9
+            val rows = Chunk(
+                "0: 0100007F:9CD9 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 101",
+                "1: 0100007F:C26A 0100007F:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 102",
+                "2: 0100007F:9CD9 0100007F:C26A 01 00000000:00000000 00:00000000 00000000 0 0 103",
+                "3: 027FA8C0:0016 017FA8C0:9CD9 01 00000000:00000000 00:00000000 00000000 0 0 104",
+                "4: 0000000000000000FFFF00000100007F:C26B 0000000000000000FFFF00000100007F:9CD9 01 " +
+                    "00000000:00000000 00:00000000 00000000 0 0 105"
+            ).map(_.trim.split("\\s+"))
+            assert(establishedTo(port)(rows) == 2)
+        }
     }
+
+    private def socketPort(address: String): Int = Integer.parseInt(address.split(":").last, 16)
+
+    // The table lists every socket in the network namespace, which under host networking includes connections from other hosts, so a
+    // remote port equal to the server's ephemeral port is not enough: another host's ssh session whose source port equals it would count.
+    // The client connects to 127.0.0.1, written 0100007F in tcp and as the tail of the v4-mapped address in tcp6.
+    private def establishedTo(port: Int)(rows: Chunk[Array[String]]): Int =
+        rows.count(cols => cols(3) == "01" && cols(2).split(":").head.endsWith("0100007F") && socketPort(cols(2)) == port)
 
 end HttpServerTest
