@@ -5,6 +5,7 @@ import kyo.*
 import kyo.Codec.IntrospectingReader
 import kyo.Codec.Reader
 import kyo.internal.CodecMacro
+import kyo.internal.Numeric
 import scala.annotation.tailrec
 
 /** Reads values from MessagePack wire format.
@@ -92,20 +93,26 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         s
     end readUtf8
 
-    private def formatName(b: Int): String =
-        if isInt(b) then "integer"
-        else if isStr(b) then "string"
-        else if isMap(b) then "map"
-        else if isArray(b) then "array"
-        else if isBin(b) then "binary"
-        else if isExt(b) then "extension"
-        else if isFloat(b) then "float"
-        else if b == Nil then "nil"
-        else if b == True || b == False then "boolean"
-        else f"unknown(0x$b%02x)"
+    /** The kind a marker byte starts. An extension is opaque bytes unless read as a timestamp; the one byte no value starts with
+      * (0xc1) has no kind.
+      */
+    private def kindOf(b: Int): Maybe[Codec.Kind] =
+        if isInt(b) || isFloat(b) then Present(Codec.Kind.Number)
+        else if isStr(b) then Present(Codec.Kind.String)
+        else if isMap(b) then Present(Codec.Kind.Object)
+        else if isArray(b) then Present(Codec.Kind.Array)
+        else if isBin(b) || isExt(b) then Present(Codec.Kind.Bytes)
+        else if b == Nil then Present(Codec.Kind.Null)
+        else if b == True || b == False then Present(Codec.Kind.Boolean)
+        else Absent
 
-    private def mismatch(expected: String, b: Int): Nothing =
-        throw TypeMismatchException(Seq.empty, expected, formatName(b))(using _frame)
+    private def mismatch(expected: Codec.Kind, b: Int): Nothing =
+        kindOf(b) match
+            case Present(actual) => throw Codec.kindMismatch(expected, actual)(using _frame)
+            case Absent          => unknownMarker(b, expected.show)
+
+    private def unknownMarker(b: Int, expected: String): Nothing =
+        throw ParseException(self, f"0x$b%02x", expected, Seq.empty, pos - 1)(using _frame)
 
     // --- container count stack ---
 
@@ -132,7 +139,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             if isFixMap(b) then b & 0x0f
             else if b == Map16 then readU16()
             else if b == Map32 then readLen32()
-            else mismatch("map", b)
+            else mismatch(Codec.Kind.Object, b)
         checkCollectionSize(n)
         n
     end readMapHeader
@@ -143,7 +150,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             if isFixArray(b) then b & 0x0f
             else if b == Array16 then readU16()
             else if b == Array32 then readLen32()
-            else mismatch("array", b)
+            else mismatch(Codec.Kind.Array, b)
         checkCollectionSize(n)
         n
     end readArrayHeader
@@ -196,7 +203,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         else if isInt(b) then
             keyIsInt = true
             keyInt = readLongValue()
-        else mismatch("map key (string or integer)", b)
+        else mismatch(Codec.Kind.String, b)
         end if
     end parseKey
 
@@ -242,37 +249,40 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         else if b == Int16 then readS16().toLong
         else if b == Int32 then readBE32().toLong
         else if b == Int64 then readBE64()
-        else mismatch("integer", b)
+        else mismatch(Codec.Kind.Number, b)
         end if
     end readLongValue
 
-    def long(): Long = readLongValue()
+    /** The integer at the cursor, a uint64 at or above 2^63 included, which no Long holds. */
+    private def readWholeValue(): BigInt | Long =
+        if peekByte() == UInt64 then
+            pos += 1
+            val raw = readBE64()
+            if raw >= 0 then raw else BigInt(java.lang.Long.toUnsignedString(raw))
+        else readLongValue()
 
-    def int(): Int =
-        val v = readLongValue()
-        if v < Int.MinValue.toLong || v > Int.MaxValue.toLong then
-            throw RangeException(v, "Int", Int.MinValue.toLong, Int.MaxValue.toLong)(using _frame)
-        v.toInt
-    end int
+    def long(): Long = integral(Numeric.Target.Int64)
 
-    def short(): Short =
-        val v = readLongValue()
-        if v < Short.MinValue.toLong || v > Short.MaxValue.toLong then
-            throw RangeException(v, "Short", Short.MinValue.toLong, Short.MaxValue.toLong)(using _frame)
-        v.toShort
-    end short
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def byte(): Byte =
-        val v = readLongValue()
-        if v < Byte.MinValue.toLong || v > Byte.MaxValue.toLong then
-            throw RangeException(v, "Byte", Byte.MinValue.toLong, Byte.MaxValue.toLong)(using _frame)
-        v.toByte
-    end byte
+    def short(): Short = integral(Numeric.Target.Int16).toShort
+
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
+
+    private def integral(target: Numeric.Target): Long =
+        given Frame = _frame
+        if isFloat(peekByte()) then Numeric.whole(readDoubleValue(), target)
+        else
+            readWholeValue() match
+                case value: Long   => Numeric.whole(value, target)
+                case value: BigInt => Numeric.whole(value, target)
+        end if
+    end integral
 
     def char(): Char =
         val v = readLongValue()
         if v < Char.MinValue.toInt.toLong || v > Char.MaxValue.toInt.toLong then
-            throw RangeException(v, "Char", Char.MinValue.toInt.toLong, Char.MaxValue.toInt.toLong)(using _frame)
+            throw RangeException(BigDecimal(v), "Char", Char.MinValue.toInt.toLong, Char.MaxValue.toInt.toLong)(using _frame)
         v.toChar
     end char
 
@@ -280,7 +290,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         val b = readByte()
         if b == Float64 then java.lang.Double.longBitsToDouble(readBE64())
         else if b == Float32 then java.lang.Float.intBitsToFloat(readBE32()).toDouble
-        else mismatch("float", b)
+        else mismatch(Codec.Kind.Number, b)
     end readDoubleValue
 
     def double(): Double = readDoubleValue()
@@ -289,14 +299,14 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         val b = readByte()
         if b == Float32 then java.lang.Float.intBitsToFloat(readBE32())
         else if b == Float64 then java.lang.Double.longBitsToDouble(readBE64()).toFloat
-        else mismatch("float", b)
+        else mismatch(Codec.Kind.Number, b)
     end float
 
     def boolean(): Boolean =
         val b = readByte()
         if b == True then true
         else if b == False then false
-        else mismatch("boolean", b)
+        else mismatch(Codec.Kind.Boolean, b)
     end boolean
 
     private def readStringValue(): String =
@@ -306,7 +316,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             else if b == Str8 then readByte()
             else if b == Str16 then readU16()
             else if b == Str32 then readLen32()
-            else mismatch("string", b)
+            else mismatch(Codec.Kind.String, b)
         readUtf8(len)
     end readStringValue
 
@@ -325,7 +335,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             if b == Bin8 then readByte()
             else if b == Bin16 then readU16()
             else if b == Bin32 then readLen32()
-            else mismatch("binary", b)
+            else mismatch(Codec.Kind.Bytes, b)
         requireRemaining(len)
         val arr = java.util.Arrays.copyOfRange(data, pos, pos + len)
         pos += len
@@ -357,7 +367,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             else if b == Ext8 then readByte()
             else if b == Ext16 then readU16()
             else if b == Ext32 then readLen32()
-            else mismatch("extension", b)
+            else mismatch(Codec.Kind.Timestamp, b)
         val tpe = readS8()
         (tpe, len)
     end readExtHeader
@@ -388,7 +398,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             val nanos = if n > 1 then readLongValue() else 0L
             java.time.Instant.ofEpochSecond(secs, nanos)
         else if isInt(b) then java.time.Instant.ofEpochMilli(readLongValue())
-        else mismatch("Instant (array, timestamp ext, or integer)", b)
+        else mismatch(Codec.Kind.Timestamp, b)
         end if
     end instant
 
@@ -408,7 +418,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
         else if isInt(b) then
             // Bare integer of total nanoseconds (e.g. a plain msgpack int produced by another encoder).
             java.time.Duration.ofNanos(readLongValue())
-        else mismatch("Duration (array, string, or integer)", b)
+        else mismatch(Codec.Kind.Duration, b)
         end if
     end duration
 
@@ -473,7 +483,7 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
                 case Ext8                     => skipBytes(1 + readByte())
                 case Ext16                    => skipBytes(1 + readU16())
                 case Ext32                    => skipBytes(1 + readLen32())
-                case _                        => mismatch("value", b)
+                case _                        => unknownMarker(b, "a value")
         end if
     end skip
 
@@ -495,13 +505,16 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             pos += 1
             Structure.Value.Null
         else if b == True || b == False then Structure.Value.Bool(boolean())
-        else if isInt(b) then Structure.Value.Integer(readLongValue())
+        else if isInt(b) then
+            readWholeValue() match
+                case value: Long   => Structure.Value.Integer(value)
+                case value: BigInt => Structure.Value.BigNum(BigDecimal(value))
         else if isFloat(b) then Structure.Value.Decimal(readDoubleValue())
-        else if isBin(b) then
-            throw ParseException(self, formatName(b), "Structure.Value (MessagePack binary is not representable)")(using _frame)
-        else if isExt(b) then
-            throw ParseException(self, formatName(b), "Structure.Value (MessagePack extension is not representable)")(using _frame)
-        else mismatch("Structure.Value", b)
+        else if isBin(b) then Structure.Value.Bytes(bytes())
+        else if isExt(b) then Structure.Value.Instant(instant())
+        else
+            pos += 1
+            unknownMarker(b, "a value")
         end if
     end readStructure
 

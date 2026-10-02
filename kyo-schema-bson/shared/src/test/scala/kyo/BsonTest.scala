@@ -837,4 +837,15 @@ class BsonTest extends kyo.test.Test[Any]:
         val decoded              = Bson.decode[WCDefaults](Bson.encode(WCValues.defaultsSet))
         assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
     }
+
+    "a Short out of range or with a fraction fails with one exception type, read directly or from a captured value" in {
+        val (direct, captured) = CodecTestSupport.shortNarrowing[Bson]
+        assert(direct == Chunk("RangeException", "TypeMismatchException"), direct.toString)
+        assert(captured == direct, s"direct: $direct, captured: $captured")
+    }
+
+    "a record cut off before its end is truncated input" in {
+        val kind = CodecTestSupport.truncation[Bson]
+        assert(kind == "TruncatedInputException", kind)
+    }
 end BsonTest

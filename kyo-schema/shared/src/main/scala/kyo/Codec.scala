@@ -81,6 +81,31 @@ object Codec:
         }
     end readFully
 
+    /** The kind of a value as every reader reports it in a `TypeMismatchException`.
+      *
+      * Each format maps its own tokens onto these (an Ion struct, a MsgPack map and a JSON object are all `Object`), so a value of the
+      * wrong kind fails with the same text whichever format read it, and whether it was read directly or from a captured tree.
+      */
+    private[kyo] enum Kind derives CanEqual:
+        case Object, Array, String, Number, Boolean, Null, Bytes, Timestamp, Duration
+
+        def show: java.lang.String =
+            this match
+                case Object    => "object"
+                case Array     => "array"
+                case String    => "string"
+                case Number    => "number"
+                case Boolean   => "boolean"
+                case Null      => "null"
+                case Bytes     => "bytes"
+                case Timestamp => "timestamp"
+                case Duration  => "duration"
+    end Kind
+
+    /** A value of kind `actual` where one of kind `expected` was required. */
+    private[kyo] def kindMismatch(expected: Kind, actual: Kind)(using Frame): TypeMismatchException =
+        TypeMismatchException(Seq.empty, expected.show, actual.show)
+
     abstract class Reader:
         /** The source location where this Reader was constructed.
           *

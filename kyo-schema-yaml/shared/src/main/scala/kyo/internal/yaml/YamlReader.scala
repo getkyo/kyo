@@ -3,6 +3,7 @@ package kyo.internal.yaml
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Reader
+import kyo.internal.Numeric
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
@@ -79,7 +80,7 @@ final private[kyo] class YamlReader private (
                     case Absent => error(s"Unknown alias '${name.value}'")
                 end match
             case _ =>
-                scalarValue() match
+                scalarValue(Codec.Kind.String) match
                     case ScalarValue.Null       => Structure.Value.Null
                     case ScalarValue.Bool(b)    => Structure.Value.Bool(b)
                     case ScalarValue.Str(s)     => Structure.Value.Str(s)
@@ -87,7 +88,11 @@ final private[kyo] class YamlReader private (
                     case ScalarValue.Number(n)  =>
                         if n.indexOf('.') >= 0 || n.indexOf('e') >= 0 || n.indexOf('E') >= 0 then
                             Structure.Value.Decimal(n.toDouble)
-                        else Structure.Value.Integer(n.toLong)
+                        else
+                            Numeric.parse(n) match
+                                case Present(whole) if whole.isValidLong => Structure.Value.Integer(whole.toLong)
+                                case Present(whole)                      => Structure.Value.BigNum(whole)
+                                case Absent                              => error(s"Invalid number: '$n'")
         end match
     end structureFromEvents
 
@@ -114,7 +119,7 @@ final private[kyo] class YamlReader private (
                             pos += 1
                             stack = MappingFrame() :: stack
                             if atNodeEnd then 0 else -1
-                        case other => expected("mapping", other)
+                        case other => expected(Codec.Kind.Object, other)
                 }
         }
     end objectStart
@@ -159,7 +164,7 @@ final private[kyo] class YamlReader private (
                             pos += 1
                             stack = SequenceFrame() :: stack
                             if atNodeEnd then 0 else -1
-                        case other => expected("sequence", other)
+                        case other => expected(Codec.Kind.Array, other)
                 }
             end if
         }
@@ -211,7 +216,7 @@ final private[kyo] class YamlReader private (
                             countMappingField()
                             pos += 1
                             setLastFieldName(value)
-                        case other => expected("field name", other)
+                        case other => error(s"Expected field name, got ${describeEvent(other)}")
                 }
     end fieldParse
 
@@ -279,7 +284,7 @@ final private[kyo] class YamlReader private (
     end hasNextElement
 
     def string(): String =
-        scalarValue() match
+        scalarValue(Codec.Kind.String) match
             case ScalarValue.Null           => ""
             case ScalarValue.Bool(value)    => value.toString
             case ScalarValue.Number(value)  => value
@@ -287,22 +292,19 @@ final private[kyo] class YamlReader private (
             case ScalarValue.Str(value)     => value
     end string
 
-    def int(): Int =
-        val value = numberString("Int")
-        try value.toInt
-        catch
-            case _: NumberFormatException => error(s"Invalid Int value: '$value'")
-    end int
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def long(): Long =
-        val value = numberString("Long")
-        try value.toLong
-        catch
-            case _: NumberFormatException => error(s"Invalid Long value: '$value'")
-    end long
+    def long(): Long = integral(Numeric.Target.Int64)
+
+    private def integral(target: Numeric.Target): Long =
+        val value = numberString(target.name)
+        Numeric.parse(value) match
+            case Present(number) => Numeric.whole(number, target)
+            case Absent          => error(s"Invalid ${target.name} value: '$value'")
+    end integral
 
     def float(): Float =
-        scalarValue() match
+        scalarValue(Codec.Kind.Number) match
             case ScalarValue.Special("NaN")       => Float.NaN
             case ScalarValue.Special("Infinity")  => Float.PositiveInfinity
             case ScalarValue.Special("-Infinity") => Float.NegativeInfinity
@@ -311,11 +313,11 @@ final private[kyo] class YamlReader private (
                 try value.toFloat
                 catch
                     case _: NumberFormatException => error(s"Invalid Float value: '$value'")
-            case other => error(s"Expected Float, got ${describeScalar(other)}")
+            case other => kindMismatch(Codec.Kind.Number, other)
     end float
 
     def double(): Double =
-        scalarValue() match
+        scalarValue(Codec.Kind.Number) match
             case ScalarValue.Special("NaN")       => Double.NaN
             case ScalarValue.Special("Infinity")  => Double.PositiveInfinity
             case ScalarValue.Special("-Infinity") => Double.NegativeInfinity
@@ -324,28 +326,18 @@ final private[kyo] class YamlReader private (
                 try value.toDouble
                 catch
                     case _: NumberFormatException => error(s"Invalid Double value: '$value'")
-            case other => error(s"Expected Double, got ${describeScalar(other)}")
+            case other => kindMismatch(Codec.Kind.Number, other)
     end double
 
     def boolean(): Boolean =
-        scalarValue() match
+        scalarValue(Codec.Kind.Boolean) match
             case ScalarValue.Bool(value) => value
-            case other                   => error(s"Expected Boolean, got ${describeScalar(other)}")
+            case other                   => kindMismatch(Codec.Kind.Boolean, other)
     end boolean
 
-    def short(): Short =
-        val value = int()
-        if value < Short.MinValue || value > Short.MaxValue then
-            throw RangeException(value, "Short", Short.MinValue, Short.MaxValue)
-        value.toShort
-    end short
+    def short(): Short = integral(Numeric.Target.Int16).toShort
 
-    def byte(): Byte =
-        val value = int()
-        if value < Byte.MinValue || value > Byte.MaxValue then
-            throw RangeException(value, "Byte", Byte.MinValue, Byte.MaxValue)
-        value.toByte
-    end byte
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
 
     def char(): Char =
         val value = string()
@@ -510,7 +502,7 @@ final private[kyo] class YamlReader private (
                             val stop  = subtreeEnd(pos)
                             countSequenceElement()
                             pos = stop
-                            child(start, stop)
+                            child(events, start, stop)
                         }
                 end match
         end match
@@ -598,18 +590,19 @@ final private[kyo] class YamlReader private (
         end while
     end captureSourceRootBlockMapping
 
-    private def scalarValue(): ScalarValue =
-        withDelegate(_.scalarValue()) {
+    /** The scalar at the cursor; a mapping or sequence there is a value of another kind than `kind`, the one the caller reads. */
+    private def scalarValue(kind: Codec.Kind): ScalarValue =
+        withDelegate(_.scalarValue(kind)) {
             trySourceScalarValue() match
                 case Present(value) => value
                 case Absent         =>
-                    currentAliasOr(_.scalarValue()) {
+                    currentAliasOr(_.scalarValue(kind)) {
                         peek match
                             case Scalar(value, meta, _) =>
                                 countSequenceElement()
                                 pos += 1
                                 resolveScalarValue(value, meta)
-                            case other => expected("scalar", other)
+                            case other => expected(kind, other)
                     }
             end match
         }
@@ -625,9 +618,10 @@ final private[kyo] class YamlReader private (
     end resolveScalarValue
 
     private def numberString(expected: String): String =
-        scalarValue() match
-            case ScalarValue.Number(value) => value
-            case other                     => error(s"Expected $expected, got ${describeScalar(other)}")
+        scalarValue(Codec.Kind.Number) match
+            case ScalarValue.Number(value)  => value
+            case ScalarValue.Special(value) => error(s"Expected $expected, got $value")
+            case other                      => kindMismatch(Codec.Kind.Number, other)
     end numberString
 
     private def resolveScalar(value: String, meta: Yaml.ScalarMeta): ScalarValue =
@@ -810,9 +804,9 @@ final private[kyo] class YamlReader private (
                 checkCollectionSize(expansion.values)
                 if expansion.depth > maxDepth then throw LimitExceededException("Nesting depth", expansion.depth, maxDepth)
                 advance
-                val reader = anchor.source match
-                    case Present(SourceAnchor(source, line)) => sourceChild(source, line)
-                    case Absent                              => child(anchor.start, anchor.end)
+                val reader = anchor.body match
+                    case AnchorBody.Source(source, line)             => sourceChild(source, line)
+                    case AnchorBody.Events(anchorEvents, start, end) => child(anchorEvents, start, end)
                 reader.resetLimits(maxDepth, maxCollectionSize)
                 delegate = Maybe(reader)
                 delegateDepth = 0
@@ -821,7 +815,7 @@ final private[kyo] class YamlReader private (
         end match
     end startAliasReader
 
-    private def child(start: Int, stop: Int): YamlReader =
+    private def child(events: Array[Event], start: Int, stop: Int): YamlReader =
         val reader = new YamlReader("", 0, yamlVersion, events, start, stop, anchors, expansion, allowSourcePull = false)
         reader.resetLimits(maxDepth, maxCollectionSize)
         reader
@@ -1715,7 +1709,7 @@ final private[kyo] class YamlReader private (
 
     private def registerSourceAnchor(name: String, value: String, lineNumber: Int): Unit =
         val (values, maxDepth) = sourceAnchorStats(value)
-        anchors(name) = Anchor(0, 0, values, maxDepth, Maybe(SourceAnchor(value, lineNumber)))
+        anchors(name) = Anchor(values, maxDepth, AnchorBody.Source(value, lineNumber))
     end registerSourceAnchor
 
     private def sourceAnchorStats(value: String): (Int, Int) =
@@ -1908,7 +1902,7 @@ final private[kyo] class YamlReader private (
     private def expectNodeEnd(expected: String): Unit =
         peek match
             case _: NodeEnd => pos += 1
-            case other      => this.expected(s"$expected end", other)
+            case other      => error(s"Expected $expected end, got ${describeEvent(other)}")
     end expectNodeEnd
 
     private def subtreeEnd(start: Int): Int =
@@ -1946,9 +1940,17 @@ final private[kyo] class YamlReader private (
         end match
     end finished
 
-    private def expected[A](expected: String, event: Event): A =
-        error(s"Expected $expected, got ${describeEvent(event)}")
+    /** A node of another kind than `kind` is a type mismatch, as in every format; an event that is no node is malformed input. */
+    private def expected[A](kind: Codec.Kind, event: Event): A =
+        event match
+            case _: MappingStart        => throw Codec.kindMismatch(kind, Codec.Kind.Object)
+            case _: SequenceStart       => throw Codec.kindMismatch(kind, Codec.Kind.Array)
+            case Scalar(value, meta, _) => kindMismatch(kind, resolveScalar(value, meta))
+            case other                  => error(s"Expected ${kind.show}, got ${describeEvent(other)}")
     end expected
+
+    private def kindMismatch[A](kind: Codec.Kind, value: ScalarValue): A =
+        throw Codec.kindMismatch(kind, scalarKind(value))
 
     private def sourceError[A](message: String, position: Int = sourcePos): A =
         val safePosition = math.max(0, math.min(position, source.length))
@@ -2007,7 +2009,14 @@ object YamlReader:
     end NodeEnd
 
     final private case class Built(events: Array[Event], anchors: scala.collection.mutable.Map[String, Anchor])
-    final private case class Anchor(start: Int, end: Int, values: Int, maxDepth: Int, source: Maybe[SourceAnchor])
+    final private case class Anchor(values: Int, maxDepth: Int, body: AnchorBody)
+
+    // Anchors are shared by every reader of a document, but each captured reader builds its own event array, so an anchor holds the
+    // array its range indexes into.
+    private enum AnchorBody:
+        case Events(events: Array[Event], start: Int, end: Int)
+        case Source(text: String, line: Int)
+    end AnchorBody
     final private class Expansion:
         var values: Int = 0
         var depth: Int  = 0
@@ -2032,7 +2041,6 @@ object YamlReader:
         def isBlank: Boolean = text.isEmpty
     end SourceScalarLine
     final private case class SourceValue(text: String, line: Int)
-    final private case class SourceAnchor(text: String, line: Int)
 
     private enum ScalarValue derives CanEqual:
         case Null
@@ -2135,7 +2143,7 @@ object YamlReader:
             events(i).anchor match
                 case Present(name) =>
                     val stop = subtreeEnd(events, i)
-                    out(name.value) = Anchor(i, stop, valueCount(events, i, stop), depth(events, i, stop), Absent)
+                    out(name.value) = Anchor(valueCount(events, i, stop), depth(events, i, stop), AnchorBody.Events(events, i, stop))
                 case Absent => ()
             end match
             i += 1
@@ -2201,14 +2209,13 @@ object YamlReader:
             case _: NodeEnd       => "collection end"
     end describeEvent
 
-    private def describeScalar(value: ScalarValue): String =
+    private def scalarKind(value: ScalarValue): Codec.Kind =
         value match
-            case ScalarValue.Null           => "null"
-            case ScalarValue.Bool(_)        => "boolean"
-            case ScalarValue.Number(_)      => "number"
-            case ScalarValue.Special(value) => value
-            case ScalarValue.Str(_)         => "string"
-    end describeScalar
+            case ScalarValue.Null                               => Codec.Kind.Null
+            case ScalarValue.Bool(_)                            => Codec.Kind.Boolean
+            case ScalarValue.Number(_) | ScalarValue.Special(_) => Codec.Kind.Number
+            case ScalarValue.Str(_)                             => Codec.Kind.String
+    end scalarKind
 
     def apply(input: Span[Byte])(using Frame): YamlReader =
         apply(input, Yaml.SpecVersion.Yaml12)

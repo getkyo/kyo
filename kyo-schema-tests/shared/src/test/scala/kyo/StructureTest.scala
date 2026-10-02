@@ -1539,18 +1539,16 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(r.char() == 'x')
         }
 
-        "json int parse error throws ParseException" in {
+        "json int of a fraction throws TypeMismatchException, as a captured value does" in {
             val r  = JsonReader("3.14")
-            val ex = intercept[ParseException](r.int())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[TypeMismatchException](r.int())
+            assert((ex.expected, ex.actual) == ("Int", "a number with a fraction"))
         }
 
-        "json long parse error throws ParseException" in {
+        "json long of a fraction throws TypeMismatchException, as a captured value does" in {
             val r  = JsonReader("3.14")
-            val ex = intercept[ParseException](r.long())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[TypeMismatchException](r.long())
+            assert((ex.expected, ex.actual) == ("Long", "a number with a fraction"))
         }
 
         "json long of a string throws TypeMismatchException naming both kinds" in {
@@ -1559,18 +1557,16 @@ class StructureTest extends kyo.test.Test[Any]:
             assert((ex.expected, ex.actual) == ("number", "string"))
         }
 
-        "json short overflow throws ParseException" in {
+        "json short overflow throws RangeException" in {
             val r  = JsonReader("99999")
-            val ex = intercept[ParseException](r.short())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[RangeException](r.short())
+            assert((ex.value, ex.targetType) == (BigDecimal(99999), "Short"))
         }
 
-        "json byte overflow throws ParseException" in {
+        "json byte overflow throws RangeException" in {
             val r  = JsonReader("999")
-            val ex = intercept[ParseException](r.byte())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[RangeException](r.byte())
+            assert((ex.value, ex.targetType) == (BigDecimal(999), "Byte"))
         }
 
         "json invalid base64 throws ParseException" in {

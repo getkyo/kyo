@@ -495,6 +495,10 @@ case class WCDefaults(name: String, count: Int = 7, label: String = "x", note: M
 
 case class WCMaybe(a: Maybe[Int], b: Maybe[String], c: Maybe[WCInner], d: Option[Int]) derives CanEqual, Schema
 
+case class WCShort(s: Short) derives CanEqual, Schema
+case class WCShortWide(s: Int) derives CanEqual, Schema
+case class WCShortFraction(s: Double) derives CanEqual, Schema
+
 object WCMaybes:
     val omitNone: Schema[WCMaybe] = Schema[WCMaybe].omitNone
 end WCMaybes

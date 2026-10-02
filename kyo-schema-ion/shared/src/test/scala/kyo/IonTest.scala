@@ -518,6 +518,15 @@ class IonTest extends kyo.test.Test[Any]:
             )
         }
 
+        "rejects non-finite Ion floats for an integral type, not as a fraction" in {
+            val failures = Chunk("nan", "+inf", "-inf").map { text =>
+                Ion.decode[Int](text) match
+                    case Result.Failure(e: TypeMismatchException) => (e.expected, e.actual)
+                    case other                                    => ("not a type mismatch", other.toString)
+            }
+            assert(failures == Chunk.fill(3)(("Int", "a non-finite number")), failures.toString)
+        }
+
         "rejects trailing content after the decoded root value" in {
             assertFailure(
                 Ion.decode[Int]("0 1"),
@@ -790,6 +799,12 @@ class IonTest extends kyo.test.Test[Any]:
     "a catch-all captures an integer as an Integer, as every other format does" in {
         val decoded = Ion.decode[WCOpen]("{type:\"zzz\",y:1}")
         assert(decoded == Result.succeed(WCValues.other), s"decoded $decoded")
+    }
+
+    "a Short out of range or with a fraction fails with one exception type, read directly or from a captured value" in {
+        val (direct, captured) = CodecTestSupport.shortNarrowing[Ion]
+        assert(direct == Chunk("RangeException", "TypeMismatchException"), direct.toString)
+        assert(captured == direct, s"direct: $direct, captured: $captured")
     }
 
 end IonTest

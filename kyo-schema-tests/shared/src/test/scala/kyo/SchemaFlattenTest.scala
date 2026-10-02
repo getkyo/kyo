@@ -179,11 +179,11 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
             case Result.Failure(e: TypeMismatchException) => assert((e.expected, e.actual) == ("Int", "a number with a fraction"))
             case other                                    => fail(s"expected TypeMismatchException, got $other")
         schema.decodeString[Json]("""{"name":"a","n":5000000000}""") match
-            case Result.Failure(e: RangeException) => assert((e.value, e.targetType) == (5000000000L, "Int"))
+            case Result.Failure(e: RangeException) => assert((e.value, e.targetType) == (BigDecimal(5000000000L), "Int"))
             case other                             => fail(s"expected RangeException, got $other")
         schema.decodeString[Json]("""{"name":"a","n":1e30}""") match
-            case Result.Failure(e: TypeMismatchException) => assert((e.expected, e.actual) == ("Int", "a number outside its range"))
-            case other                                    => fail(s"expected TypeMismatchException, got $other")
+            case Result.Failure(e: RangeException) => assert((e.value, e.targetType) == (BigDecimal("1e30"), "Int"))
+            case other                             => fail(s"expected RangeException, got $other")
     }
 
     "a malformed Base64 value in a flattened field is a decode failure" in {

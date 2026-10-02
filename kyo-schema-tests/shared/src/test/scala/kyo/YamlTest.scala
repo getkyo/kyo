@@ -1574,8 +1574,8 @@ class YamlTest extends kyo.test.Test[Any]:
         "present optional fields" in {
             wirePin(WCValues.maybePresent, "a: 1\nb: s\nc:\n  x: 2\n  label: c\nd: 4\n", summon[Schema[WCMaybe]])
         }
-        "absent optional fields: the bytes written" in {
-            wireWrites(WCValues.maybeAbsent, "\n", summon[Schema[WCMaybe]])
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "{}\n", summon[Schema[WCMaybe]])
         }
         "absent optional fields under omitNone" in {
             wirePin(WCValues.maybeAbsent, "{}\n", WCMaybes.omitNone)
@@ -1616,6 +1616,12 @@ class YamlTest extends kyo.test.Test[Any]:
         val decoded = Yaml.decode[WCMaybe](written)
         val failure = decoded.failure.map(_.getClass.getSimpleName)
         assert(decoded == Result.succeed(WCValues.maybeAbsent), s"wrote ${written.replace("\n", "\\n")}, failed with $failure")
+    }
+
+    "a Short out of range or with a fraction fails with one exception type, read directly or from a captured value" in {
+        val (direct, captured) = CodecTestSupport.shortNarrowing[Yaml]
+        assert(direct == Chunk("RangeException", "TypeMismatchException"), direct.toString)
+        assert(captured == direct, s"direct: $direct, captured: $captured")
     }
 
 end YamlTest

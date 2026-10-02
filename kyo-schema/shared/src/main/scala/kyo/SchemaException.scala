@@ -219,11 +219,13 @@ case class LimitExceededException(limit: String, actual: Int, maximum: Int)(usin
     private[kyo] def mapPath(f: Seq[String] => Seq[String]): LimitExceededException = this
 end LimitExceededException
 
-/** Thrown when a numeric value is outside the valid range of the target type (e.g., Int overflow). */
-case class RangeException(value: Long, targetType: String, min: Long, max: Long)(using Frame)
-    extends SchemaException(s"Value $value out of range for $targetType ($min to $max)")
+/** Thrown when a numeric value is outside the valid range of the target type (e.g., Int overflow). `value` is the number as read, which
+  * may be beyond a Long.
+  */
+case class RangeException(value: BigDecimal, targetType: String, min: Long, max: Long, path: Seq[String] = Seq.empty)(using Frame)
+    extends SchemaException(s"Value $value out of range for $targetType ($min to $max)" + SchemaException.pathSuffix(path))
     with DecodeException derives CanEqual:
-    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RangeException = this
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RangeException = copy(path = f(path))(using frame)
 end RangeException
 
 /** Thrown when a smart constructor refuses the decoded fields.

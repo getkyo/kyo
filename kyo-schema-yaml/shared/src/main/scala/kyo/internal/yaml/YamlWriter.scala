@@ -14,10 +14,16 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
 
     import Yaml.WriterConfig.*
 
+    // A block collection writes nothing of its own until its first entry, so one whose declared size was nonzero but that received
+    // no entries would leave an empty document. `opening` restores the output to before the collection started so it can be written
+    // as `{}` or `[]` instead.
+    final private case class Opening(length: Int, pendingField: Boolean, lastWriteWasLine: Boolean)
+
     sealed private trait Frame
-    final private class MappingFrame(val indent: Int, var first: Boolean, var inlineFirst: Boolean, val flow: Boolean) extends Frame
-    final private class SequenceFrame(val indent: Int, val flow: Boolean, var first: Boolean)                          extends Frame
-    final private class EmptyFrame                                                                                     extends Frame
+    final private class MappingFrame(val indent: Int, var first: Boolean, var inlineFirst: Boolean, val flow: Boolean, val opening: Opening)
+        extends Frame
+    final private class SequenceFrame(val indent: Int, val flow: Boolean, var first: Boolean, val opening: Opening) extends Frame
+    final private class EmptyFrame                                                                                  extends Frame
 
     private enum Scalar derives CanEqual:
         case Plain(value: String)
@@ -124,11 +130,12 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
             writeEmpty("{}")
             stack = EmptyFrame() :: stack
         else
-            val flow   = flowCollections
-            val indent = startContainer(isMapping = true, flow)
+            val opening = Opening(out.length, pendingField, lastWriteWasLine)
+            val flow    = flowCollections
+            val indent  = startContainer(isMapping = true, flow)
             if flow then out.append('{')
             if flow then flowDepth += 1
-            stack = MappingFrame(indent, first = true, inlineFirst = !flow && startsInlineMapping, flow) :: stack
+            stack = MappingFrame(indent, first = true, inlineFirst = !flow && startsInlineMapping, flow, opening) :: stack
         end if
     end startMapping
 
@@ -137,11 +144,12 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
             writeEmpty("[]")
             stack = EmptyFrame() :: stack
         else
-            val flow   = flowCollections
-            val indent = startContainer(isMapping = false, flow)
+            val opening = Opening(out.length, pendingField, lastWriteWasLine)
+            val flow    = flowCollections
+            val indent  = startContainer(isMapping = false, flow)
             if flow then out.append('[')
             if flow then flowDepth += 1
-            stack = SequenceFrame(indent, flow, first = true) :: stack
+            stack = SequenceFrame(indent, flow, first = true, opening) :: stack
         end if
     end startSequence
 
@@ -160,6 +168,7 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
                 flowSequenceElement(frame)
                 frame.indent
             case (frame: SequenceFrame) :: _ =>
+                frame.first = false
                 writeIndent(frame.indent)
                 out.append("-")
                 if isMapping && config.sequenceMappingStyle == SequenceMappingStyle.Compact && !childFlow then out.append(' ')
@@ -183,11 +192,15 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
                 if frame.flow then
                     flowDepth -= 1
                     out.append('}')
+                else if frame.first then writeEmptyAt(frame.opening, "{}")
+                end if
             case (frame: SequenceFrame) :: rest =>
                 stack = rest
                 if frame.flow then
                     flowDepth -= 1
                     out.append(']')
+                else if frame.first then writeEmptyAt(frame.opening, "[]")
+                end if
             case _ :: rest => stack = rest
             case Nil       => ()
         end match
@@ -195,6 +208,13 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
 
     private def writeEmpty(value: String): Unit =
         writeScalar(Scalar.Plain(value))
+
+    private def writeEmptyAt(opening: Opening, value: String): Unit =
+        out.setLength(opening.length)
+        pendingField = opening.pendingField
+        lastWriteWasLine = opening.lastWriteWasLine
+        writeEmpty(value)
+    end writeEmptyAt
 
     private def writeScalar(scalar: Scalar): Unit =
         released = false
@@ -213,6 +233,7 @@ final private[kyo] class YamlWriter private (private var config: Yaml.WriterConf
                 val _ = appendScalar(scalar, frame.indent + indentSize)
                 lastWriteWasLine = false
             case (frame: SequenceFrame) :: _ =>
+                frame.first = false
                 writeIndent(frame.indent)
                 out.append("- ")
                 if !appendScalar(scalar, frame.indent + indentSize) then out.append('\n')

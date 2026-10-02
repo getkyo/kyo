@@ -39,7 +39,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     def objectStart(): Int =
         checkDepth()
         skipWhitespace()
-        if pos >= input.size || input(pos) != '{' then wrongKind("object", "Expected '{'")
+        if pos >= input.size || input(pos) != '{' then wrongKind(Codec.Kind.Object, "Expected '{'")
         advance()
         skipWhitespace()
         if pos < input.size && peek() == '}' then 0 else -1
@@ -54,7 +54,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     def arrayStart(): Int =
         checkDepth()
         skipWhitespace()
-        if pos >= input.size || input(pos) != '[' then wrongKind("array", "Expected '['")
+        if pos >= input.size || input(pos) != '[' then wrongKind(Codec.Kind.Array, "Expected '['")
         advance()
         skipWhitespace()
         if pos < input.size && peek() == ']' then 0 else -1
@@ -194,7 +194,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     def string(): String =
         skipWhitespace()
-        if pos >= input.size || input(pos) != '"' then wrongKind("string", "Expected '\"'")
+        if pos >= input.size || input(pos) != '"' then wrongKind(Codec.Kind.String, "Expected '\"'")
         pos += 1
         val start = pos
         skipPlainStringBytes()
@@ -222,45 +222,20 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         loop()
     end skipPlainStringBytes
 
-    def int(): Int =
-        skipWhitespace()
-        val start = pos
-        val neg   = pos < input.size && input(pos) == '-'
-        if neg then pos += 1
-        if pos >= input.size || input(pos) < '0' || input(pos) > '9' then
-            if neg then error("Expected number") else wrongKind("number", "Expected number")
-        val digitsStart                                                          = pos
-        @tailrec def parseDigits(result: Int, overflow: Boolean): (Int, Boolean) =
-            if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
-                val digit       = input(pos) - '0'
-                val newOverflow = overflow || result > (Int.MaxValue - digit) / 10
-                val newResult   = if newOverflow then result else result * 10 + digit
-                pos += 1
-                parseDigits(newResult, newOverflow)
-            else
-                (result, overflow)
-        val (result, overflow) = parseDigits(0, false)
-        requireNoLeadingZero(digitsStart)
-        if pos - digitsStart > maxNumberDigits then tooManyDigits(start)
-        // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
-        if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
-            pos = start
-            parseNumberStr("Int")(_.toInt)
-        else if overflow then
-            pos = start
-            parseNumberStr("Int")(_.toInt)
-        else if neg then -result
-        else result
-        end if
-    end int
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def long(): Long =
+    def long(): Long = integral(Numeric.Target.Int64)
+
+    /** A plain run of digits that fits a Long is read in place; a fraction, an exponent or a longer run goes through `Numeric`, which
+      * refuses a fraction and a value outside `target` the way the captured path does.
+      */
+    private def integral(target: Numeric.Target): Long =
         skipWhitespace()
         val start = pos
         val neg   = pos < input.size && input(pos) == '-'
         if neg then pos += 1
         if pos >= input.size || input(pos) < '0' || input(pos) > '9' then
-            if neg then error("Expected number") else wrongKind("number", "Expected number")
+            if neg then malformed("Expected number") else wrongKind(Codec.Kind.Number, "Expected number")
         val digitsStart                                                            = pos
         @tailrec def parseDigits(result: Long, overflow: Boolean): (Long, Boolean) =
             if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
@@ -274,17 +249,15 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val (result, overflow) = parseDigits(0L, false)
         requireNoLeadingZero(digitsStart)
         if pos - digitsStart > maxNumberDigits then tooManyDigits(start)
-        // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
-        if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
+        if overflow || (pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E')) then
             pos = start
-            parseNumberStr("Long")(_.toLong)
-        else if overflow then
-            pos = start
-            parseNumberStr("Long")(_.toLong)
-        else if neg then -result
-        else result
+            val text = readNumber()
+            Numeric.parse(text) match
+                case Present(value) => Numeric.whole(value, target)(using _frame)
+                case Absent         => malformed(s"Invalid ${target.name} value: '$text'")
+        else Numeric.whole(if neg then -result else result, target)(using _frame)
         end if
-    end long
+    end integral
 
     def float(): Float =
         skipWhitespace()
@@ -293,7 +266,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             if s == "NaN" then Float.NaN
             else if s == "Infinity" then Float.PositiveInfinity
             else if s == "-Infinity" then Float.NegativeInfinity
-            else error(s"Invalid Float value: '$s'")
+            else malformed(s"Invalid Float value: '$s'")
             end if
         else
             requireNumberStart()
@@ -320,7 +293,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             if s == "NaN" then Double.NaN
             else if s == "Infinity" then Double.PositiveInfinity
             else if s == "-Infinity" then Double.NegativeInfinity
-            else error(s"Invalid Double value: '$s'")
+            else malformed(s"Invalid Double value: '$s'")
             end if
         else
             requireNumberStart()
@@ -356,31 +329,23 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             input(pos + 4) == 'e'
         then
             pos += 5; false
-        else wrongKind("boolean", "Expected boolean")
+        else wrongKind(Codec.Kind.Boolean, "Expected boolean")
         end if
     end boolean
 
-    def short(): Short =
-        skipWhitespace()
-        requireNumberStart()
-        parseNumberStr("Short")(_.toShort)
-    end short
+    def short(): Short = integral(Numeric.Target.Int16).toShort
 
-    def byte(): Byte =
-        skipWhitespace()
-        requireNumberStart()
-        parseNumberStr("Byte")(_.toByte)
-    end byte
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
 
     // A number starts with a digit or a minus sign; anything else is a value of another kind or malformed input.
     private def requireNumberStart(): Unit =
         if pos >= input.size || !(input(pos) == '-' || (input(pos) >= '0' && input(pos) <= '9')) then
-            wrongKind("number", "Expected number")
+            wrongKind(Codec.Kind.Number, "Expected number")
 
     def char(): Char =
         skipWhitespace()
         val s = string()
-        if s.length != 1 then error(s"Expected single character, got string of length ${s.length}")
+        if s.length != 1 then malformed(s"Expected single character, got string of length ${s.length}")
         s.charAt(0)
     end char
 
@@ -463,7 +428,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         try Span.fromUnsafe(kyo.internal.Base64s.decodeExact(s))
         catch
             case e: IllegalArgumentException =>
-                error(s"Invalid Base64: ${e.getMessage}")
+                malformed(s"Invalid Base64: ${e.getMessage}")
         end try
     end bytes
 
@@ -475,7 +440,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         try BigInt(s)
         catch
             case _: NumberFormatException =>
-                error(s"Invalid BigInt value: '$s'")
+                malformed(s"Invalid BigInt value: '$s'")
         end try
     end bigInt
 
@@ -487,18 +452,18 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         try BigDecimal(s)
         catch
             case _: NumberFormatException =>
-                error(s"Invalid BigDecimal value: '$s'")
+                malformed(s"Invalid BigDecimal value: '$s'")
         end try
     end bigDecimal
 
     def instant(): java.time.Instant =
         val s = string()
-        TimeText.instant(s).foldOrThrow(identity, reason => error(s"Invalid Instant value: '$s' ($reason)"))
+        TimeText.instant(s).foldOrThrow(identity, reason => malformed(s"Invalid Instant value: '$s' ($reason)"))
     end instant
 
     def duration(): java.time.Duration =
         val s = string()
-        TimeText.duration(s).foldOrThrow(identity, reason => error(s"Invalid Duration value: '$s' ($reason)"))
+        TimeText.duration(s).foldOrThrow(identity, reason => malformed(s"Invalid Duration value: '$s' ($reason)"))
     end duration
 
     // Internal parsing methods
@@ -605,7 +570,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         try convert(s)
         catch
             case _: NumberFormatException =>
-                error(s"Invalid $expected value: '$s'")
+                malformed(s"Invalid $expected value: '$s'")
         end try
     end parseNumberStr
 
@@ -617,13 +582,13 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         if pos < input.size && input(pos) == '-' then pos += 1
         val intStart  = pos
         val intDigits = scanDigits()
-        if intDigits == 0 then error("Expected digit")
+        if intDigits == 0 then malformed("Expected digit")
         requireNoLeadingZero(intStart)
         val fracDigits =
             if pos < input.size && input(pos) == '.' then
                 pos += 1
                 val n = scanDigits()
-                if n == 0 then error("Expected digit after '.'")
+                if n == 0 then malformed("Expected digit after '.'")
                 n
             else 0
         if intDigits + fracDigits > maxNumberDigits then tooManyDigits(start)
@@ -631,7 +596,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             pos += 1
             if pos < input.size && (input(pos) == '+' || input(pos) == '-') then pos += 1
             val expStart = pos
-            if scanDigits() == 0 then error("Expected exponent digit")
+            if scanDigits() == 0 then malformed("Expected exponent digit")
             if exponentMagnitude(expStart, pos) > maxExponent then exponentTooLarge(start)
         end if
     end scanNumber
@@ -740,31 +705,42 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     /** Fails a read that expected `expected` at `pos`: a type mismatch when a value of another kind starts there, since the input is
       * well-formed JSON and only its shape is wrong, and a parse failure otherwise.
       */
-    private def wrongKind(expected: String, parseMessage: String): Nothing =
+    private def wrongKind(expected: Codec.Kind, parseMessage: String): Nothing =
         def literalAt(text: String): Boolean =
             pos + text.length <= input.size && text.indices.forall(i => input(pos + i) == text.charAt(i))
-        val actual =
-            if pos >= input.size then ""
+        val actual: Maybe[Codec.Kind] =
+            if pos >= input.size then Absent
             else
                 input(pos) match
-                    case '"'                                                                           => "string"
-                    case '{'                                                                           => "object"
-                    case '['                                                                           => "array"
-                    case b if b >= '0' && b <= '9'                                                     => "number"
-                    case '-' if pos + 1 < input.size && input(pos + 1) >= '0' && input(pos + 1) <= '9' => "number"
-                    case 't' if literalAt("true")                                                      => "boolean"
-                    case 'f' if literalAt("false")                                                     => "boolean"
-                    case 'n' if literalAt("null")                                                      => "null"
-                    case _                                                                             => ""
-        if actual.isEmpty then error(parseMessage)
-        else throw TypeMismatchException(Nil, expected, actual)(using _frame)
+                    case '"'                                                                           => Present(Codec.Kind.String)
+                    case '{'                                                                           => Present(Codec.Kind.Object)
+                    case '['                                                                           => Present(Codec.Kind.Array)
+                    case b if b >= '0' && b <= '9'                                                     => Present(Codec.Kind.Number)
+                    case '-' if pos + 1 < input.size && input(pos + 1) >= '0' && input(pos + 1) <= '9' => Present(Codec.Kind.Number)
+                    case 't' if literalAt("true")                                                      => Present(Codec.Kind.Boolean)
+                    case 'f' if literalAt("false")                                                     => Present(Codec.Kind.Boolean)
+                    case 'n' if literalAt("null")                                                      => Present(Codec.Kind.Null)
+                    case _                                                                             => Absent
+        actual match
+            case Present(kind) => throw Codec.kindMismatch(expected, kind)(using _frame)
+            case Absent        => error(parseMessage)
     end wrongKind
 
     private[kyo] def requireEndOfInput(): Unit =
         skipWhitespace()
         if pos < input.size then error("Unexpected trailing content")
 
+    /** Fails the grammar at `pos`. At the end of the input the value was cut off, which every format reports as truncated input; anywhere
+      * else the input is malformed. A number that breaks its own grammar, and a token that is whole but does not convert (a Base64, number
+      * or time text), fail through `malformed`, since a number's end and a token's end can be the end of the input too.
+      */
     private def error(msg: String): Nothing =
+        given Frame = _frame
+        if pos >= input.size then throw TruncatedInputException(Json(), msg)
+        malformed(msg)
+    end error
+
+    private def malformed(msg: String): Nothing =
         given Frame                          = _frame
         val contextRadius                    = 30
         val start                            = math.max(0, pos - contextRadius)
@@ -781,7 +757,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val caret          = " " * caretPos + "^"
         val contextSnippet = s"$snippet\n  $caret"
         throw ParseException(Json(), contextSnippet, msg, Nil, pos)
-    end error
+    end malformed
 
     // Reset state for reuse from pool
     private def reset(newInput: Span[Byte], newFrame: Frame): Unit =
@@ -896,7 +872,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                     loop()
                 end if
             else
-                error(s"Field '$fieldName' not found in JSON object")
+                malformed(s"Field '$fieldName' not found in JSON object")
         loop()
     end extractField
 

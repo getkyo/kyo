@@ -75,19 +75,16 @@ class SchemaExceptionPathTest extends kyo.test.Test[Any]:
                 case other                             => fail(s"expected a ParseException, got $other")
         }
 
-        "input that ends inside an object or an array is a ParseException at its end, not a missing field" in {
+        "input that ends inside an object or an array is truncated input, not a missing field" in {
             val records = Chunk("{", """{"id":1""", """{"id":1,""", """{"id":1,"name":"a"""").map(Json.decode[SEPUser](_))
             val array   = Json.decode[Chunk[Int]]("[1,2")
             val nested  = Json.decode[SEPOuter]("""{"inner":{"ok":true""")
-            def position(result: Result[DecodeException, Any]): Maybe[Int] =
+            def kind(result: Result[DecodeException, Any]): String =
                 result match
-                    case Result.Failure(e: ParseException) => Present(e.position)
-                    case _                                 => Absent
-            assert(
-                (records :+ array :+ nested).map(position) ==
-                    Chunk(Present(1), Present(7), Present(8), Present(18), Present(4), Present(19)),
-                (records :+ array :+ nested).map(position).toString
-            )
+                    case Result.Failure(e) => e.getClass.getSimpleName
+                    case other             => s"not a failure: $other"
+            val kinds = (records :+ array :+ nested).map(kind)
+            assert(kinds == Chunk.fill(6)("TruncatedInputException"), kinds.toString)
         }
     }
 
@@ -133,8 +130,8 @@ class SchemaExceptionPathTest extends kyo.test.Test[Any]:
     "a field's value out of range carries the field's path" in {
         Yaml.decode[SEPShortHolder]("inner:\n  s: 99999\n") match
             case Result.Failure(e: RangeException) =>
-                val stated = e.getMessage.linesIterator.find(_.contains("Value 99999 out of range")).getOrElse(e.getMessage)
-                assert(stated.endsWith(" at inner.s"), stated)
+                assert(e.path == Seq("inner", "s"), e.path.toString)
+                assert(e.getMessage.contains("Value 99999 out of range for Short (-32768 to 32767) at inner.s"), e.getMessage)
             case other => fail(s"expected a RangeException, got $other")
     }
 

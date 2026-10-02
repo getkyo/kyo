@@ -321,24 +321,14 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         val _ = packedScalar()
         readVarint() != 0L
 
-    def short(): Short =
-        val v = int()
-        if v < Short.MinValue || v > Short.MaxValue then
-            throw RangeException(v.toLong, "Short", Short.MinValue.toLong, Short.MaxValue.toLong)
-        v.toShort
-    end short
+    def short(): Short = Numeric.whole(int().toLong, Numeric.Target.Int16).toShort
 
-    def byte(): Byte =
-        val v = int()
-        if v < Byte.MinValue || v > Byte.MaxValue then
-            throw RangeException(v.toLong, "Byte", Byte.MinValue.toLong, Byte.MaxValue.toLong)
-        v.toByte
-    end byte
+    def byte(): Byte = Numeric.whole(int().toLong, Numeric.Target.Int8).toByte
 
     def char(): Char =
         val v = int()
         if v < Char.MinValue.toInt || v > Char.MaxValue.toInt then
-            throw RangeException(v.toLong, "Char", Char.MinValue.toInt.toLong, Char.MaxValue.toInt.toLong)
+            throw RangeException(BigDecimal(v), "Char", Char.MinValue.toInt.toLong, Char.MaxValue.toInt.toLong)
         end if
         v.toChar
     end char
