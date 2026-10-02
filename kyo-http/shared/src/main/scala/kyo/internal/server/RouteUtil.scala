@@ -41,7 +41,7 @@ private[kyo] object RouteUtil:
     )(
         inline onEmpty: ( /* url */ String, HttpHeaders) => A < S2,
         inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A < S2,
-        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async]) => A < S2
+        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
     )(using Frame): A < (S2 & Sync) =
         val bodyField =
             findBodyField(route.request.fields)
@@ -66,7 +66,7 @@ private[kyo] object RouteUtil:
     )(
         inline onEmpty: ( /* url */ String, HttpHeaders) => A,
         inline onBuffered: ( /* url */ String, HttpHeaders, Span[Byte]) => A,
-        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async]) => A
+        inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
         val fields    = route.request.fields
         val dict      = request.fields.dict
@@ -131,7 +131,7 @@ private[kyo] object RouteUtil:
     )(
         inline onEmpty: (String, HttpHeaders) => A,
         inline onBuffered: (String, HttpHeaders, Span[Byte]) => A,
-        inline onStreaming: (String, HttpHeaders, Stream[Span[Byte], Async]) => A
+        inline onStreaming: (String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
         bodyField match
             case Absent        => onEmpty(url, headers)
@@ -222,7 +222,7 @@ private[kyo] object RouteUtil:
         route: HttpRoute[In, Out, S],
         status: HttpStatus,
         headers: HttpHeaders,
-        stream: Stream[Span[Byte], Async],
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
         method: String,
         url: HttpUrl
     )(using Frame): Result[HttpException, HttpResponse[Out]] =
@@ -253,7 +253,7 @@ private[kyo] object RouteUtil:
         route: HttpRoute[In, Out, S],
         status: HttpStatus,
         headers: HttpHeaders,
-        stream: Stream[Span[Byte], Async],
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
         method: String,
         url: HttpUrl
     )(f: HttpResponse[Out] => A < S2)(using Frame): A < (S2 & Abort[HttpException]) =
@@ -300,7 +300,7 @@ private[kyo] object RouteUtil:
         pathCaptures: Dict[String, String],
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
-        stream: Stream[Span[Byte], Async],
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
         path: String = "",
         methodOverride: Maybe[HttpMethod] = Absent
     )(using Frame): Result[HttpException, HttpRequest[In]] =
@@ -334,7 +334,7 @@ private[kyo] object RouteUtil:
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A < S2,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S2,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A < S2
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
     )(using Frame): A < (S2 & Sync) =
         val bodyField = findBodyField(route.response.fields)
         if requiresMultipartBoundary(bodyField) then
@@ -357,7 +357,7 @@ private[kyo] object RouteUtil:
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
         val fields      = route.response.fields
         val routeStatus = route.response.status
@@ -388,7 +388,7 @@ private[kyo] object RouteUtil:
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
         bodyField match
             case Absent        => onEmpty(status, headers)
@@ -699,20 +699,20 @@ private[kyo] object RouteUtil:
         value: Any,
         boundary: Maybe[String]
     )(
-        f: (String, Stream[Span[Byte], Async]) => A
+        f: (String, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
         ct match
             case HttpRoute.ContentType.ByteStream =>
-                f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async]])
+                f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async & Abort[HttpException]]])
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
-                val stream     = value.asInstanceOf[Stream[Any, Async]]
+                val stream     = value.asInstanceOf[Stream[Any, Async & Abort[HttpException]]]
                 val schema     = ndjson.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { v =>
                     stringToSpan(Json.encode(v)(using schema) + "\n")
                 }(using ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("application/x-ndjson", byteStream)
             case sse: HttpRoute.ContentType.Sse[?] =>
-                val stream     = value.asInstanceOf[Stream[HttpSseEvent[Any], Async]]
+                val stream     = value.asInstanceOf[Stream[HttpSseEvent[Any], Async & Abort[HttpException]]]
                 val schema     = sse.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
@@ -730,7 +730,7 @@ private[kyo] object RouteUtil:
                 }(using sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
             case sseText: HttpRoute.ContentType.SseText =>
-                val stream     = value.asInstanceOf[Stream[HttpSseEvent[String], Async]]
+                val stream     = value.asInstanceOf[Stream[HttpSseEvent[String], Async & Abort[HttpException]]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
                     event.event match
@@ -754,7 +754,7 @@ private[kyo] object RouteUtil:
                 }(using sseText.emitTag, Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
             case HttpRoute.ContentType.MultipartStream =>
-                val stream         = value.asInstanceOf[Stream[HttpRequest.Part, Async]]
+                val stream         = value.asInstanceOf[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
                 val boundaryString = requireMultipartBoundary(boundary)
                 val byteStream     = stream.mapPure { part =>
                     encodeMultipartPart(part, boundaryString)
@@ -964,9 +964,12 @@ private[kyo] object RouteUtil:
                 Result.fail(HttpStreamingDecodeException(ct.toString, method, url.toString))
     end decodeBufferedBodyValue
 
+    /** The value of a streamed body field: the byte stream itself, or a stream decoded from it line by line, frame by frame or part by
+      * part. A line or frame whose JSON does not decode fails the stream with `HttpJsonDecodeException` on the row the stream declares.
+      */
     private def decodeStreamBodyValue(
         ct: HttpRoute.ContentType[?],
-        stream: Stream[Span[Byte], Async],
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
         headers: HttpHeaders,
         method: String,
         url: HttpUrl
@@ -976,167 +979,424 @@ private[kyo] object RouteUtil:
                 stream
             case ndjson: HttpRoute.ContentType.Ndjson[?] =>
                 val schema = ndjson.schema.asInstanceOf[Schema[Any]]
-                splitLines(stream, "\n").mapPure { line =>
-                    Json.decode[Any](line)(using summon[Json], schema, summon[Frame]) match
-                        case Result.Success(v) => v
-                        case Result.Failure(e) => throw HttpJsonDecodeException(e.getMessage, method, url.toString)
-                        case p: Result.Panic   => throw p.exception
-                    end match
-                }(using Tag[Emit[Chunk[String]]], ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]])
+                framed(stream, JsonLines.Framer.init(), (f, span) => feedNdjson(f, span), finishNdjson, decodeJson(schema, method, url))(
+                    using
+                    summon[Frame],
+                    ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]]
+                )
             case sse: HttpRoute.ContentType.Sse[?] =>
                 val schema = sse.schema.asInstanceOf[Schema[Any]]
-                splitLines(stream, "\n\n").mapPure { frame =>
-                    parseSseFrame(schema, frame)
-                }(using Tag[Emit[Chunk[String]]], sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]])
+                val decode = decodeJson(schema, method, url)
+                framed(
+                    stream,
+                    SseFraming.empty,
+                    (st, span) => feedSse(st, span),
+                    finishSse,
+                    (event: HttpSseEvent[String]) => decode(event.data).map(value => event.copy(data = value))
+                )(using summon[Frame], sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]])
             case sseText: HttpRoute.ContentType.SseText =>
-                splitLines(stream, "\n\n").mapPure { frame =>
-                    parseSseFields(frame)(identity)
-                }(using Tag[Emit[Chunk[String]]], sseText.emitTag)
+                framed(stream, SseFraming.empty, (st, span) => feedSse(st, span), finishSse, Result.succeed)(
+                    using
+                    summon[Frame],
+                    sseText.emitTag
+                )
             case HttpRoute.ContentType.MultipartStream =>
                 parseMultipartStream(stream, headers)
             case _ =>
                 throw new IllegalStateException(s"Cannot decode non-streaming ContentType as stream: $ct")
     end decodeStreamBodyValue
 
-    /** Splits a byte stream into string segments by delimiter, handling cross-chunk boundaries. */
-    private def splitLines(
-        stream: Stream[Span[Byte], Async],
-        delimiter: String
-    )(using Frame): Stream[String, Async] =
-        // Accumulate bytes, split on delimiter, carry leftover as loop state to avoid mutation
-        val byteTag                            = Tag[Emit[Chunk[Span[Byte]]]]
-        given strTag: Tag[Emit[Chunk[String]]] = Tag[Emit[Chunk[String]]]
+    // ==================== Streamed body framing ====================
+
+    /** What feeding one span to a framing state produced: the elements the span completed, in order, the state for the next span, and the
+      * fault framing ended with, if it ended. A fault never discards the elements completed before it. A fault is a `Result.Error` so a
+      * panic met while framing is raised as the panic it was, after those elements.
+      */
+    final private case class Framing[State, F](state: State, elements: Chunk[F], fault: Maybe[Result.Error[HttpException]])
+
+    /** Frames a byte stream into elements and decodes them, on bytes: the framing state carries what a span left incomplete, so an
+      * element, a multi-byte character or a delimiter split across spans is reassembled and binary content passes unchanged. The elements
+      * each span completes are decoded in order and emitted together; the first that does not decode, or the fault framing ended with,
+      * fails the stream after them.
+      */
+    private def framed[State, F, A](
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
+        initial: State,
+        feed: (State, Span[Byte]) => Framing[State, F],
+        finish: State => (Chunk[F], Maybe[Result.Error[HttpException]]),
+        decode: F => Result[HttpException, A]
+    )(using frame: Frame, emitTag: Tag[Emit[Chunk[A]]]): Stream[A, Async & Abort[HttpException]] =
+        def emitDecoded(
+            elements: Chunk[F],
+            fault: Maybe[Result.Error[HttpException]]
+        ): Maybe[Result.Error[HttpException]] < (Emit[Chunk[A]] & Abort[HttpException]) =
+            val decoded                                                   = ChunkBuilder.init[A]
+            @tailrec def loop(i: Int): Maybe[Result.Error[HttpException]] =
+                if i >= elements.size then fault
+                else
+                    decode(elements(i)) match
+                        case Result.Success(a) =>
+                            discard(decoded += a)
+                            loop(i + 1)
+                        case Result.Failure(e) => Present(Result.Failure(e))
+                        case p: Result.Panic   => Present(p)
+            val ended  = loop(0)
+            val prefix = decoded.result()
+            if prefix.isEmpty then ended else Emit.valueWith(prefix)(ended)(using emitTag, frame)
+        end emitDecoded
         Stream(
-            ArrowEffect.handleLoopState(byteTag, "", stream.emit)([C] =>
-                (leftover, input) =>
-                    val sb = new StringBuilder(leftover)
-                    input.foreach(span => discard(sb.append(spanToString(span))))
-                    val combined = sb.toString
-                    val parts    = combined.split(java.util.regex.Pattern.quote(delimiter), -1)
-                    if parts.length <= 1 then
-                        Loop.continue(combined, ())
-                    else
-                        val result                      = ChunkBuilder.init[String]
-                        @tailrec def loop(i: Int): Unit =
-                            if i < parts.length - 1 then
-                                val part = parts(i).trim
-                                if part.nonEmpty then discard(result += part)
-                                loop(i + 1)
-                        loop(0)
-                        val out = result.result()
-                        if out.isEmpty then Loop.continue(parts.last, ())
-                        else Emit.valueWith(out)(Loop.continue(parts.last, ()))
-                    end if
+            ArrowEffect.handleLoopState(Tag[Emit[Chunk[Span[Byte]]]], initial, stream.emit)(
+                [C] =>
+                    (state, input) =>
+                        @tailrec def feedAll(i: Int, st: State, acc: Chunk[F]): Framing[State, F] =
+                            if i >= input.size then Framing(st, acc, Absent)
+                            else
+                                val next = feed(st, input(i))
+                                if next.fault.isDefined then Framing(next.state, acc.concat(next.elements), next.fault)
+                                else feedAll(i + 1, next.state, acc.concat(next.elements))
+                        val fed = feedAll(0, state, Chunk.empty)
+                        emitDecoded(fed.elements, fed.fault).map {
+                            case Present(error) => Abort.error(error)
+                            case Absent         => Loop.continue(fed.state, ())
+                        }
+                ,
+                (state, _) =>
+                    val (elements, fault) = finish(state)
+                    emitDecoded(elements, fault).map {
+                        case Present(error) => Abort.error(error)
+                        case Absent         => Kyo.unit
+                    }
             )
         )
-    end splitLines
+    end framed
 
-    /** Parses SSE frame fields shared by both JSON and text SSE decoders. */
-    private inline def parseSseFields[A](frame: String)(inline decodeData: String => A): HttpSseEvent[A] =
-        val lines       = frame.split('\n')
-        val dataBuilder = new StringBuilder
-        @tailrec def loop(
-            i: Int,
-            eventName: Maybe[String],
-            id: Maybe[String],
-            retry: Maybe[Duration],
-            hasData: Boolean
-        ): (Maybe[String], Maybe[String], Maybe[Duration]) =
-            if i >= lines.length then (eventName, id, retry)
-            else
-                val line = lines(i)
-                if line.startsWith("event:") then
-                    loop(i + 1, Present(line.substring(6).trim), id, retry, hasData)
-                else if line.startsWith("id:") then
-                    loop(i + 1, eventName, Present(line.substring(3).trim), retry, hasData)
-                else if line.startsWith("retry:") then
-                    val ms = line.substring(6).trim.toLong
-                    loop(i + 1, eventName, id, Present(Duration.fromNanos(ms * 1000000)), hasData)
-                else if line.startsWith("data:") then
-                    if hasData then discard(dataBuilder.append('\n'))
-                    discard(dataBuilder.append(line.substring(5).trim))
-                    loop(i + 1, eventName, id, retry, true)
+    private def decodeJson(schema: Schema[Any], method: String, url: HttpUrl)(using Frame): String => Result[HttpException, Any] =
+        text =>
+            Json.decode[Any](text)(using summon[Json], schema, summon[Frame]) match
+                case Result.Success(v) => Result.succeed(v)
+                case Result.Failure(e) => Result.fail(HttpJsonDecodeException(e.getMessage, method, url.toString))
+                case p: Result.Panic   => p
+
+    /** The largest NDJSON record, SSE line, multipart boundary line or multipart part the framers hold before failing the stream: a peer
+      * that never sends the terminator would otherwise grow the pending bytes without bound (CWE-400), and a part is delivered whole, as
+      * one span. Shared with kyo-schema-json's framer, whose bound it is.
+      */
+    private val MaxFramedLine: Int = JsonLines.DefaultMaxLineSize.toBytes.toInt
+
+    private def tooLarge(size: Long)(using Frame): Result.Error[HttpException] =
+        Result.Failure(HttpPayloadTooLargeException(if size > Int.MaxValue.toLong then Int.MaxValue else size.toInt, MaxFramedLine))
+
+    // NDJSON: one JSON record per line, framed by kyo-schema-json, which strips the terminator and any CR before it, skips blank lines
+    // and a byte order mark, and bounds a record.
+
+    private def feedNdjson(framer: JsonLines.Framer, span: Span[Byte])(using Frame): Framing[JsonLines.Framer, String] =
+        def lines(results: Chunk[Result[LimitExceededException, JsonLines.Line]]): (Chunk[String], Maybe[Result.Error[HttpException]]) =
+            val texts                                                     = ChunkBuilder.init[String]
+            @tailrec def loop(i: Int): Maybe[Result.Error[HttpException]] =
+                if i >= results.size then Absent
                 else
-                    loop(i + 1, eventName, id, retry, hasData)
-                end if
-        val (eventName, id, retry) = loop(0, Absent, Absent, Absent, false)
-        HttpSseEvent(decodeData(dataBuilder.toString), eventName, id, retry)
-    end parseSseFields
+                    results(i) match
+                        case Result.Success(line) =>
+                            discard(texts += line.text)
+                            loop(i + 1)
+                        case Result.Failure(limit) => Present(tooLarge(limit.actual.toLong))
+                        case p: Result.Panic       => Present(p)
+            val fault = loop(0)
+            (texts.result(), fault)
+        end lines
+        framer.feed(span) match
+            case JsonLines.Framed.Continued(next, results) =>
+                val (texts, fault) = lines(results)
+                Framing(next, texts, fault)
+            case JsonLines.Framed.Halted(results, breach) =>
+                val (texts, fault) = lines(results)
+                Framing(framer, texts, fault.orElse(Present(tooLarge(breach.actual.toLong))))
+        end match
+    end feedNdjson
 
-    /** Parses a single SSE frame string into an HttpSseEvent. */
-    private def parseSseFrame(schema: Schema[Any], frame: String)(using Frame): HttpSseEvent[Any] =
-        parseSseFields(frame) { data =>
-            Json.decode[Any](data)(using summon[Json], schema, summon[Frame]) match
-                case Result.Success(v) => v
-                case Result.Failure(e) => throw new RuntimeException(s"SSE data decode failed: ${e.getMessage}")
-                case p: Result.Panic   => throw p.exception
+    private def finishNdjson(framer: JsonLines.Framer): (Chunk[String], Maybe[Result.Error[HttpException]]) =
+        framer.finishLine match
+            case Present(line) => (Chunk(line.text), Absent)
+            case Absent        => (Chunk.empty, Absent)
+
+    // SSE (the WHATWG event stream format): lines end with CR, LF or CRLF; a field is the text before the first colon, its value the text
+    // after it minus one leading space; a line starting with a colon is a comment; an empty line dispatches the event, which needs at
+    // least one data line; the data lines join with LF; an event the stream ends inside is discarded.
+
+    /** The bytes of the line in progress (as the pieces they arrived in, joined once the line ends), whether it ended on a CR whose LF
+      * may still follow, whether it is the stream's first line (the one a byte order mark may precede), and the fields of the event in
+      * progress. `data` is `Absent` until a data line arrives, which is what decides whether the empty line dispatches an event. `id` is
+      * the last event id, stream state that a dispatch keeps: it names every later event until the next id line.
+      */
+    final private case class SseFraming(
+        pieces: Chunk[Span[Byte]],
+        pending: Long,
+        afterCr: Boolean,
+        first: Boolean,
+        data: Maybe[Chunk[String]],
+        event: Maybe[String],
+        id: Maybe[String],
+        retry: Maybe[Duration]
+    ):
+        def withLine(bytes: Chunk[Span[Byte]], size: Long, cr: Boolean): SseFraming = copy(pieces = bytes, pending = size, afterCr = cr)
+        def resetEvent: SseFraming                                                  = copy(data = Absent, event = Absent, retry = Absent)
+    end SseFraming
+
+    private object SseFraming:
+        val empty: SseFraming = SseFraming(Chunk.empty, 0L, false, true, Absent, Absent, Absent, Absent)
+
+    private val Cr: Byte = '\r'.toByte
+    private val Lf: Byte = '\n'.toByte
+
+    private def feedSse(state: SseFraming, span: Span[Byte])(using Frame): Framing[SseFraming, HttpSseEvent[String]] =
+        val events = ChunkBuilder.init[HttpSseEvent[String]]
+        // The line in progress starts in the pieces held from earlier spans and continues at `lineStart` of this span; each terminator
+        // resolves it, dispatching an event when the line is empty, and the tail of the span is held for the next one.
+        @tailrec def scan(i: Int, lineStart: Int, st: SseFraming): Framing[SseFraming, HttpSseEvent[String]] =
+            if i >= span.size then
+                val tail    = span.slice(lineStart, span.size)
+                val held    = st.pending + tail.size
+                val pending = if tail.isEmpty then st.pieces else st.pieces.append(tail)
+                if held > MaxFramedLine then Framing(st, events.result(), Present(tooLarge(held)))
+                else Framing(st.withLine(pending, held, st.afterCr), events.result(), Absent)
+            else
+                val b = span(i)
+                if b == Lf && st.afterCr && i == lineStart && st.pieces.isEmpty then
+                    // the LF of a CRLF whose CR ended the previous span
+                    scan(i + 1, i + 1, st.copy(afterCr = false))
+                else if b == Lf || b == Cr then
+                    val lineBytes = if st.pieces.isEmpty then span.slice(lineStart, i) else joinLine(st.pieces, span.slice(lineStart, i))
+                    val size      = st.pending + (i - lineStart)
+                    if size > MaxFramedLine then Framing(st, events.result(), Present(tooLarge(size)))
+                    else
+                        val text = new String(lineBytes.toArrayUnsafe, utf8)
+                        // one byte order mark is skipped before the first line; a second one is part of the field name
+                        val line = if st.first && text.startsWith("﻿") then text.substring(1) else text
+                        val next = sseLine(st.withLine(Chunk.empty, 0L, b == Cr).copy(first = false), line)
+                        next._2.foreach(event => discard(events += event))
+                        val after = if b == Cr && i + 1 < span.size && span(i + 1) == Lf then i + 2 else i + 1
+                        scan(after, after, if after == i + 2 then next._1.copy(afterCr = false) else next._1)
+                    end if
+                else scan(i + 1, lineStart, if st.afterCr then st.copy(afterCr = false) else st)
+                end if
+        scan(0, 0, state)
+    end feedSse
+
+    private def joinLine(pieces: Chunk[Span[Byte]], tail: Span[Byte]): Span[Byte] =
+        val size = pieces.foldLeft(tail.size)((n, p) => n + p.size)
+        val out  = new Array[Byte](size)
+        val at   = pieces.foldLeft(0) { (at, p) =>
+            discard(p.copyToArray(out, at))
+            at + p.size
         }
+        discard(tail.copyToArray(out, at))
+        Span.fromUnsafe(out)
+    end joinLine
+
+    /** Applies one line to the event in progress, dispatching it when the line is empty and it has data. */
+    private def sseLine(st: SseFraming, line: String): (SseFraming, Maybe[HttpSseEvent[String]]) =
+        if line.isEmpty then
+            st.data match
+                case Present(lines) => (st.resetEvent, Present(HttpSseEvent(lines.mkString("\n"), st.event, st.id, st.retry)))
+                case Absent         => (st.resetEvent, Absent)
+        else if line.charAt(0) == ':' then (st, Absent)
+        else
+            val colon = line.indexOf(':')
+            val field = if colon < 0 then line else line.substring(0, colon)
+            val value =
+                if colon < 0 then ""
+                else if colon + 1 < line.length && line.charAt(colon + 1) == ' ' then line.substring(colon + 2)
+                else line.substring(colon + 1)
+            val next = field match
+                case "data"  => st.copy(data = Present(st.data.getOrElse(Chunk.empty).append(value)))
+                case "event" => st.copy(event = Present(value))
+                case "id"    => if value.indexOf('\u0000') < 0 then st.copy(id = Present(value)) else st
+                case "retry" =>
+                    // digits only, and few enough to be a millisecond count a Long holds (the spec ignores any other value)
+                    if value.nonEmpty && value.length <= 18 && value.forall(c => c >= '0' && c <= '9') then
+                        st.copy(retry = Present(Duration.fromNanos(value.toLong * 1000000L)))
+                    else st
+                case _ => st
+            (next, Absent)
+        end if
+    end sseLine
+
+    private def finishSse(state: SseFraming): (Chunk[HttpSseEvent[String]], Maybe[Result.Error[HttpException]]) = (Chunk.empty, Absent)
+
+    // Multipart (RFC 2046 section 5.1.1): a part runs from the CRLF that ends its boundary line to the CRLF that precedes the next
+    // delimiter, so a delimiter is recognized only after CRLF (or at the very start of the body), and the bytes of a part are never
+    // decoded: binary content passes unchanged. The preamble before the first delimiter and everything after the close delimiter are
+    // dropped.
+
+    /** Where the framing is (`Preamble` before the first delimiter, `BoundaryLine` after a delimiter, awaiting its CRLF or the `--` of the
+      * close, `Section` inside a part, `Done` after the close delimiter), the bytes held for the phase (the tail of the preamble or the
+      * boundary line so far), the section's bytes as pieces, and the last bytes of the section, which the search for a delimiter that
+      * straddles spans reads across.
+      */
+    final private case class MultipartFraming(
+        phase: MultipartFraming.Phase,
+        atStart: Boolean,
+        held: Span[Byte],
+        pieces: Chunk[Span[Byte]],
+        size: Long,
+        overlap: Span[Byte]
+    )
+
+    private object MultipartFraming:
+        enum Phase derives CanEqual:
+            case Preamble, BoundaryLine, Section, Done
+        val empty: MultipartFraming = MultipartFraming(Phase.Preamble, true, Span.empty[Byte], Chunk.empty, 0L, Span.empty[Byte])
+    end MultipartFraming
+
+    private def feedMultipart(delimiter: Array[Byte], state: MultipartFraming, span: Span[Byte])(using
+        Frame
+    ): Framing[MultipartFraming, HttpRequest.Part] =
+        import MultipartFraming.Phase
+        val crlfDelimiter                                              = CrLf ++ delimiter
+        val parts                                                      = ChunkBuilder.init[HttpRequest.Part]
+        def startsWith(buf: Array[Byte], prefix: Array[Byte]): Boolean =
+            buf.length >= prefix.length && indexOfBytes(buf, 0, prefix.length, prefix) == 0
+        // `rest` is what this span left unconsumed, prefixed with the bytes held from earlier spans when the phase reads across them.
+        @tailrec def step(st: MultipartFraming, rest: Span[Byte]): Framing[MultipartFraming, HttpRequest.Part] =
+            st.phase match
+                case Phase.Done     => Framing(st, parts.result(), Absent)
+                case Phase.Preamble =>
+                    val buf = (st.held.toArrayUnsafe ++ rest.toArrayUnsafe)
+                    val at  =
+                        if st.atStart && startsWith(buf, delimiter) then 0
+                        else
+                            val i = indexOfBytes(buf, 0, buf.length, crlfDelimiter)
+                            if i < 0 then -1 else i + CrLf.length
+                    if at < 0 then
+                        val keep = math.min(buf.length, crlfDelimiter.length - 1)
+                        val held = Span.fromUnsafe(java.util.Arrays.copyOfRange(buf, buf.length - keep, buf.length))
+                        Framing(st.copy(atStart = st.atStart && buf.length < delimiter.length, held = held), parts.result(), Absent)
+                    else
+                        val after = at + delimiter.length
+                        step(
+                            st.copy(phase = Phase.BoundaryLine, atStart = false, held = Span.empty[Byte]),
+                            Span.fromUnsafe(java.util.Arrays.copyOfRange(buf, after, buf.length))
+                        )
+                    end if
+                case Phase.BoundaryLine =>
+                    val buf = st.held.toArrayUnsafe ++ rest.toArrayUnsafe
+                    if buf.length >= 2 && buf(0) == '-' && buf(1) == '-' then Framing(st.copy(phase = Phase.Done), parts.result(), Absent)
+                    else
+                        val crlf = indexOfBytes(buf, 0, buf.length, CrLf)
+                        if crlf < 0 then
+                            if buf.length > MaxFramedLine then Framing(st, parts.result(), Present(tooLarge(buf.length.toLong)))
+                            else Framing(st.copy(held = Span.fromUnsafe(buf)), parts.result(), Absent)
+                        else
+                            step(
+                                st.copy(
+                                    phase = Phase.Section,
+                                    held = Span.empty[Byte],
+                                    pieces = Chunk.empty,
+                                    size = 0L,
+                                    overlap = Span.empty[Byte]
+                                ),
+                                Span.fromUnsafe(java.util.Arrays.copyOfRange(buf, crlf + CrLf.length, buf.length))
+                            )
+                        end if
+                    end if
+                case Phase.Section =>
+                    // the delimiter may start inside the overlap, the section's last bytes, so the search runs over overlap and span
+                    val probe = st.overlap.toArrayUnsafe ++ rest.toArrayUnsafe
+                    val at    = indexOfBytes(probe, 0, probe.length, crlfDelimiter)
+                    if at < 0 then
+                        val size = st.size + rest.size
+                        val keep = math.min(probe.length, crlfDelimiter.length - 1)
+                        // the bytes at the end of the probe that begin the delimiter, if any, are not the part's until the next span
+                        // says so, and the bound counts the bytes known to be the part's
+                        val known = size - delimiterPrefixLength(probe, crlfDelimiter, keep)
+                        if known > MaxFramedLine then Framing(st, parts.result(), Present(tooLarge(known)))
+                        else
+                            val overlap = Span.fromUnsafe(java.util.Arrays.copyOfRange(probe, probe.length - keep, probe.length))
+                            val pieces  = if rest.isEmpty then st.pieces else st.pieces.append(rest)
+                            Framing(st.copy(pieces = pieces, size = size, overlap = overlap), parts.result(), Absent)
+                        end if
+                    else if st.size + (at - st.overlap.size) > MaxFramedLine then
+                        Framing(st, parts.result(), Present(tooLarge(st.size + (at - st.overlap.size))))
+                    else
+                        // the section ends `at` bytes into the probe: the part is the pieces plus the span's prefix before the
+                        // delimiter, minus the overlap bytes the delimiter consumed when it started inside them
+                        val inSpan  = at - st.overlap.size
+                        val section =
+                            if inSpan >= 0 then joinLine(st.pieces, rest.slice(0, inSpan))
+                            else joinLine(st.pieces, Span.empty[Byte]).slice(0, (st.size + inSpan).toInt)
+                        val part = parseMultipartSectionBytes(section.toArrayUnsafe, 0, section.size, stripTrailingCrlf = false)
+                        if part.name.nonEmpty then discard(parts += part)
+                        val after = inSpan + crlfDelimiter.length
+                        step(
+                            st.copy(
+                                phase = Phase.BoundaryLine,
+                                held = Span.empty[Byte],
+                                pieces = Chunk.empty,
+                                size = 0L,
+                                overlap = Span.empty[Byte]
+                            ),
+                            rest.slice(after, rest.size)
+                        )
+                    end if
+        step(state, span)
+    end feedMultipart
+
+    /** The length of the longest suffix of `buf`, at most `max` bytes, that is a prefix of `delimiter`: the bytes that may begin a
+      * delimiter the next span completes.
+      */
+    private def delimiterPrefixLength(buf: Array[Byte], delimiter: Array[Byte], max: Int): Int =
+        def suffixMatches(k: Int): Boolean =
+            @tailrec def loop(j: Int): Boolean = j >= k || (buf(buf.length - k + j) == delimiter(j) && loop(j + 1))
+            loop(0)
+        @tailrec def longest(k: Int): Int =
+            if k <= 0 then 0
+            else if suffixMatches(k) then k
+            else longest(k - 1)
+        longest(math.min(max, math.min(buf.length, delimiter.length - 1)))
+    end delimiterPrefixLength
+
+    /** A body that ends inside a part, with no close delimiter, still yields that part, as the buffered parser does, bounded like one
+      * a delimiter ends: the bytes a span held back as a possible delimiter start are part bytes after all.
+      */
+    private def finishMultipart(state: MultipartFraming)(using Frame): (Chunk[HttpRequest.Part], Maybe[Result.Error[HttpException]]) =
+        if state.phase == MultipartFraming.Phase.Section && state.size > 0 then
+            if state.size > MaxFramedLine then (Chunk.empty, Present(tooLarge(state.size)))
+            else
+                val section = joinLine(state.pieces, Span.empty[Byte])
+                val part    = parseMultipartSectionBytes(section.toArrayUnsafe, 0, section.size)
+                (if part.name.nonEmpty then Chunk(part) else Chunk.empty, Absent)
+        else (Chunk.empty, Absent)
+
+    private val CrLf = Array[Byte]('\r', '\n')
 
     /** Parses a multipart byte stream into a stream of HttpRequest.Part. */
     private def parseMultipartStream(
-        stream: Stream[Span[Byte], Async],
+        stream: Stream[Span[Byte], Async & Abort[HttpException]],
         headers: HttpHeaders
-    )(using Frame): Stream[HttpRequest.Part, Async] =
+    )(using Frame): Stream[HttpRequest.Part, Async & Abort[HttpException]] =
         multipartBoundaryFromHeaders(headers) match
             case Absent =>
                 Stream.empty[HttpRequest.Part]
             case Present(b) =>
-                val delimiter = s"--$b"
-                splitLines(stream, delimiter).mapPure { section =>
-                    parseMultipartSection(section)
-                }(using Tag[Emit[Chunk[String]]], Tag[Emit[Chunk[HttpRequest.Part]]])
+                val delimiter = s"--$b".getBytes(StandardCharsets.US_ASCII)
+                framed(stream, MultipartFraming.empty, (st, span) => feedMultipart(delimiter, st, span), finishMultipart, Result.succeed)(
+                    using
+                    summon[Frame],
+                    Tag[Emit[Chunk[HttpRequest.Part]]]
+                )
         end match
     end parseMultipartStream
 
-    /** Parse a multipart section from a String (used by streaming multipart parser). */
-    private def parseMultipartSection(section: String): HttpRequest.Part =
-        val headerBodySep = section.indexOf("\r\n\r\n")
-        if headerBodySep < 0 then
-            HttpRequest.Part("", Absent, Absent, Span.fromUnsafe(section.getBytes(StandardCharsets.UTF_8)))
-        else
-            val headerSection = section.substring(0, headerBodySep).trim
-            val bodySection   = section.substring(headerBodySep + 4)
-            val cleanBody     =
-                if bodySection.endsWith("\r\n") then bodySection.substring(0, bodySection.length - 2)
-                else bodySection
-            val headerLines = headerSection.split("\r\n")
-
-            @tailrec def parseHeaders(
-                i: Int,
-                name: String,
-                filename: Maybe[String],
-                partCt: Maybe[String]
-            ): HttpRequest.Part =
-                if i >= headerLines.length then
-                    HttpRequest.Part(name, filename, partCt, Span.fromUnsafe(cleanBody.getBytes(StandardCharsets.UTF_8)))
-                else
-                    val line = headerLines(i)
-                    if line.toLowerCase.startsWith("content-disposition:") then
-                        val disp       = line.substring(20).trim
-                        val nameIdx    = disp.indexOf("name=\"")
-                        val parsedName =
-                            if nameIdx >= 0 then
-                                val nameEnd = disp.indexOf('"', nameIdx + 6)
-                                if nameEnd >= 0 then disp.substring(nameIdx + 6, nameEnd) else name
-                            else name
-                        val fnIdx          = disp.indexOf("filename=\"")
-                        val parsedFilename =
-                            if fnIdx >= 0 then
-                                val fnEnd = disp.indexOf('"', fnIdx + 10)
-                                if fnEnd >= 0 then Present(disp.substring(fnIdx + 10, fnEnd)) else filename
-                            else filename
-                        parseHeaders(i + 1, parsedName, parsedFilename, partCt)
-                    else if line.toLowerCase.startsWith("content-type:") then
-                        parseHeaders(i + 1, name, filename, Present(line.substring(13).trim))
-                    else
-                        parseHeaders(i + 1, name, filename, partCt)
-                    end if
-            parseHeaders(0, "", Absent, Absent)
-        end if
-    end parseMultipartSection
-
-    /** Parse a multipart section from raw bytes, keeping body data as raw bytes to avoid UTF-8 corruption. */
-    private def parseMultipartSectionBytes(section: Array[Byte], offset: Int, length: Int): HttpRequest.Part =
+    /** Parse a multipart section from raw bytes, keeping body data as raw bytes to avoid UTF-8 corruption. `stripTrailingCrlf` is for a
+      * section cut at the next delimiter's dashes, which still carries the CRLF that belongs to the delimiter; a section cut at that CRLF
+      * ends exactly where the part's data does.
+      */
+    private def parseMultipartSectionBytes(
+        section: Array[Byte],
+        offset: Int,
+        length: Int,
+        stripTrailingCrlf: Boolean = true
+    ): HttpRequest.Part =
         val sepIdx = indexOfBytes(section, offset, length, CrNlCrNl)
         if sepIdx < 0 then
             HttpRequest.Part("", Absent, Absent, Span.fromUnsafe(java.util.Arrays.copyOfRange(section, offset, offset + length)))
@@ -1144,10 +1404,11 @@ private[kyo] object RouteUtil:
             val headerStr  = new String(section, offset, sepIdx - offset, StandardCharsets.US_ASCII).trim
             val bodyStart  = sepIdx + 4
             val bodyEndRaw = offset + length
-            // Strip trailing \r\n
-            val bodyEnd = if bodyEndRaw >= bodyStart + 2 && section(bodyEndRaw - 2) == '\r' && section(bodyEndRaw - 1) == '\n' then
-                bodyEndRaw - 2
-            else bodyEndRaw
+            val bodyEnd    =
+                if stripTrailingCrlf && bodyEndRaw >= bodyStart + 2 && section(bodyEndRaw - 2) == '\r' && section(bodyEndRaw - 1) == '\n'
+                then
+                    bodyEndRaw - 2
+                else bodyEndRaw
             val bodyData    = java.util.Arrays.copyOfRange(section, bodyStart, bodyEnd)
             val headerLines = headerStr.split("\r\n")
 

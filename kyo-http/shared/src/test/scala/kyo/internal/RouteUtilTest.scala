@@ -110,19 +110,19 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         }
 
         "streaming multipart boundary is generated inside the scoped effect" in {
-            val uuid                                   = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
-            val generator                              = new FixedUUIDGenerator(uuid)
-            val route                                  = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
-            val parts: Stream[HttpRequest.Part, Async] = Stream.init(Seq(
+            val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
+            val generator = new FixedUUIDGenerator(uuid)
+            val route     = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val parts: Stream[HttpRequest.Part, Async & Abort[HttpException]] = Stream.init(Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             ))
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .addField("body", parts)
 
-            var callbackInvoked                 = false
-            var headers                         = HttpHeaders.empty
-            var body: Stream[Span[Byte], Async] = Stream.empty
-            val encoding: Unit < Sync           =
+            var callbackInvoked                                        = false
+            var headers                                                = HttpHeaders.empty
+            var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
+            val encoding: Unit < Sync                                  =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -631,7 +631,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         "streaming multipart boundary is generated inside the scoped effect" in {
             val uuid      = UUID.parse("ffeeddcc-bbaa-4988-b766-554433221100").getOrThrow
             val generator = new FixedUUIDGenerator(uuid)
-            type MultipartOutput = "body" ~ Stream[HttpRequest.Part, Async]
+            type MultipartOutput = "body" ~ Stream[HttpRequest.Part, Async & Abort[HttpException]]
             val base                                            = HttpRoute.getRaw("download")
             val route: HttpRoute[Any, MultipartOutput, Nothing] = HttpRoute(
                 base.method,
@@ -640,15 +640,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                     fields = Chunk(HttpRoute.Field.Body("body", HttpRoute.ContentType.MultipartStream, ""))
                 )
             )
-            val parts = Stream.init[HttpRequest.Part, Async](Seq(
+            val parts = Stream.init[HttpRequest.Part, Async & Abort[HttpException]](Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             ))
             val response = HttpResponse.ok.addField("body", parts)
 
-            var callbackInvoked                 = false
-            var headers                         = HttpHeaders.empty
-            var body: Stream[Span[Byte], Async] = Stream.empty
-            val encoding: Unit < Sync           =
+            var callbackInvoked                                        = false
+            var headers                                                = HttpHeaders.empty
+            var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
+            val encoding: Unit < Sync                                  =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -1032,7 +1032,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "user-set Content-Type preserved for streaming request" in {
             val route   = HttpRoute.postRaw("api").request(_.bodyStream)
-            val stream  = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val stream  = kyo.Stream.init[Span[Byte], kyo.Async & Abort[HttpException]](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val request = HttpRequest(
                 HttpMethod.POST,
                 HttpUrl.parse("http://localhost/api").getOrThrow,
@@ -1374,7 +1374,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
         "user-set Content-Type preserved for streaming response" in {
             val route    = HttpRoute.getRaw("events").response(_.bodyStream)
-            val stream   = kyo.Stream.init[Span[Byte], kyo.Async](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
+            val stream   = kyo.Stream.init[Span[Byte], kyo.Async & Abort[HttpException]](Seq(Span.fromUnsafe("data".getBytes("UTF-8"))))
             val response = HttpResponse.ok.addField("body", stream)
                 .setHeader("Content-Type", "multipart/mixed; boundary=abc")
 
@@ -1490,8 +1490,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "SSE encoding" - {
         "encodeResponse produces SSE frames" in {
-            val route                                             = HttpRoute.getRaw("events").response(_.bodySseJson[User])
-            val events: kyo.Stream[HttpSseEvent[User], kyo.Async] = kyo.Stream.init(Seq(
+            val route = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+            val events: kyo.Stream[HttpSseEvent[User], kyo.Async & Abort[HttpException]] = kyo.Stream.init(Seq(
                 HttpSseEvent(User("Alice", 30)),
                 HttpSseEvent(User("Bob", 25), event = Present("update")),
                 HttpSseEvent(User("Carol", 35), id = Present("3"), retry = Present(5000.millis))
@@ -1499,8 +1499,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val response = HttpResponse.ok
                 .addField("body", events)
 
-            var headers: HttpHeaders                      = HttpHeaders.empty
-            var stream: kyo.Stream[Span[Byte], kyo.Async] = null
+            var headers: HttpHeaders                                             = HttpHeaders.empty
+            var stream: kyo.Stream[Span[Byte], kyo.Async & Abort[HttpException]] = null
             RouteUtil.encodeResponse(route, response)(
                 onEmpty = (_, _) => fail("expected streaming"),
                 onBuffered = (_, _, _) => fail("expected streaming"),
@@ -1564,6 +1564,302 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 case Result.Failure(err) => fail(s"decode failed: $err")
                 case p: Result.Panic     => throw p.exception
             end match
+        }
+    }
+
+    // ==================== Streamed body framing ====================
+
+    // A streamed body is framed on bytes, whatever the span boundaries: a multi-byte character or a delimiter split across spans is
+    // reassembled, binary content passes unchanged, and an element that does not decode fails the stream after the elements before it.
+    "streamed body framing" - {
+
+        def spans(pieces: String*): Stream[Span[Byte], Async & Abort[HttpException]] =
+            Stream.init(pieces.map(p => Span.fromUnsafe(p.getBytes("UTF-8"))))
+
+        /** Runs a decoded stream to its end or its failure: the elements emitted before either, and how it ended. */
+        def collect[A: Tag](stream: Stream[A, Async & Abort[HttpException]])(using
+            Frame
+        ): (Chunk[A], Result[HttpException, Unit]) < Async =
+            AtomicRef.init(Chunk.empty[A]).map { seen =>
+                Abort.run[HttpException](stream.foreach(a => seen.updateAndGet(_.append(a)).unit)).map { result =>
+                    seen.get.map(items => (items, result))
+                }
+            }
+
+        def responseBody[A](
+            route: HttpRoute[?, "body" ~ Stream[A, Async & Abort[HttpException]], ?],
+            stream: Stream[Span[Byte], Async & Abort[HttpException]]
+        )(using Frame, kyo.test.AssertScope): Stream[A, Async & Abort[HttpException]] =
+            RouteUtil.decodeStreamingResponse(
+                route,
+                HttpStatus.OK,
+                HttpHeaders.empty,
+                stream,
+                route.method.name,
+                HttpUrl.fromUri("/s")
+            ) match
+                case Result.Success(response) => response.fields.body
+                case Result.Failure(err)      => fail(s"decode failed: $err")
+                case p: Result.Panic          => throw p.exception
+
+        val ndjson  = HttpRoute.getRaw("lines").response(_.bodyNdjson[User])
+        val sseJson = HttpRoute.getRaw("events").response(_.bodySseJson[User])
+        val sseText = HttpRoute.getRaw("events").response(_.bodySseText)
+
+        "NDJSON" - {
+            "the elements before a line that does not decode are emitted, then the stream fails with HttpJsonDecodeException" in {
+                val body = "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\nnot json\n{\"name\":\"Carol\",\"age\":35}\n"
+                collect(responseBody(ndjson, spans(body))).map { (users, ended) =>
+                    assert(users == Chunk(User("Alice", 30), User("Bob", 25)), s"observed $users")
+                    ended match
+                        case Result.Failure(_: HttpJsonDecodeException) => succeed
+                        case other                                      => fail(s"expected HttpJsonDecodeException, got $other")
+                }
+            }
+
+            "a multi-byte character split across two spans is decoded whole" in {
+                val line                                                     = "{\"name\":\"Zoë\",\"age\":30}\n".getBytes("UTF-8")
+                val split                                                    = line.indexWhere(_ == 0xc3.toByte) + 1
+                val stream: Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(Seq(Span.fromUnsafe(line.take(split)), Span.fromUnsafe(line.drop(split))))
+                collect(responseBody(ndjson, stream)).map { (users, ended) =>
+                    assert(users == Chunk(User("Zoë", 30)), s"observed $users")
+                    assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "a final line without a trailing newline is decoded" in {
+                collect(responseBody(ndjson, spans("{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\"", ":25}"))).map {
+                    (users, ended) =>
+                        assert(users == Chunk(User("Alice", 30), User("Bob", 25)), s"observed $users")
+                        assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "CRLF line endings and blank lines are accepted" in {
+                collect(responseBody(ndjson, spans("{\"name\":\"Alice\",\"age\":30}\r\n\r\n\n{\"name\":\"Bob\",\"age\":25}\r\n"))).map {
+                    (users, ended) =>
+                        assert(users == Chunk(User("Alice", 30), User("Bob", 25)), s"observed $users")
+                        assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+        }
+
+        "SSE" - {
+            "the events before one whose data does not decode are emitted, then the stream fails with HttpJsonDecodeException" in {
+                val body = "data: {\"name\":\"Alice\",\"age\":30}\n\ndata: not json\n\ndata: {\"name\":\"Carol\",\"age\":35}\n\n"
+                collect(responseBody(sseJson, spans(body))).map { (events, ended) =>
+                    assert(events.map(_.data) == Chunk(User("Alice", 30)), s"observed $events")
+                    ended match
+                        case Result.Failure(_: HttpJsonDecodeException) => succeed
+                        case other                                      => fail(s"expected HttpJsonDecodeException, got $other")
+                }
+            }
+
+            "a multi-byte character split across two spans is decoded whole" in {
+                val frame                                                    = "data: {\"name\":\"Zoë\",\"age\":30}\n\n".getBytes("UTF-8")
+                val split                                                    = frame.indexWhere(_ == 0xc3.toByte) + 1
+                val stream: Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(Seq(Span.fromUnsafe(frame.take(split)), Span.fromUnsafe(frame.drop(split))))
+                collect(responseBody(sseJson, stream)).map { (events, ended) =>
+                    assert(events.map(_.data) == Chunk(User("Zoë", 30)), s"observed $events")
+                    assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "CRLF and CR line endings frame events, and an event split across spans is assembled" in {
+                collect(responseBody(sseText, spans("data: one\r\n\r\ndata: two\r\rdata: th", "ree\n\n"))).map { (events, ended) =>
+                    assert(events.map(_.data) == Chunk("one", "two", "three"), s"observed $events")
+                    assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "one space after the colon is stripped and the rest of the value is kept" in {
+                collect(responseBody(sseText, spans("data:  two spaces\n\ndata:tight\n\nevent:  spaced\ndata: x\n\n"))).map {
+                    (events, ended) =>
+                        assert(events.map(_.data) == Chunk(" two spaces", "tight", "x"), s"observed $events")
+                        assert(events(2).event == Present(" spaced"), s"observed ${events(2)}")
+                        assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "data lines join with LF, a comment is ignored, a field-less event is not dispatched, and an unterminated event is discarded" in {
+                collect(responseBody(sseText, spans(": ping\ndata: a\ndata: b\n\nevent: only\n\ndata: tail"))).map { (events, ended) =>
+                    assert(events.map(_.data) == Chunk("a\nb"), s"observed $events")
+                    assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "a line without a colon is a field with an empty value; retry with a non-digit value is ignored" in {
+                collect(responseBody(sseText, spans("data\n\nretry: soon\nid: 7\ndata: x\n\nretry: 250\ndata: y\n\n"))).map {
+                    (events, ended) =>
+                        assert(events.map(_.data) == Chunk("", "x", "y"), s"observed $events")
+                        assert(events(1).retry == Absent && events(1).id == Present("7"), s"observed ${events(1)}")
+                        assert(events(2).retry == Present(250.millis), s"observed ${events(2)}")
+                        assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            // The last event id is stream state (the WHATWG event stream format): a dispatch clears the data and event type buffers only,
+            // so the id set by one line names every later event until the next id line, which may set it to the empty string.
+            "the last event id persists across events until the next id line" in {
+                collect(responseBody(sseText, spans("id: 1\ndata: a\n\ndata: b\n\nid: 2\ndata: c\n\nid\ndata: d\n\n"))).map {
+                    (events, ended) =>
+                        assert(events.map(_.data) == Chunk("a", "b", "c", "d"), s"observed $events")
+                        assert(
+                            events.map(_.id) == Chunk(Present("1"), Present("1"), Present("2"), Present("")),
+                            s"observed ${events.map(_.id)}"
+                        )
+                        assert(ended == Result.unit, s"observed $ended")
+                }
+            }
+
+            "one byte order mark before the first line is skipped, split across spans as well; a second one is part of the field name" in {
+                val bom  = Array[Byte](0xef.toByte, 0xbb.toByte, 0xbf.toByte)
+                val text = "data: x\n\n".getBytes("UTF-8")
+                def stream(pieces: Array[Byte]*): Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(pieces.map(Span.fromUnsafe))
+                collect(responseBody(sseText, stream(bom ++ text))).map { (whole, _) =>
+                    assert(whole.map(_.data) == Chunk("x"), s"observed $whole")
+                    collect(responseBody(sseText, stream(bom.take(2), bom.drop(2) ++ text))).map { (split, _) =>
+                        assert(split.map(_.data) == Chunk("x"), s"observed $split")
+                        collect(responseBody(sseText, stream(bom ++ bom ++ text))).map { (twice, ended) =>
+                            assert(twice.isEmpty, s"observed $twice")
+                            assert(ended == Result.unit, s"observed $ended")
+                        }
+                    }
+                }
+            }
+        }
+
+        "a line over the 16 MiB bound" - {
+            val bound    = 16 * 1024 * 1024
+            val oversize = Span.fromUnsafe(Array.fill[Byte](bound + 1)('x'.toByte))
+            def oversized(first: String): Stream[Span[Byte], Async & Abort[HttpException]] =
+                Stream.init(Seq(Span.fromUnsafe(first.getBytes("UTF-8")), oversize))
+            val tooLarge = Result.fail(HttpPayloadTooLargeException(bound + 1, bound))
+
+            "an NDJSON record over the bound fails the stream after the records before it" in {
+                collect(responseBody(ndjson, oversized("{\"name\":\"Alice\",\"age\":30}\n"))).map { (users, ended) =>
+                    assert(users == Chunk(User("Alice", 30)), s"observed $users")
+                    assert(ended == tooLarge, s"observed $ended")
+                }
+            }
+
+            "an SSE line over the bound fails the stream after the events before it" in {
+                collect(responseBody(sseText, oversized("data: a\n\n"))).map { (events, ended) =>
+                    assert(events.map(_.data) == Chunk("a"), s"observed $events")
+                    assert(ended == tooLarge, s"observed $ended")
+                }
+            }
+
+            val multipartRoute   = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val multipartHeaders = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+            def multipartPartsOf(stream: Stream[Span[Byte], Async & Abort[HttpException]])(using Frame, kyo.test.AssertScope) =
+                RouteUtil.decodeStreamingRequest(multipartRoute, Dict.empty[String, String], Absent, multipartHeaders, stream) match
+                    case Result.Success(request) => collect(request.fields.body)
+                    case other                   => fail(s"decode failed: $other")
+            def multipartParts(first: String)(using Frame, kyo.test.AssertScope) = multipartPartsOf(oversized(first))
+
+            // The bound is exact: the first bytes of a delimiter split across spans are held with the part until the rest arrives and
+            // are not counted against it, and a part the body ends inside is bounded the same way.
+            "a multipart part of exactly the bound is delivered and one byte more fails, its delimiter split across spans or absent" in {
+                val headersG                         = "Content-Disposition: form-data; name=\"g\"\r\n\r\n"
+                val exact                            = bound - headersG.length
+                def body(dataSize: Int): Array[Byte] = ("--b\r\n" + headersG).getBytes("UTF-8") ++ Array.fill[Byte](dataSize)('x'.toByte)
+                val close                            = "\r\n--b--\r\n".getBytes("UTF-8")
+                def delimited(dataSize: Int): Stream[Span[Byte], Async & Abort[HttpException]] =
+                    val bytes = body(dataSize) ++ close
+                    val cut   = body(dataSize).length + 3
+                    Stream.init(Seq(Span.fromUnsafe(bytes.take(cut)), Span.fromUnsafe(bytes.drop(cut))))
+                end delimited
+                def unterminated(dataSize: Int): Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(Seq(Span.fromUnsafe(body(dataSize))))
+                val oneMore = Result.fail(HttpPayloadTooLargeException(bound + 1, bound))
+                multipartPartsOf(delimited(exact)).map { (parts, ended) =>
+                    assert(parts.map(_.data.size) == Chunk(exact) && ended == Result.unit, s"observed ${parts.map(_.data.size)} $ended")
+                    multipartPartsOf(delimited(exact + 1)).map { (parts, ended) =>
+                        assert(parts.isEmpty && ended == oneMore, s"observed ${parts.map(_.data.size)} $ended")
+                        multipartPartsOf(unterminated(exact)).map { (parts, ended) =>
+                            assert(
+                                parts.map(_.data.size) == Chunk(exact) && ended == Result.unit,
+                                s"observed ${parts.map(_.data.size)} $ended"
+                            )
+                            multipartPartsOf(unterminated(exact + 1)).map { (parts, ended) =>
+                                assert(parts.isEmpty && ended == oneMore, s"observed ${parts.map(_.data.size)} $ended")
+                            }
+                        }
+                    }
+                }
+            }
+
+            "a multipart boundary line over the bound fails the stream after the parts before it" in {
+                multipartParts("--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nd\r\n--b").map { (parts, ended) =>
+                    assert(parts.map(_.name) == Chunk("f"), s"observed $parts")
+                    assert(ended == tooLarge, s"observed $ended")
+                }
+            }
+
+            // A part is delivered whole, as one span, so it is held until its delimiter and bounded like a line; its size counts its
+            // header lines, which are part of the section.
+            "a multipart part over the bound fails the stream after the parts before it" in {
+                val headersG = "Content-Disposition: form-data; name=\"g\"\r\n\r\n"
+                val first    = "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nd\r\n--b\r\n" + headersG
+                multipartParts(first).map { (parts, ended) =>
+                    assert(parts.map(_.name) == Chunk("f"), s"observed $parts")
+                    assert(ended == Result.fail(HttpPayloadTooLargeException(headersG.length + bound + 1, bound)), s"observed $ended")
+                }
+            }
+        }
+
+        "multipart" - {
+            val route   = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
+
+            def parts(stream: Stream[Span[Byte], Async & Abort[HttpException]])(using
+                Frame,
+                kyo.test.AssertScope
+            ): Chunk[HttpRequest.Part] < (Async & Abort[HttpException]) =
+                RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream) match
+                    case Result.Success(request) => request.fields.body.run
+                    case Result.Failure(err)     => fail(s"decode failed: $err")
+                    case p: Result.Panic         => throw p.exception
+
+            "part data with every byte value survives framing across span boundaries" in {
+                val data = Array.tabulate[Byte](256)(i => i.toByte)
+                val head = "--b\r\nContent-Disposition: form-data; name=\"bin\"\r\n\r\n".getBytes("UTF-8")
+                val tail = "\r\n--b--\r\n".getBytes("UTF-8")
+                val body = head ++ data ++ tail
+                val stream: Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(body.grouped(37).map(Span.fromUnsafe).toSeq)
+                parts(stream).map { ps =>
+                    assert(ps.size == 1 && ps(0).name == "bin", s"observed $ps")
+                    assert(ps(0).data.toArrayUnsafe.toSeq == data.toSeq, "the bytes must arrive unchanged")
+                }
+            }
+
+            "a boundary string inside part data is not a delimiter unless it follows CRLF" in {
+                val body =
+                    "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx--b y\r\n--b\r\nContent-Disposition: form-data; name=\"g\"\r\n\r\nz\r\n--b--\r\n"
+                parts(spans(body)).map { ps =>
+                    assert(ps.map(_.name) == Chunk("f", "g"), s"observed $ps")
+                    assert(new String(ps(0).data.toArrayUnsafe, "UTF-8") == "x--b y", s"observed ${ps(0)}")
+                    assert(new String(ps(1).data.toArrayUnsafe, "UTF-8") == "z")
+                }
+            }
+
+            "a preamble and an epilogue are ignored, and a delimiter split across spans is found" in {
+                val body =
+                    "preamble text\r\n--b\r\nContent-Disposition: form-data; name=\"p1\"\r\n\r\nd1\r\n--b\r\nContent-Disposition: form-data; name=\"p2\"\r\n\r\nd2\r\n--b--\r\nepilogue"
+                val bytes                                                    = body.getBytes("UTF-8")
+                val cut                                                      = body.indexOf("d1\r\n--b") + 4
+                val stream: Stream[Span[Byte], Async & Abort[HttpException]] =
+                    Stream.init(Seq(Span.fromUnsafe(bytes.take(cut)), Span.fromUnsafe(bytes.drop(cut))))
+                parts(stream).map { ps =>
+                    assert(ps.map(_.name) == Chunk("p1", "p2"), s"observed $ps")
+                    assert(ps.map(p => new String(p.data.toArrayUnsafe, "UTF-8")) == Chunk("d1", "d2"), s"observed $ps")
+                }
+            }
         }
     }
 
@@ -1753,8 +2049,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     "multipart streaming encoding" - {
         "includes closing boundary" in {
-            val route                                          = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
-            val parts: kyo.Stream[HttpRequest.Part, kyo.Async] = kyo.Stream.init(Seq(
+            val route = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
+            val parts: kyo.Stream[HttpRequest.Part, kyo.Async & Abort[HttpException]] = kyo.Stream.init(Seq(
                 HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8")))
             ))
             val request = HttpRequest(
@@ -1764,7 +2060,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Record.empty
             ).addField("body", parts)
 
-            var stream: kyo.Stream[Span[Byte], kyo.Async] = null
+            var stream: kyo.Stream[Span[Byte], kyo.Async & Abort[HttpException]] = null
             RouteUtil.encodeRequest(route, request)(
                 onEmpty = (_, _) => fail("expected streaming"),
                 onBuffered = (_, _, _) => fail("expected streaming"),

@@ -14,8 +14,8 @@ import kyo.scheduler.IOPromise
   * The parser runs on the inbound channel and completes the response promise when headers arrive. The send method serializes request
   * headers via a connection-scoped GrowableByteBuffer and offers them to the outbound channel.
   *
-  * Allocation per request: 1 byte[] (serialized request headers) + 1 byte[] (parsed response headers). The GrowableByteBuffer and
-  * ParsedResponse builder state are reused.
+  * Allocation per request: the serialized request head, the parsed response's packed headers and its ParsedResponse, and a body array when
+  * body bytes share a read with the head. The GrowableByteBuffer and the parser's head buffer are reused.
   */
 final private[kyo] class Http1ClientConnection(
     inbound: Channel.Unsafe[Span[Byte]],
@@ -25,7 +25,7 @@ final private[kyo] class Http1ClientConnection(
 )(using AllowUnsafe, Frame):
 
     /** Reusable response promise that exposes the protected `becomeAvailable` for reuse across requests. */
-    private class ResponsePromise extends IOPromise[Nothing, ParsedResponse]:
+    private class ResponsePromise extends IOPromise[Http1ClientConnection.ResponseFailure, ParsedResponse]:
         def resetForReuse(): Boolean = becomeAvailable()
     end ResponsePromise
 
@@ -44,8 +44,7 @@ final private[kyo] class Http1ClientConnection(
             _lastBodySpan = bodySpan
             responsePromise.completeDiscard(Result.succeed(response))
         ,
-        onClosed = () =>
-            responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
+        onFailure = failure => responsePromise.completeDiscard(failure)
     )
 
     /** Sends an HTTP request and returns a fiber that completes when response headers are parsed.
@@ -60,18 +59,20 @@ final private[kyo] class Http1ClientConnection(
         path: String,
         headers: HttpHeaders,
         body: Span[Byte]
-    )(using AllowUnsafe): Fiber.Unsafe[ParsedResponse, Abort[Nothing]] =
-        // Cross opaque boundary: IOPromise[Nothing, ParsedResponse] is the runtime
-        // representation of Fiber.Unsafe[ParsedResponse, Abort[Nothing]].
-        sendDirect(method, path, headers, body, "", contentLength = -1, chunked = false)
-            .asInstanceOf[Fiber.Unsafe[ParsedResponse, Abort[Nothing]]]
+    )(using AllowUnsafe): Fiber.Unsafe[ParsedResponse, Abort[Http1ClientConnection.ResponseFailure]] =
+        // Cross opaque boundary: IOPromise[ResponseFailure, ParsedResponse] is the runtime
+        // representation of Fiber.Unsafe[ParsedResponse, Abort[ResponseFailure]].
+        sendDirect(method, path, headers, body, "", contentLength = -1, chunked = false, rawAfterHead = false)
+            .asInstanceOf[Fiber.Unsafe[ParsedResponse, Abort[Http1ClientConnection.ResponseFailure]]]
 
-    /** Returns the underlying IOPromise directly for internal backend use. IOPromise.onComplete gives Result[Nothing, ParsedResponse] — no
-      * `< S` wrapper.
+    /** Returns the underlying IOPromise directly for internal backend use. IOPromise.onComplete gives Result[ResponseFailure,
+      * ParsedResponse], with no `< S` wrapper.
       *
       * @param hostHeader
       *   pre-computed host header value (e.g. "example.com" or "example.com:8080"). Written as a "Host" header unless the caller's
       *   `headers` already contain a "Host" entry. Pass empty string to skip.
+      * @param rawAfterHead
+      *   whether every byte after the response head belongs to the caller, as on a raw connection
       */
     private[kyo] def sendDirect(
         method: HttpMethod,
@@ -80,8 +81,9 @@ final private[kyo] class Http1ClientConnection(
         body: Span[Byte],
         hostHeader: String,
         contentLength: Int,
-        chunked: Boolean
-    )(using AllowUnsafe): IOPromise[Nothing, ParsedResponse] =
+        chunked: Boolean,
+        rawAfterHead: Boolean
+    )(using AllowUnsafe): IOPromise[Http1ClientConnection.ResponseFailure, ParsedResponse] =
         import Http1ClientConnection.*
         // Serialize request headers to bytes
         headerBuf.reset()
@@ -116,11 +118,16 @@ final private[kyo] class Http1ClientConnection(
         // Reset promise for this request cycle and start parser
         discard(responsePromise.resetForReuse())
         _lastBodySpan = Span.empty[Byte]
-        parser.reset()
+        parser.reset(method, rawAfterHead)
         parser.start()
 
         responsePromise
     end sendDirect
+
+    /** Whether any response byte arrived for the request last sent. Read after the response promise completes, which orders it after the
+      * parser's write.
+      */
+    def responseBytesReceived(using AllowUnsafe): Boolean = parser.receivedAny
 
     /** Returns the body bytes that were available in the same chunk as the response headers. */
     def lastBodySpan(using AllowUnsafe): Span[Byte] = _lastBodySpan
@@ -155,22 +162,20 @@ final private[kyo] class Http1ClientConnection(
 
     /** Close the connection. Fails any pending response promise so waiting fibers unblock. */
     def close()(using AllowUnsafe): Unit =
-        responsePromise.completeDiscard(Http1ClientConnection.connectionClosedPanic)
+        responsePromise.completeDiscard(Result.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead)))
 
 end Http1ClientConnection
 
 private[kyo] object Http1ClientConnection:
 
-    /** The completion sentinel for a connection that closed with a response outstanding.
+    /** How a response the client was waiting for fails to arrive: the connection closed before its head was complete, or the peer sent a
+      * head the client refuses. A panic is neither and stays a panic.
       *
-      * NoStackTrace, and allocated once: the sentinel marks WHERE the wait ended, never a failure
-      * site, so a trace carries no information. Capturing one would also walk the unwinder on
-      * whatever carrier delivers the close, and a driver carrier's stack crosses C poller frames
-      * the Scala Native unwinder cannot step through on arm64 (observed SIGSEGV inside
-      * fillInStackTrace).
+      * Both are `KyoException`s, which capture no stack trace. A capture here would walk the unwinder on whatever carrier delivers the
+      * close, and a driver carrier's stack crosses C poller frames the Scala Native unwinder cannot step through on arm64 (observed SIGSEGV
+      * inside fillInStackTrace).
       */
-    private val connectionClosedPanic: Result[Nothing, Nothing] =
-        Result.panic(new java.io.IOException("connection closed") with scala.util.control.NoStackTrace)
+    type ResponseFailure = HttpConnectionClosedException | HttpProtocolException
 
     private val HttpVersion             = " HTTP/1.1\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val ContentLengthPrefix     = "Content-Length: ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
