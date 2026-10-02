@@ -40,31 +40,9 @@ object HttpQueryParams:
         def toQueryString: String =
             if self.isEmpty then ""
             else
-                self.map((k, v) => s"${percentEncode(k)}=${percentEncode(v)}").mkString("&")
+                self.map((k, v) => s"${encode(k)}=${encode(v)}").mkString("&")
     end extension
 
-    /** RFC 3986 percent-encoding. Unreserved chars (A-Z, a-z, 0-9, `-`, `_`, `.`, `~`) pass through; everything else is %XX encoded. */
-    private def percentEncode(s: String): String =
-        val bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val sb    = new StringBuilder(bytes.length)
-        @scala.annotation.tailrec
-        def loop(i: Int): String =
-            if i >= bytes.length then sb.toString
-            else
-                val b = bytes(i) & 0xff
-                if (b >= 'A' && b <= 'Z') ||
-                    (b >= 'a' && b <= 'z') ||
-                    (b >= '0' && b <= '9') ||
-                    b == '-' || b == '_' || b == '.' || b == '~'
-                then
-                    sb.append(b.toChar)
-                else
-                    sb.append('%')
-                    sb.append(Character.forDigit(b >> 4, 16).toUpper)
-                    sb.append(Character.forDigit(b & 0xf, 16).toUpper)
-                end if
-                loop(i + 1)
-        loop(0)
-    end percentEncode
+    private def encode(s: String): String = internal.PercentEncoding.encode(s, internal.PercentEncoding.Mode.Component)
 
 end HttpQueryParams

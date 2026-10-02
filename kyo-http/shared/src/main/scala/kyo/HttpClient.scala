@@ -792,22 +792,7 @@ object HttpClient:
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        local.use { (client, clientConfig) =>
-            val resolved = clientConfig.baseUrl match
-                case Present(base) if !url.contains("://") =>
-                    base.toString.stripSuffix("/") + url
-                case _ => url
-            Abort.get(HttpUrl.parse(resolved)).map(parsed =>
-                client.connectWebSocket(
-                    parsed,
-                    resolveHeaders(headers),
-                    config,
-                    clientConfig.connectTimeout,
-                    clientConfig.clientFilter,
-                    clientConfig.autoFilters
-                )(f)
-            )
-        }
+        Abort.get(HttpUrl.parse(url)).map(parsed => webSocket(parsed, resolveHeaders(headers), config)(f))
 
     /** Connects to a HttpWebSocket endpoint from a parsed URL. */
     def webSocket[A, S](url: HttpUrl)(
@@ -821,7 +806,7 @@ object HttpClient:
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         local.use { (client, clientConfig) =>
             client.connectWebSocket(
-                url,
+                clientConfig.baseUrl.fold(url)(base => HttpUrl.underBase(base.url, url)),
                 headers,
                 config,
                 clientConfig.connectTimeout,

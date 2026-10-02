@@ -196,6 +196,17 @@ class HttpContainerBackendTest extends BasePodTest:
         })
     end claimLegacyFixture
 
+    "endpoint URLs" - {
+
+        "a socket path with a space and a '+' reaches the daemon unchanged, as do query values" in {
+            val backend = new HttpContainerBackend("/tmp/a b+c/docker.sock", "v1.43", Meter.Noop)
+            val url     = HttpUrl.parse(backend.url("/containers/x/archive", "path" -> "/a b+c")).getOrThrow
+            assert(url.unixSocket == Present("/tmp/a b+c/docker.sock"))
+            assert(url.path == "/v1.43/containers/x/archive")
+            assert(url.query("path") == Present("/a b+c"))
+        }
+    }
+
     "create payload" - {
         // Regression guard for the podman 5.x compat API: docker and podman 4.x treat
         // PidsLimit 0 as "no limit configured", but podman 5.8.4 applies it as a literal

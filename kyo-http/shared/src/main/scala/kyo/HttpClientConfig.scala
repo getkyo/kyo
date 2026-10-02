@@ -8,9 +8,9 @@ import kyo.*
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
   * config entirely, use `HttpClient.withConfig(newConfig) { ... }`.
   *
-  * The `baseUrl` field is resolved only for requests with path-only URLs (where `scheme` is absent). A request to `/users` with
-  * `baseUrl("https://api.example.com")` resolves to `https://api.example.com/users`. Requests with a full URL ignore `baseUrl`. WebSocket
-  * connections also honor `baseUrl` for path-only URLs.
+  * The `baseUrl` field is resolved only for requests with path-only URLs (where `scheme` is absent). A request to `/users` with the
+  * base `https://api.example.com/v1` resolves to `https://api.example.com/v1/users`: the base's path is a prefix. Requests with a
+  * full URL ignore `baseUrl`. WebSocket connections also honor `baseUrl` for path-only URLs.
   *
   * Retry behavior is inactive unless a `retrySchedule` is set. When active, the client retries on network errors and on responses where
   * `retryOn(status)` returns true (default: `_.isServerError`). The `timeout` wraps the entire retry loop, so a short timeout may prevent
@@ -18,7 +18,9 @@ import kyo.*
   *
   * @param baseUrl
   *   Prefix for path-only request URLs. Absent by default, all URLs must be absolute. When set, requests to `/path` resolve to
-  *   `baseUrl + /path`. Requests with a scheme (e.g. `https://...`) ignore this field. Also applied to WebSocket connections.
+  *   `baseUrl + /path`. Requests with a scheme (e.g. `https://...`) ignore this field. Also applied to WebSocket connections. A
+  *   [[HttpClientConfig.BaseUrl]] is built by `BaseUrl.init`, or by the `baseUrl` setter that takes a `String` or an `HttpUrl`, each of
+  *   which refuses a URL without a scheme, or without a host or Unix socket, with an [[kyo.HttpUrlParseException]].
   * @param timeout
   *   Maximum duration for the entire request lifecycle including retries. Defaults to 5 seconds. Set to `Duration.Infinity` to disable.
   *   Does not apply to WebSocket connections (they are long-lived by design).
@@ -63,7 +65,7 @@ import kyo.*
   *   [[kyo.Schedule]] Controls retry timing and backoff
   */
 case class HttpClientConfig(
-    baseUrl: Maybe[HttpUrl] = Absent,
+    baseUrl: Maybe[HttpClientConfig.BaseUrl] = Absent,
     timeout: Duration = 5.seconds,
     connectTimeout: Duration = 30.seconds,
     followRedirects: Boolean = true,
@@ -84,8 +86,16 @@ case class HttpClientConfig(
         s"connectTimeout must be positive or Infinity: $connectTimeout"
     )
 
-    def baseUrl(url: String)(using Frame): HttpClientConfig          = copy(baseUrl = Present(HttpUrl.parse(url).getOrThrow))
-    def baseUrl(url: HttpUrl): HttpClientConfig                      = copy(baseUrl = Present(url))
+    def baseUrl(base: HttpClientConfig.BaseUrl): HttpClientConfig = copy(baseUrl = Present(base))
+
+    /** This config with `url` as its base, or the [[kyo.HttpUrlParseException]] naming why `url` cannot be one. */
+    def baseUrl(url: String)(using Frame): Result[HttpUrlParseException, HttpClientConfig] =
+        HttpClientConfig.BaseUrl.init(url).map(baseUrl)
+
+    /** This config with `url` as its base, or the [[kyo.HttpUrlParseException]] naming why `url` cannot be one. */
+    def baseUrl(url: HttpUrl)(using Frame): Result[HttpUrlParseException, HttpClientConfig] =
+        HttpClientConfig.BaseUrl.init(url).map(baseUrl)
+
     def timeout(d: Duration): HttpClientConfig                       = copy(timeout = d)
     def connectTimeout(d: Duration): HttpClientConfig                = copy(connectTimeout = d)
     def followRedirects(v: Boolean): HttpClientConfig                = copy(followRedirects = v)
@@ -103,4 +113,27 @@ case class HttpClientConfig(
         copy(clientFilter = fs.foldLeft(clientFilter)(_.andThen(_)))
     def clearFilters: HttpClientConfig =
         copy(clientFilter = HttpFilter.noop)
+end HttpClientConfig
+
+object HttpClientConfig:
+
+    /** A URL a client can resolve path-only requests against: absolute, with a scheme and either a host or a Unix socket.
+      *
+      * Built only by `init`, so an [[HttpClientConfig]] cannot hold a base without a scheme or a host. Its path is a prefix: a request to
+      * `/users` under `https://api.example.com/v1` goes to `https://api.example.com/v1/users`.
+      */
+    opaque type BaseUrl = HttpUrl
+
+    object BaseUrl:
+        /** `url` parsed as a base, or the [[kyo.HttpUrlParseException]] naming why it cannot be one. */
+        def init(url: String)(using Frame): Result[HttpUrlParseException, BaseUrl] = HttpUrl.parseBase(url)
+
+        /** `url` as a base, or the [[kyo.HttpUrlParseException]] naming why it cannot be one. */
+        def init(url: HttpUrl)(using Frame): Result[HttpUrlParseException, BaseUrl] = HttpUrl.checkBase(url)
+
+        given CanEqual[BaseUrl, BaseUrl] = CanEqual.derived
+
+        extension (self: BaseUrl) def url: HttpUrl = self
+    end BaseUrl
+
 end HttpClientConfig
