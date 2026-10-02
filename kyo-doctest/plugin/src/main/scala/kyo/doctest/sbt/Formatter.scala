@@ -142,7 +142,7 @@ private[sbt] object Formatter {
         // unwrap strips back off. Indenting every line (including string interiors) would change a string's
         // value; indenting none confuses scalafmt's Scala-3 significant-indentation parse.
         val wrapped   = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
-        val result = session.formatOrError(fmtFile, wrapped)
+        val result  = session.formatOrError(fmtFile, wrapped)
         result.exception match {
             case null                     => unwrap(result.value)
             case e if fatalCause(e) => throw e
