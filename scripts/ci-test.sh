@@ -14,7 +14,9 @@ set -uo pipefail
 # compile-test, then run) so the driver never holds the whole compile heap while
 # the test phase forks. Each of those processes chains its Scala passes in one
 # ordered command string, so one process covers the primary version and the 2.x
-# cross-builds.
+# cross-builds. With JS_TEST_BATCH or WASM_TEST_BATCH set, that platform's run
+# phase is instead a plan, the plan in batches of that many modules, and the
+# cross pass, each in its own process.
 #
 # Native runs a pool of fresh drivers over one module plan:
 #
@@ -43,8 +45,8 @@ set -uo pipefail
 # per-module test-worker count; both are hygiene, neither can change a verdict.
 #
 # Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
-# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX, and
-# CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
+# NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
+# JS_TEST_BATCH, WASM_TEST_BATCH, and CONTAINER_SWEEP from the environment; mutates none of them (the nativeLink
 # invocations append -XX:ActiveProcessorCount when NATIVE_LINK_CPUS is set). The
 # caller (a CI workflow, or build.sh --env podman-ci) owns the environment, so
 # this one runner is correct in every environment.
@@ -232,6 +234,39 @@ if [ "${1:-}" = "--self-test" ]; then
     if calls_count 2 && calls_lack "testKyo --all JVM" && exit_is 0
     then record ok "compile action runs only the two compile phases"
     else record no "compile action runs only the two compile phases"; fi
+
+    # 5a. JS_TEST_BATCH turns the JS run phase into a plan, ordered batches, and the cross pass, each
+    # its own process under the run-phase heap cap.
+    FAKE_PLAN="m1JS m2JS m3JS m4JS m5JS"
+    run_runner_env 'exit 0' JS test JS_TEST_BATCH=2
+    if calls_count 7 \
+       && call_nth_has 3 "testKyo --dry-run --plan-file " && call_nth_has 3 " --scala 3 --all JS" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1JS,m2JS JS" \
+       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m3JS,m4JS JS" \
+       && call_nth_is 6 "-J-Xmx6G testKyo --scala 3 --modules m5JS JS" \
+       && call_nth_is 7 "-J-Xmx6G testKyo --cross --all JS" && exit_is 0
+    then record ok "JS_TEST_BATCH: plan, ordered batches, then the cross pass"
+    else record no "JS_TEST_BATCH: plan, ordered batches, then the cross pass"; fi
+
+    # 5b. WASM_TEST_BATCH batches a diff run the same way, with no --all anywhere; JS_TEST_BATCH does
+    # not reach Wasm.
+    FAKE_PLAN="m1Wasm m2Wasm m3Wasm"
+    run_runner_env 'exit 0' Wasm testDiff WASM_TEST_BATCH=2 JS_TEST_BATCH=1
+    if calls_count 6 \
+       && call_nth_has 3 "testKyo --dry-run --plan-file " && call_nth_has 3 " --scala 3 Wasm" \
+       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1Wasm,m2Wasm Wasm" \
+       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m3Wasm Wasm" \
+       && call_nth_is 6 "-J-Xmx6G testKyo --cross Wasm" && calls_lack "--all" && exit_is 0
+    then record ok "WASM_TEST_BATCH batches a diff run; JS_TEST_BATCH does not reach Wasm"
+    else record no "WASM_TEST_BATCH batches a diff run; JS_TEST_BATCH does not reach Wasm"; fi
+
+    # 5c. A failed batch fails the run before any later batch or the cross pass.
+    FAKE_PLAN="m1Wasm m2Wasm m3Wasm"
+    run_runner_env 'if [[ "$*" == *"--modules m1Wasm"* ]]; then exit 1; fi; exit 0' Wasm test WASM_TEST_BATCH=1
+    if calls_count 4 && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1Wasm Wasm" && exit_is 1
+    then record ok "a failed JS/Wasm batch stops the run before the next batch and the cross pass"
+    else record no "a failed JS/Wasm batch stops the run before the next batch and the cross pass"; fi
+    FAKE_PLAN="kyo-dataNative kyo-preludeNative"
 
     # 6. Native plans first, then links the plan in batches, before any test process, and never links
     # the kyoNative aggregate (only the planned modules are linked at all).
@@ -617,7 +652,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 55 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 58 ]
     exit $?
 fi
 
@@ -678,6 +713,15 @@ NATIVE_LINK_CPUS="${NATIVE_LINK_CPUS:-}"
 # local run wants; the CI workflow sets both for the Native target.
 NATIVE_LINK_BATCH="${NATIVE_LINK_BATCH:-}"
 NATIVE_TEST_BATCH="${NATIVE_TEST_BATCH:-}"
+
+# Modules per sbt process in the JS and Wasm run phase: a plan, then the plan in batches, then the
+# cross pass. sbt-scalajs keeps each module's linker state in the driver for the rest of the session,
+# so one driver linking every module accumulates all of them: measured on one 6G driver, kyo-data's
+# Wasm test link retained 490 to 650 MB and kyo-crypto's about 200 MB after a full GC, and main's
+# whole-selection Wasm session reached kyo-ui with 0.09 GB free. Empty or 0 runs the whole selection in
+# one process; the CI workflow sets both.
+JS_TEST_BATCH="${JS_TEST_BATCH:-}"
+WASM_TEST_BATCH="${WASM_TEST_BATCH:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
@@ -782,9 +826,36 @@ run_phase_split() {
         *)
             sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
             sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
-            sbt_run_resolve_retry $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
+            local size; size=$(run_test_batch_size)
+            if [ -z "$size" ] || [ "$size" = 0 ]; then
+                sbt_run_resolve_retry $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
+                return 0
+            fi
+            trap native_cleanup EXIT
+            local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" '--scala 3' "$arg" "$PLATFORM")
+            log "planning $PLATFORM test modules: sbt $plan_cmd"
+            sbt_resolve_retry "$plan_cmd" || { log "$PLATFORM planning failed"; return 1; }
+            if [ ! -f "$PLAN" ]; then
+                log "$PLATFORM planning wrote no plan file ($PLAN)"; return 1
+            fi
+            log "plan: $(tr '\n' ' ' < "$PLAN")"
+            local batch
+            for batch in $(plan_batches "$size"); do
+                log "$PLATFORM test batch: sbt testKyo --scala 3 --modules $batch $PLATFORM"
+                sbt_run_resolve_retry $(run_phase_heap) "testKyo --scala 3 --modules $batch $PLATFORM" || return $?
+            done
+            sbt_run_resolve_retry $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$arg" "$PLATFORM")" || return $?
             return 0
             ;;
+    esac
+}
+
+# The JS or Wasm test batch size the environment sets for this platform; empty for JVM and Native.
+run_test_batch_size() {
+    case "$PLATFORM" in
+        JS)   printf '%s' "$JS_TEST_BATCH" ;;
+        Wasm) printf '%s' "$WASM_TEST_BATCH" ;;
+        *)    printf '' ;;
     esac
 }
 
