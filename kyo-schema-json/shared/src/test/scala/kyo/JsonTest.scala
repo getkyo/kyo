@@ -2271,4 +2271,9 @@ class JsonTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Json.decode[WCDefaults](Json.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
 end JsonTest

@@ -489,4 +489,9 @@ class IonBinaryTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = IonBinary.decode[WCDefaults](IonBinary.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
 end IonBinaryTest

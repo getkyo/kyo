@@ -831,4 +831,10 @@ class BsonTest extends kyo.test.Test[Any]:
             wirePin(WCValues.other: WCOpen, "1a000000027479706500040000007a7a7a001079000100000000", summon[Schema[WCOpen]])
         }
     }
+
+    "an Absent field whose default is Present round-trips as Absent" in {
+        given CanEqual[Any, Any] = CanEqual.derived
+        val decoded              = Bson.decode[WCDefaults](Bson.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
 end BsonTest

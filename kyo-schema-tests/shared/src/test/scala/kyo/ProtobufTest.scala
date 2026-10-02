@@ -1952,6 +1952,46 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
     }
 
+    private def outcome(result: Result[DecodeException, Any]): String = result match
+        case Result.Success(value) => s"decoded $value"
+        case Result.Failure(e)     => s"failed with ${e.getClass.getSimpleName}"
+        case Result.Panic(t)       => s"panicked with ${t.getClass.getSimpleName}"
+
+    "a field under a naming convention round-trips" in {
+        val decoded = Protobuf.decode[WCCased](Protobuf.encode(WCValues.cased))
+        assert(decoded == Result.succeed(WCValues.cased), outcome(decoded))
+    }
+
+    "the nested form of a flattened record under a naming convention decodes" in {
+        val nested  = "b293820607416e6e204c6565e2bcfc0117bac6d90208506f72746c616e64b2b1fd02053937323031"
+        val decoded = Protobuf.decode[WCPersonCased](CodecTestSupport.unhex(nested))
+        assert(decoded == Result.succeed(WCValues.personC), outcome(decoded))
+    }
+
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), outcome(decoded))
+    }
+
+    "a numbered variant under the wrapper form round-trips" in {
+        val variant: WCNumberedWrapped = WCWrapA(3)
+        val decoded                    = Protobuf.decode[WCNumberedWrapped](Protobuf.encode(variant))
+        assert(decoded == Result.succeed(variant), outcome(decoded))
+    }
+
+    "a numbered case object under the wrapper form round-trips" in {
+        val variant: WCNumberedWrapped = WCWrapB
+        val written                    = Protobuf.encode(variant)
+        val decoded                    = Protobuf.decode[WCNumberedWrapped](written)
+        assert(decoded == Result.succeed(variant), s"wrote ${written.size} bytes, ${outcome(decoded)}")
+    }
+
+    "a known variant of a sum with a catch-all decodes, never as a panic" in {
+        val variant: WCOpen = WCKnown(1)
+        val decoded         = Protobuf.decode[WCOpen](Protobuf.encode(variant))
+        assert(decoded == Result.succeed(variant), outcome(decoded))
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions

@@ -782,6 +782,16 @@ class IonTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Ion.decode[WCDefaults](Ion.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
+    "a catch-all captures an integer as an Integer, as every other format does" in {
+        val decoded = Ion.decode[WCOpen]("{type:\"zzz\",y:1}")
+        assert(decoded == Result.succeed(WCValues.other), s"decoded $decoded")
+    }
+
 end IonTest
 
 object IonTest:

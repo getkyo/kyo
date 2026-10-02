@@ -1606,4 +1606,16 @@ class YamlTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Yaml.decode[WCDefaults](Yaml.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
+    "a record whose optional fields are all absent round-trips" in {
+        val written = Yaml.encode(WCValues.maybeAbsent)
+        val decoded = Yaml.decode[WCMaybe](written)
+        val failure = decoded.failure.map(_.getClass.getSimpleName)
+        assert(decoded == Result.succeed(WCValues.maybeAbsent), s"wrote ${written.replace("\n", "\\n")}, failed with $failure")
+    }
+
 end YamlTest

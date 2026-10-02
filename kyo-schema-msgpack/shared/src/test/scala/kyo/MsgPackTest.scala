@@ -774,6 +774,11 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
     }
 
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = MsgPack.decode[WCDefaults](MsgPack.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
 end MsgPackTest
 
 // ===== test fixtures (each shares a name prefix with no source file; local to this suite) =====
