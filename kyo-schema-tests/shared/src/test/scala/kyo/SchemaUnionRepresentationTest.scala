@@ -1674,7 +1674,32 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(schema.decodeString[Json](wire) == Result.succeed(SSRAPhoto("a")))
     }
 
+    "a variant field whose wire key is the discriminator key is refused, never dropped" - {
+
+        "under @discriminator, when the sum is derived" in {
+            val errors = scala.compiletime.testing.typeCheckErrors(
+                """{
+                    @kyo.schema.discriminator("type") sealed trait Clash
+                    case class ClashCase(`type`: String, x: Int) extends Clash
+                    kyo.Schema.derived[Clash]
+                }"""
+            )
+            assert(errors.exists(e => e.message.contains("ClashCase") && e.message.contains("type")), errors.map(_.message).toString)
+        }
+
+        "under the discriminator builder, before anything is written" in {
+            val schema              = Schema[SSRTypeField].discriminator("type")
+            val value: SSRTypeField = SSRTypeFieldCase("a", 1)
+            Result.catching[FieldNameCollisionException](schema.encodeString[Json](value)) match
+                case Result.Failure(_) => succeed("the collision is refused")
+                case other             => fail(s"the variant's `type` value was not refused: $other")
+        }
+    }
+
 end SchemaUnionRepresentationTest
+
+sealed trait SSRTypeField derives CanEqual, Schema
+case class SSRTypeFieldCase(`type`: String, x: Int) extends SSRTypeField derives CanEqual
 
 sealed trait SSRARenamed derives CanEqual, Schema
 @kyo.schema.rename("circle")

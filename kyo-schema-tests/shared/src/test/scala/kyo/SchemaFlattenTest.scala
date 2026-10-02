@@ -107,6 +107,30 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
         assertDecodes(schema.denyUnknownFields, wire, value)
     }
 
+    "under the parent's renameAllFields, a flattened child's explicit @rename is kept and its other keys are cased" in {
+        val value = FLExplicitPerson("Alice", FLExplicitAddress("Main St", "97201"))
+        val flat  = Schema[FLExplicitPerson].renameAllFields(Schema.NameCase.SnakeCase).flatten.encodeString[Json](value)
+        assert(flat == """{"name":"Alice","street_name":"Main St","zipCode":"97201"}""", flat)
+    }
+
+    "flatten(_.sum) checks collisions against the sum's variants as the sum derives them" - {
+
+        "a sub-trait with its own given is one variant" in {
+            val errors = scala.compiletime.testing.typeCheckErrors("kyo.Schema[kyo.FLGroupedParent].flatten(_.event)")
+            assert(errors.isEmpty, errors.map(_.message).mkString("; "))
+        }
+
+        "a variant field renamed away from a parent key does not collide" in {
+            val errors = scala.compiletime.testing.typeCheckErrors("kyo.Schema[kyo.FLRenamedAwayParent].flatten(_.event)")
+            assert(errors.isEmpty, errors.map(_.message).mkString("; "))
+        }
+
+        "a variant field renamed onto a parent key collides" in {
+            val errors = scala.compiletime.testing.typeCheckErrors("kyo.Schema[kyo.FLRenamedOntoParent].flatten(_.event)")
+            assert(errors.exists(_.message.contains("'id'")), errors.map(_.message).mkString("; "))
+        }
+    }
+
     "maps a child's given with its own rename on write and read" in {
         val schema = Schema[FLGivenPerson].flatten
         val value  = FLGivenPerson("Alice", FLGivenAddress("Main St", "97201"))
@@ -699,6 +723,28 @@ case class FLCodeChild(@kyo.schema.rename("id") code: String) derives CanEqual, 
 case class FLCodeParent(id: Int, child: FLCodeChild) derives CanEqual, Schema
 case class FLZipAddress(street: String, @kyo.schema.rename("zip_code") zip: String) derives CanEqual, Schema
 case class FLZipPerson(name: String, address: FLZipAddress) derives CanEqual, Schema
+case class FLExplicitAddress(streetName: String, @kyo.schema.rename("zipCode") zip: String) derives CanEqual, Schema
+case class FLExplicitPerson(name: String, address: FLExplicitAddress) derives CanEqual, Schema
+
+// A sub-trait with its own given is one variant of the root: its cases' fields sit under the given's content key, not beside the root's.
+@kyo.schema.discriminator("kind")
+sealed trait FLGroupedEvent derives CanEqual, Schema
+sealed trait FLGroup extends FLGroupedEvent derives CanEqual
+object FLGroup:
+    given Schema[FLGroup] = Schema[FLGroup].adjacent("t", "c")
+case class FLGroupCase(id: String) extends FLGroup derives CanEqual
+case class FLGroupOther(x: Int)    extends FLGroupedEvent derives CanEqual
+case class FLGroupedParent(id: String, event: FLGroupedEvent) derives CanEqual, Schema
+
+@kyo.schema.discriminator("kind")
+sealed trait FLRenamedAwayEvent derives CanEqual, Schema
+case class FLRenamedAwayCase(@kyo.schema.rename("ref") id: String) extends FLRenamedAwayEvent derives CanEqual
+case class FLRenamedAwayParent(id: String, event: FLRenamedAwayEvent) derives CanEqual, Schema
+
+@kyo.schema.discriminator("kind")
+sealed trait FLRenamedOntoEvent derives CanEqual, Schema
+case class FLRenamedOntoCase(@kyo.schema.rename("id") ref: String) extends FLRenamedOntoEvent derives CanEqual
+case class FLRenamedOntoParent(id: String, event: FLRenamedOntoEvent) derives CanEqual, Schema
 case class FLGivenAddress(street: String, zip: String) derives CanEqual
 object FLGivenAddress:
     given Schema[FLGivenAddress] = Schema[FLGivenAddress].rename("zip", "postal")

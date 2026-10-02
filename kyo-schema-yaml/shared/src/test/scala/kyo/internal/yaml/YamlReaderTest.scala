@@ -33,4 +33,24 @@ class YamlReaderTest extends kyo.test.Test[Any]:
         assert(Yaml.decode[YRTHolder]("label: &x a\nvalue: *x\n") == Result.succeed(YRTHolder("a", Structure.Value.Str("a"))))
     }
 
+    "a Structure.Value field holding an alias to a collection reads the anchored collection" - {
+        val anchored = Structure.Value.Sequence(Chunk(Structure.Value.Integer(1), Structure.Value.Integer(2)))
+
+        "anchored by a sibling field" in {
+            assert(Yaml.decode[YRTAnchored]("base: &x [1, 2]\nvalue: *x\n") == Result.succeed(YRTAnchored(List(1, 2), anchored)))
+        }
+
+        "anchored on the field itself, with no alias" in {
+            val record = Structure.Value.Record(Chunk("k" -> Structure.Value.Integer(1)))
+            assert(Yaml.decode[YRTHolder]("label: a\nvalue: &x\n  k: 1\n") == Result.succeed(YRTHolder("a", record)))
+        }
+
+        "anchored by an earlier element's field" in {
+            assert(Yaml.decode[YRTList]("items:\n  - label: a\n    value: &x [1, 2]\n  - label: b\n    value: *x\n") ==
+                Result.succeed(YRTList(List(YRTHolder("a", anchored), YRTHolder("b", anchored)))))
+        }
+    }
+
 end YamlReaderTest
+
+case class YRTAnchored(base: List[Int], value: Structure.Value) derives CanEqual, Schema

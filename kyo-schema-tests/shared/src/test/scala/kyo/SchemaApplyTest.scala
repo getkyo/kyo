@@ -110,9 +110,37 @@ class SchemaApplyTest extends kyo.test.Test[Any]:
                 assert(Json.encode(SchemaApplyGivens.SAViaDef(1, "s")) == """{"id":1}""")
             }
         }
+
+        "inside the object that defines a given, a Schema[A] that is not the given's definition does not compile, naming both meanings" in {
+            val errors = SchemaApplyInScope.insideErrors
+            assert(
+                errors.exists(e => e.contains("summon[Schema[") && e.contains("Schema.derived[")),
+                s"expected a compile error naming summon and Schema.derived, got: $errors"
+            )
+        }
+
+        "is an imported given when the companion derives Schema, as summon is" in {
+            import SchemaApplyOverride.given
+            val summoned = summon[Schema[SADerived]].encodeString[Json](SADerived(1))
+            val applied  = Schema[SADerived].encodeString[Json](SADerived(1))
+            assert(summoned == """{"v":1}""", summoned)
+            assert(applied == summoned, applied)
+        }
     }
 
 end SchemaApplyTest
+
+object SchemaApplyInScope:
+    case class SAScoped(value: Int) derives CanEqual
+    given Schema[SAScoped]         = Schema[SAScoped].rename("value", "the_value")
+    val insideErrors: List[String] =
+        scala.compiletime.testing.typeCheckErrors("Schema[SAScoped]").map(_.message)
+end SchemaApplyInScope
+
+case class SADerived(value: Int) derives CanEqual, Schema
+object SchemaApplyOverride:
+    given Schema[SADerived] = Schema[SADerived].rename("value", "v")
+end SchemaApplyOverride
 
 object SchemaApplyNested:
     case class Configured(a: Int, b: String) derives CanEqual

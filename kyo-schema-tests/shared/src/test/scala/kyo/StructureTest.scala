@@ -2183,7 +2183,44 @@ class StructureTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a Short out of range or with a fraction fails with one exception type, read from JSON or from a captured value" in {
+        def kind(result: Result[DecodeException, STShort]): String =
+            result match
+                case Result.Failure(e) => e.getClass.getSimpleName
+                case other             => s"not a failure: $other"
+        val direct   = Chunk("""{"s":99999}""", """{"s":1.5}""").map(json => kind(Json.decode[STShort](json)))
+        val captured = Chunk(Structure.Value.Integer(99999), Structure.Value.Decimal(1.5))
+            .map(v => kind(Structure.decode[STShort](Structure.Value.Record(Chunk("s" -> v)))))
+        assert(direct == captured, s"direct: $direct, captured: $captured")
+    }
+
+    "a field's default is recorded in the structure as the field's schema writes it" in {
+        Schema[STDefaults].structure match
+            case Structure.Type.Product(_, _, _, fields, _) =>
+                assert(fields.map(_.default) == Chunk(Present(Structure.Value.Null), Present(Structure.Value.Integer(3))), fields.toString)
+            case other => fail(s"expected a product, got $other")
+    }
+
+    "a number outside a Short from a captured value is a RangeException whether or not it fits a Long" in {
+        val kinds = Chunk(Structure.Value.Integer(99999), Structure.Value.BigNum(BigDecimal("1e30"))).map { v =>
+            Structure.decode[STShort](Structure.Value.Record(Chunk("s" -> v))) match
+                case Result.Failure(e) => e.getClass.getSimpleName
+                case other             => s"not a failure: $other"
+        }
+        assert(kinds == Chunk("RangeException", "RangeException"), kinds.toString)
+    }
+
+    "a captured map with a key that is not a string names the key's kind" in {
+        val entries = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1) -> Structure.Value.Integer(2)))
+        Structure.decode[Map[String, Int]](entries) match
+            case Result.Failure(e: TypeMismatchException) => assert(e.actual == "number", e.actual)
+            case other                                    => fail(s"expected a TypeMismatchException, got $other")
+    }
+
 end StructureTest
+
+case class STShort(s: Short) derives CanEqual, Schema
+case class STDefaults(a: Maybe[Int] = Absent, b: Maybe[Int] = Present(3)) derives CanEqual, Schema
 
 // The same wire key "a_b" and field "v", as a String and as a Structure.Value, for decoding one's Protobuf bytes as the other.
 case class STPlainHolder(a_b: Int, v: String) derives CanEqual, Schema

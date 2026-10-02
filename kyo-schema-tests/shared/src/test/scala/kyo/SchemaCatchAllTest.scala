@@ -210,7 +210,23 @@ class SchemaCatchAllTest extends kyo.test.Test[Any]:
             case other => fail(s"expected SchemaNotSerializableException, got $other")
     }
 
+    "a catch-all whose tag does not write as a name is refused under the wrapper object, not written under an empty key" in {
+        val value: SCAWrapped = SCAWrappedOther("scroll", Structure.Value.Integer(3))
+        Result.catching[TransformFailedException](Json.encode(value)) match
+            case Result.Failure(_) => succeed("the tag that is no name is refused")
+            case other             => fail(s"expected TransformFailedException, got $other")
+    }
+
 end SchemaCatchAllTest
+
+object SCALengthTag extends Transformer.Full[String]:
+    def write(value: String, writer: Codec.Writer): Unit = writer.int(value.length)
+    def read(reader: Codec.Reader): String               = "x" * reader.int()
+
+sealed trait SCAWrapped derives CanEqual, Schema
+case class SCAWrappedKnown(x: Int)                                                                     extends SCAWrapped derives CanEqual
+@catchAll() case class SCAWrappedOther(@transform(SCALengthTag) tag: String, payload: Structure.Value) extends SCAWrapped
+    derives CanEqual
 
 @discriminator("type") sealed trait SCAEvent derives CanEqual, Schema
 case class SCAClick(x: Int)                                              extends SCAEvent derives CanEqual

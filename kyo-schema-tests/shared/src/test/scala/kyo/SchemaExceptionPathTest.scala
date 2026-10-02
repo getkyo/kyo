@@ -119,7 +119,29 @@ class SchemaExceptionPathTest extends kyo.test.Test[Any]:
         }
     }
 
+    "input cut off before its end fails with the same exception type in JSON as in Protobuf" in {
+        val bytes                                                  = Protobuf.encode(SEPUser(1, "abcdef"))
+        def kind(result: Result[DecodeException, SEPUser]): String =
+            result match
+                case Result.Failure(e) => e.getClass.getSimpleName
+                case other             => s"not a failure: $other"
+        val protobuf = kind(Protobuf.decode[SEPUser](bytes.slice(0, bytes.size - 2)))
+        val json     = kind(Json.decode[SEPUser]("""{"id":1"""))
+        assert(json == protobuf, s"json: $json, protobuf: $protobuf")
+    }
+
+    "a field's value out of range carries the field's path" in {
+        Yaml.decode[SEPShortHolder]("inner:\n  s: 99999\n") match
+            case Result.Failure(e: RangeException) =>
+                val stated = e.getMessage.linesIterator.find(_.contains("Value 99999 out of range")).getOrElse(e.getMessage)
+                assert(stated.endsWith(" at inner.s"), stated)
+            case other => fail(s"expected a RangeException, got $other")
+    }
+
 end SchemaExceptionPathTest
+
+case class SEPShort(s: Short) derives CanEqual, Schema
+case class SEPShortHolder(inner: SEPShort) derives CanEqual, Schema
 
 case class SEPHello(@rename("app_id") appId: String) derives CanEqual, Schema
 case class SEPHelloHolder(hello: SEPHello) derives CanEqual, Schema

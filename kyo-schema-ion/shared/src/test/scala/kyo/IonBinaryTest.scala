@@ -265,4 +265,14 @@ class IonBinaryTest extends kyo.test.Test[Any]:
 
     }
 
+    "an integer beyond a Long read into an Int fails naming the value it read" in {
+        val big = BigInt(2).pow(70)
+        IonBinary.decode[Int](IonBinary.encode[BigInt](big)) match
+            case Result.Failure(e: RangeException) =>
+                val stated = e.getMessage.linesIterator.find(_.contains("out of range")).getOrElse(e.getMessage)
+                assert(stated.contains(big.toString), stated)
+            case other => fail(s"expected a RangeException, got $other")
+        end match
+    }
+
 end IonBinaryTest

@@ -53,6 +53,18 @@ class SchemaMapKeyTest extends kyo.test.Test[Any]:
         assert(Json.encode(SMKCounts(Map(1 -> 2))) == """{"counts":[{"key":1,"value":2}]}""")
     }
 
+    "a map keyed by Char is described in the JSON Schema in the form it is written" in {
+        val wire = Json.encode(SMKChars(Map('a' -> 1)))
+        assert(wire == """{"chars":[{"key":"a","value":1}]}""", wire)
+        Json.jsonSchema[SMKChars] match
+            case obj: Json.JsonSchema.Obj =>
+                obj.properties.collectFirst { case ("chars", s) => s } match
+                    case Some(_: Json.JsonSchema.Arr) => succeed("described as the array it is written as")
+                    case other                        => fail(s"the array-written map is described as $other")
+            case other => fail(s"expected an object schema, got $other")
+        end match
+    }
+
 end SchemaMapKeyTest
 
 object SMKTypes:
@@ -71,3 +83,4 @@ case class SMKScores(scores: Map[SMKTypes.SMKUserId, Int]) derives CanEqual, Sch
 case class SMKDicts(dict: Dict[SMKTypes.SMKUserId, Int], ordered: OrderedDict[SMKTypes.SMKUserId, Int]) derives CanEqual, Schema
 case class SMKChecked(byId: Map[SMKTypes.SMKCheckedId, Int]) derives CanEqual, Schema
 case class SMKCounts(counts: Map[Int, Int]) derives CanEqual, Schema
+case class SMKChars(chars: Map[Char, Int]) derives CanEqual, Schema
