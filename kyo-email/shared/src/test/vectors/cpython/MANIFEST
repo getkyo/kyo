@@ -1,0 +1,72 @@
+# Test messages of CPython's email package, https://github.com/python/cpython at commit 7731da1fe749eafe0d97f80ab0021d6fd1b47c8d,
+# copied byte for byte with curl on 2026-09-27, each from the source URL followed by its path. The build verifies each file against
+# its SHA-256 and fails on a mismatch, a missing file or an unlisted one (project/VendoredFiles.scala).
+#
+# Every file was read before vendoring. The messages are the email package's own test mail: obfuscated or example domains
+# (zzz.org, dom.ain, example.com, wooster.local), test phrases, digests of "hello" messages, and public announcements (msg_36, an
+# IETF Internet-Draft announcement). msg_15 is a message anonymized at source (addresses xx@xx.dk, bodies replaced by "Some removed
+# text"). msg_41 is a spam sample whose address is xxx@example.com and which has no content. The expected values of these messages
+# are in CPython's test code, not in files; the tests here compare the module with mime4j (EmailMessageReferenceTest) instead.
+# What is left in, and none of it identifies a private person: the email package author's own addresses in his own test messages
+# (barry@python.org in msg_04, 06, 08, 09, 10, 12, 12a and 44; barry@digicool.com in msg_02, 07, 13 and 17); the joke recipient
+# cravindogs@cravindogs.com (msg_07, 08, 10); the public list address freebsd-isp@freebsd.org and its owner address (msg_32, 33),
+# whose persons are already example.com addresses; the relay hosts fepD.post.tele.dk (195.41.46.149) and mail.groupcare.dk in
+# msg_15's Received line; and the Message-ID domain teconcept.de in msg_46, whose persons are example.net and example.com.
+#
+# Excluded, each real mail of private persons:
+#   msg_16.txt: a real delivery-failure report quoting a person's message, with their name, address and text.
+#   msg_25.txt: a real bounce carrying a person's address and a real mailing-list bulletin.
+#   msg_43.txt: a real virus-filter bounce listing recipients' (partly masked) addresses.
+#
+# Licence: the repository's LICENSE, vendored as LICENSE-PSF.txt; the Python Software Foundation License Version 2, clause 2:
+# "PSF hereby grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce, analyze, test, perform and/or display
+# publicly, prepare derivative works, distribute, and otherwise use Python alone or in any derivative version, provided, however,
+# that PSF's License Agreement and PSF's notice of copyright ... are retained".
+source https://raw.githubusercontent.com/python/cpython/7731da1fe749eafe0d97f80ab0021d6fd1b47c8d/
+license PSF-2.0
+file LICENSE-PSF.txt b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231 LICENSE
+file msg_01.txt c15a3a17f6b65e9c51c58ed3a79d12bc517f867321ed118e5dc7b5c3a1ed7d4b Lib/test/test_email/data/msg_01.txt
+file msg_02.txt 05d5e533f5e590d9ee2c7692d26dc87ccbf381f4831cca3362baf596691a55bb Lib/test/test_email/data/msg_02.txt
+file msg_03.txt e34151ed8e0c5f0ea996f1128834b15f41f5e2081a41dca2ba7f2f307c331f49 Lib/test/test_email/data/msg_03.txt
+file msg_04.txt a8a24bcd720323185063761b53731cd6dcc5583fc0fd7ffd972137f345b1d738 Lib/test/test_email/data/msg_04.txt
+file msg_05.txt 845bca9a59de1959c1501cbc1f2c90fa9ab73a38653175fe94073c012fa555b1 Lib/test/test_email/data/msg_05.txt
+file msg_06.txt 0c4e8456a424135a4dda4829050de77b05c7fb56ef716841bdfe1371af2eb695 Lib/test/test_email/data/msg_06.txt
+file msg_07.txt 8358092b45c8631df6466a2e4dc23278263b2dd2ba5765e99caba47c304dd3b5 Lib/test/test_email/data/msg_07.txt
+file msg_08.txt 357bf940a54f04d5f7b335a0a6697a1e9dda14eb2f1dbc590beb0fe98ed65f02 Lib/test/test_email/data/msg_08.txt
+file msg_09.txt 3ee9d9ab704a1f7e0ce35bb832fe7189528cb5873d1f30285d3520bc48f66eb8 Lib/test/test_email/data/msg_09.txt
+file msg_10.txt 31b6aa0a2168c412559b6c9667846d84de86554af573a1a9dfa5dc753de3754a Lib/test/test_email/data/msg_10.txt
+file msg_11.txt 7ac917c8e4309742c3571b8c3c8d97361ab6b838f7cd5bda498a410d9d6d9fc7 Lib/test/test_email/data/msg_11.txt
+file msg_12.txt 449711060a7ec45e0a4bfbd5d497d069676cbf31f77f3385d3e166795e79deaa Lib/test/test_email/data/msg_12.txt
+file msg_12a.txt defa4275a55f7778d400fcbf0628822dcae95d8239da065ba8e40049daaa32e4 Lib/test/test_email/data/msg_12a.txt
+file msg_13.txt 6538070d2455c077280a8b537f23e3e3a7362074ba2630567d7f951f11fa113d Lib/test/test_email/data/msg_13.txt
+file msg_14.txt 81a2f5fdaf0a506502fd4cac0ccc0c5e7ccc02330150b75d3d7fd4bde0e3c95e Lib/test/test_email/data/msg_14.txt
+file msg_15.txt 8f1c4f13d767b8a4d55fe9a377c3ff20cfd7e77b9b9da12e1df9772c1f685f27 Lib/test/test_email/data/msg_15.txt
+file msg_17.txt f647152e43fe5e381c71ccd9da9bbd843a854761f8fe60bc6c17b7c0e24e0106 Lib/test/test_email/data/msg_17.txt
+file msg_18.txt f5b4867e0b9c0357e14f488bb45585eccdf47f62b7ff914a0fae73f48cc307c8 Lib/test/test_email/data/msg_18.txt
+file msg_19.txt a5a8f44410fb1085689eaad5a24914e940b0488e0ff2cc3191b972e625522a9e Lib/test/test_email/data/msg_19.txt
+file msg_20.txt aa9e77f6297e6007745040e9b6a2c2be3880e25206594582e0cd09ef482ee27a Lib/test/test_email/data/msg_20.txt
+file msg_21.txt 395794cdc34731bce3ea1ff032b1c8bcbc275779325999641c052b771a28d8f9 Lib/test/test_email/data/msg_21.txt
+file msg_22.txt 4367f6ef8398e92de819ccd8e4938c819c2b24aa08f06cdcc0266bb0ec37eb08 Lib/test/test_email/data/msg_22.txt
+file msg_23.txt cd0dcfaeb8dc99c4ea418b80bf6c13d4aea912fc699aa3b30ddaf938bdb62e04 Lib/test/test_email/data/msg_23.txt
+file msg_24.txt b67ede3fedf08cc4fd20c2cccdea46f2791f95e0ab991d8cf6c7c66ec81e23c3 Lib/test/test_email/data/msg_24.txt
+file msg_26.txt 46c391e25d3f2fa622d5781a27553176648270768435295a235a760bf725752f Lib/test/test_email/data/msg_26.txt
+file msg_27.txt 3d33f36e79c3406c72aeac084df89c84d522fc9953ec3fbb31e8c90f53f87b21 Lib/test/test_email/data/msg_27.txt
+file msg_28.txt c82275d275dc73870a4c8bc4962c1462cb477c6a6323788c591003ab421973d4 Lib/test/test_email/data/msg_28.txt
+file msg_29.txt fe19e3503f22da78a9920c4831a4fa121410ff76430dc10fdd81144ddbdddb01 Lib/test/test_email/data/msg_29.txt
+file msg_30.txt 4398e2153afe488f1d629b4192a2da8a743b10ed55f3e26ed662bd9e2718d789 Lib/test/test_email/data/msg_30.txt
+file msg_31.txt c9d406692ba3573699a2e1f58713cc2e5a65792df472217aaaf8402dd0c29356 Lib/test/test_email/data/msg_31.txt
+file msg_32.txt b41254e201645eeca3d0c9ca84ba7726c8c21b3796c04cbb9e20d8a2b51ee894 Lib/test/test_email/data/msg_32.txt
+file msg_33.txt cc35e6cc84c00eb7d5e2bdf9ceb8977eb94c2bcc1630ea93c6c4b82381406dad Lib/test/test_email/data/msg_33.txt
+file msg_34.txt f1efcd32a4b669ed5eed317926a11646c05922fc49b815568ef2c3858d5bec27 Lib/test/test_email/data/msg_34.txt
+file msg_35.txt 352627d5f72f49c830f9366bbd071b4095a3f9c98df4a0f425d4c3d6ea969079 Lib/test/test_email/data/msg_35.txt
+file msg_36.txt 79e4cb253305c42e22d5631bed2d57e795a70d0356d0c04e3ac395ab73051c52 Lib/test/test_email/data/msg_36.txt
+file msg_37.txt 98b9ee99d099269d838a12b6fa3b0af725565418ec1fedd8a522acccc0df88de Lib/test/test_email/data/msg_37.txt
+file msg_38.txt 0107d3183911047ec758a69bec7e24edba03838c00331c5004208d850bd57747 Lib/test/test_email/data/msg_38.txt
+file msg_39.txt 5b3f5e5eaab13ca96387dd517a8864c25fcbbbc0dffd0f8580f07b30ec8e1dff Lib/test/test_email/data/msg_39.txt
+file msg_40.txt d59f6e422b9ad6163924bc1fb70ae8b697a11282d5b32b02708b40cb9a7d82ee Lib/test/test_email/data/msg_40.txt
+file msg_41.txt f95478516949ab993d14634219a6f62a4470f46ccbdf434d9a2c5526fb0263e9 Lib/test/test_email/data/msg_41.txt
+file msg_42.txt e2305d3cd3097ff4fa587d2c2becfeb700d3d340eef0f3b701ff78b0f0ec898c Lib/test/test_email/data/msg_42.txt
+file msg_44.txt 67f41bd0b0ac605c5431ad8c658c0c8e3c5d766eac8fbb81d51132f9fb818bfc Lib/test/test_email/data/msg_44.txt
+file msg_45.txt b98e4e0c90037146f2b5d3cbb9e43cb419f36385cfd7a4567fd509ef00ec53cb Lib/test/test_email/data/msg_45.txt
+file msg_46.txt d92e941be30507b7dd5976f4223f9d01998f1e73262e900e0ed002b0f53dc4b7 Lib/test/test_email/data/msg_46.txt
+file msg_47.txt f43de32a9f3ec07815d8459ad8919b9a770d34122836da36401bbafbbd4acf8e Lib/test/test_email/data/msg_47.txt

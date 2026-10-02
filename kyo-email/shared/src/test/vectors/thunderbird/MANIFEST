@@ -1,0 +1,123 @@
+# Test messages of Thunderbird's mail code, https://github.com/mozilla/releases-comm-central at commit
+# ba6de6a0c447ccf34d0b114d7ed26c721cfdc827, mailnews/test/data, copied byte for byte with curl on 2026-09-27, each from the source URL
+# followed by its path. The build verifies each file against its SHA-256 and fails on a mismatch, a missing file or an unlisted one
+# (project/VendoredFiles.scala).
+#
+# Every one of the directory's 104 message files was read in full before vendoring, base64 bodies decoded where their text mattered;
+# 89 are vendored. The 30-file matrix (01 to 30) and most others are synthetic: test@example.com, example and invalid domains, test
+# phrases. jorgk.com appears only in Content-IDs of the test author's own files. Kept with their reading recorded:
+#   multipartmalt-detach: a reproduction whose addresses were replaced (abc <ef@hg.de>) and whose bodies were stripped.
+#   bug505221, bug513543: anonymized reproductions (<aaa bbb>, abc@xyc.com, def@a.org).
+#   reply-filter-testmail: its one Received line names Mozilla's and Google's relays and no person.
+#   mbox_mboxrd, mbox_modern, mbox_unquoted: sample mailboxes of example addresses, vendored as single inputs.
+# mbox_mboxrd is not Mozilla's own text: upstream's readme.txt calls it an "Example of the mboxrd variant, taken from the wikipedia mbox
+# page". It is used under that page's licence, CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/), with this attribution:
+# the example of the "Mbox" article of the English Wikipedia, https://en.wikipedia.org/wiki/Mbox, by its contributors, unmodified.
+# Excluded, each a real delivered message whose trace fields carry a person's first name in an address, a hosting account and network
+# addresses: SenderHeader, bugmail-1, bugmail1 to bugmail8, bugmail10, bugmail11, bugmail12, bugmail19.
+# Excluded, third-party content with no licence to redistribute it: bodySearchCrash, a 2007 MikroTik marketing newsletter, which the
+# Mozilla License Policy's reading of test code does not reach.
+# Not vendored, not being mail: the 17 .out files (expected text of Thunderbird's body search, with HTML tags stripped, which is not the
+# model's text) and readme.txt. mime-torture was excluded before the read (real 1991 to 1993 mail), and the address-book, password,
+# database and .msf files are not messages.
+#
+# Renamed, since the embedding generator makes object names from file names: every character outside A-Za-z0-9._- becomes -, runs of
+# - collapse, and a - before the extension is dropped. The path column keeps each upstream name.
+#
+# Licence: the directory has no licence file. The Mozilla License Policy (https://www.mozilla.org/en-US/MPL/license-policy/) says "Test
+# Code which has not been demonstrated to be PD Test Code should be considered to be under the MPL 2", so the other 88 message files
+# are used under MPL-2.0, whose text is vendored beside them as LICENSE-MPL-2.0.txt from the URL in its path column. mbox_mboxrd is
+# the one exception, under CC BY-SA 4.0 with the attribution above. The `license` line states both, since the build copies it into
+# every generated file's header. The files are unmodified.
+source https://raw.githubusercontent.com/mozilla/releases-comm-central/ba6de6a0c447ccf34d0b114d7ed26c721cfdc827/
+license MPL-2.0, except mbox_mboxrd: CC BY-SA 4.0, the example of the English Wikipedia's "Mbox" article by its contributors
+file 01-plaintext.eml 7971096fa45668318cab3cadfe79f14f81b915204651f880233fae70170f5daa mailnews/test/data/01-plaintext.eml
+file 02-plaintext-attachment.eml 845463a8f1d1e6dfa33ea43cd0cd1542f7970f1ffdf304a81513ac5d27085c82 mailnews/test/data/02-plaintext+attachment.eml
+file 03-HTML.eml ba9f9d3e6845c0c4eaf3230c8ea73064db8b5c981e58f0ca876853fa1eb7f14a mailnews/test/data/03-HTML.eml
+file 04-HTML-attachment.eml 03af8e9ea3267ad3bbabdcc6ca55edef1e0fcfcdf33b828d92765f0ded563c72 mailnews/test/data/04-HTML+attachment.eml
+file 05-HTML-embedded-image.eml 208de8229d6c80a066c95f073cea900cfb4aee670610027ae09dbd247fbfb513 mailnews/test/data/05-HTML+embedded-image.eml
+file 06-plaintext-HMTL.eml 4315d18bbfdbd4949b285708e0f170672cdfe08bacd4a198ea3a4cd3a2dcb2b8 mailnews/test/data/06-plaintext+HMTL.eml
+file 07-plaintext-HTML-embedded-image.eml e5d173d317d02e211c071387c7bd7686b2c066c239a529e719b5ee5501ee4912 mailnews/test/data/07-plaintext+(HTML+embedded-image).eml
+file 08-plaintext-HTML-attachment.eml ae6a2d5c1d38724dad83d1a4a3f31aa13781161ec0002ff4314ebb7a86996688 mailnews/test/data/08-plaintext+HTML+attachment.eml
+file 09-HTML-embedded-image-attachment.eml c713917600196164d7643089206a6f93a9e4908869ef74a1cf1347e9425b957a mailnews/test/data/09-(HTML+embedded-image)+attachment.eml
+file 10-plaintext-HTML-embedded-image-attachment.eml a915b67cf14c00e8992b8aff5cf699341a8fad6b8dfc04209862caf7170fbda7 mailnews/test/data/10-plaintext+(HTML+embedded-image)+attachment.eml
+file 11-plaintext-greek.eml a7caa1a7d62351b94b94c949d19cb761f93b83bcbc252d10ac8e623e433e3a5e mailnews/test/data/11-plaintext-greek.eml
+file 11-plaintext.eml 8e93b9d71abd99ab9f6105f294453bb35029ec0bf590f10521bd668f3cbbf5ef mailnews/test/data/11-plaintext.eml
+file 12-plaintext-attachment.eml 40088a721843231b5f4c7586dcd07914313f2ca682ee1512338acf373f4bdf76 mailnews/test/data/12-plaintext+attachment.eml
+file 13-HTML.eml 3aa6f973f3c28de489e9d19b5dc9efd3f40eddfc943b668fbff3f9f21646c447 mailnews/test/data/13-HTML.eml
+file 14-HTML-attachment.eml 61fa4201c832cacc49e24a02406c243c74eaf92d9db69bab859de0eb823ea0c7 mailnews/test/data/14-HTML+attachment.eml
+file 15-HTML-embedded-image.eml f54c78f019dd3e3b873c4b5234cf0f3c44ce9cc0b080d23bf94c73cfe603472a mailnews/test/data/15-HTML+embedded-image.eml
+file 16-plaintext-HMTL.eml cdf8efd7fc20f6bf524ad7967200218a3a37a7b1fbc0847f8c51fa9064b34eac mailnews/test/data/16-plaintext+HMTL.eml
+file 17-plaintext-HTML-embedded-image.eml 598deb5e5149cbc6ab05788b6e215f237a0356c64be2df2019657c426fcc40fe mailnews/test/data/17-plaintext+(HTML+embedded-image).eml
+file 18-plaintext-HTML-attachment.eml 1919f79cf2de21d47b7b04d5839a4f7363e6d5b3c3fb94f846b84a6a2397d60e mailnews/test/data/18-plaintext+HTML+attachment.eml
+file 19-HTML-embedded-image-attachment.eml 7a20abd3d833087ce3dcc3f3f51ef5bfc646d81060af775ab81d7c010c244fb2 mailnews/test/data/19-(HTML+embedded-image)+attachment.eml
+file 20-plaintext-HTML-embedded-image-attachment.eml d2ad63265fbfa563303e5b477ba759f41007ab7c1e4858b3191a79013f3696d4 mailnews/test/data/20-plaintext+(HTML+embedded-image)+attachment.eml
+file 21-plaintext.eml a7f4cb4deae53ad90108395c9a3ee55b6cb60a333e792d62da96ebd5e8f8896c mailnews/test/data/21-plaintext.eml
+file 22-plaintext-attachment.eml 83500a2654d571de2c2a8af42b4af9d38f9b01cf950005dd1f3f8fbac99686c1 mailnews/test/data/22-plaintext+attachment.eml
+file 23-HTML.eml dbc52e6f2fb35883bd6d338953bf9b85e4c7e280cdf188166a2319e8db43e25d mailnews/test/data/23-HTML.eml
+file 24-HTML-attachment.eml e3fdfc43774dae5bd3ddff586e68f36a8e3759ddbc6f920536b7aa03e3ee8b61 mailnews/test/data/24-HTML+attachment.eml
+file 25-HTML-embedded-image.eml fc757eab4aec6005389b5c2978469bb2cffaf7efe0a8a209db737c5d4c436089 mailnews/test/data/25-HTML+embedded-image.eml
+file 26-plaintext-HMTL.eml 8d6af2aa0e757c60d81efcd26f67d224eb3a2a2626627cc742ed6f3189a6024d mailnews/test/data/26-plaintext+HMTL.eml
+file 27-plaintext-HTML-embedded-image.eml babcae31c04c64b5c40e69bc1233a9ac961095a6c687147eeecdfacbacbe695f mailnews/test/data/27-plaintext+(HTML+embedded-image).eml
+file 28-plaintext-HTML-attachment.eml 0d6856cb0beef66ea176763b904fb96522e39c57654c281182dc193f760ac909 mailnews/test/data/28-plaintext+HTML+attachment.eml
+file 29-HTML-embedded-image-attachment.eml 808202c7bfe82ae4b21686b4e80a4055ad3284d4d4da59492ada026348658d93 mailnews/test/data/29-(HTML+embedded-image)+attachment.eml
+file 30-plaintext-HTML-embedded-image-attachment.eml 091ca60680e4af30a8d7460f0b60a342958770e0a81a1793aaf2beb2edec7117 mailnews/test/data/30-plaintext+(HTML+embedded-image)+attachment.eml
+file HTML-with-split-tag1.eml 5dd13f2a552dfcb0bbe066868c878c4deebd79f1415ca25cbe1c42421b1dba3d mailnews/test/data/HTML-with-split-tag1.eml
+file HTML-with-split-tag2.eml 3a4105502c70930511ec6d45fd33e7fac1639b782948c1b8f2a603d79e282a53 mailnews/test/data/HTML-with-split-tag2.eml
+file LICENSE-MPL-2.0.txt 3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04 https://www.mozilla.org/media/MPL/2.0/index.txt
+file SpamAssassinYes 45b3eeeda80a15d7c26987a99f059c1f883a43176c67b6dbc165b96a2c40294b mailnews/test/data/SpamAssassinYes
+file bad-charset.eml 3b1ae3a91f394f84aebfbe7b663b0937b699284dd95c9f8407e751b32f5f7d4d mailnews/test/data/bad-charset.eml
+file badly-folded-headers.eml 6eba9be0c570e02830f0b65f15625e6eccdf3b39adc7dea09c4d63a55017362d mailnews/test/data/badly-folded-headers.eml
+file bare-text-type.eml 37dc5fcaadf2d8ebc821bc6544ad9e93806c447f19d2e098a280beff84b1ea0d mailnews/test/data/bare-text-type.eml
+file base64-1 8294eb8f11e16b51974c96ce13491b5dc7fab5655efda695624a88c107ecd896 mailnews/test/data/base64-1
+file base64-2 89b9afa6c01bc1ebf97cda8e9f8eea3a044cd99c37e4d05b9d3b159505c0f173 mailnews/test/data/base64-2
+file base64-3 2a814082edcedf2a1b817f4f2d0713411371bf497691aea9caff4b1bc8fc9fa3 mailnews/test/data/base64-3
+file base64-utf16.eml dfa244e2e6f772c625a7a4b12f31b66bbe019c83838d75767a33696dfce06b00 mailnews/test/data/base64-utf16.eml
+file base64-with-whitespace.eml cdc5f32c8cceff5a34d02ae4135ab7245e47018e06e696c067946a4d0e128be1 mailnews/test/data/base64-with-whitespace.eml
+file basic1 765fd30d5f1e32181d1d3e8f2201d87d43b4157242134395904d2a87bb4c4ffd mailnews/test/data/basic1
+file basic2 09175afd845bb4cd00d950ad75d3118f5229497b15b50f7df9c9068f8d0d70fe mailnews/test/data/basic2
+file basic3 789d8e3a6aaf7995104068d799c4f3f04caaf6362e7a332cb7bb05933c48cdec mailnews/test/data/basic3
+file basic4 fb20d2600c6002b76757cab3c8070fc5939a8664a41c561f83e119470fdd0be1 mailnews/test/data/basic4
+file basic5 1eab335b4b54832d51138eea415b77f120c5df6d7c02ab9c557ac2688ab36eb5 mailnews/test/data/basic5
+file bodystructurebug244741 966fcbaf5bd5526d6eae3796b6111e7fc993dc88cd51ce5da30bbb569f45efa4 mailnews/test/data/bodystructurebug244741
+file bodystructurebug246415 f58d91f609f5c58245fbedc693ba124488971317cf5449928aba52bd3da3365a mailnews/test/data/bodystructurebug246415
+file bodystructuretest1 35bf7d9345340da2e27a972ab6b8cba41dfe09fca070f058c068f59c1647da69 mailnews/test/data/bodystructuretest1
+file bodystructuretest2 23de0132d98e53aa6285d8618274bf8ed6b50ddb259fdd826dc52d0dd74dc225 mailnews/test/data/bodystructuretest2
+file bodystructuretest3 72443a3f0beab08ea6c920d55787cd542fabf8cc032b21a01d77c5399a86642c mailnews/test/data/bodystructuretest3
+file bug132340 9a6245cd14fd7b2522da85539e4658906446dc73b46a69975c9916a392620512 mailnews/test/data/bug132340
+file bug460636 6b9dad988b63023909573a8c4aebd2073b2cc79641a1915b62e4baf786254933 mailnews/test/data/bug460636
+file bug505221 2bfa19e20fcdb45033f66ce7dfe05ba4e7b0c4cfb41d6d4d1deb0d193e859f41 mailnews/test/data/bug505221
+file bug513543 ebf4f0327640d7c8df1b376740732ee86b25a2e551e7cf32582ff69461266811 mailnews/test/data/bug513543
+file bug92111 2cf2f02b532e6026b947d5a4a2f5f3054fb48abd0b58cfe3690f0947f534a309 mailnews/test/data/bug92111
+file bug92111b f3e3acef7c2b5ea1f0daf61ed095736a27eb4cddc56b88a845dcd08984669372 mailnews/test/data/bug92111b
+file draft1 5934722442fcb8a3da35d5f73a94730a1eaa76c2e6f8856f555a8758499e2dff mailnews/test/data/draft1
+file external-attach-test 425178e2afb85b6b205e29d56183273d5bfb0da0b69495199393759d8d5f5b5a mailnews/test/data/external-attach-test
+file html-entities-and-styles.eml a326f4eff4d8ed2d203954a0ac365cd39a98f055717d9e8f8ec100250e0b57d9 mailnews/test/data/html-entities-and-styles.eml
+file image-attach-test 9e70229942a8d0a29e087366da6a4bf18ab7a15a99809a98cf7abfe23e57e63e mailnews/test/data/image-attach-test
+file iso-2022-jp-not-qp.eml 354fd136323c45d66643a41c8d961dcaa478e934f8787eec6da9b722250e14ea mailnews/test/data/iso-2022-jp-not-qp.eml
+file iso-2022-jp-qp.eml 1c2af0ce98e81e25407dda985718feb4cc0476a0a559a84b42c1f3ceb65e9bbe mailnews/test/data/iso-2022-jp-qp.eml
+file mail-without-from b171c9ec312c714b6a8ab06f40e2a53eba2edfa450a2e7dc5b28410f95f7b296 mailnews/test/data/mail-without-from
+file mbox_mboxrd 043ed2f333305789be7ed4731b40b52cb385d115af694f4fba16c9de5cb5ba67 mailnews/test/data/mbox_mboxrd
+file mbox_modern 0ce3d193e3d01ef3a1b03381f40f70f666e3bf0166376ecb4c4053a4cf86a367 mailnews/test/data/mbox_modern
+file mbox_unquoted bcd96c0b4bea90fa9e66e982ffb1a5a03965bfd03095e2f4d5a822423e383e97 mailnews/test/data/mbox_unquoted
+file multipart-base64-1 68fac80de266eb88ccd175a4594fc8be1ce3f55925c2f953c4d79039d0d356a9 mailnews/test/data/multipart-base64-1
+file multipart-base64-2 bba69a3dbbb86e5ed2a1dfbd4f70de77fb48e5bcfb7fd8a0cb463bb7e614817d mailnews/test/data/multipart-base64-2
+file multipart-base64-3 cdde5753df68ab516bca9ac180c32e5b3f916ef3870c82878a6e35338bdf6f3f mailnews/test/data/multipart-base64-3
+file multipart-complex1 86b1f15873fec933abfc686da48d6191aa667d39992a526bf9006d8b3a93782e mailnews/test/data/multipart-complex1
+file multipart-complex2 0394919b8daa5882ff06d9909474f7e14e8d74075fd7504a10158d60d4bd199f mailnews/test/data/multipart-complex2
+file multipart-message-1.eml affed47ede50099fcb62415af18b43959a9a7b8d4617cda6051f83da54c05e85 mailnews/test/data/multipart-message-1.eml
+file multipart-message-2.eml 41c2ecb46cc8b75bd851a9df2844389c3a71e1a3a68135e05a036244e0b0a845 mailnews/test/data/multipart-message-2.eml
+file multipart-message-3.eml 4df9cbb1a63b62347bb765bad60b5d323ed545327845fb7b3088b39f49e8bb83 mailnews/test/data/multipart-message-3.eml
+file multipart-message-4.eml 04463ef2dbd64379c51fa987e12248bd575bb60c88ea0d63afb9a313319cf4ee mailnews/test/data/multipart-message-4.eml
+file multipart1 ccb4ac5dfe3bbf70c9b38be83fbb305c0be52e751407c4ac20602312c97ae404 mailnews/test/data/multipart1
+file multipart2 77569abff91ed9bca946290fa3fa3df1d3d6c0e52108091c68e4350b64af5b6a mailnews/test/data/multipart2
+file multipart3 538480cd65530caedb3bc8458bdf6e7ffa39252331c15fc99a95506862f67d5a mailnews/test/data/multipart3
+file multipart4 d920ff467620f4db282053e6ddcb7153248934e47a549bb65809f8c9769655eb mailnews/test/data/multipart4
+file multipartmalt-detach 1d140e52722468f115dba87da185b72c64bb3f32670632fd8a7c2b7edece7bb4 mailnews/test/data/multipartmalt-detach
+file no-content-type.eml cac3155f658db9d6213f177406aeb2c2befda51fa09ff36f2350e95ac132f1c8 mailnews/test/data/no-content-type.eml
+file not-really-base64.eml 9434e9c4526eaf4f58e9fd3ca1a7f93d169322ed211c5220f04dade2e831f68c mailnews/test/data/not-really-base64.eml
+file qp-trailing-equals-html.eml e69810f1e501668e66341beff4a96dbf9679ebbb52f67d52d1ce8bdbbd3b6dac mailnews/test/data/qp-trailing-equals-html.eml
+file qp-trailing-equals-plain.eml 57fd12e8232ad44d579b68fb9ec539137eec12df5f78ecca67ae5a78e45f158d mailnews/test/data/qp-trailing-equals-plain.eml
+file reply-filter-testmail b372925430784d2ad424c0c1f3fcedeb991c064cedf11583247d40d4f3fc4f3d mailnews/test/data/reply-filter-testmail
+file template-latin1 f3b89f8203601e59d004fb1137682baec7ee18736f12fe88857a8bdf8397bbef mailnews/test/data/template-latin1
+file template-utf8 66e29756a5aef92796dd99aeaafb9e6889783bfac3b8ea18a604036669111a99 mailnews/test/data/template-utf8

@@ -1,0 +1,12 @@
+# Differences between kyo-email's reading of dates and Stalwart mail-parser's, over resources/date.json at commit
+# 4eba485d9450c757b2f3ec29c44663740cff0afe (kyo-email/shared/src/test/vectors/stalwart). Kept by hand: DateCodecTest
+# prints, in this format, each row missing here and each row here that no longer occurs.
+# Columns, tab-separated: vector index from 0, header, the module's instant, Stalwart's instant (null for none), reason.
+# Backslash, tab, CR and LF in a value are written as \\, \t, \r and \n, and any other control character as \uXXXX.
+# Reasons, each the first rule of DateCodecStalwart.classify that holds:
+#   ZoneWithDigits: the zone is letters followed by digits (EST5EDT, a POSIX TZ string); Stalwart reads the letters, and the module reads a zone followed by anything but CFWS as unreadable
+#   NotRfc5322DateTime: Stalwart finds a date in text that is not an RFC 5322 date-time with its obsolete forms: no month name (a numeric month, a list of numbers), or a first word before the date that is neither a day nor a month name (a date after other text); the module reads only that grammar, so the date is absent and the header stays in the headers
+10	20 11 (some \n 44 comments(more comments\n )) 79 05:34:27 -0300	null	1979-11-20T08:34:27Z	NotRfc5322DateTime
+12	 4 8 15 16 23 42, 4 8 15 16 23 42, 4 8 15 16 23 42, 	null	2015-08-04T16:19:42Z	NotRfc5322DateTime
+28	by 2002:aa7:cd10:0:b0:45c:2c83:1208 with SMTP id b16-20020aa7cd10000000b0045c2c831208mr4220805edw.81.1665423075119;\n\tMon, 10 Oct 2022 10:31:15 -0700 (PDT)	null	2022-10-10T17:31:15Z	NotRfc5322DateTime
+30	Thu, 10 Jul 1997 14:53:31 EST5EDT	null	1997-07-10T19:53:31Z	ZoneWithDigits
