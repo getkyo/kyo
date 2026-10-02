@@ -32,7 +32,7 @@ class MachineJvmTest extends kyo.test.Test[Any]:
             val content = new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
             readingClassPattern.findAllIn(content).toList
         }
-        for handles <- MachineHandles.init
+        for handles <- MachineHandlesOwners.init
         yield
             val sampler = new MachineSampler(handles)
             assert(matches.isEmpty)
