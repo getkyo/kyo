@@ -555,6 +555,23 @@ class JsonLinesTest extends kyo.test.Test[Any]:
             assert(Json.Lines.decodeAll[Event]("").getOrThrow == Chunk.empty)
         }
 
+        "applies maxNumberDigits and maxExponent to terminated and unterminated records" in {
+            def assertNumberRejected(result: Result[DecodeException, Chunk[Event]], recordIndex: Long)(using kyo.test.AssertScope) =
+                result match
+                    case Result.Failure(e: RecordDecodeException) =>
+                        assert(e.recordIndex == recordIndex)
+                        e.cause match
+                            case cause: ParseException => assert(cause.position == 20)
+                            case other                 => fail(s"unexpected cause $other")
+                    case other => fail(s"expected RecordDecodeException, got $other")
+            val digits   = "{\"name\":\"a\",\"count\":1}\n{\"name\":\"b\",\"count\":12345}"
+            val exponent = "{\"name\":\"a\",\"count\":1e1}\n{\"name\":\"b\",\"count\":2}\n"
+            assertNumberRejected(Json.Lines.decodeAll[Event](digits, maxNumberDigits = 4), 1L)
+            assertNumberRejected(Json.Lines.decodeAll[Event](digits + "\n", maxNumberDigits = 4), 1L)
+            assertNumberRejected(Json.Lines.decodeAll[Event](exponent, maxExponent = 0), 0L)
+            assert(Json.Lines.decodeAll[Event](digits, maxNumberDigits = 5).getOrThrow == Chunk(Event("a", 1), Event("b", 12345)))
+        }
+
         "fails on the first bad record with its position" in {
             val in     = "{\"name\":\"a\",\"count\":1}\n{\"nope\":true}\n{\"name\":\"c\",\"count\":3}\n"
             val result = Json.Lines.decodeAll[Event](in)
