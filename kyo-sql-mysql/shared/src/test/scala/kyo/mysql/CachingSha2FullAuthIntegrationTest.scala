@@ -7,7 +7,8 @@ import kyo.internal.TestContainers
 /** Integration test for caching_sha2_password full-auth via pure-Scala RSA-OAEP.
   *
   * Connects to a fresh MySQL 8.0 container (cache is cold → server sends full-auth required / AuthMoreData 0x04). The client requests the
-  * RSA public key, encrypts the password with the pure-Scala [[kyo.internal.auth.RsaOaep]] implementation, and the server decrypts it.
+  * RSA public key, encrypts the password with kyo-crypto's [[kyo.crypto.RsaOaep]] through [[kyo.internal.mysql.auth.PasswordEncryption]], and
+  * the server decrypts it.
   *
   * A fresh container per test ensures the server-side credential cache is empty so the full-auth path is always taken (no fast-path
   * bypass).

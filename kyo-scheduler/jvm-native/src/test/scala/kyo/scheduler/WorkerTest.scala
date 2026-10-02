@@ -522,14 +522,19 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
         }
 
         "pending task" in {
-            val worker = createWorker(executor)
-            val cdl    = new CountDownLatch(1)
-            val task   = TestTask(_run = () => {
+            val worker  = createWorker(executor)
+            val started = new CountDownLatch(1)
+            val cdl     = new CountDownLatch(1)
+            val task    = TestTask(_run = () => {
+                started.countDown()
                 cdl.await()
                 Done
             })
             worker.enqueue(task)
-            eventually(assert(worker.load() == 1))
+            // load() also reads 1 while the task is still queued, and reads 0 between the worker's poll and its
+            // mount of the task, so only the task's own start proves load() == 0 below means it finished.
+            started.await()
+            assert(worker.load() == 1)
             cdl.countDown()
             eventually(assert(worker.load() == 0))
             assert(task.executions == 1)

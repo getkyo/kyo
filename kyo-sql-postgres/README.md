@@ -103,6 +103,8 @@ failure at startup. Change the URL to a `mysql://` one and the same body runs ag
 
 `DB.run(url, config)` is the same with a `SqlConfig`, which is how the PostgreSQL settings below are attached.
 
+The password goes through whichever method the server asks for: trust, cleartext, MD5, SCRAM-SHA-256 or SCRAM-SHA-256-PLUS. Under SCRAM it is salted in its SASLprep form, as RFC 5802 requires and as PostgreSQL does on both sides, so a password holding a no-break space, a fullwidth digit or a decomposed accent matches the secret the server stored; when the profile refuses the password, on an emoji for one, the raw password is salted instead, which is what the server stored in that case and what libpq sends.
+
 ### Reaching the PostgreSQL client
 
 The operations with no portable equivalent live on `PostgresClient`, and `DB.clientAs` narrows the running client

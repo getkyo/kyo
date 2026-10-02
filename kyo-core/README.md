@@ -840,7 +840,7 @@ val name: String < (Sync & Abort[java.io.IOException]) =
 
 ### UUID generation
 
-`UUID` is the pure value type from `kyo-data`. It provides canonical parsing and formatting, network-order bytes, and the deterministic name-based constructors `UUID.v5` and `UUID.v8Sha256`. Effectful generation is provided by the secure `UUIDGenerator` capability:
+`UUID` is the pure value type from `kyo-data`. It provides canonical parsing and formatting and network-order bytes; the deterministic name-based constructors `UUID.v5` and `UUID.v8Sha256` come from `kyo-crypto` under `import kyo.crypto.*`. Effectful generation is provided by the secure `UUIDGenerator` capability:
 
 ```scala
 val randomId: UUID < Sync =

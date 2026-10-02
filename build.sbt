@@ -445,6 +445,7 @@ lazy val kyoJVM: Project = project
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-finagle`.jvm,
         `kyo-scheduler-pekko`.jvm,
+        `kyo-crypto`.jvm,
         `kyo-data`.jvm,
         `kyo-charset`.jvm,
         `kyo-mime`.jvm,
@@ -544,6 +545,7 @@ lazy val kyoJS = project
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
         `kyo-scheduler`.js,
+        `kyo-crypto`.js,
         `kyo-data`.js,
         `kyo-charset`.js,
         `kyo-mime`.js,
@@ -624,6 +626,7 @@ lazy val kyoNative = project
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
+        `kyo-crypto`.native,
         `kyo-data`.native,
         `kyo-charset`.native,
         `kyo-mime`.native,
@@ -708,6 +711,7 @@ lazy val kyoWasm = project
     .aggregate(
         `kyo-config`.wasm,
         `kyo-stats-registry`.wasm,
+        `kyo-crypto`.wasm,
         `kyo-data`.wasm,
         `kyo-charset`.wasm,
         `kyo-mime`.wasm,
@@ -932,6 +936,54 @@ lazy val `kyo-mime` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-crypto` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data`)
+        .in(file("kyo-crypto"))
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Compile / sourceGenerators += Def.task {
+                UnicodeTablesGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "main" / "unicode",
+                    (Compile / sourceManaged).value,
+                    "kyo.internal.crypto",
+                    "UnicodeTables"
+                )
+            }.taskValue,
+            Compile / resourceGenerators += Def.task {
+                UnicodeTablesGen.notice(
+                    baseDirectory.value / ".." / "shared" / "src" / "main" / "unicode",
+                    (Compile / resourceManaged).value
+                )
+            }.taskValue,
+            Test / sourceGenerators += Def.task {
+                TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.crypto",
+                    "TestVectors"
+                ) ++ TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "main" / "unicode",
+                    (Test / sourceManaged).value,
+                    "kyo.internal.crypto",
+                    "UnicodeInputs"
+                )
+            }.taskValue
+        )
+        .jvmSettings(mimaCheck(false))
+        .jvmConfigure(_.settings(
+            doctestSources                           := Seq(baseDirectory.value / ".." / "README.md"),
+            CryptoDifferentialGen.generateJdkVectors := CryptoDifferentialGen.write(
+                baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors" / "jdk-differential",
+                streams.value.log
+            )
+        ))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-kernel` =
@@ -1216,6 +1268,7 @@ lazy val `kyo-sql-postgres` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-crypto`)
         .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-postgres"))
         .withKyoTest
@@ -1235,6 +1288,7 @@ lazy val `kyo-sql-mysql` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-crypto`)
         .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-mysql"))
         .withKyoTest
@@ -3130,7 +3184,7 @@ lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
-        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`)
+        .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`, `kyo-crypto`)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
         .withKyoTest
         .settings(
@@ -4151,10 +4205,12 @@ lazy val `native-settings-base` = Seq(
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // A dependency's bundled FFI C (kyo-net's kyo_uring.c and TLS shims) compiles into THIS Native binary, but
     // nativeConfig does not propagate across a project dependency, so fold each dep's FFI compile/link flags in
     // here or the link fails (SSL_CTX_ctrl macro / undefined io_uring_*).
@@ -4211,10 +4267,12 @@ lazy val `js-settings` = Seq(
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
     // linker state overflows the 12G sbt heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
@@ -4246,10 +4304,12 @@ lazy val `wasm-settings` = Seq(
     ),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0",
     // Off-JVM these java.time/java.util types exist but carry no data (named zones, locales, currencies), so
-    // resolving one throws at run time, invisible to compile and link. These data artifacts supply the data.
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb"       % "2.7.0",
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"         % "1.5.4",
-    libraryDependencies += "io.github.cquiroz" %%% "locales-full-currencies-db" % "1.5.4",
+    // resolving one throws at run time, invisible to compile and link. The tzdb artifact supplies the zones;
+    // scala-java-locales falls back to the root locale and no currency data. The full CLDR data
+    // (locales-full-currencies-db) stays out: on Native it registers through a static constructor the linker
+    // always reaches, so any binary with it on the classpath links 40MB of tables.
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
     scalaJSLinkerConfig := {
         val c = scalaJSLinkerConfig.value

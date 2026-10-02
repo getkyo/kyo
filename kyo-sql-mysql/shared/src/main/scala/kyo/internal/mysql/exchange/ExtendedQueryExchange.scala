@@ -3,7 +3,7 @@ import kyo.*
 import kyo.SqlCodec
 import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
-import kyo.internal.auth.PureHash
+import kyo.crypto.Sha256
 import kyo.internal.mysql.*
 import kyo.internal.mysql.unmarshaller.BinaryResultsetRowUnmarshaller
 import kyo.internal.mysql.unmarshaller.ColumnDefinition41Unmarshaller
@@ -388,7 +388,7 @@ private[mysql] object ExtendedQueryExchange:
       * Mirrors [[kyo.internal.postgres.exchange.ExtendedQueryExchange.cacheKey]] for consistency.
       */
     def cacheKey(sql: String): String =
-        val digest = PureHash.sha256(sql.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        val digest = Sha256.hashArray(sql.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         digest.take(8).map(b => f"${b & 0xff}%02x").mkString
     end cacheKey
 

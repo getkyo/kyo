@@ -495,6 +495,9 @@ run_in_container() {
                    -e "NATIVE_TEST_BATCH=${NATIVE_TEST_BATCH-8}"
                    -e "NATIVE_SKIP=${NATIVE_SKIP-}")
         fi
+        # The JS and Wasm run-phase batch sizes, as build.yml sets them for those rows.
+        [ "$platform" = JS ] && envs+=(-e "JS_TEST_BATCH=${JS_TEST_BATCH-8}")
+        [ "$platform" = Wasm ] && envs+=(-e "WASM_TEST_BATCH=${WASM_TEST_BATCH-8}")
     fi
     # Forward a host override of the native-run stale-output watchdog into any container run.
     [ -n "${STALE_TIMEOUT:-}" ] && envs+=(-e "STALE_TIMEOUT=$STALE_TIMEOUT")

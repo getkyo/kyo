@@ -2,7 +2,8 @@ package kyo.internal.mysql.auth
 
 import kyo.*
 import kyo.SqlRequestException
-import kyo.internal.auth.PureHash
+import kyo.crypto.*
+import kyo.internal.crypto.Bytes
 
 /** caching_sha2_password authentication helper.
   *
@@ -13,8 +14,8 @@ import kyo.internal.auth.PureHash
   * Full-auth (non-TLS) formula: plaintext = (password-bytes ++ [0x00]) XOR scramble-bytes-cycling ciphertext = RSA-OAEP(plaintext,
   * serverPublicKey)
   *
-  * Digests come from [[kyo.internal.auth.PureHash.sha256]] and the encryption from [[kyo.internal.mysql.auth.RsaOaep.encrypt]], both pure Scala,
-  * so the same bytes are produced on every platform without `java.security` or `javax.crypto`.
+  * Digests come from kyo-crypto's [[kyo.crypto.Sha256]] and the encryption from [[kyo.internal.mysql.auth.PasswordEncryption.encrypt]], both
+  * pure Scala, so the same bytes are produced on every platform without `java.security` or `javax.crypto`.
   *
   * References:
   *   - MySQL Internals Manual, caching_sha2_password Authentication
@@ -39,14 +40,14 @@ private[mysql] object CachingSha2Shared:
         if password.isEmpty then Span.empty
         else
             val passwordBytes = password.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            val hash1         = PureHash.sha256(passwordBytes)
-            val hash2         = PureHash.sha256(hash1)
+            val hash1         = Sha256.hashArray(passwordBytes)
+            val hash2         = Sha256.hashArray(hash1)
             val scrambleArr   = scramble.toArray
             val combined      = new Array[Byte](hash2.length + scrambleArr.length)
             java.lang.System.arraycopy(hash2, 0, combined, 0, hash2.length)
             java.lang.System.arraycopy(scrambleArr, 0, combined, hash2.length, scrambleArr.length)
-            val xorWith = PureHash.sha256(combined)
-            Span.from(PureHash.xor(hash1, xorWith))
+            val xorWith = Sha256.hashArray(combined)
+            Span.from(Bytes.xor(hash1, xorWith))
         end if
     end computeFastResponse
 
@@ -70,7 +71,7 @@ private[mysql] object CachingSha2Shared:
         publicKeyPem: Span[Byte]
     )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
         val pemStr = new String(publicKeyPem.toArray, java.nio.charset.StandardCharsets.US_ASCII)
-        SecureRandom.get.map(RsaOaep.encrypt(pemStr, scrambledPlaintext(password, scramble), _))
+        SecureRandom.get.map(PasswordEncryption.encrypt(pemStr, scrambledPlaintext(password, scramble), _))
     end computeFullAuthResponse
 
     /** Builds the RSA plaintext for the full-auth path: the NUL-terminated password bytes XOR'd with the scramble, cycling over the scramble

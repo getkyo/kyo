@@ -5,6 +5,7 @@ import java.util.Base64
 import kyo.*
 import kyo.Span
 import kyo.SqlException
+import kyo.crypto.*
 
 /** Unit tests for ScramSha256Shared.
   *
@@ -58,6 +59,16 @@ class ScramSha256SharedTest extends kyo.Test:
         assert(cfm == "n,,n=alice,r=someNonce123")
     }
 
+    "ScramSha256Shared escapes a comma and an equals sign in the name as RFC 5802 section 5.1 requires" in {
+        val scram = ScramSha256Shared("odd,role=name", "someNonce123", ChannelBinding.NotSupported)
+        assert(scram.clientFirstMessage == "n,,n=odd=2Crole=3Dname,r=someNonce123")
+    }
+
+    "ScramSha256Shared sends an empty name as an empty attribute, the form the exchange uses" in {
+        val scram = ScramSha256Shared("", "someNonce123", ChannelBinding.NotSupported)
+        assert(scram.clientFirstMessage == "n,,n=,r=someNonce123")
+    }
+
     "ScramSha256Shared RFC 7677 test vector client-first" in {
         val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
         assert(scram.clientFirstMessage == s"n,,n=$rfcUsername,r=$rfcClientNonce")
@@ -75,6 +86,37 @@ class ScramSha256SharedTest extends kyo.Test:
                 )
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
         end match
+    }
+
+    "the password is salted in its SASLprep form" - {
+        def clientFinal(password: String)(using kyo.test.AssertScope): String =
+            ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported).clientFinalMessage(rfcServerFirst, password) match
+                case Result.Success((clientFinal, _)) => clientFinal
+                case other                            => fail(s"clientFinalMessage failed: $other")
+
+        def text(codePoints: Int*): String =
+            val out = new java.lang.StringBuilder
+            codePoints.foreach(c => out.appendCodePoint(c))
+            out.toString
+        end text
+
+        "a fullwidth password produces the proof of its ASCII form" in {
+            assert(clientFinal(text(0xff50, 0xff45, 0xff4e, 0xff43, 0xff49, 0xff4c)) == rfcClientFinal)
+        }
+
+        "a soft hyphen in the password is dropped before salting" in {
+            assert(clientFinal("pen" + text(0x00ad) + "cil") == rfcClientFinal)
+        }
+
+        "a no-break space is salted as a space" in {
+            assert(clientFinal("pen" + text(0x00a0) + "cil") == clientFinal("pen cil"))
+            assert(clientFinal("pen" + text(0x00a0) + "cil") != rfcClientFinal)
+        }
+
+        "a password the profile refuses is salted raw, the fallback libpq applies" in {
+            // The proof of the UTF-8 bytes of "pencil" followed by U+1F600, computed offline with Python's hashlib and hmac.
+            assert(clientFinal("pencil" + text(0x1f600)) == s"$rfcClientFinalWoProof,p=ZfpQUhZHDxvUETrTR4zvQ7h8G6fesIN/qSTBB0iRiw8=")
+        }
     }
 
     "ScramSha256Shared verifyServerSignature accepts valid RFC 7677 vector" in {
@@ -317,7 +359,7 @@ class ScramSha256SharedTest extends kyo.Test:
                     )
                     val decodedPrefix = decoded.take(expectedGs2Header.length)
                     assert(
-                        Span.from(decodedPrefix).constantTimeEquals(Span.from(expectedGs2Header)),
+                        ConstantTime.isEqualArrays(decodedPrefix, expectedGs2Header),
                         s"c= prefix is not gs2-header. Expected 'p=tls-server-end-point,,' bytes, got: '${new String(decodedPrefix)}'"
                     )
 
@@ -328,7 +370,7 @@ class ScramSha256SharedTest extends kyo.Test:
                         s"cert-hash portion of c= has wrong length: ${decodedSuffix.length}, expected 32"
                     )
                     assert(
-                        Span.from(decodedSuffix).constantTimeEquals(certHash),
+                        ConstantTime.isEqualArrays(decodedSuffix, certHash.toArray),
                         s"cert-hash portion of c= does not match expected hash (32×0xCC)"
                     )
             end match
@@ -396,6 +438,17 @@ class ScramSha256SharedTest extends kyo.Test:
     }
 
     // ── The server-chosen iteration count is bounded (RFC 5802 §5.1 i attribute) ──
+
+    "the derivation's refusal of a count below 1 reaches the caller as the malformed i attribute" in {
+        // parseServerFirst refuses i <= 0 before the derivation runs; this pins the second guard, the one PBKDF2 itself answers with.
+        val scram = ScramSha256Shared(rfcUsername, rfcClientNonce, ChannelBinding.NotSupported)
+        scram.pbkdf2HmacSha256("pencil".getBytes(StandardCharsets.UTF_8), Array[Byte](1, 2, 3), 0, 32) match
+            case Result.Failure(e: SqlDecodeScramFormatException) =>
+                assert(e.field == "i" && e.text == "0", s"the refusal must name the i attribute and the count, got $e")
+            case other =>
+                fail(s"expected SqlDecodeScramFormatException, got: $other")
+        end match
+    }
 
     "a server-chosen iteration count above the ceiling is refused instead of performed" in {
         // The count arrives from a peer the client has not authenticated yet, and PBKDF2 consumes it in a loop with no

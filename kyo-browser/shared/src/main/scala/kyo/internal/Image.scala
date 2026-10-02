@@ -153,10 +153,10 @@ object Image:
 
     /** Decodes a Base64 payload and wraps the resulting bytes as an [[Image]].
       *
-      * Returns [[Result.Failure]] carrying an [[IllegalArgumentException]] when the input is not valid Base64. Callers that produce the
-      * input from a CDP wire payload should translate the failure to a typed `Abort[BrowserDecodingException]` at the call site so the
+      * Returns [[Result.Failure]] carrying the [[kyo.Base64.Failure]] when the input is not valid Base64. Callers that produce the input
+      * from a CDP wire payload should translate the failure to a typed `Abort[BrowserDecodingException]` at the call site so the
       * malformed-wire path stays inside the typed-error channel.
       */
-    def fromBase64(string: String): Result[IllegalArgumentException, Image] =
+    def fromBase64(string: String): Result[Base64.Failure, Image] =
         Base64.decode(string).map(Image(_))
 end Image
