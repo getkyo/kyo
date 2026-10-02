@@ -1825,6 +1825,133 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Protobuf.decode[A](CodecTestSupport.unhex(wire)) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(CodecTestSupport.hex(Protobuf.encode(value)) == wire)
+    end wireWrites
+
+    private def wireRefuses[E <: Throwable](using ConcreteTag[E])[A](value: A, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Result.catching[E](Protobuf.encode(value)).isFailure)
+    end wireRefuses
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "9aa5b60603416e6ea085a70252e88a6b01f1f8670000000000000440ead78b070161ead78b070162a2b8390c90d7d60206ba86d10102696e",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(WCValues.renamed, "fa8326064c6973626f6efac7ee0503616e6e", summon[Schema[WCRenamed]])
+            wireWrites(WCValues.renamed, "fac7ee0503616e6efa8326064c6973626f6e", summon[Schema[WCRenamed]])
+        }
+        "fields under a naming convention, one renamed by annotation: the bytes written" in {
+            wireWrites(WCValues.cased, "eaedc90203416e6ec89cae0512", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes" in {
+            wireDecodes(WCValues.person, "9aa5b60603416e6e8aa4661682c4a603074d61696e205374baa6aa07053937323031", summon[Schema[WCPerson]])
+        }
+        "a flattened record is refused on encode" in {
+            wireRefuses[TransformUnsupportedException](WCValues.person, summon[Schema[WCPerson]])
+        }
+        "a flattened record under a naming convention is refused on encode" in {
+            wireRefuses[TransformUnsupportedException](WCValues.personC, summon[Schema[WCPersonCased]])
+        }
+        "a variant under the wrapper form" in {
+            wirePin(WCValues.circle: WCShape, "faba90040cf980f206000000000000f83f", summon[Schema[WCShape]])
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "da949b0400", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(WCValues.circle: WCShape, "ca84e403085743436972636c65f980f206000000000000f83f", WCShapes.discriminated)
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "ca84e403075743456d707479", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(WCValues.square: WCShape, "ea95b206085743537175617265b289ce0205f0bcba0108", WCShapes.adjacent)
+        }
+        "a variant under tupleTagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleFlat)
+        }
+        "a variant under untagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(WCValues.circle: WCShape, "ca84e4030977635f636972636c65f980f206000000000000f83f", WCShapes.snake)
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "ea9d19066f70656e656480936102", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(WCValues.closed: WCEvent, "ea9d19085743436c6f7365648093610482c2b80404646f6e65", summon[Schema[WCEvent]])
+        }
+        "a record of maps of every key kind is refused" in {
+            wireRefuses[SchemaNotSerializableException](WCValues.maps, summon[Schema[WCMaps]])
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "eade62050a01611002eade62050a01621004", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(WCValues.mapByInt, "eade6207080212036f6e65eade62070804120374776f", summon[Schema[WCMapByInt]])
+        }
+        "a map keyed by Long" in {
+            wirePin(WCValues.mapByLong, "eade620408141001", summon[Schema[WCMapByLong]])
+        }
+        "a map keyed by Char" in {
+            wirePin(WCValues.mapByChar, "eade620508f0011002", summon[Schema[WCMapByChar]])
+        }
+        "a map keyed by a record is refused" in {
+            wireRefuses[SchemaNotSerializableException](WCValues.mapByRecord, summon[Schema[WCMapByRecord]])
+        }
+        "a map keyed by a string-backed type" in {
+            wirePin(WCValues.mapById, "eade62070a03696431100eeade62070a036964321010", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(WCValues.defaultsAll, "9aa5b6060164e0956d0eba86d1010178b894a30106", summon[Schema[WCDefaults]])
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(WCValues.defaultsSet, "9aa5b6060164e0956d02ba86d1010179f2ccc402016e", summon[Schema[WCDefaults]])
+        }
+        "present optional fields" in {
+            wirePin(WCValues.maybePresent, "a8f1cc0402ba86d6050173b289ce020b90d7d60204ba86d1010163d8bf950208", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "c884e4030290d7d6020a", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "c884e40304e29cfa050162", summon[Schema[WCNumbered]])
+        }
+        "a tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCLow: WCLevel, summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCHigh: WCLevel, summon[Schema[WCLevel]])
+        }
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions

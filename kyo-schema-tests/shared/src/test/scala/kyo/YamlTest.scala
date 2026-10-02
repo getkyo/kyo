@@ -1456,4 +1456,154 @@ class YamlTest extends kyo.test.Test[Any]:
 
     }
 
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Yaml.decode[A](wire) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Yaml.encode(value) == wire)
+    end wireWrites
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "name: Ann\nage: 41\nactive: true\nscore: 2.5\ntags:\n  - a\n  - b\ninner:\n  x: 3\n  label: in\n",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(WCValues.renamed, "homeCity: Lisbon\nuser_name: ann\n", summon[Schema[WCRenamed]])
+            wireWrites(WCValues.renamed, "user_name: ann\nhomeCity: Lisbon\n", summon[Schema[WCRenamed]])
+        }
+        "fields under a naming convention, one renamed by annotation" in {
+            wirePin(WCValues.cased, "first_name: Ann\nID: 9\n", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes and the flat form is written" in {
+            wireDecodes(WCValues.person, "name: Ann\naddress:\n  street: Main St\n  zipCode: \"97201\"\n", summon[Schema[WCPerson]])
+            wireWrites(WCValues.person, "name: Ann\nstreet: Main St\nzipCode: \"97201\"\n", summon[Schema[WCPerson]])
+        }
+        "a flattened record under a naming convention: the nested form decodes" in {
+            wireDecodes(
+                WCValues.personC,
+                "full_name: Ann Lee\nhome_address:\n  cityName: Portland\n  ZIP: \"97201\"\n",
+                summon[Schema[WCPersonCased]]
+            )
+        }
+        "a variant under the wrapper form" in {
+            wirePin(WCValues.circle: WCShape, "WCCircle:\n  radius: 1.5\n", summon[Schema[WCShape]])
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "WCEmpty: {}\n", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(WCValues.circle: WCShape, "type: WCCircle\nradius: 1.5\n", WCShapes.discriminated)
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "type: WCEmpty\n", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(WCValues.square: WCShape, "t: WCSquare\nc:\n  side: 4\n", WCShapes.adjacent)
+        }
+        "a variant under tupleTagged" in {
+            wirePin(WCValues.square: WCShape, "- WCSquare\n-\n  side: 4\n", WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat" in {
+            wirePin(WCValues.square: WCShape, "- WCSquare\n- 4\n", WCShapes.tupleFlat)
+        }
+        "a variant under untagged" in {
+            wirePin(WCValues.square: WCShape, "side: 4\n", WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(WCValues.circle: WCShape, "type: wc_circle\nradius: 1.5\n", WCShapes.snake)
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "kind: opened\nid: 1\n", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(WCValues.closed: WCEvent, "kind: WCClosed\nid: 2\nreason: done\n", summon[Schema[WCEvent]])
+        }
+        "a record of maps of every key kind: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.maps,
+                "byName:\n  a: 1\n  b: 2\nbyInt:\n  -\n    key: 1\n    value: one\n  -\n    key: 2\n    value: two\nbyLong:\n  -\n    key: 10\n    value: true\nbyChar:\n  -\n    key: \"x\"\n    value: 1\nbyRecord:\n  -\n    key:\n      x: 1\n      label: k\n    value: 5\nbyId:\n  -\n    key: id1\n    value: 7\n",
+                summon[Schema[WCMaps]]
+            )
+            wireWrites(
+                WCValues.maps,
+                "byName:\n  a: 1\n  b: 2\nbyInt:\n  -\n    key: 1\n    value: one\n  -\n    key: 2\n    value: two\nbyLong:\n  -\n    key: 10\n    value: true\nbyChar:\n  -\n    key: \"x\"\n    value: 1\nbyRecord:\n  -\n    key:\n      x: 1\n      label: k\n    value: 5\nbyId:\n  id1: 7\n",
+                summon[Schema[WCMaps]]
+            )
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "m:\n  a: 1\n  b: 2\n", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(WCValues.mapByInt, "m:\n  -\n    key: 1\n    value: one\n  -\n    key: 2\n    value: two\n", summon[Schema[WCMapByInt]])
+        }
+        "a map keyed by Long" in {
+            wirePin(WCValues.mapByLong, "m:\n  -\n    key: 10\n    value: true\n", summon[Schema[WCMapByLong]])
+        }
+        "a map keyed by Char" in {
+            wirePin(WCValues.mapByChar, "m:\n  -\n    key: \"x\"\n    value: 1\n", summon[Schema[WCMapByChar]])
+        }
+        "a map keyed by a record" in {
+            wirePin(WCValues.mapByRecord, "m:\n  -\n    key:\n      x: 1\n      label: k\n    value: 5\n", summon[Schema[WCMapByRecord]])
+        }
+        "a map keyed by a string-backed type: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.mapById,
+                "m:\n  -\n    key: id1\n    value: 7\n  -\n    key: id2\n    value: 8\n",
+                summon[Schema[WCMapById]]
+            )
+            wireWrites(WCValues.mapById, "m:\n  id1: 7\n  id2: 8\n", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(WCValues.defaultsAll, "name: d\ncount: 7\nlabel: x\nsize: 3\n", summon[Schema[WCDefaults]])
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(WCValues.defaultsSet, "name: d\ncount: 1\nlabel: y\nnote: n\n", summon[Schema[WCDefaults]])
+        }
+        "present optional fields" in {
+            wirePin(WCValues.maybePresent, "a: 1\nb: s\nc:\n  x: 2\n  label: c\nd: 4\n", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields: the bytes written" in {
+            wireWrites(WCValues.maybeAbsent, "\n", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "{}\n", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "type: 1\nx: 5\n", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "type: 2\ns: b\n", summon[Schema[WCNumbered]])
+        }
+        "a numbered variant under the wrapper form, written by name" in {
+            wirePin(WCWrapA(3): WCNumberedWrapped, "WCWrapA:\n  x: 3\n", summon[Schema[WCNumberedWrapped]])
+        }
+        "a numbered case object under the wrapper form, written by name" in {
+            wirePin(WCWrapB: WCNumberedWrapped, "WCWrapB: {}\n", summon[Schema[WCNumberedWrapped]])
+        }
+        "a tagOnly variant" in {
+            wirePin(WCLow: WCLevel, "WCLow\n", summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant" in {
+            wirePin(WCHigh: WCLevel, "hi\n", summon[Schema[WCLevel]])
+        }
+        "a known variant beside a catch-all" in {
+            wirePin(WCKnown(1): WCOpen, "type: WCKnown\nx: 1\n", summon[Schema[WCOpen]])
+        }
+        "a catch-all variant" in {
+            wirePin(WCValues.other: WCOpen, "type: zzz\ny: 1\n", summon[Schema[WCOpen]])
+        }
+    }
+
 end YamlTest

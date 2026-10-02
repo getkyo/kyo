@@ -14,6 +14,14 @@ object CodecTestSupport:
     def sameBytes(actual: Span[Byte], expected: Span[Byte]): Boolean =
         java.util.Arrays.equals(actual.toArray, expected.toArray)
 
+    /** Lowercase hex of a byte span, two digits per byte, the form the binary-format wire pins are written in. */
+    def hex(bytes: Span[Byte]): String =
+        bytes.toArray.map(b => f"${b & 0xff}%02x").mkString
+
+    /** The bytes a [[hex]] string spells. */
+    def unhex(text: String): Span[Byte] =
+        Span.from(text.grouped(2).map(pair => Integer.parseInt(pair, 16).toByte).toArray)
+
     /** Encode then decode a value through codec `C`, returning the decoded value or throwing on
       * decode failure. The plain round-trip suites share this; suites that assert extra paths or a
       * custom comparison keep their own helper.

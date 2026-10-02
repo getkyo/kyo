@@ -418,3 +418,143 @@ object CodecTestHelper:
         writer.resultTokens
     end encode
 end CodecTestHelper
+
+// --- Wire pin fixtures: one value per wire shape, encoded by every format suite ---
+
+case class WCInner(x: Int, label: String) derives CanEqual, Schema
+
+case class WCRecord(name: String, age: Int, active: Boolean, score: Double, tags: Chunk[String], inner: WCInner)
+    derives CanEqual, Schema
+
+case class WCRenamed(@kyo.schema.rename("user_name") userName: String, @kyo.schema.alias("town") homeCity: String)
+    derives CanEqual, Schema
+
+case class WCCased(firstName: String, @kyo.schema.rename("ID") userId: Int) derives CanEqual
+given wcCasedSchema: Schema[WCCased] = Schema[WCCased].renameAllFields(Schema.NameCase.SnakeCase)(using Frame.internal)
+
+case class WCAddress(street: String, zipCode: String) derives CanEqual, Schema
+case class WCPerson(name: String, address: WCAddress) derives CanEqual
+given wcPersonSchema: Schema[WCPerson] = Schema[WCPerson].flatten
+
+case class WCAddressRenamed(@kyo.schema.rename("ZIP") zipCode: String, cityName: String) derives CanEqual, Schema
+case class WCPersonCased(fullName: String, homeAddress: WCAddressRenamed) derives CanEqual
+given wcPersonCasedSchema: Schema[WCPersonCased] =
+    Schema[WCPersonCased].flatten.renameAllFields(Schema.NameCase.SnakeCase)(using Frame.internal)
+
+sealed trait WCShape derives CanEqual, Schema
+case class WCCircle(radius: Double) extends WCShape derives CanEqual
+case class WCSquare(side: Int)      extends WCShape derives CanEqual
+case object WCEmpty                 extends WCShape
+
+object WCShapes:
+    val discriminated: Schema[WCShape] = Schema[WCShape].discriminator("type")
+    val adjacent: Schema[WCShape]      = Schema[WCShape].adjacent("t", "c")
+    val tupleTagged: Schema[WCShape]   = Schema[WCShape].tupleTagged
+    val tupleFlat: Schema[WCShape]     = Schema[WCShape].tupleFlat
+    val untagged: Schema[WCShape]      = Schema[WCShape].untagged
+    val snake: Schema[WCShape]         =
+        Schema[WCShape].discriminator("type").renameAllVariants(Schema.NameCase.SnakeCase)(using Frame.internal)
+            .variantAlias("wc_circle", "round")(using Frame.internal)
+end WCShapes
+
+@kyo.schema.discriminator("kind")
+sealed trait WCEvent derives CanEqual, Schema
+@kyo.schema.rename("opened")
+case class WCOpened(id: Int)                 extends WCEvent derives CanEqual
+case class WCClosed(id: Int, reason: String) extends WCEvent derives CanEqual
+
+object WCId:
+    opaque type Type = String
+
+    def apply(value: String): Type = value
+
+    extension (id: Type) def value: String = id
+
+    given Schema[Type]         = Schema.stringSchema.transform[Type](apply)(_.value)
+    given CanEqual[Type, Type] = CanEqual.derived
+end WCId
+
+case class WCMaps(
+    byName: Map[String, Int],
+    byInt: Map[Int, String],
+    byLong: Map[Long, Boolean],
+    byChar: Map[Char, Int],
+    byRecord: Map[WCInner, Int],
+    byId: Map[WCId.Type, Int]
+) derives CanEqual, Schema
+
+case class WCMapByName(m: Map[String, Int]) derives CanEqual, Schema
+case class WCMapByInt(m: Map[Int, String]) derives CanEqual, Schema
+case class WCMapByLong(m: Map[Long, Boolean]) derives CanEqual, Schema
+case class WCMapByChar(m: Map[Char, Int]) derives CanEqual, Schema
+case class WCMapByRecord(m: Map[WCInner, Int]) derives CanEqual, Schema
+case class WCMapById(m: Map[WCId.Type, Int]) derives CanEqual, Schema
+
+case class WCDefaults(name: String, count: Int = 7, label: String = "x", note: Maybe[String] = Absent, size: Maybe[Int] = Present(3))
+    derives CanEqual, Schema
+
+case class WCMaybe(a: Maybe[Int], b: Maybe[String], c: Maybe[WCInner], d: Option[Int]) derives CanEqual, Schema
+
+object WCMaybes:
+    val omitNone: Schema[WCMaybe] = Schema[WCMaybe].omitNone
+end WCMaybes
+
+@kyo.schema.discriminator("type")
+sealed trait WCNumbered derives CanEqual, Schema
+@kyo.schema.tagNumber(1)
+case class WCNumA(x: Int) extends WCNumbered derives CanEqual
+@kyo.schema.tagNumber(2)
+case class WCNumB(s: String) extends WCNumbered derives CanEqual
+
+sealed trait WCNumberedWrapped derives CanEqual, Schema
+@kyo.schema.tagNumber(7)
+case class WCWrapA(x: Int) extends WCNumberedWrapped derives CanEqual
+@kyo.schema.tagNumber(9)
+case object WCWrapB extends WCNumberedWrapped
+
+@kyo.schema.tagOnly()
+sealed trait WCLevel derives CanEqual, Schema
+case object WCLow extends WCLevel
+@kyo.schema.rename("hi")
+case object WCHigh extends WCLevel
+
+@kyo.schema.discriminator("type")
+sealed trait WCOpen derives CanEqual, Schema
+case class WCKnown(x: Int) extends WCOpen derives CanEqual
+@kyo.schema.catchAll()
+case class WCOther(tag: String, payload: Structure.Value) extends WCOpen derives CanEqual
+
+object WCValues:
+    val record  = WCRecord("Ann", 41, true, 2.5, Chunk("a", "b"), WCInner(3, "in"))
+    val renamed = WCRenamed("ann", "Lisbon")
+    val cased   = WCCased("Ann", 9)
+    val person  = WCPerson("Ann", WCAddress("Main St", "97201"))
+    val personC = WCPersonCased("Ann Lee", WCAddressRenamed("97201", "Portland"))
+    val circle  = WCCircle(1.5)
+    val square  = WCSquare(4)
+    val empty   = WCEmpty
+    val opened  = WCOpened(1)
+    val closed  = WCClosed(2, "done")
+    val maps    = WCMaps(
+        Map("a"             -> 1, "b"   -> 2),
+        Map(1               -> "one", 2 -> "two"),
+        Map(10L             -> true),
+        Map('x'             -> 1),
+        Map(WCInner(1, "k") -> 5),
+        Map(WCId("id1")     -> 7)
+    )
+    val mapByName    = WCMapByName(Map("a" -> 1, "b" -> 2))
+    val mapByInt     = WCMapByInt(Map(1 -> "one", 2 -> "two"))
+    val mapByLong    = WCMapByLong(Map(10L -> true))
+    val mapByChar    = WCMapByChar(Map('x' -> 1))
+    val mapByRecord  = WCMapByRecord(Map(WCInner(1, "k") -> 5))
+    val mapById      = WCMapById(Map(WCId("id1") -> 7, WCId("id2") -> 8))
+    val defaultsAll  = WCDefaults("d")
+    val defaultsSet  = WCDefaults("d", 1, "y", Present("n"), Absent)
+    val maybePresent = WCMaybe(Present(1), Present("s"), Present(WCInner(2, "c")), Some(4))
+    val maybeAbsent  = WCMaybe(Absent, Absent, Absent, None)
+    val other        = WCOther(
+        "zzz",
+        Structure.Value.Record(Chunk("type" -> Structure.Value.Str("zzz"), "y" -> Structure.Value.Integer(1)))
+    )
+end WCValues

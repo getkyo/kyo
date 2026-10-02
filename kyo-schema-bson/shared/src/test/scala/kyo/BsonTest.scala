@@ -607,4 +607,228 @@ class BsonTest extends kyo.test.Test[Any]:
         }
 
     }
+
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A]          = schema
+        given CanEqual[Any, Any] = CanEqual.derived
+        assert(Bson.decode[A](CodecTestSupport.unhex(wire)) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(CodecTestSupport.hex(Bson.encode(value)) == wire)
+    end wireWrites
+
+    private def wireRefuses[E <: Throwable](using ConcreteTag[E])[A](value: A, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Result.catching[E](Bson.encode(value)).isFailure)
+    end wireRefuses
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "72000000026e616d650004000000416e6e001061676500290000000861637469766500010173636f7265000000000000000440047461677300170000000230000200000061000231000200000062000003696e6e6572001a00000010780003000000026c6162656c0003000000696e000000",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(
+                WCValues.renamed,
+                "2d00000002686f6d654369747900070000004c6973626f6e0002757365725f6e616d650004000000616e6e0000",
+                summon[Schema[WCRenamed]]
+            )
+            wireWrites(
+                WCValues.renamed,
+                "2d00000002757365725f6e616d650004000000616e6e0002686f6d654369747900070000004c6973626f6e0000",
+                summon[Schema[WCRenamed]]
+            )
+        }
+        "fields under a naming convention, one renamed by annotation" in {
+            wirePin(WCValues.cased, "210000000266697273745f6e616d650004000000416e6e00104944000900000000", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes and the flat form is written" in {
+            wireDecodes(
+                WCValues.person,
+                "48000000026e616d650004000000416e6e000361646472657373002c0000000273747265657400080000004d61696e20537400027a6970436f646500060000003937323031000000",
+                summon[Schema[WCPerson]]
+            )
+            wireWrites(
+                WCValues.person,
+                "3a000000026e616d650004000000416e6e000273747265657400080000004d61696e20537400027a6970436f6465000600000039373230310000",
+                summon[Schema[WCPerson]]
+            )
+        }
+        "a flattened record under a naming convention: the nested form decodes" in {
+            wireDecodes(
+                WCValues.personC,
+                "550000000266756c6c5f6e616d650008000000416e6e204c65650003686f6d655f61646472657373002b00000002636974794e616d650009000000506f72746c616e6400025a495000060000003937323031000000",
+                summon[Schema[WCPersonCased]]
+            )
+        }
+        "a variant under the wrapper form" in {
+            wirePin(
+                WCValues.circle: WCShape,
+                "24000000035743436972636c6500150000000172616469757300000000000000f83f0000",
+                summon[Schema[WCShape]]
+            )
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "13000000035743456d70747900050000000000", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(
+                WCValues.circle: WCShape,
+                "28000000027479706500090000005743436972636c65000172616469757300000000000000f83f00",
+                WCShapes.discriminated
+            )
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "17000000027479706500080000005743456d7074790000", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(
+                WCValues.square: WCShape,
+                "27000000027400090000005743537175617265000363000f000000107369646500040000000000",
+                WCShapes.adjacent
+            )
+        }
+        "a variant under tupleTagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleFlat)
+        }
+        "a variant under untagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(
+                WCValues.circle: WCShape,
+                "290000000274797065000a00000077635f636972636c65000172616469757300000000000000f83f00",
+                WCShapes.snake
+            )
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "1e000000026b696e6400070000006f70656e656400106964000100000000", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(
+                WCValues.closed: WCEvent,
+                "31000000026b696e6400090000005743436c6f73656400106964000200000002726561736f6e0005000000646f6e650000",
+                summon[Schema[WCEvent]]
+            )
+        }
+        "a record of maps of every key kind: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.maps,
+                "2c0100000362794e616d650013000000106100010000001062000200000000046279496e7400450000000330001d000000106b657900010000000276616c756500040000006f6e6500000331001d000000106b657900020000000276616c7565000400000074776f0000000462794c6f6e6700220000000330001a000000126b6579000a000000000000000876616c7565000100000462794368617200230000000330001b000000026b6579000200000078001076616c7565000100000000000462795265636f726400360000000330002e000000036b6579001900000010780001000000026c6162656c00020000006b00001076616c756500050000000000046279496400250000000330001d000000026b65790004000000696431001076616c75650007000000000000",
+                summon[Schema[WCMaps]]
+            )
+            wireWrites(
+                WCValues.maps,
+                "150100000362794e616d650013000000106100010000001062000200000000046279496e7400450000000330001d000000106b657900010000000276616c756500040000006f6e6500000331001d000000106b657900020000000276616c7565000400000074776f0000000462794c6f6e6700220000000330001a000000126b6579000a000000000000000876616c7565000100000462794368617200230000000330001b000000026b6579000200000078001076616c7565000100000000000462795265636f726400360000000330002e000000036b6579001900000010780001000000026c6162656c00020000006b00001076616c7565000500000000000362794964000e0000001069643100070000000000",
+                summon[Schema[WCMaps]]
+            )
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "1b000000036d001300000010610001000000106200020000000000", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(
+                WCValues.mapByInt,
+                "4d000000046d00450000000330001d000000106b657900010000000276616c756500040000006f6e6500000331001d000000106b657900020000000276616c7565000400000074776f00000000",
+                summon[Schema[WCMapByInt]]
+            )
+        }
+        "a map keyed by Long" in {
+            wirePin(
+                WCValues.mapByLong,
+                "2a000000046d00220000000330001a000000126b6579000a000000000000000876616c75650001000000",
+                summon[Schema[WCMapByLong]]
+            )
+        }
+        "a map keyed by Char" in {
+            wirePin(
+                WCValues.mapByChar,
+                "2b000000046d00230000000330001b000000026b6579000200000078001076616c75650001000000000000",
+                summon[Schema[WCMapByChar]]
+            )
+        }
+        "a map keyed by a record" in {
+            wirePin(
+                WCValues.mapByRecord,
+                "3e000000046d00360000000330002e000000036b6579001900000010780001000000026c6162656c00020000006b00001076616c75650005000000000000",
+                summon[Schema[WCMapByRecord]]
+            )
+        }
+        "a map keyed by a string-backed type: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.mapById,
+                "4d000000046d00450000000330001d000000026b65790004000000696431001076616c75650007000000000331001d000000026b65790004000000696432001076616c75650008000000000000",
+                summon[Schema[WCMapById]]
+            )
+            wireWrites(WCValues.mapById, "1f000000036d00170000001069643100070000001069643200080000000000", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(
+                WCValues.defaultsAll,
+                "33000000026e616d650002000000640010636f756e740007000000026c6162656c000200000078001073697a65000300000000",
+                summon[Schema[WCDefaults]]
+            )
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(
+                WCValues.defaultsSet,
+                "35000000026e616d650002000000640010636f756e740001000000026c6162656c00020000007900026e6f746500020000006e0000",
+                summon[Schema[WCDefaults]]
+            )
+        }
+        "present optional fields" in {
+            wirePin(
+                WCValues.maybePresent,
+                "38000000106100010000000262000200000073000363001900000010780002000000026c6162656c00020000006300001064000400000000",
+                summon[Schema[WCMaybe]]
+            )
+        }
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "0500000000", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "0500000000", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "16000000107479706500010000001078000500000000", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "180000001074797065000200000002730002000000620000", summon[Schema[WCNumbered]])
+        }
+        "a numbered variant under the wrapper form, written by name" in {
+            wirePin(
+                WCWrapA(3): WCNumberedWrapped,
+                "1a0000000357435772617041000c000000107800030000000000",
+                summon[Schema[WCNumberedWrapped]]
+            )
+        }
+        "a numbered case object under the wrapper form, written by name" in {
+            wirePin(WCWrapB: WCNumberedWrapped, "13000000035743577261704200050000000000", summon[Schema[WCNumberedWrapped]])
+        }
+        "a tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCLow: WCLevel, summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCHigh: WCLevel, summon[Schema[WCLevel]])
+        }
+        "a known variant beside a catch-all" in {
+            wirePin(WCKnown(1): WCOpen, "1e0000000274797065000800000057434b6e6f776e001078000100000000", summon[Schema[WCOpen]])
+        }
+        "a catch-all variant" in {
+            wirePin(WCValues.other: WCOpen, "1a000000027479706500040000007a7a7a001079000100000000", summon[Schema[WCOpen]])
+        }
+    }
 end BsonTest
