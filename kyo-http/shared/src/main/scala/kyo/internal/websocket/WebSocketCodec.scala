@@ -3,7 +3,7 @@ package kyo.internal.websocket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kyo.*
-import kyo.internal.Sha1
+import kyo.crypto.Sha1
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import scala.annotation.tailrec
@@ -246,7 +246,7 @@ private[kyo] object WebSocketCodec:
             name.equalsIgnoreCase("Sec-WebSocket-Key")
 
     private[internal] def computeAcceptKey(clientKey: String): String =
-        val hash = Sha1.hash((clientKey + WsGuid).getBytes(Utf8))
+        val hash = Sha1.hashArray((clientKey + WsGuid).getBytes(Utf8))
         Base64.getEncoder.encodeToString(hash)
     end computeAcceptKey
 

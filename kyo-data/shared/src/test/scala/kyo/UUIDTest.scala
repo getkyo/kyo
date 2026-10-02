@@ -16,21 +16,15 @@ package uuidclient {
 
 package kyo {
 
-    import java.nio.charset.StandardCharsets
-
     class UUIDTest extends kyo.test.Test[Any]:
 
         private val canonical = "00112233-4455-6677-8899-aabbccddeeff"
-        private val dns       = parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
         private def parse(value: String): UUID =
             UUID.parse(value).getOrThrow
 
         private def bytes(values: Int*): Span[Byte] =
             Span.from(values.map(_.toByte).toArray)
-
-        private def utf8(value: String): Span[Byte] =
-            Span.from(value.getBytes(StandardCharsets.UTF_8))
 
         private def problem(result: Result[UUID.InvalidUUID, UUID]): Maybe[UUID.InvalidProblem] =
             result.failure.map(_.problem)
@@ -197,55 +191,23 @@ package kyo {
             }
         }
 
-        "deterministic construction" - {
-            "matches the RFC version-5 DNS namespace vector" in {
-                assert(UUID.v5(dns, utf8("www.example.com")).show == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+        "fromHash" - {
+            "takes the first 16 bytes of the hash and sets the version and variant" in {
+                val hash = Span.from(Array.tabulate[Byte](20)(i => (i * 17 + 3).toByte))
+                val uuid = UUID.fromHash(hash, version = 5)
+                assert(uuid.version == 5)
+                assert(uuid.variant == UUID.Variant.RFC)
+                val expected = hash.toArray.take(16)
+                expected(6) = ((expected(6) & 0x0f) | 0x50).toByte
+                expected(8) = ((expected(8) & 0x3f) | 0x80).toByte
+                assert(uuid.bytes.toArray.toSeq == expected.toSeq)
             }
 
-            "sets the version-5 nibble" in {
-                assert(UUID.v5(dns, utf8("www.example.com")).version == 5)
-            }
-
-            "sets the RFC variant on version-5 values" in {
-                assert(UUID.v5(dns, utf8("www.example.com")).variant == UUID.Variant.RFC)
-            }
-
-            "changes version-5 output when the namespace bytes change" in {
-                val otherNamespace = parse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
-                assert(UUID.v5(dns, utf8("www.example.com")) != UUID.v5(otherNamespace, utf8("www.example.com")))
-            }
-
-            "changes version-5 output when the exact name bytes change" in {
-                assert(UUID.v5(dns, utf8("www.example.com")) != UUID.v5(dns, utf8("www.example.coM")))
-            }
-
-            "matches the Kyo version-8 SHA-256 profile snapshot" in {
-                assert(UUID.v8Sha256(dns, utf8("kyo")).show == "40b14c55-e8a6-81ec-befd-7dcf39275a9b")
-            }
-
-            "encodes the largest Span length as an unsigned 32-bit value" in {
-                assert(UUID.unsignedIntBytes(Int.MaxValue).sameElements(Array[Byte](0x7f, 0xff.toByte, 0xff.toByte, 0xff.toByte)))
-            }
-
-            "sets the version-8 nibble" in {
-                assert(UUID.v8Sha256(dns, utf8("kyo")).version == 8)
-            }
-
-            "sets the RFC variant on version-8 values" in {
-                assert(UUID.v8Sha256(dns, utf8("kyo")).variant == UUID.Variant.RFC)
-            }
-
-            "returns equal version-8 values for equal inputs" in {
-                assert(UUID.v8Sha256(dns, utf8("kyo")) == UUID.v8Sha256(dns, utf8("kyo")))
-            }
-
-            "changes version-8 output when the namespace bytes change" in {
-                val otherNamespace = parse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
-                assert(UUID.v8Sha256(dns, utf8("kyo")) != UUID.v8Sha256(otherNamespace, utf8("kyo")))
-            }
-
-            "changes version-8 output when the exact name bytes change" in {
-                assert(UUID.v8Sha256(dns, utf8("kyo")) != UUID.v8Sha256(dns, utf8("Kyo")))
+            "leaves the hash unchanged" in {
+                val array = Array.tabulate[Byte](32)(_.toByte)
+                val copy  = array.clone()
+                discard(UUID.fromHash(Span.from(array), version = 8))
+                assert(array.sameElements(copy))
             }
         }
     end UUIDTest

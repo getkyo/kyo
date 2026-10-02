@@ -7,15 +7,15 @@ import kyo.net.NetTlsConfig
 
 /** Integration test for MySQL sha256_password auth plugin.
   *
-  * sha256_password is the legacy RSA-auth plugin used by some MySQL 5.7 / 8.0 installations. Unlike caching_sha2_password there is no
+  * sha256_password is the legacy RSA-auth plugin, supported for MySQL 8.0.5 or later over plaintext. Unlike caching_sha2_password there is no
   * fast-path cache, every connection either encrypts the password with the server's RSA public key (non-TLS) or sends cleartext over TLS.
   *
   * Container strategy, and which handshake path each leaf actually takes:
   *   - Root connects and runs `ALTER USER 'test'@'%' IDENTIFIED WITH sha256_password BY 'test'` to switch the test user to sha256_password.
   *   - Leaves 1 and 2 leave the server's own `default_authentication_plugin` at `caching_sha2_password`, so the server still names that plugin
   *     in its `HandshakeV10` and reaches `sha256_password` through an `AuthSwitchRequest`. They therefore cover `performSha256Auth`, not the
-  *     initial-response branch: leaf 1 the plaintext RSA-OAEP round via [[kyo.internal.auth.RsaOaep]], leaf 2 the TLS path where the client
-  *     sends the cleartext NUL-terminated password and skips RSA.
+  *     initial-response branch: leaf 1 the plaintext RSA-OAEP round via [[kyo.internal.mysql.auth.PasswordEncryption]], leaf 2 the TLS
+  *     path where the client sends the cleartext NUL-terminated password and skips RSA.
   *   - Leaf 3 starts the server with `--default-authentication-plugin=sha256_password`, which is the only configuration in which the client's
   *     `HandshakeResponse41` carries a `sha256_password` initial auth response at all. Without it that branch is unreachable, which is how it
   *     came to send the wrong bytes with every leaf here passing.

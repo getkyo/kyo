@@ -430,16 +430,20 @@ the wire in a form only TLS protects. Four plugins are implemented, all in pure 
 
 The full-auth round is where the two SHA-256 plugins differ from their fast path. Over TLS the password goes as
 cleartext inside the encrypted channel. Over a plaintext connection it is encrypted to the server's RSA public key
-with RSA-OAEP, implemented here in `internal/mysql/auth/RsaOaep.scala`. `caching_sha2_password` needs that round only
-when the server has no cached entry for the account, which in practice means the first connection after a server
-restart or a password change. `sha256_password` has no cache at all and pays it every time.
+with RSA-OAEP, kyo-crypto's `RsaOaep.encryptSha1` behind `internal/mysql/auth/PasswordEncryption.scala`. That key
+arrives in the same plaintext exchange and nothing authenticates it: an active attacker who answers the full-auth
+request with a key of its own recovers the password, so without TLS the encryption keeps the password from a passive
+listener only. `caching_sha2_password` needs that round only when the server has no cached entry for the account,
+which in practice means the first connection after a server restart or a password change. `sha256_password` has no
+cache at all and pays it every time. OAEP is the padding MySQL uses from 8.0.5 on; a 5.7 server, or an 8.0 server
+before 8.0.5, expects PKCS#1 v1.5 and is not supported over a plaintext connection.
 
 `mysql_clear_password` is the one that cannot protect itself, and the handshake enforces TLS before the plugin is
 ever called: on a plaintext connection it fails with `SqlConnectionClearPasswordRequiresTlsException` rather than
 sending the password in the clear. Configure TLS through the portable `sslmode` URL option or `config.tlsMode`, both
 documented in [kyo-sql](../kyo-sql/README.md#engines-and-configuration).
 
-Digests come from core's `internal/auth/PureHash.scala`, which both engines share.
+Digests come from [kyo-crypto](../kyo-crypto/README.md), which both engines share.
 
 ## Configuration
 

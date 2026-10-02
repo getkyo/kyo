@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.crypto.*
 
 class HttpContainerBackendTest extends BasePodTest:
 

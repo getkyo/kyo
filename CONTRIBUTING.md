@@ -213,6 +213,7 @@ If you want to contribute a new method or type, feel free to:
 | Subproject        | Use For                                                   |
 | ----------------- | --------------------------------------------------------- |
 | `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
+| `kyo-crypto`      | Digests, MACs, key derivation, signature verification     |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
 | `kyo-core`        | Methods requiring `Sync`                                  |
 | `kyo-system`      | File system, OS process, and environment methods          |
