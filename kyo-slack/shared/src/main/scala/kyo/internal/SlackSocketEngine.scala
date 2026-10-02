@@ -82,11 +82,9 @@ final private[kyo] class SlackSocketEngine private[kyo] (
         inbound.streamUntilClosed().foreach { frame =>
             decodeAndDeliver(handler, frame)
         }.andThen {
-            inboundResidue.poll.map {
-                case Present(Result.Success(residue)) =>
-                    residue.map(frames => Kyo.foreachDiscard(frames)(decodeAndDeliver(handler, _)))
-                case _ => Kyo.unit
-            }
+            // The stream ends as soon as the channel closes, which can be before the closer has published the residue. Every
+            // close publishes it (see `closeInbound`), so awaiting it is bounded, and a non-blocking read here would drop it.
+            inboundResidue.get.map(frames => Kyo.foreachDiscard(frames)(decodeAndDeliver(handler, _)))
         }
 
     private def decodeAndDeliver[S](
@@ -240,18 +238,15 @@ final private[kyo] class SlackSocketEngine private[kyo] (
       * first caller does the plain channel `close` (which fails the loop's pending take
       * with `Closed`, so the receive loop observes a clean end with no consumer required)
       * and completes `inboundResidue` with the returned residue; any later caller's `close`
-      * returns `Absent` (the channel is already fully closed) and the already-completed
-      * promise rejects the redundant completion.
+      * returns `Absent` (the channel is already fully closed) and publishes nothing. Every
+      * caller returns once the residue is published.
       *
       * Both the relay's raced completion and the controller's rotation drain call this, so
       * they share one close rather than racing a plain `close` against a `closeAwaitEmpty`
       * that would leave the channel waiting for a consumer the rotation has stopped being.
       */
     private[kyo] def closeInbound(using Frame): Unit < Async =
-        inbound.close.map {
-            case Present(residue) => inboundResidue.complete(Result.succeed(Chunk.from(residue))).unit
-            case Absent           => Kyo.unit
-        }
+        SlackSocketEngine.closeInbound(inbound, inboundResidue)
 
     /** Stop receiving and drain the already-buffered inbound residue through the SAME
       * decode + dedup + deliver + ack path the receive loop uses, so every envelope the
@@ -351,6 +346,28 @@ end SlackSocketEngine
 
 private[kyo] object SlackSocketEngine:
 
+    /** The single close of `inbound` and the publication of its residue into `inboundResidue`.
+      *
+      * The publication is registered on the close's own completion, in the same step as the close, rather than run as a continuation
+      * of the closing fiber: that fiber can be interrupted (a teardown interrupts the relay) once the channel is closed and before
+      * it publishes, and the receive loop, which awaits the residue after seeing the close, would then wait forever. A losing
+      * close returns `Absent` and publishes nothing; every caller then awaits the winner's publication.
+      */
+    private def closeInbound(inbound: Channel[String], inboundResidue: Fiber.Promise[Chunk[String], Any])(using
+        Frame
+    ): Unit < Async =
+        // Unsafe: the close and the registration of its publication must be one uninterruptible step. The safe-tier
+        // `onComplete` returns a suspended registration, which would put an interruption point between the two.
+        Sync.Unsafe.defer {
+            inbound.unsafe.close().onComplete {
+                case Result.Success(closed) =>
+                    closed.eval match
+                        case Present(residue) => inboundResidue.unsafe.completeDiscard(Result.succeed(Chunk.from(residue)))
+                        case Absent           => ()
+                case Result.Panic(ex) => inboundResidue.unsafe.completeDiscard(Result.panic(ex))
+            }
+        }.andThen(inboundResidue.get.unit)
+
     /** Open one engine over the given transport and wss url: bounded channels, the
       * readiness gate, the sender fiber draining `outbound` to the socket, and the relay
       * fiber running the receiver raced with `onPeerClose`. Awaits the readiness gate before
@@ -372,14 +389,11 @@ private[kyo] object SlackSocketEngine:
             senderDone       <- Fiber.Promise.init[Unit, Any]
             // Close `inbound` once and publish its residue, idempotently: the first caller
             // (this relay on its raced completion, or the controller's rotation drain) does the
-            // plain `close` and completes the residue promise; a later call is a no-op. A plain
+            // plain `close` and completes the residue promise; a later call only awaits it. A plain
             // close fails the loop's pending take with `Closed` and needs no consumer, so a
             // rotation that has stopped reading the old inbound never leaves it half-closed.
-            closeInbound = inbound.close.map {
-                case Present(residue) => inboundResidue.complete(Result.succeed(Chunk.from(residue))).unit
-                case Absent           => Kyo.unit
-            }
-            wsConfig = HttpWebSocket.Config(autoPingInterval = config.keepAliveInterval)
+            closeInbound = SlackSocketEngine.closeInbound(inbound, inboundResidue)
+            wsConfig     = HttpWebSocket.Config(autoPingInterval = config.keepAliveInterval)
             relay <- Fiber.initUnscoped {
                 Abort.run[Throwable] {
                     transport.connect(wsUrl, wsConfig) { conn =>
