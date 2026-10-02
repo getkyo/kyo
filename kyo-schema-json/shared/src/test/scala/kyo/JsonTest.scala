@@ -694,15 +694,10 @@ class JsonTest extends kyo.test.Test[Any]:
 
         // 15. NUMERIC EDGE CASES
 
-        "integer with leading zeros" in {
-            val json   = "007"
-            val result = Json.decode[Int](json)
-            result match
-                case Result.Success(7) => succeed("parsed '007' as 7, ignoring leading zeros; the literal pattern is the verification")
-                case Result.Failure(_) =>
-                    succeed("rejected leading zeros as invalid per strict JSON; reaching the Failure branch is the verification")
-                case Result.Success(other) => fail(s"Unexpected value: $other")
-            end match
+        "integer with leading zeros is rejected" in {
+            Json.decode[Int]("007") match
+                case Result.Failure(e: ParseException) => assert(e.position == 1)
+                case other                             => fail(s"Expected a ParseException, got $other")
         }
 
         "negative zero" in {
@@ -1707,13 +1702,10 @@ class JsonTest extends kyo.test.Test[Any]:
 
         // json-iterator/go #632: accepts invalid number formats
         // https://github.com/json-iterator/go/issues/632
-        "leading zero in number rejected or parsed as 0" in {
-            val result = Json.decode[Int]("01")
-            result match
-                case Result.Success(v) =>
-                    assert(v == 0 || v == 1) // either parse as 0 (stop at '1') or as 1 is debatable
-                case Result.Failure(_) => ()
-            end match
+        "leading zero in number rejected" in {
+            Json.decode[Int]("01") match
+                case Result.Failure(e: ParseException) => assert(e.position == 1)
+                case other                             => fail(s"Expected a ParseException, got $other")
         }
 
         // -----------------------------------------------------------------

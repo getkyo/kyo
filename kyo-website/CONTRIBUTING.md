@@ -143,6 +143,12 @@ the SSG's exact HTML and must not HTML-escape it again: use `UI.rawHtml`, never
 `UI.text` (`DocsClient.scala:112-113`). The transpiler (`DocsMarkdownRender`) is
 JVM-only and never ships to the browser.
 
+The SSG paints the article the way the bundle mounts it: `WebsiteGenerator.articleSlot`
+wraps `UI.rawHtml(articleHtml)` in a reactive node, the shape of the bundle's
+`articleRef` slot. Handing `DocsApp.body` the transpiled `article` subtree instead
+renders it without the slot's range markers and with `data-kyo-path` values rooted
+in the page, so the mount would replace a different DOM than the one first painted.
+
 ### Mechanism 5: the boot islands seed the SPA
 
 Each docs page embeds a `#docs-island` and a `#versions-island` JSON
@@ -232,6 +238,11 @@ from the island (single-threaded JS, Unsafe-marked, `WebsiteBundleMain.scala:44-
    `<link rel=canonical>` using the SAME formats the SSG emitted.** The in-browser
    head must never diverge from what crawlers indexed
    (`WebsiteBundleMain.scala:22-25`).
+3. **Numbers rendered by shared code must be the same double on the JVM and in
+   Scala.js.** `math.pow` is not correctly rounded and differs in the last bit
+   between the two, and that bit reaches the markup; the landing's gap chart
+   computes its powers as products of multiplications, which both platforms round
+   identically.
 
 ### The decision rule for any shell change
 
@@ -242,7 +253,7 @@ default it to a no-op on the SSG, and confirm the empty/initial state renders th
 same structure on both. The header search box is the worked example: at the empty
 query the dropdown is an empty container, so the SSG shell and the bundle's first
 render are structurally identical (`SiteApp.scala:36-37`). Then run
-`ChromeParityTest`.
+`ChromeParityTest` and `SiteAppSpaTest`.
 
 ## The content model
 
@@ -779,6 +790,22 @@ byte-identical normalized HTML:
 normalize away positional `data-kyo-path` values
 (`html.replaceAll("""data-kyo-path="[^"]*"""", "data-kyo-path=\"\"")`,
 `ChromeParityTest.scala:32-34`).
+
+`ChromeParityTest` compares two renders of one view on the JVM; it cannot see what
+the generator hands the view or what the linked bundle computes in the browser.
+`SiteAppSpaTest` is the gate for both: it serves the real site with the real
+`fullLinkJS` bundle (`ServedSite`), loads a module page, the version overview and
+the landing in Chrome, and asserts the mounted `document.body.innerHTML` equals
+the served page's body with the page wrapper's islands and module script removed,
+both serialized by the same Chrome. Its navigation leaf clicks a rail link and
+asserts the content area equals the target page's SSG content, with no reload and
+the header and `<head>` stylesheet untouched. Chrome suites extend `SiteChromeTest`,
+which gives each leaf its own Chrome that resolves no host but localhost, sizes the
+navigation budget for a page whose load waits on the 35 MB bundle, and cancels the
+leaf where Google publishes no `chrome-headless-shell` (linux-arm64,
+windows-arm64). `SiteAppHeapTest` runs its idle window in Chrome's virtual time
+(`Emulation.setVirtualTimePolicy`), so the page's timers cover the window in
+seconds and the leaf waits on the page's clock, never the wall clock.
 
 ### Generator and content tests
 

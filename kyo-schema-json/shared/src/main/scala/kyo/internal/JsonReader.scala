@@ -20,6 +20,22 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     private var lastFieldStart: Int = 0
     private var lastFieldLen: Int   = 0
 
+    // A field name holding an escape cannot be compared byte for byte against the input, so its decoded UTF-8 is held
+    // here and matched instead.
+    private var lastFieldEscaped: Boolean     = false
+    private var lastFieldDecoded: Array[Byte] = Array.emptyByteArray
+
+    // One bit per container open while skipping, set for an object.
+    private var skipKinds: Array[Long] = new Array[Long](1)
+
+    // Restored to the defaults on reuse, since a pooled reader would otherwise carry one caller's limits into the next decode.
+    private var maxNumberDigits: Int = Json.DefaultMaxNumberDigits
+    private var maxExponent: Int     = Json.DefaultMaxExponent
+
+    private[kyo] def resetNumberLimits(maxNumberDigits: Int, maxExponent: Int): Unit =
+        this.maxNumberDigits = maxNumberDigits
+        this.maxExponent = maxExponent
+
     def objectStart(): Int =
         checkDepth()
         skipWhitespace()
@@ -61,22 +77,25 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         skipWhitespace()
         expectByte('"')
         lastFieldStart = pos
-        // Fast scan for closing quote: field names are typically ASCII with no escapes
-        @tailrec def scanClose(): Unit =
-            if pos < input.size && input(pos) != '"' then
-                pos += 1
-                scanClose()
-        scanClose()
+        skipPlainStringBytes()
         if pos >= input.size then error("Unterminated field name")
-        lastFieldLen = pos - lastFieldStart
-        pos += 1 // skip closing quote
+        if input(pos) == '"' then
+            lastFieldEscaped = false
+            lastFieldLen = pos - lastFieldStart
+            pos += 1 // skip closing quote
+        else
+            pos = lastFieldStart
+            lastFieldEscaped = true
+            lastFieldDecoded = readQuotedStringWithEscapes().getBytes(StandardCharsets.UTF_8)
+        end if
         skipWhitespace()
         expectByte(':')
     end fieldParse
 
     /** Compare last parsed field name bytes against pre-encoded name bytes. */
     override def matchField(nameBytes: Array[Byte]): Boolean =
-        if nameBytes.length != lastFieldLen then false
+        if lastFieldEscaped then java.util.Arrays.equals(lastFieldDecoded, nameBytes)
+        else if nameBytes.length != lastFieldLen then false
         else
             @tailrec def loop(i: Int): Boolean =
                 if i >= lastFieldLen then true
@@ -86,7 +105,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     end matchField
 
     override def lastFieldName(): String =
-        if lastFieldLen <= 0 then ""
+        if lastFieldEscaped then new String(lastFieldDecoded, StandardCharsets.UTF_8)
+        else if lastFieldLen <= 0 then ""
         else
             val buf                         = new Array[Byte](lastFieldLen)
             @tailrec def copy(i: Int): Unit =
@@ -124,52 +144,77 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         fieldDepth -= 1
     end clearFields
 
-    def hasNextField(): Boolean =
-        skipWhitespace()
-        if pos >= input.size then false
-        else
-            peek() match
-                case '}' => false
-                case ',' => advance(); skipWhitespace(); true
-                case _   => true // first field, no comma
-        end if
-    end hasNextField
+    def hasNextField(): Boolean = hasNext('}')
 
-    def hasNextElement(): Boolean =
+    def hasNextElement(): Boolean = hasNext(']')
+
+    /** Whether another member follows inside the current object or array, consuming the comma that separates it.
+      *
+      * Whether a comma is owed is read from the last significant byte before the cursor rather than from reader state:
+      * `{`, `[` or an already consumed `,` means no value has been read since, and any other byte ends a value. That
+      * keeps the call idempotent, so a caller may ask twice at the same position.
+      */
+    private def hasNext(close: Byte): Boolean =
         skipWhitespace()
         if pos >= input.size then false
         else
-            peek() match
-                case ']' => false
-                case ',' => advance(); skipWhitespace(); true
-                case _   => true // first element, no comma
+            val next = input(pos)
+            previousSignificantByte match
+                case '{' | '[' =>
+                    if next == ',' then error("Expected a value")
+                    next != close
+                case ',' =>
+                    if next == ',' || next == close then error("Expected a value")
+                    true
+                case _ =>
+                    if next == close then false
+                    else if next == ',' then
+                        advance()
+                        skipWhitespace()
+                        true
+                    else error(s"Expected ',' or '${close.toChar}'")
+            end match
         end if
-    end hasNextElement
+    end hasNext
+
+    private def previousSignificantByte: Byte =
+        @tailrec def loop(i: Int): Byte =
+            if i < 0 then 0
+            else
+                val b = input(i)
+                if b == ' ' || b == '\t' || b == '\n' || b == '\r' then loop(i - 1) else b
+        loop(pos - 1)
+    end previousSignificantByte
 
     def string(): String =
         skipWhitespace()
         if pos >= input.size || input(pos) != '"' then error("Expected '\"'")
         pos += 1
         val start = pos
-        // Fast scan: no escapes?
-        @tailrec def fastScan(): Unit =
-            if pos < input.size && input(pos) != '"' && input(pos) != '\\' then
-                pos += 1
-                fastScan()
-        fastScan()
+        skipPlainStringBytes()
         if pos < input.size && input(pos) == '"' then
             // No escapes: bulk convert from underlying array
             val s = new String(input.toArrayUnsafe, start, pos - start, StandardCharsets.UTF_8)
             pos += 1
             s
-        else if pos < input.size && input(pos) == '\\' then
-            // Has escapes: fall back to StringBuilder path
+        else
+            // An escape, a control character or the end of input: the escape-aware path decodes the first and
+            // reports the other two
             pos = start
             readQuotedStringWithEscapes()
-        else
-            error("Unterminated string")
         end if
     end string
+
+    /** Advances over string content that needs no decoding: anything but a quote, a backslash or a control character. */
+    private def skipPlainStringBytes(): Unit =
+        @tailrec def loop(): Unit =
+            if pos < input.size then
+                val b = input(pos)
+                if b != '"' && b != '\\' && (b & 0xff) >= 0x20 then
+                    pos += 1
+                    loop()
+        loop()
+    end skipPlainStringBytes
 
     def int(): Int =
         skipWhitespace()
@@ -177,6 +222,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val neg   = pos < input.size && input(pos) == '-'
         if neg then pos += 1
         if pos >= input.size || input(pos) < '0' || input(pos) > '9' then error("Expected number")
+        val digitsStart                                                          = pos
         @tailrec def parseDigits(result: Int, overflow: Boolean): (Int, Boolean) =
             if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
                 val digit       = input(pos) - '0'
@@ -187,6 +233,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else
                 (result, overflow)
         val (result, overflow) = parseDigits(0, false)
+        requireNoLeadingZero(digitsStart)
+        if pos - digitsStart > maxNumberDigits then tooManyDigits(start)
         // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
         if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
             pos = start
@@ -205,6 +253,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val neg   = pos < input.size && input(pos) == '-'
         if neg then pos += 1
         if pos >= input.size || input(pos) < '0' || input(pos) > '9' then error("Expected number")
+        val digitsStart                                                            = pos
         @tailrec def parseDigits(result: Long, overflow: Boolean): (Long, Boolean) =
             if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
                 val digit       = input(pos) - '0'
@@ -215,6 +264,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else
                 (result, overflow)
         val (result, overflow) = parseDigits(0L, false)
+        requireNoLeadingZero(digitsStart)
+        if pos - digitsStart > maxNumberDigits then tooManyDigits(start)
         // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
         if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
             pos = start
@@ -237,9 +288,10 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Float value: '$s'")
             end if
         else
-            val start    = pos
+            val start = pos
+            scanNumber()
+            val end      = pos
             val inputArr = input.toArrayUnsafe
-            val end      = FastFloat.scanNumberEnd(inputArr, start, input.size)
             val bits     = FastFloat.parseFloat(inputArr, start, end)
             if bits == FastFloat.FloatBailOut then
                 pos = start
@@ -262,9 +314,10 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Double value: '$s'")
             end if
         else
-            val start    = pos
+            val start = pos
+            scanNumber()
+            val end      = pos
             val inputArr = input.toArrayUnsafe
-            val end      = FastFloat.scanNumberEnd(inputArr, start, input.size)
             val bits     = FastFloat.parseDouble(inputArr, start, end)
             if bits == FastFloat.DoubleBailOut then
                 pos = start
@@ -325,26 +378,62 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         end if
     end isNil
 
+    /** Advances over one value, holding it to the same grammar a read would, without building it.
+      *
+      * A skipped value builds nothing, so its nesting is not bound by `maxDepth`: containers are walked in a loop over a bit
+      * stack of their kinds rather than by recursion, and an ignored field nested any depth is skipped in constant stack.
+      */
     def skip(): Unit =
         skipWhitespace()
         if pos >= input.size then error("Unexpected end of input")
         peek() match
-            case '"'       => discard(string())
-            case '{'       => skipObject()
-            case '['       => skipArray()
-            case 't' | 'f' => discard(boolean())
-            case 'n'       =>
-                if !(pos + 4 <= input.size &&
-                        input(pos) == 'n' &&
-                        input(pos + 1) == 'u' &&
-                        input(pos + 2) == 'l' &&
-                        input(pos + 3) == 'l')
-                then error("Expected 'null'")
-                end if
-                pos += 4
-            case _ => discard(readNumber())
-        end match
+            case '{' | '[' => skipContainer()
+            case _         => skipScalar()
     end skip
+
+    private def skipScalar(): Unit =
+        peek() match
+            case '"'       => skipString()
+            case 't' | 'f' => discard(boolean())
+            case 'n'       => if !isNil() then error("Expected 'null'")
+            case _         => scanNumber()
+    end skipScalar
+
+    private def skipContainer(): Unit =
+        def open(depth: Int): Unit =
+            val word = depth >>> 6
+            if word >= skipKinds.length then skipKinds = java.util.Arrays.copyOf(skipKinds, skipKinds.length * 2)
+            val bit = 1L << (depth & 63)
+            if input(pos) == '{' then skipKinds(word) |= bit else skipKinds(word) &= ~bit
+            pos += 1
+        end open
+        @tailrec def loop(depth: Int): Unit =
+            if depth > 0 then
+                val top      = depth - 1
+                val isObject = (skipKinds(top >>> 6) & (1L << (top & 63))) != 0
+                val close    = if isObject then '}' else ']'
+                if hasNext(close.toByte) then
+                    if isObject then
+                        skipString()
+                        skipWhitespace()
+                        expect(':')
+                        skipWhitespace()
+                    end if
+                    if pos >= input.size then error("Unexpected end of input")
+                    if input(pos) == '{' || input(pos) == '[' then
+                        open(depth)
+                        loop(depth + 1)
+                    else
+                        skipScalar()
+                        loop(depth)
+                    end if
+                else
+                    expect(close)
+                    loop(depth - 1)
+                end if
+        open(0)
+        loop(1)
+    end skipContainer
 
     def mapStart(): Int         = objectStart()
     def mapEnd(): Unit          = objectEnd()
@@ -360,7 +449,10 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     end bytes
 
     def bigInt(): BigInt =
-        val s = string()
+        skipWhitespace()
+        val start = pos + 1
+        val s     = string()
+        requireWithinNumberBounds(s, start)
         try BigInt(s)
         catch
             case _: NumberFormatException =>
@@ -369,7 +461,10 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     end bigInt
 
     def bigDecimal(): BigDecimal =
-        val s = string()
+        skipWhitespace()
+        val start = pos + 1
+        val s     = string()
+        requireWithinNumberBounds(s, start)
         try BigDecimal(s)
         catch
             case _: NumberFormatException =>
@@ -434,12 +529,13 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                             else
                                 sb.append(cp.toChar)
                             end if
-                        case c => sb.append(c.toChar); pos += 1
+                        case _ => error("Invalid escape")
                     end match
                 else
                     // Decode UTF-8 byte(s) to char(s)
                     val b = input(pos) & 0xff
-                    if b < 0x80 then
+                    if b < 0x20 then error("Unescaped control character in string")
+                    else if b < 0x80 then
                         sb.append(b.toChar)
                         pos += 1
                     else if (b & 0xe0) == 0xc0 then
@@ -480,15 +576,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     private def readNumber(): String =
         val start = pos
-        if pos < input.size && peek() == '-' then advance()
-        @tailrec def loop(): Unit =
-            if pos < input.size then
-                val b = peek()
-                if (b >= '0' && b <= '9') || b == '.' || b == 'e' || b == 'E' || b == '+' || b == '-' then
-                    advance()
-                    loop()
-        loop()
-        if pos == start then error("Expected number")
+        scanNumber()
         // Number bytes are always ASCII, copy only the needed range
         val len                              = pos - start
         val arr                              = new Array[Byte](len)
@@ -510,49 +598,100 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         end try
     end parseNumberStr
 
-    private def skipObject(): Unit =
-        expect('{')
-        @tailrec def loop(depth: Int): Unit =
-            if depth > 0 then
-                if pos >= input.size then error("Unterminated object")
-                peek() match
-                    case '{' => advance(); loop(depth + 1)
-                    case '}' => advance(); loop(depth - 1)
-                    case '"' => skipQuotedString(); loop(depth)
-                    case _   => advance(); loop(depth)
-                end match
-        loop(1)
-    end skipObject
+    /** Advances over one RFC 8259 number. Fails at the first byte that breaks the grammar, or at the number's first byte when it
+      * exceeds `maxNumberDigits` or `maxExponent`.
+      */
+    private def scanNumber(): Unit =
+        val start = pos
+        if pos < input.size && input(pos) == '-' then pos += 1
+        val intStart  = pos
+        val intDigits = scanDigits()
+        if intDigits == 0 then error("Expected digit")
+        requireNoLeadingZero(intStart)
+        val fracDigits =
+            if pos < input.size && input(pos) == '.' then
+                pos += 1
+                val n = scanDigits()
+                if n == 0 then error("Expected digit after '.'")
+                n
+            else 0
+        if intDigits + fracDigits > maxNumberDigits then tooManyDigits(start)
+        if pos < input.size && (input(pos) == 'e' || input(pos) == 'E') then
+            pos += 1
+            if pos < input.size && (input(pos) == '+' || input(pos) == '-') then pos += 1
+            val expStart = pos
+            if scanDigits() == 0 then error("Expected exponent digit")
+            if exponentMagnitude(expStart, pos) > maxExponent then exponentTooLarge(start)
+        end if
+    end scanNumber
 
-    private def skipArray(): Unit =
-        expect('[')
-        @tailrec def loop(depth: Int): Unit =
-            if depth > 0 then
-                if pos >= input.size then error("Unterminated array")
-                peek() match
-                    case '[' => advance(); loop(depth + 1)
-                    case ']' => advance(); loop(depth - 1)
-                    case '"' => skipQuotedString(); loop(depth)
-                    case _   => advance(); loop(depth)
-                end match
-        loop(1)
-    end skipArray
-
-    /** Skip a quoted string without building a result. Handles escape sequences. */
-    private def skipQuotedString(): Unit =
-        pos += 1 // skip opening quote
+    private def scanDigits(): Int =
+        val start                 = pos
         @tailrec def loop(): Unit =
-            if pos < input.size && input(pos) != '"' then
-                if input(pos) == '\\' then
-                    pos += 2 // skip escape char + escaped char
-                else
-                    pos += 1
-                end if
+            if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
+                pos += 1
                 loop()
         loop()
-        if pos >= input.size then error("Unterminated string")
-        pos += 1 // skip closing quote
-    end skipQuotedString
+        pos - start
+    end scanDigits
+
+    /** Fails at the second digit when the integer part starting at `digitsStart` and ending at the cursor is a zero followed by more digits. */
+    private def requireNoLeadingZero(digitsStart: Int): Unit =
+        if pos - digitsStart > 1 && input(digitsStart) == '0' then
+            pos = digitsStart + 1
+            error("Leading zero in number")
+
+    /** The value of the exponent digits in `[from, until)`, saturating at `Long.MaxValue`. */
+    private def exponentMagnitude(from: Int, until: Int): Long =
+        @tailrec def loop(i: Int, acc: Long): Long =
+            if i >= until then acc
+            else if acc > (Long.MaxValue - 9) / 10 then Long.MaxValue
+            else loop(i + 1, acc * 10 + (input(i) - '0'))
+        loop(from, 0L)
+    end exponentMagnitude
+
+    private def tooManyDigits(start: Int): Nothing =
+        pos = start
+        error(s"Number exceeds $maxNumberDigits significant digits")
+
+    private def exponentTooLarge(start: Int): Nothing =
+        pos = start
+        error(s"Number exceeds an exponent magnitude of $maxExponent")
+
+    /** Holds a quoted big number to the unquoted bounds, failing at `start`. Its grammar is left to the conversion. */
+    private def requireWithinNumberBounds(s: String, start: Int): Unit =
+        val e        = s.indexWhere(c => c == 'e' || c == 'E')
+        val digits   = (if e < 0 then s else s.substring(0, e)).count(c => c >= '0' && c <= '9')
+        val exponent = if e < 0 then "" else s.substring(e + 1).dropWhile(c => c == '+' || c == '-' || c == '0')
+        if digits > maxNumberDigits then tooManyDigits(start)
+        if exponent.length > 18 || exponent.toLongOption.exists(_ > maxExponent) then exponentTooLarge(start)
+    end requireWithinNumberBounds
+
+    /** The exact value of a scanned number. The exponent is handed over without its leading zeros, which `BigDecimal`'s parsers on
+      * some platforms count against their limit.
+      */
+    private def exactNumber(numStr: String): BigDecimal =
+        val e = numStr.indexWhere(c => c == 'e' || c == 'E')
+        if e < 0 then BigDecimal(numStr)
+        else
+            val sign   = if numStr.charAt(e + 1) == '-' then "-" else ""
+            val digits = numStr.substring(e + 1).dropWhile(c => c == '+' || c == '-' || c == '0')
+            BigDecimal(s"${numStr.substring(0, e)}e$sign${if digits.isEmpty then "0" else digits}")
+        end if
+    end exactNumber
+
+    /** Advances over one string without building it, holding it to the grammar `string()` applies. */
+    private def skipString(): Unit =
+        skipWhitespace()
+        expectByte('"')
+        val start = pos
+        skipPlainStringBytes()
+        if pos < input.size && input(pos) == '"' then pos += 1
+        else
+            pos = start
+            discard(readQuotedStringWithEscapes())
+        end if
+    end skipString
 
     // Fast path: check if next byte is not whitespace before entering the loop
     private def skipWhitespace(): Unit =
@@ -617,15 +756,19 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         this.pos = 0
         this.lastFieldStart = 0
         this.lastFieldLen = 0
+        this.lastFieldEscaped = false
         this.fieldDepth = 0
+        resetNumberLimits(Json.DefaultMaxNumberDigits, Json.DefaultMaxExponent)
     end reset
 
     override def captureValue(): Reader =
         skipWhitespace()
         val start = pos
         skip()
-        val end = pos
-        new JsonReader(input.slice(start, end), _frame)
+        val end      = pos
+        val captured = new JsonReader(input.slice(start, end), _frame)
+        captured.resetNumberLimits(maxNumberDigits, maxExponent)
+        captured
     end captureValue
 
     override def readStructure(): Structure.Value =
@@ -665,7 +808,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 Structure.Value.Null
             case _ =>
                 val numStr = readNumber()
-                val exact  = BigDecimal(numStr)
+                val exact  = exactNumber(numStr)
                 if numStr.indexOf('.') < 0 && numStr.indexOf('e') < 0 && numStr.indexOf('E') < 0 then
                     if exact.isValidLong then Structure.Value.Integer(exact.toLong)
                     else Structure.Value.BigNum(exact)
@@ -683,6 +826,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         this.pos = 0
         this.lastFieldStart = 0
         this.lastFieldLen = 0
+        this.lastFieldEscaped = false
+        this.lastFieldDecoded = Array.emptyByteArray
         this.fieldDepth = 0
         JsonReader.cache.set(this)
     end release

@@ -4,6 +4,12 @@ final class Json extends Codec:
     def newWriter(): Codec.Writer                               = kyo.internal.JsonWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.JsonReader(input)
+
+    private[kyo] def newReader(input: Span[Byte], maxNumberDigits: Int, maxExponent: Int)(using Frame): Codec.Reader =
+        val reader = kyo.internal.JsonReader(input)
+        reader.resetNumberLimits(maxNumberDigits, maxExponent)
+        reader
+    end newReader
 end Json
 
 /** Primary entry point for JSON serialization and schema generation.
@@ -23,6 +29,20 @@ object Json:
 
     /** Default maximum number of entries in any single collection or object in JSON decoding (DoS limit). */
     inline val DefaultMaxCollectionSize = Codec.DefaultMaxCollectionSize
+
+    /** Default maximum digits in a number's significand in JSON decoding (DoS limit). Converting a number costs time quadratic in its
+      * digits: measured at 1000 digits under 1 ms on JVM, JS, Native and Wasm, at 100000 digits 0.26 s (JVM) to 7.6 s (Native), and at
+      * 1000000 digits over 20 s on JVM. A number's scale, its fraction digits plus its exponent, must fit an `Int`, so a
+      * `maxNumberDigits` above `Int.MaxValue` less `maxExponent` fails the decode with a [[LimitExceededException]].
+      */
+    inline val DefaultMaxNumberDigits = 1000
+
+    /** Default, and largest accepted, maximum magnitude of a number's exponent in JSON decoding. `BigDecimal`'s scale is an `Int`, and
+      * the platforms disagree on the edge: JS, Native and Wasm reject an exponent past `Int.MaxValue`, and the JVM rejects
+      * `1e-2147483648`. A magnitude up to 999999999 keeps the scale inside `Int` on all four, measured. A larger `maxExponent` fails the
+      * decode with a [[LimitExceededException]].
+      */
+    inline val DefaultMaxExponent = 999999999
 
     given Json = Json()
 
@@ -76,15 +96,32 @@ object Json:
       *
       * @param input
       *   the JSON string to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays (default `DefaultMaxDepth`)
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays (default `DefaultMaxCollectionSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `DefaultMaxExponent` (default `DefaultMaxExponent`)
       * @return
       *   the decoded value, or a DecodeException if the input is malformed or does not match the schema
       */
     def decode[A](
         input: String,
         maxDepth: Int = DefaultMaxDepth,
-        maxCollectionSize: Int = DefaultMaxCollectionSize
+        maxCollectionSize: Int = DefaultMaxCollectionSize,
+        maxNumberDigits: Int = DefaultMaxNumberDigits,
+        maxExponent: Int = DefaultMaxExponent
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        json.decodeFully[A](Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)), maxDepth, maxCollectionSize)
+        decodeWithin[A](
+            json,
+            Span.from(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+            maxDepth,
+            maxCollectionSize,
+            maxNumberDigits,
+            maxExponent
+        )
     end decode
 
     /** Decodes raw UTF-8 JSON bytes into a value of type A.
@@ -95,16 +132,41 @@ object Json:
       *   maximum nesting depth for objects/arrays (default `DefaultMaxDepth`)
       * @param maxCollectionSize
       *   maximum number of entries in maps, sets, or arrays (default `DefaultMaxCollectionSize`)
+      * @param maxNumberDigits
+      *   maximum digits in a number's significand (default `DefaultMaxNumberDigits`)
+      * @param maxExponent
+      *   maximum magnitude of a number's exponent, at most `DefaultMaxExponent` (default `DefaultMaxExponent`)
       * @return
       *   the decoded value, or a DecodeException if the input is malformed or does not match the schema
       */
     def decodeBytes[A](
         input: Span[Byte],
         maxDepth: Int = DefaultMaxDepth,
-        maxCollectionSize: Int = DefaultMaxCollectionSize
+        maxCollectionSize: Int = DefaultMaxCollectionSize,
+        maxNumberDigits: Int = DefaultMaxNumberDigits,
+        maxExponent: Int = DefaultMaxExponent
     )(using json: Json, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
-        json.decodeFully[A](input, maxDepth, maxCollectionSize)
+        decodeWithin[A](json, input, maxDepth, maxCollectionSize, maxNumberDigits, maxExponent)
     end decodeBytes
+
+    /** Every JSON decode entry point routes through here, so the number limits are checked and handed to the reader in one place. */
+    private[kyo] def decodeWithin[A](
+        json: Json,
+        input: Span[Byte],
+        maxDepth: Int,
+        maxCollectionSize: Int,
+        maxNumberDigits: Int,
+        maxExponent: Int
+    )(using Schema[A], Frame): Result[DecodeException, A] =
+        val digitCeiling = Int.MaxValue - math.max(maxExponent, 0)
+        if maxExponent > DefaultMaxExponent then
+            Result.fail(LimitExceededException("Exponent limit", maxExponent, DefaultMaxExponent))
+        else if maxNumberDigits > digitCeiling then
+            Result.fail(LimitExceededException("Number digit limit", maxNumberDigits, digitCeiling))
+        else
+            Codec.readFully[A](json.newReader(input, maxNumberDigits, maxExponent), maxDepth, maxCollectionSize)
+        end if
+    end decodeWithin
 
     /** Generates a JSON Schema for type A, enriched with runtime Schema metadata.
       *

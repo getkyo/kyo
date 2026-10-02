@@ -9,8 +9,7 @@ import java.nio.file.Paths
   * permission, concurrency, bundle-link, forward-only render, and artifact-deploy shape, plus
   * repo-state leaves that the docsify `docs/` shell and the scaladoc-committing workflow are gone. The
   * workflow is a textual contract (its substrings are what the deploy pipeline depends on), so the
-  * leaves match substrings rather than re-parsing the YAML. The in-Chrome chrome-parity and
-  * SPA-navigation leaves (`WebsiteSpaSmokeTest`) run in the cross-platform gate, not here.
+  * leaves match substrings rather than re-parsing the YAML.
   */
 class DeployWorkflowTest extends WebsiteTest:
 
