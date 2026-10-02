@@ -901,7 +901,7 @@ final private[kyo] class HttpClientBackend private (
                 else HttpFilter.noop
             val filter = autoFilter.andThen(clientFilter)
             if filter.eq(HttpFilter.noop) then
-                WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.pathWithQuery, headers, config) { wsStream =>
+                WebSocketCodec.requestUpgradeWith(transportStream, url, headers, config) { wsStream =>
                     serveWebSocketWith(transportStream, wsStream, config)(f)
                 }
             else
@@ -911,13 +911,7 @@ final private[kyo] class HttpClientBackend private (
                     filter[Any, "body" ~ A, HttpException, S](
                         request,
                         (filteredReq: HttpRequest[Any]) =>
-                            WebSocketCodec.requestUpgradeWith(
-                                transportStream,
-                                filteredReq.url.host,
-                                filteredReq.url.pathWithQuery,
-                                filteredReq.headers,
-                                config
-                            ) { wsStream =>
+                            WebSocketCodec.requestUpgradeWith(transportStream, filteredReq.url, filteredReq.headers, config) { wsStream =>
                                 serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
                                     HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
                                 }

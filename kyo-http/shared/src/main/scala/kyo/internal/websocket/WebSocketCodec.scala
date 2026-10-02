@@ -132,22 +132,23 @@ private[kyo] object WebSocketCodec:
                     dst.write(Span.fromUnsafe(response.toString.getBytes(Utf8)))
                 }
 
-    /** Client: send upgrade request, validate 101 response, pass remaining stream after headers to f. */
+    /** Client: send the upgrade request for `url`, validate the 101 response, pass the remaining stream after headers to f. A well-formed
+      * answer with any other status is the server refusing the upgrade: `HttpWebSocketHandshakeException` naming `url` and that status.
+      */
     def requestUpgradeWith[A, S](
         conn: TransportStream,
-        host: String,
-        path: String,
+        url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        unsendableField(path, host, headers) match
+        unsendableField(url.pathWithQuery, url.host, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent      =>
                 unsendableSubprotocol(config, headers) match
                     case Present(ex) => Abort.fail(ex)
-                    case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
+                    case Absent      => writeUpgradeRequestWith(conn, url, headers, config)(f)
 
     /** Names the first element of an upgrade handshake that cannot go on the wire, or `Absent` when all of them can.
       *
@@ -178,13 +179,14 @@ private[kyo] object WebSocketCodec:
 
     private def writeUpgradeRequestWith[A, S](
         conn: TransportStream,
-        host: String,
-        path: String,
+        url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
+        val host = url.host
+        val path = url.pathWithQuery
         Sync.defer {
             val clientKey = Base64.getEncoder.encodeToString(randomBytes(16))
             val request   = new StringBuilder
@@ -208,7 +210,12 @@ private[kyo] object WebSocketCodec:
                 ByteStream.readUntilWith(conn.read, "\r\n\r\n".getBytes(Utf8), 4096) { (headerBytes, remaining) =>
                     val responseStr = new String(headerBytes.toArrayUnsafe, Utf8)
                     if !responseStr.startsWith("HTTP/1.1 101") then
-                        Abort.fail(HttpProtocolException(s"HttpWebSocket upgrade failed: expected 101, got: ${responseStr.take(40)}"))
+                        responseStatus(responseStr) match
+                            case Present(status) => Abort.fail(HttpWebSocketHandshakeException(url.full, status))
+                            case Absent          =>
+                                Abort.fail(
+                                    HttpProtocolException(s"HttpWebSocket upgrade failed: expected 101, got: ${responseStr.take(40)}")
+                                )
                     else
                         val expectedAccept = computeAcceptKey(clientKey)
                         if !responseStr.contains(expectedAccept) then
@@ -300,6 +307,21 @@ private[kyo] object WebSocketCodec:
     /** Extract the value of the `Sec-WebSocket-Protocol` response header from a raw HTTP/1.1 upgrade response, if present. Case-insensitive
       * header-name match per RFC 7230 §3.2.
       */
+    /** The status code of an HTTP/1.x status line (RFC 9112 section 4: version, SP, three digits, SP), or `Absent` when the answer does
+      * not start with one.
+      */
+    private[internal] def responseStatus(responseStr: String): Maybe[Int] =
+        val codeStart = "HTTP/1.1 ".length
+        val codeEnd   = codeStart + 3
+        if responseStr.length >= codeEnd &&
+            (responseStr.startsWith("HTTP/1.1 ") || responseStr.startsWith("HTTP/1.0 ")) &&
+            (codeStart until codeEnd).forall(i => responseStr.charAt(i) >= '0' && responseStr.charAt(i) <= '9') &&
+            (responseStr.length == codeEnd || responseStr.charAt(codeEnd) == ' ' || responseStr.charAt(codeEnd) == '\r')
+        then Present(responseStr.substring(codeStart, codeEnd).toInt)
+        else Absent
+        end if
+    end responseStatus
+
     private[internal] def parseResponseSubprotocol(responseStr: String): Option[String] =
         val needle = "sec-websocket-protocol:"
         responseStr.linesIterator.drop(1).collectFirst {
