@@ -2677,13 +2677,12 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
     }
 
-    // The wire form of a mapping field belongs to the bound given, not to the declared key type: the
-    // object-form and array-form givens of Dict, OrderedDict, and Map each declare a byte-identical
-    // structure, so an injected empty value chosen from the key type is a guess. These four leaves
-    // bind the array form for a String key, the binding no key-type guess can serve (getkyo/kyo#1748).
+    // The wire form of a mapping field belongs to the bound given, not to the declared key type, so an
+    // injected empty value chosen from the key type is a guess. These leaves bind the array form for a
+    // String key, the binding no key-type guess can serve (getkyo/kyo#1748).
 
     "empty String-key Dict bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
         val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
         val out                                    = schema.encodeString[Json](value)
@@ -2695,10 +2694,10 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     // A mapping's framing is part of what the bound given encodes, so a transform, which materializes
     // the value into a Structure.Value tree and replays it, has to replay the framing it was given. It
-    // cannot re-derive it: a map node carries none and the two givens declare the same structure.
+    // cannot re-derive it from the entries: a map node carries no framing.
 
     "a non-empty String-key Dict bound to the array-form given keeps the array wire form under a transform" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
         val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out                                    = schema.encodeString[Json](value)
@@ -2713,7 +2712,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     // Not an omit-policy defect: any transform replays the tree, so a rename reaches the same path.
     "a rename keeps a String-key Dict's array wire form" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema[MTStringDictRecord].rename(_.name, "who")
         val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out                                    = schema.encodeString[Json](value)
@@ -2736,7 +2735,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "a non-empty String-key Map bound to the array-form given keeps the array wire form under a transform" in {
-        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
         val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
         val value                                 = MTStringMapRecord("alice", Map("x" -> 1), 7)
         val out                                   = schema.encodeString[Json](value)
@@ -2749,7 +2748,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "empty String-key OrderedDict bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[OrderedDict[String, Int]] = Schema.orderedDictSchema[String, Int]
+        given arrayForm: Schema[OrderedDict[String, Int]] = Schema.orderedDictAsPairs[String, Int]
         val schema                                        = Schema.derived[MTOrderedDictRecord].omitEmptyCollections
         val value                                         = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
         val out                                           = schema.encodeString[Json](value)
@@ -2760,7 +2759,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "empty String-key Map bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
         val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
         val value                                 = MTStringMapRecord("alice", Map.empty[String, Int], 7)
         val out                                   = schema.encodeString[Json](value)
@@ -2770,7 +2769,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "per-field .omit(_.f).whenEmpty round-trips a String-key Dict bound to the array-form given" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema[MTStringDictRecord].omit(_.tags).whenEmpty
         val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
         val out                                    = schema.encodeString[Json](value)

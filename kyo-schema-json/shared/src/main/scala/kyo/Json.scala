@@ -751,19 +751,19 @@ object Json:
                         }
                         OneOf(variantList)
 
-                case Structure.Type.Mapping(_, _, keyType, valueType) =>
-                    // JSON Schema represents Map[String, V] as an object with `additionalProperties`.
-                    // For non-String keys (encoded as array-of-pairs), emit a plain empty Obj.
-                    keyType match
-                        case p: Structure.Type.Primitive
-                            if p.kind == Structure.PrimitiveKind.String || p.kind == Structure.PrimitiveKind.Char =>
+                case Structure.Type.Mapping(_, _, keyType, valueType, form) =>
+                    form match
+                        case Structure.MapForm.Object =>
                             Obj(
                                 properties = List.empty,
                                 required = List.empty,
                                 additionalProperties = Maybe(fromStructure(valueType, seen))
                             )
-                        case _ =>
-                            Obj(List.empty, List.empty)
+                        case Structure.MapForm.Pairs =>
+                            Arr(Obj(
+                                properties = List("key" -> fromStructure(keyType, seen), "value" -> fromStructure(valueType, seen)),
+                                required = List("key", "value")
+                            ))
 
                 case _: Structure.Type.Open =>
                     // The carrying Schema accepts arbitrary JSON; describe it as the JSON Schema

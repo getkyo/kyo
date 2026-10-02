@@ -1012,7 +1012,15 @@ Any case class or sealed trait composed of these types derives a `Schema` automa
 
 `OrderedDict[K, V]` serializes in the same shape as `Dict[K, V]` and additionally preserves insertion order across an encode/decode round-trip: encoding walks the map in insertion order, and decoding rebuilds it by inserting entries in wire order.
 
-`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. So does a map whose key type's schema is a string on the wire, such as an opaque type over `String` or a `transformVia` of `Schema[String]`: each key is written through its schema, and a key the schema rejects fails the decode with that key in the path. Decode also accepts such a map in the array form below. `Map[K, V]` and `Dict[K, V]` with any other key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. So does a map whose key type's schema is a string on the wire, such as an opaque type over `String` or a `transformVia` of `Schema[String]`: each key is written through its schema, and a key the schema rejects fails the decode with that key in the path. Decode also accepts such a map in the array form below. `Map[K, V]` and `Dict[K, V]` with any other key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. To write a string-keyed map as that array too, bind `Schema.mapAsPairs`, `Schema.dictAsPairs` or `Schema.orderedDictAsPairs`:
+
+```scala
+given Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
+
+val pairs = Json.encode(Map("a" -> 1)) // [{"key":"a","value":1}]
+```
+
+The form a schema chose is `Structure.Type.Mapping.form`, `Object` or `Pairs`, and the JSON Schema and Ion Schema generators describe the map in that form. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
 
 > **Note:** a map entry whose value is an empty collection can decode incorrectly on the Protobuf codec. proto3 has no representation for an empty `repeated` field, so the entry is written without its value and the decode reads whatever follows in its place, which either fails or yields a wrong value. Entries whose values are non-empty are unaffected, and the other codecs are unaffected. This is a shared codec defect in the `mapSchema`, `dictSchema`, and `orderedDictSchema` givens alike, not a property of any one map type. It is tracked in [getkyo/kyo#1747](https://github.com/getkyo/kyo/issues/1747) and will be fixed in a follow-up.
 

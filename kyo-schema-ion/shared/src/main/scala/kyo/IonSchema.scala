@@ -267,15 +267,14 @@ object IonSchema:
                             end if
                         }
                         TypeExpr.OneOf(options)
-                case Structure.Type.Mapping(_, _, keyType, valueType) =>
-                    keyType match
-                        case p: Structure.Type.Primitive
-                            if p.kind == Structure.PrimitiveKind.String || p.kind == Structure.PrimitiveKind.Char =>
+                case Structure.Type.Mapping(_, _, keyType, valueType, form) =>
+                    form match
+                        case Structure.MapForm.Object =>
                             TypeExpr.MapOf(
                                 fromStructure(valueType, constraints, path :+ "*", schema, config, seen),
                                 distinctFieldNames = false
                             )
-                        case _ =>
+                        case Structure.MapForm.Pairs =>
                             val key =
                                 Field("key", fromStructure(keyType, constraints, path :+ "key", schema, config, seen), required = true)
                             val value = Field(

@@ -636,14 +636,6 @@ private[kyo] object SchemaSerializer:
             case Schema.UnionRepresentation.Untagged         => readUntagged(schema, reader)
     end readForRepresentation
 
-    /** True for a map key whose schema is a string on the wire (an opaque type over `String`, a `transform` or `transformVia` of
-      * `Schema[String]`): such a map is written as an object, as a `String`-keyed one is.
-      */
-    private[kyo] def isStringKey(keySchema: Schema[?]): Boolean =
-        keySchema.structure match
-            case p: Structure.Type.Primitive => p.kind == Structure.PrimitiveKind.String
-            case _                           => false
-
     /** Writes a map with string-backed keys as an object, each key rendered through its own schema. */
     private[kyo] def writeStringKeyed[K, V](
         foreachEntry: ((K, V) => Unit) => Unit,
@@ -1423,10 +1415,10 @@ private[kyo] object SchemaSerializer:
       * every caller other than `writeWithTransforms` still relies on.
       *
       * `pairArrayFramed` answers, for a `MapEntries` node, whether the writer that materialized the
-      * tree wrote it in the pair-array framing. A map node carries no framing of its own and the
-      * declared structure carries none either (the object-form and array-of-pairs givens of `Map`,
-      * `Dict`, and `OrderedDict` declare a byte-identical `Mapping`), so this is the only thing that
-      * can tell the two apart, and the transform path's replay has to tell them apart: a mapping
+      * tree wrote it in the pair-array framing. A map node carries no framing of its own, and a
+      * replay has a `Mapping` shape only for a node it can locate in the declared structure, so this
+      * is what tells the two apart wherever the shape is missing, and the transform path's replay
+      * has to tell them apart: a mapping
       * field's framing belongs to the given bound at it, and rewriting it produces a document the
       * schema that wrote it cannot read back. A caller replaying a tree it did not materialize
       * (a wire-decoded or hand-built tree) has nothing to declare and passes nothing, which keeps
@@ -1447,7 +1439,7 @@ private[kyo] object SchemaSerializer:
             case Structure.Value.Record(fields) =>
                 val resolvedShape = shape.map(unwrapOptionalShape)
                 resolvedShape match
-                    case Maybe.Present(Structure.Type.Mapping(_, _, _, valueType)) =>
+                    case Maybe.Present(Structure.Type.Mapping(_, _, _, valueType, _)) =>
                         val valueShape = Maybe(unwrapOptionalShape(valueType))
                         writer.mapStart(fields.size)
                         fields.foreach { (name, v) =>
@@ -1494,13 +1486,14 @@ private[kyo] object SchemaSerializer:
                 //   * the framing the field's own writer used, when the caller can name it
                 //     (`pairArrayFramed`): a bound given's framing is part of what it encodes, so a
                 //     replay that changed it would produce a document that given cannot read back.
+                //   * the form the shape declares, when the caller passes a `Mapping` shape.
                 //   * all-String keys -> map framing with each key as a field (a JSON object).
                 //   * mixed/non-String keys -> the mapEntriesStart envelope (array of {key, value}
                 //     records on wire codecs); non-String keys are inexpressible as JSON field names.
                 // The last two match the typed map schemas' own spelling, so a tree with no framing
                 // declared still replays byte-identically with the raw write path.
                 val (keyShape, valueShape) = shape.map(unwrapOptionalShape) match
-                    case Maybe.Present(Structure.Type.Mapping(_, _, k, v)) =>
+                    case Maybe.Present(Structure.Type.Mapping(_, _, k, v, _)) =>
                         (Maybe(unwrapOptionalShape(k)), Maybe(unwrapOptionalShape(v)))
                     case _ =>
                         (Maybe.empty, Maybe.empty)
@@ -1508,7 +1501,10 @@ private[kyo] object SchemaSerializer:
                     case (Structure.Value.Str(_), _) => true
                     case _                           => false
                 }
-                if allStringKeys && !pairArrayFramed(value) then
+                val shapedPairs = shape.map(unwrapOptionalShape) match
+                    case Maybe.Present(m: Structure.Type.Mapping) => m.form == Structure.MapForm.Pairs
+                    case _                                        => false
+                if allStringKeys && !pairArrayFramed(value) && !shapedPairs then
                     writer.mapStart(entries.size)
                     entries.foreach { (k, v) =>
                         k match
@@ -1642,12 +1638,9 @@ private[kyo] object SchemaSerializer:
       * reads back under either mapping form.
       *
       * A mapping's wire form belongs to the given bound at the field, not to the field's declared
-      * type: for a `String` key the object-form given (`stringDictSchema`, `stringOrderedDictSchema`,
-      * `stringMapSchema`) is the more specific one and wins by default, while the array-of-pairs given
-      * (`dictSchema`, `orderedDictSchema`, `mapSchema`) can be bound explicitly for the same key type
-      * and declares a byte-identical `Structure.Type.Mapping`. The declared structure therefore cannot
-      * say which reader will consume the injected value, and a value guessed from the key type is
-      * unreadable under the explicit binding (getkyo/kyo#1748).
+      * type: for a `String` key the object form is the default, while `mapAsPairs`, `dictAsPairs` and
+      * `orderedDictAsPairs` bind the array of pairs for the same key type, so a value guessed from the
+      * key type is unreadable under that binding (getkyo/kyo#1748).
       *
       * It does not have to be guessed. `MapEntries` is what [[StructureValueWriter]] produces for an
       * empty mapping under BOTH forms (`mapEnd` and `mapEntriesEnd` both emit it), and

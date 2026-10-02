@@ -9,6 +9,7 @@ case class ISTGpsFix(lat: Double, lon: Double) derives CanEqual, Schema
 case class ISTReading(sensorId: String, value: Double) derives CanEqual, Schema
 case class ISTNestedReport(name: String, location: Option[ISTGpsFix], readings: List[ISTReading]) derives CanEqual, Schema
 case class ISTIntKeyedMap(counts: Map[Int, Int]) derives CanEqual, Schema
+case class ISTCharKeyedMap(counts: Map[Char, Int]) derives CanEqual, Schema
 enum ISTSignal derives CanEqual, Schema:
     case Go, Stop
 
@@ -240,6 +241,22 @@ class IonSchemaTest extends kyo.test.Test[Any]:
                   |""".stripMargin
 
             assert(Ion.ionSchemaString[ISTIntKeyedMap]() == expected)
+        }
+
+        "describes a Char-keyed map as the list of key and value structs it is written as" in {
+            val expected =
+                """$ion_schema_2_0
+                  |
+                  |type::{
+                  |  name: ISTCharKeyedMap,
+                  |  type: struct,
+                  |  fields: closed::{
+                  |    counts: { type: list, element: { type: struct, fields: closed::{ key: { type: string, occurs: required }, value: { type: int, occurs: required } } }, occurs: required },
+                  |  },
+                  |}
+                  |""".stripMargin
+
+            assert(Ion.ionSchemaString[ISTCharKeyedMap]() == expected)
         }
 
         // IonSchema is not a Codec (no newWriter/newReader), so this asserts the Mapping

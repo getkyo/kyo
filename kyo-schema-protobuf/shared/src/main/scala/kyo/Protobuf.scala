@@ -130,8 +130,8 @@ object Protobuf:
                 case Nil       => ()
                 case t :: rest =>
                     t match
-                        case Structure.Type.Mapping(_, _, key, value) =>
-                            if !isProto3MapKey(key) then
+                        case Structure.Type.Mapping(_, _, key, value, form) =>
+                            if form == Structure.MapForm.Pairs && !isProto3MapKey(key) then
                                 throw SchemaNotSerializableException(
                                     s"non-canonical proto3 map key: ${key.name}"
                                 )
@@ -274,12 +274,12 @@ object Protobuf:
                                 val (number, isPinned) = resolve(field)
                                 buf += FieldNumberInfo(path, name, number, isPinned, isReservedRange(number))
                                 field.fieldType match
-                                    case np: Structure.Type.Product             => children += Frame(path, np, nextAncestry)
-                                    case ns: Structure.Type.Sum                 => children += Frame(path, ns, nextAncestry)
-                                    case Structure.Type.Optional(_, _, inner)   => children += Frame(path, inner, nextAncestry)
-                                    case Structure.Type.Collection(_, _, elem)  => children += Frame(path, elem, nextAncestry)
-                                    case Structure.Type.Mapping(_, _, _, value) => children += Frame(s"$path.value", value, nextAncestry)
-                                    case _                                      => ()
+                                    case np: Structure.Type.Product                => children += Frame(path, np, nextAncestry)
+                                    case ns: Structure.Type.Sum                    => children += Frame(path, ns, nextAncestry)
+                                    case Structure.Type.Optional(_, _, inner)      => children += Frame(path, inner, nextAncestry)
+                                    case Structure.Type.Collection(_, _, elem)     => children += Frame(path, elem, nextAncestry)
+                                    case Structure.Type.Mapping(_, _, _, value, _) => children += Frame(s"$path.value", value, nextAncestry)
+                                    case _                                         => ()
                                 end match
                             }
                             loop(children.toList ::: rest)
@@ -425,7 +425,11 @@ object Protobuf:
                                 val (innerType, nextState) = protoTypeName(elem, state)
                                 (s"repeated $innerType $name = $fieldNumber;", nextState)
 
-                    case Structure.Type.Mapping(_, _, key, value) =>
+                    case Structure.Type.Mapping(_, _, _, value, Structure.MapForm.Object) =>
+                        val (valName, s1) = protoTypeName(value, state)
+                        (s"map<string, $valName> $name = $fieldNumber;", s1)
+
+                    case Structure.Type.Mapping(_, _, key, value, Structure.MapForm.Pairs) =>
                         if isProto3MapKey(key) then
                             val (keyName, s1) = protoTypeName(key, state)
                             val (valName, s2) = protoTypeName(value, s1)
@@ -473,7 +477,7 @@ object Protobuf:
                             s"proto3 does not support nested repeated fields (List[List[_]] or map value List[_]): use a wrapper message instead"
                         )
 
-                    case Structure.Type.Mapping(_, _, _, _) =>
+                    case Structure.Type.Mapping(_, _, _, _, _) =>
                         // Mapping-as-type-name occurs when used as an element inside repeated/map: not valid in proto3
                         throw new IllegalArgumentException(
                             s"proto3 does not support nested Mapping as a type name (map value Map[_, _]): use a wrapper message instead"

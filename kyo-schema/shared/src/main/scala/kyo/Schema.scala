@@ -3268,19 +3268,26 @@ object Schema:
       * schema is a string on the wire (an opaque type over `String`, a `transformVia` of
       * `Schema[String]`) is written as an object keyed by that string, as `stringMapSchema` writes,
       * and decode also accepts the array of `{key, value}` records such a map was written as before.
-      * `String` itself is not such a key here: binding `mapSchema[String, V]` explicitly is how a
-      * `String`-keyed map keeps the array form. Any other key is written as a two-field record (`key`, `value`) per entry: the Protobuf codec
+      * Any other key is written as a two-field record (`key`, `value`) per entry: the Protobuf codec
       * renders this as a standard proto3 `MapEntry` message, and self-describing codecs render an
-      * array of `{key, value}` objects (such a key cannot be an object field name).
+      * array of `{key, value}` objects (such a key cannot be an object field name). [[mapAsPairs]]
+      * writes that array for any key.
       */
-    given mapSchema[K, V](using
-        kSchema0: => Schema[K],
-        vSchema0: => Schema[V],
-        keyForm: internal.MapKeyForm[K]
-    ): Schema[Map[K, V]] =
-        lazy val kSchema                              = kSchema0
-        lazy val vSchema                              = vSchema0
-        lazy val stringKey                            = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+    given mapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Map[K, V]] =
+        mapIn(kSchema0, vSchema0, pairs = false)
+
+    /** Schema for Map[K, V] written as an array of `{key, value}` records for every key, a `String` or string-backed one included,
+      * where the givens write a string key as an object field. Decode reads the same array.
+      */
+    def mapAsPairs[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Map[K, V]] =
+        mapIn(kSchema0, vSchema0, pairs = true)
+
+    private def mapIn[K, V](kSchema0: => Schema[K], vSchema0: => Schema[V], pairs: Boolean): Schema[Map[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        lazy val form    =
+            if pairs then Structure.MapForm.Pairs else Structure.MapForm.of(kSchema.structure)
+        lazy val stringKey                            = form == Structure.MapForm.Object
         def readEntryPairs(reader: Reader): Map[K, V] =
             discard(reader.arrayStart())
             val builder = Map.newBuilder[K, V]
@@ -3347,10 +3354,11 @@ object Schema:
                 "Map",
                 Tag[Any],
                 kSchema.structure,
-                vSchema.structure
+                vSchema.structure,
+                form
             )
         )
-    end mapSchema
+    end mapIn
 
     // --- Tuple Schemas ---
 
@@ -3540,19 +3548,24 @@ object Schema:
       * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
       * general given covers every other key type, so `Dict[Int, V]` and friends derive. A key whose
       * schema is a string on the wire is written as an object, as for [[mapSchema]], and decode also
-      * accepts the array of `{key, value}` records; `String` itself keeps the array form when this
-      * given is bound explicitly. Any other key is written as a two-field record
+      * accepts the array of `{key, value}` records. Any other key is written as a two-field record
       * (`key`, `value`) per entry: the Protobuf codec renders this as a standard proto3 `MapEntry`
       * message, and self-describing codecs render an array of `{key, value}` objects.
+      * [[dictAsPairs]] writes that array for any key.
       */
-    given dictSchema[K, V](using
-        kSchema0: => Schema[K],
-        vSchema0: => Schema[V],
-        keyForm: internal.MapKeyForm[K]
-    ): Schema[Dict[K, V]] =
-        lazy val kSchema                               = kSchema0
-        lazy val vSchema                               = vSchema0
-        lazy val stringKey                             = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+    given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
+        dictIn(kSchema0, vSchema0, pairs = false)
+
+    /** Schema for Dict[K, V] written as an array of `{key, value}` records for every key, as [[mapAsPairs]] writes a `Map`. */
+    def dictAsPairs[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
+        dictIn(kSchema0, vSchema0, pairs = true)
+
+    private def dictIn[K, V](kSchema0: => Schema[K], vSchema0: => Schema[V], pairs: Boolean): Schema[Dict[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        lazy val form    =
+            if pairs then Structure.MapForm.Pairs else Structure.MapForm.of(kSchema.structure)
+        lazy val stringKey                             = form == Structure.MapForm.Object
         def readEntryPairs(reader: Reader): Dict[K, V] =
             discard(reader.arrayStart())
             @tailrec
@@ -3618,10 +3631,11 @@ object Schema:
                 "Dict",
                 Tag[Any],
                 kSchema.structure,
-                vSchema.structure
+                vSchema.structure,
+                form
             )
         )
-    end dictSchema
+    end dictIn
 
     /** Schema for OrderedDict[String, V] - serializes as a JSON object.
       *
@@ -3674,11 +3688,10 @@ object Schema:
       * `stringOrderedDictSchema` is the more specific given for `OrderedDict[String, V]` (object
       * encoding); this general given covers every other key type. A key whose schema is a string on
       * the wire is written as an object, as for [[mapSchema]], and decode also accepts the array of
-      * `{key, value}` records; `String` itself keeps the array form when this given is bound
-      * explicitly. Any other key is written as a two-field record (`key`, `value`), the
+      * `{key, value}` records. Any other key is written as a two-field record (`key`, `value`), the
       * same form `mapSchema` and `dictSchema` use: the Protobuf codec renders this as a standard
       * proto3 `MapEntry` message, and self-describing codecs render an array of `{key, value}`
-      * objects.
+      * objects. [[orderedDictAsPairs]] writes that array for any key.
       *
       * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
       * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
@@ -3687,14 +3700,21 @@ object Schema:
       * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
       * map fields, so a foreign Protobuf implementation may reorder entries.
       */
-    given orderedDictSchema[K, V](using
-        kSchema0: => Schema[K],
-        vSchema0: => Schema[V],
-        keyForm: internal.MapKeyForm[K]
-    ): Schema[OrderedDict[K, V]] =
-        lazy val kSchema                                      = kSchema0
-        lazy val vSchema                                      = vSchema0
-        lazy val stringKey                                    = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+    given orderedDictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
+        orderedDictIn(kSchema0, vSchema0, pairs = false)
+
+    /** Schema for OrderedDict[K, V] written as an array of `{key, value}` records for every key, in insertion order, as
+      * [[mapAsPairs]] writes a `Map`.
+      */
+    def orderedDictAsPairs[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
+        orderedDictIn(kSchema0, vSchema0, pairs = true)
+
+    private def orderedDictIn[K, V](kSchema0: => Schema[K], vSchema0: => Schema[V], pairs: Boolean): Schema[OrderedDict[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        lazy val form    =
+            if pairs then Structure.MapForm.Pairs else Structure.MapForm.of(kSchema.structure)
+        lazy val stringKey                                    = form == Structure.MapForm.Object
         def readEntryPairs(reader: Reader): OrderedDict[K, V] =
             discard(reader.arrayStart())
             @tailrec
@@ -3760,10 +3780,11 @@ object Schema:
                 "OrderedDict",
                 Tag[Any],
                 kSchema.structure,
-                vSchema.structure
+                vSchema.structure,
+                form
             )
         )
-    end orderedDictSchema
+    end orderedDictIn
 
     // --- Internal helpers ---
 

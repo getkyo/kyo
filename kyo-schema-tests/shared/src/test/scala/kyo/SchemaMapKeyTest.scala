@@ -65,6 +65,46 @@ class SchemaMapKeyTest extends kyo.test.Test[Any]:
         end match
     }
 
+    "a String map bound to mapAsPairs is written, read and described as the array of records" in {
+        given Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
+        given Schema[SMKNamed]         = Schema.derived
+        val wire                       = Json.encode(SMKNamed(Map("a" -> 1)))
+        assert(wire == """{"named":[{"key":"a","value":1}]}""", wire)
+        assert(Json.decode[SMKNamed](wire) == Result.succeed(SMKNamed(Map("a" -> 1))))
+        Json.jsonSchema[SMKNamed] match
+            case obj: Json.JsonSchema.Obj =>
+                assert(obj.properties.collectFirst { case ("named", s) => s } == Some(Json.JsonSchema.Arr(Json.JsonSchema.Obj(
+                    List("key" -> Json.JsonSchema.Str(), "value" -> Json.JsonSchema.Integer()),
+                    List("key", "value")
+                ))))
+            case other => fail(s"expected an object schema, got $other")
+        end match
+    }
+
+    "each map's structure carries the form its schema writes" in {
+        def form[A](using schema: Schema[A]): Maybe[Structure.MapForm] =
+            schema.structure match
+                case m: Structure.Type.Mapping => Present(m.form)
+                case _                         => Absent
+        assert(Chunk(
+            form[Map[String, Int]],
+            form[Map[SMKTypes.SMKUserId, Int]],
+            form[Map[Int, Int]],
+            form[Map[Char, Int]],
+            form(using Schema.mapAsPairs[String, Int]),
+            form(using Schema.dictAsPairs[SMKTypes.SMKUserId, Int]),
+            form(using Schema.orderedDictAsPairs[String, Int])
+        ) == Chunk(
+            Present(Structure.MapForm.Object),
+            Present(Structure.MapForm.Object),
+            Present(Structure.MapForm.Pairs),
+            Present(Structure.MapForm.Pairs),
+            Present(Structure.MapForm.Pairs),
+            Present(Structure.MapForm.Pairs),
+            Present(Structure.MapForm.Pairs)
+        ))
+    }
+
 end SchemaMapKeyTest
 
 object SMKTypes:
@@ -84,3 +124,4 @@ case class SMKDicts(dict: Dict[SMKTypes.SMKUserId, Int], ordered: OrderedDict[SM
 case class SMKChecked(byId: Map[SMKTypes.SMKCheckedId, Int]) derives CanEqual, Schema
 case class SMKCounts(counts: Map[Int, Int]) derives CanEqual, Schema
 case class SMKChars(chars: Map[Char, Int]) derives CanEqual, Schema
+case class SMKNamed(named: Map[String, Int]) derives CanEqual

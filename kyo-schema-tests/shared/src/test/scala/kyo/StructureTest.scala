@@ -235,7 +235,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "Map[K, V] produces Mapping" in {
             val ref = Structure.of[Map[String, Int]]
             ref match
-                case Structure.Type.Mapping(_, _, keyType, valueType) =>
+                case Structure.Type.Mapping(_, _, keyType, valueType, _) =>
                     keyType match
                         case Structure.Type.Primitive(_, tag) => assert(tag =:= Tag[String])
                         case other                            => fail(s"Expected Primitive key, got $other")
