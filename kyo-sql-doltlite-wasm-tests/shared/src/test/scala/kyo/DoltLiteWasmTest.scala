@@ -1,12 +1,14 @@
 package kyo
 
-import kyo.internal.doltlite.DoltLiteEngineProbe
-
 /** The engine driven from WebAssembly instead of a loaded native library.
   *
   * The leaves are the cases where the WebAssembly path rebuilds one of this build's own C wrappers: an embedded NUL in
   * text, a blob of arbitrary bytes, an int64 past a double's exact range, a declared type that is absent rather than
   * empty, a two-statement string. Each is wrong in a way a `SELECT 1` would not show.
+  *
+  * This suite lives in a module of its own because a generated binding builds its dispatch table once per process: run
+  * beside the native suites, it would take whichever transport loaded first. Nothing here may touch the binding before
+  * [[DoltLiteWasm.init]] has registered the module, which is why there is no probe for the native engine.
   */
 class DoltLiteWasmTest extends Test:
 
@@ -17,9 +19,6 @@ class DoltLiteWasmTest extends Test:
     private def withWasm[A](f: Dolt => A < (Async & Abort[SqlException] & Scope & DB))(using
         Frame
     ): A < (Async & Abort[SqlException | DoltLiteWasmUnavailableException]) =
-        // Both transports read what the staging step placed, so where the engine is not published for this
-        // platform neither the native nor the WebAssembly one has anything to reach.
-        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
         Sync.defer(java.lang.System.setProperty("kyo.ffi.js.transport", "wasm")).andThen {
             DoltLiteWasm.init.andThen {
                 Scope.run {
@@ -118,7 +117,6 @@ class DoltLiteWasmTest extends Test:
     "a statement waiting on another connection's lock waits on its fiber, so the holder can commit" in {
         // A call into WebAssembly runs on the only JS thread, so a writer asleep in SQLite's busy handler would keep the holder from ever
         // reaching its COMMIT. The rebuilt busy handler has to decline the wait for the writer to wait on its fiber instead.
-        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
         Sync.defer(java.lang.System.setProperty("kyo.ffi.js.transport", "wasm")).andThen {
             DoltLiteWasm.init.andThen {
                 Scope.run {
@@ -153,6 +151,26 @@ class DoltLiteWasmTest extends Test:
                     yield
                         assert(written.isSuccess, s"the writer: $written")
                         assert(rows == 2L, s"rows: $rows")
+                }
+            }
+        }
+    }
+
+    "the engine is the WebAssembly build, which has no file system to open a path on" in {
+        // The one outcome the two transports disagree on, so a suite that silently ran over koffi fails here: the native library opens
+        // the file, the WebAssembly module in Node has nowhere to put it.
+        Sync.defer(java.lang.System.setProperty("kyo.ffi.js.transport", "wasm")).andThen {
+            DoltLiteWasm.init.andThen {
+                Scope.run {
+                    kyo.internal.SqliteTempDatabase.create.map { path =>
+                        Abort.run[SqlException](SqlClient.init(s"doltlite://$path", SqlConfig(maxConnections = 1)).map { client =>
+                            DB.run(client)(client.query("SELECT 1")).unit
+                        }).map {
+                            case Result.Failure(e: SqliteOpenFailedException) =>
+                                assert(e.getMessage.contains("unable to open database file"))
+                            case other => fail(s"the file opened, so the engine was not the WebAssembly build: $other")
+                        }
+                    }
                 }
             }
         }

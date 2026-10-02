@@ -586,6 +586,7 @@ lazy val kyoJS = project
         `kyo-sql-dolt-api`.js,
         `kyo-sql-dolt`.js,
         `kyo-sql-doltlite`.js,
+        `kyo-sql-doltlite-wasm-tests`.js,
         `kyo-sql-tests`.js,
         `kyo-sql-conformance`.js,
         `kyo-system`.js,
@@ -734,6 +735,7 @@ lazy val kyoWasm = project
         `kyo-sql-dolt-api`.wasm,
         `kyo-sql-dolt`.wasm,
         `kyo-sql-doltlite`.wasm,
+        `kyo-sql-doltlite-wasm-tests`.wasm,
         `kyo-sql-tests`.wasm,
         `kyo-sql-conformance`.wasm,
         `kyo-system`.wasm,
@@ -1605,6 +1607,38 @@ lazy val `kyo-sql-doltlite` =
                 NodeJSEnv.Config()
                     .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
                     .withEnv(kyoDoltLiteFfiEnvMap(target.value, target.value))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
+        )
+
+// The DoltLite suites over the WebAssembly transport, in a Node process of their own. A generated binding builds its
+// dispatch table once per process, from whichever transport is reachable at its first load, so suites sharing a
+// process with the native transport run over koffi whatever they ask for. The runtime here is handed no path to the
+// native library: a load that happens before the WebAssembly provider is registered fails instead of quietly
+// taking koffi.
+lazy val `kyo-sql-doltlite-wasm-tests` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-sql-doltlite` % "test->test;compile->compile")
+        .in(file("kyo-sql-doltlite-wasm-tests"))
+        .withKyoTest
+        .settings(`kyo-settings`, publish / skip := true)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("NODE_PATH" -> (target.value / "node_modules").getAbsolutePath))
+            ),
+            Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(Map("NODE_PATH" -> (target.value / "node_modules").getAbsolutePath))
             ),
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
         )
