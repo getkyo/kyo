@@ -5,8 +5,13 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files => NioFiles}
 import java.nio.file.{Path => NioPath}
 import java.nio.file.Paths
+import org.scalafmt.dynamic.ScalafmtDynamicError
+import org.scalafmt.dynamic.coursier.CoursierDependencyDownloaderFactory
 import org.scalafmt.interfaces.Scalafmt
+import org.scalafmt.interfaces.ScalafmtSession
 import sbt.util.Logger
+import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 /** Rewrites the scala code blocks in Markdown files in place using scalafmt and the project's `.scalafmt.conf`.
   *
@@ -17,8 +22,23 @@ import sbt.util.Logger
   *
   * The formatter lives on the sbt (Scala 2.12) side rather than in the Scala 3 runner so that scalafmt's classpath never mixes with the
   * forked dotty driver's.
+  *
+  * The coursier downloader is injected rather than left to scalafmt-dynamic's `ServiceLoader` lookup, which resolves through the thread
+  * context class loader and caches its answer for the JVM. A scalafmt that cannot be loaded (version not downloadable, invalid config)
+  * fails the task: counting every block as skipped would pass while formatting nothing. So does a block whose formatting failed on a
+  * fatal error such as an `OutOfMemoryError`, which scalafmt-dynamic reports wrapped in the same `ScalafmtDynamicError` (itself an
+  * `Error`) it uses for a block that does not parse.
   */
 private[sbt] object Formatter {
+
+    /** The one scalafmt every doctest task in the sbt server formats with.
+      *
+      * Each instance loads scalafmt-core and scalameta into a class loader of its own, about 2900 classes, and releases none of them to
+      * Metaspace. An instance per task loaded them once per module and exhausted a 2G Metaspace partway through a whole-repository
+      * `doctest`. One instance loads them once per scalafmt version and caches each config by its path and modification time.
+      */
+    private lazy val scalafmt: Scalafmt =
+        Scalafmt.create(getClass.getClassLoader).withRepositoryPackageDownloader(CoursierDependencyDownloaderFactory)
 
     private val WrapperObject = "KyoDoctestFormatWrapper"
     private val Fence         = "```"
@@ -36,21 +56,23 @@ private[sbt] object Formatter {
             log.warn(s"doctest-format: scalafmt config not found at $scalafmtConf; skipping")
             Seq.empty
         } else {
-            val scalafmt = Scalafmt.create(getClass.getClassLoader)
-            try {
-                val confPath = scalafmtConf.toPath
-                sources.filter(_.exists()).map { file =>
-                    val result = formatFile(scalafmt, confPath, file)
-                    val detail = s"${result.reformatted} reformatted, ${result.unchanged} unchanged, ${result.skipped} skipped"
-                    log.info(s"doctest-format: $file ($detail)")
-                    result
+            val session =
+                try scalafmt.createSession(scalafmtConf.toPath)
+                catch {
+                    case e: ScalafmtDynamicError =>
+                        throw new sbt.MessageOnlyException(s"doctest-format: cannot load scalafmt for $scalafmtConf: ${e.getMessage}")
                 }
-            } finally scalafmt.clear()
+            sources.filter(_.exists()).map { file =>
+                val result = formatFile(session, file)
+                val detail = s"${result.reformatted} reformatted, ${result.unchanged} unchanged, ${result.skipped} skipped"
+                log.info(s"doctest-format: $file ($detail)")
+                result
+            }
         }
 
-    private def formatFile(scalafmt: Scalafmt, confPath: NioPath, file: File): FileResult = {
+    private def formatFile(session: ScalafmtSession, file: File): FileResult = {
         val original                                     = new String(NioFiles.readAllBytes(file.toPath), StandardCharsets.UTF_8)
-        val (rewritten, reformatted, unchanged, skipped) = rewrite(scalafmt, confPath, original)
+        val (rewritten, reformatted, unchanged, skipped) = rewrite(session, original)
         if (rewritten != original) NioFiles.write(file.toPath, rewritten.getBytes(StandardCharsets.UTF_8))
         FileResult(file, reformatted, unchanged, skipped)
     }
@@ -58,7 +80,7 @@ private[sbt] object Formatter {
     /** Pure transform: scans `content` for ` ```scala ` fences, reformats each block body, and returns the rewritten content plus counts.
       * Package-private so it can be exercised directly without touching disk.
       */
-    private[sbt] def rewrite(scalafmt: Scalafmt, confPath: NioPath, content: String): (String, Int, Int, Int) = {
+    private[sbt] def rewrite(session: ScalafmtSession, content: String): (String, Int, Int, Int) = {
         val lines       = content.split("\n", -1).toVector
         val out         = Vector.newBuilder[String]
         val fmtFile     = Paths.get("DoctestBlock.scala")
@@ -79,7 +101,7 @@ private[sbt] object Formatter {
                     val replacement: Vector[String] =
                         if (j >= lines.length || hasNoFormat(info)) { skipped += 1; bodyLines }
                         else
-                            formatBlock(scalafmt, confPath, fmtFile, body) match {
+                            formatBlock(session, fmtFile, body) match {
                                 case Some(formatted) if formatted != body => reformatted += 1; formatted.split("\n", -1).toVector
                                 case Some(_)                              => unchanged += 1; bodyLines
                                 case None                                 => skipped += 1; bodyLines
@@ -107,7 +129,12 @@ private[sbt] object Formatter {
 
     private def hasNoFormat(info: String): Boolean = info.split("\\s+").contains("noformat")
 
-    private def formatBlock(scalafmt: Scalafmt, confPath: NioPath, fmtFile: NioPath, body: String): Option[String] = {
+    @tailrec private def fatalCause(e: Throwable): Boolean =
+        if (e == null) false
+        else if (!NonFatal(e)) true
+        else fatalCause(e.getCause)
+
+    private def formatBlock(session: ScalafmtSession, fmtFile: NioPath, body: String): Option[String] = {
         if (body.trim.isEmpty) return Some(body)
         // Indent only STRUCTURAL lines (those outside a multi-line `"""` string) by one level so scalafmt
         // sees a well-formed object body. Multi-line string CONTENT is left at its original column, so the
@@ -115,10 +142,12 @@ private[sbt] object Formatter {
         // unwrap strips back off. Indenting every line (including string interiors) would change a string's
         // value; indenting none confuses scalafmt's Scala-3 significant-indentation parse.
         val wrapped   = OpenBrace + "\n" + indentStructural(body, "  ") + "\n}\n"
-        val formatted =
-            try scalafmt.format(confPath, fmtFile, wrapped)
-            catch { case _: Throwable => return None }
-        unwrap(formatted)
+        val result = session.formatOrError(fmtFile, wrapped)
+        result.exception match {
+            case null                     => unwrap(result.value)
+            case e if fatalCause(e) => throw e
+            case _                        => None
+        }
     }
 
     // Strips the synthetic wrapper object and dedents the body. Handles both `object W { ... }` and the

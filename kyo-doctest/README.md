@@ -37,7 +37,7 @@ sbt doctestFresh   # Same validation, but use a throwaway cache directory.
 sbt doctestClean   # Empty the cache directory. Next run is fully cold.
 ```
 
-`doctest` is the everyday command. Before validating, it reformats every scala block in place with scalafmt and the repository's `.scalafmt.conf`, so doc examples stay in the codebase's style with no separate command. Formatting is a no-op when there is no `.scalafmt.conf`; a block that fails to parse (an intentionally broken `expect=fails-compile` example, pseudo-code) or carries a bare `noformat` token on its fence info string (for example ` ```scala noformat `) is left untouched. The content-hash cache means that running `doctest` again after editing one paragraph re-validates only the blocks whose content changed.
+`doctest` is the everyday command. Before validating, it reformats every scala block in place with scalafmt and the repository's `.scalafmt.conf`, so doc examples stay in the codebase's style with no separate command. Formatting is a no-op when there is no `.scalafmt.conf`; a block that fails to parse (an intentionally broken `expect=fails-compile` example, pseudo-code) or carries a bare `noformat` token on its fence info string (for example ` ```scala noformat `) is left untouched. A `.scalafmt.conf` whose scalafmt cannot be loaded (a version that does not download, an invalid setting) fails the task before any block is validated. The content-hash cache means that running `doctest` again after editing one paragraph re-validates only the blocks whose content changed.
 
 `doctestFresh` runs in a throwaway cache directory for CI configurations that want guaranteed cold runs. Same validation, same exit code, no cache write. If your CI cache layer already saves the project's `target/` directory, `doctest` is faster and equally clean.
 
@@ -401,7 +401,7 @@ A typical reporter pattern: group `report.failures` by `f.file` for per-file sum
 
 ## How it works
 
-Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens.
+Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens. Its output, a failing block's compiler errors included, goes to the doctest task's log, so an `sbt --client` session shows it as a batch run does.
 
 Inside the fork, a single warm Dotty `Driver` is built once and reused across every block. Dotty's `ContextBase` pins a compiler context to the thread that created it, so all compiles are dispatched to one dedicated compiler thread regardless of which fiber invoked them. The cost of parsing scalac options and initialising the compiler is paid once, not once per block.
 

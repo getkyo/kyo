@@ -32,3 +32,8 @@ Compile / unmanagedSourceDirectories +=
 // publishes the plugin."
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-doctest" / "plugin" / "src" / "main" / "scala"
+
+// sbt-scalafmt brings only scalafmt-dynamic-core, which has no downloader for the scalafmt
+// version .scalafmt.conf names; without this the plugin's Formatter cannot load scalafmt.
+// Keep the version equal to the kyo-doctest-plugin project's.
+libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5"

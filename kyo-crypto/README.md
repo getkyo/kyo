@@ -177,7 +177,7 @@ import kyo.crypto.*
 val edKey: Ed25519.VerificationKey =
     valueOf(Hex.decode(ed25519KeyHex).flatMap(Ed25519.VerificationKey.fromBytes))
 
-val edSignature: Span[Byte] = valueOf(Hex.decode(ed25519SignatureHex))
+val edSignature: Span[Byte]  = valueOf(Hex.decode(ed25519SignatureHex))
 val emptyMessage: Span[Byte] = Span.empty[Byte]
 
 assert(Ed25519.verify(edKey, emptyMessage, edSignature))
@@ -297,6 +297,7 @@ def text(codePoints: Int*): String =
     val out = new java.lang.StringBuilder
     codePoints.foreach(c => out.appendCodePoint(c))
     out.toString
+end text
 
 // fullwidth p, a, s, s, a no-break space, fullwidth 1
 assert(Saslprep.prepare(text(0xff50, 0xff41, 0xff53, 0xff53, 0x00a0, 0xff11)) == Result.succeed("pass 1"))
@@ -336,7 +337,7 @@ A service that stores what it received wants an identifier it can recompute from
 import kyo.*
 import kyo.crypto.*
 
-val dns: UUID = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
+val dns: UUID  = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
 val site: UUID = UUID.v5(dns, Span.from("www.example.com".getBytes("UTF-8")))
 assert(site.show == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
 assert(site.version == 5)
@@ -383,6 +384,7 @@ def accept(delivery: Delivery, token: LoginToken): Result[String, Accepted] =
             else Result.fail("login token is not signed by the platform key")
         }
     end if
+end accept
 
 assert(accept(delivery, token).isSuccess)
 assert(accept(delivery.copy(signatureHeader = "00"), token).failure == Present("signature header does not authenticate the body"))
