@@ -172,6 +172,23 @@ class KyoFfiPluginTest extends AnyFunSuite with Matchers {
     // filesystem. A release shipped `-L/home/runner/work/kyo/kyo/.../boringssl/staged/linux-x86_64/lib` inside
     // its jar, naming a tree no consumer has and archives the artifact does not carry; the only flags that can
     // travel are the ones that name no file.
+    test("nativeCompileOptions: carries each library's include dirs and preprocessor defines") {
+        val shim = FfiLibrary(
+            id = "shim",
+            cSources = Seq(new File("/src/shim.c")),
+            includeDirs = Seq(new File("/src"), new File("/staged")),
+            cFlags = Seq("-DKYO_SQLITE_HEADER=\"doltlite.h\"", "-O2", "-UNDEBUG")
+        )
+        val other =
+            FfiLibrary(id = "other", cSources = Seq(new File("/src/other.c")), includeDirs = Seq(new File("/src")), cFlags = Seq("/MD"))
+        KyoFfiPlugin.nativeCompileOptions(Seq(shim, other)) shouldBe Seq(
+            s"-I${new File("/src").getAbsolutePath}",
+            s"-I${new File("/staged").getAbsolutePath}",
+            "-DKYO_SQLITE_HEADER=\"doltlite.h\"",
+            "-UNDEBUG"
+        )
+    }
+
     test("partitionPortableFlags: keeps flags that name no file") {
         val (portable, dropped) =
             KyoFfiPlugin.partitionPortableFlags(Seq("-luring", "-lc++", "-Wl,--whole-archive", "-Wl,--no-whole-archive"))

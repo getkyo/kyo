@@ -4220,11 +4220,18 @@ lazy val `native-settings-base` = Seq(
         val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
         // Scala Native 0.5.12 omits GNU-stack notes in its safepoint assembly (upstream #4956).
         // Mark Linux binaries' stacks non-executable until a release carries those notes.
-        val triple       = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
-        val isLinux      = triple.split("-").contains("linux")
-        val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
-        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
-        val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
+        val triple    = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
+        val isLinux   = triple.split("-").contains("linux")
+        val linkExtra = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
+        // The compile flags come from the FULL classpath, which carries this project's own manifest too: its own bundled C needs
+        // its own defines, and nothing else hands them to the compile. The link flags stay dependency-only, since this project's
+        // own libraries are compiled in rather than linked.
+        val compileExtra = readFfiNativeManifest(
+            (Compile / fullClasspath).value,
+            KyoFfiPlugin.ffiNativeCompileFlagsDir,
+            KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir
+        )
+        val withLink = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
         if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
     }
 )

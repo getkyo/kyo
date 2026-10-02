@@ -1004,7 +1004,7 @@ object KyoFfiPlugin extends AutoPlugin {
             val platform = ffiTargetPlatform.value
             val libs     = ffiLibrariesResolved.value
             if (platform != "Native") Nil
-            else libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}")
+            else nativeCompileOptions(libs)
         },
 
         // The flags this project's DEPENDENCIES declare, read off their manifests. Without these a consumer
@@ -1445,6 +1445,16 @@ object KyoFfiPlugin extends AutoPlugin {
       * The dropped flags are not lost to the build that produced them; they are written to the in-build manifests, which
       * `ffiPackageBinFlagsFilter` keeps out of the jar.
       */
+    /** The Scala Native compileOptions `libs` need: their include dirs, then the preprocessor defines among their `cFlags`.
+      *
+      * The defines are forwarded and nothing else is. A define changes what the C means, a header it includes or a feature it compiles in,
+      * so a Native binary built without one is a different program from the shared library the other transports load. Every other flag
+      * tunes one compiler (MSVC's `/MD`, an optimisation level) and is not this compile's to apply.
+      */
+    private[sbt] def nativeCompileOptions(libs: Seq[FfiLibrary]): Seq[String] =
+        libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}") ++
+            libs.flatMap(_.cFlags).filter(f => f.startsWith("-D") || f.startsWith("-U")).distinct
+
     private[sbt] def partitionPortableFlags(flags: Seq[String], vendoredLinkLibs: Set[String] = Set.empty): (Seq[String], Seq[String]) =
         flags.partition { flag =>
             val namesVendoredLib = flag.startsWith("-l") && vendoredLinkLibs.contains(flag.drop(2))
