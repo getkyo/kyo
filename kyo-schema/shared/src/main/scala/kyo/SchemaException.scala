@@ -11,8 +11,19 @@ sealed abstract class SchemaException(message: String, cause: String | Throwable
 
 // --- Operation markers ---
 
-/** Marker for exceptions raised during decoding (deserialization). */
-sealed trait DecodeException extends SchemaException
+/** Marker for exceptions raised during decoding (deserialization).
+  *
+  * The `path` of a decode failure is the chain of record fields (by wire key), sequence indices and map keys from the decoded root to
+  * the value that failed. A sum adds no segment: a variant's fields continue the path of the sum's own position. A failure that is not
+  * about one value (truncated or trailing input, a limit, a failed record of a stream) carries no path.
+  */
+sealed trait DecodeException extends SchemaException:
+    /** This failure with its path rewritten by `f`; a failure that carries no path is returned as is. */
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): DecodeException
+
+    /** This failure one level further from the root: `segment` is the field, index or key it was read under. */
+    final private[kyo] def prependPath(segment: String): DecodeException = mapPath(segment +: _)
+end DecodeException
 
 /** Marker for exceptions raised when a validation constraint is violated. */
 sealed trait ValidationException extends SchemaException
@@ -28,14 +39,18 @@ sealed trait NavigationException extends SchemaException
 /** Thrown when a required field is absent in the input during decoding. */
 case class MissingFieldException(path: Seq[String], fieldName: String)(using Frame)
     extends SchemaException(s"Missing required field '$fieldName'" + SchemaException.pathSuffix(path) + ". Add this field to the input.")
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): MissingFieldException = copy(path = f(path))(using frame)
+end MissingFieldException
 
 /** Thrown when the actual runtime type does not match the expected type during decoding or navigation. */
 case class TypeMismatchException(path: Seq[String], expected: String, actual: String)(using Frame)
     extends SchemaException(s"Type mismatch" + SchemaException.pathSuffix(
         path
     ) + s": expected $expected but got $actual. Check the input value matches the expected type.")
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TypeMismatchException = copy(path = f(path))(using frame)
+end TypeMismatchException
 
 /** Thrown when a variant name is not defined in the sealed type.
   *
@@ -49,7 +64,9 @@ case class UnknownVariantException(path: Seq[String], variantName: String)(using
             else ". Check that the discriminator value matches one of the defined case class or object variants."
         )
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownVariantException = copy(path = f(path))(using frame)
+end UnknownVariantException
 
 /** Thrown when an input field is not recognized during decoding.
   *
@@ -66,7 +83,9 @@ case class UnknownFieldException(path: Seq[String], fieldName: String)(using Fra
         s"Unknown field '$fieldName'" + SchemaException.pathSuffix(path) +
             ". Remove this field from the input, or decode with a schema that does not configure denyUnknownFields."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownFieldException = copy(path = f(path))(using frame)
+end UnknownFieldException
 
 /** Thrown when an untagged sum decode matches no variant.
   *
@@ -78,7 +97,9 @@ case class NoVariantMatchException(path: Seq[String], variants: Chunk[String])(u
         s"No variant matched the untagged input" + SchemaException.pathSuffix(path) +
             s". Attempted ${variants.size} variants: ${variants.mkString(", ")}. Ensure the input matches one of the declared variants."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): NoVariantMatchException = copy(path = f(path))(using frame)
+end NoVariantMatchException
 
 /** Thrown when an untagged union decode matches more than one member under the `Strict` ambiguity
   * policy. Carries the matched member wire names. Surfaces as a `Result.Failure` on decode.
@@ -88,7 +109,9 @@ case class AmbiguousVariantMatchException(path: Seq[String], matched: Chunk[Stri
         s"Multiple union members matched the untagged input" + SchemaException.pathSuffix(path) +
             s". Matched ${matched.size} members: ${matched.mkString(", ")}. Configure unionAmbiguity(FirstMatch) to resolve by declared order, or tag the union with a representation."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): AmbiguousVariantMatchException = copy(path = f(path))(using frame)
+end AmbiguousVariantMatchException
 
 /** Thrown when an adjacently-tagged sum decode input is missing the configured tag key.
   *
@@ -99,7 +122,9 @@ case class MissingTagKeyException(path: Seq[String], tagKey: String)(using Frame
         s"Missing adjacent tag key '$tagKey'" + SchemaException.pathSuffix(path) +
             ". Add the tag key to the input or check the adjacent representation configuration."
     )
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): MissingTagKeyException = copy(path = f(path))(using frame)
+end MissingTagKeyException
 
 /** Thrown when raw input cannot be parsed into the target type.
   *
@@ -126,12 +151,16 @@ case class ParseException(
             s" as $targetType" +
             (if position >= 0 then s" at position $position" else "") +
             SchemaException.pathSuffix(path)
-    ) with DecodeException
+    ) with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): ParseException = copy(path = f(path))(using frame)
+end ParseException
 
 /** Thrown when the input byte stream ends before a complete value can be decoded. */
 case class TruncatedInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Truncated input: $detail")
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TruncatedInputException = this
+end TruncatedInputException
 
 /** Thrown when input remains after a complete value has been decoded.
   *
@@ -143,7 +172,9 @@ case class TruncatedInputException(format: Codec, detail: String)(using Frame)
   */
 case class TrailingInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Unexpected trailing content: $detail")
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TrailingInputException = this
+end TrailingInputException
 
 /** Thrown when one record in a multi-record stream fails to decode.
   *
@@ -177,17 +208,23 @@ case class RecordDecodeException(
     cause: DecodeException
 )(using Frame)
     extends SchemaException(s"Failed to decode record $recordIndex at byte $byteOffset", cause)
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RecordDecodeException = this
+end RecordDecodeException
 
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
     extends SchemaException(s"$limit $actual exceeds maximum $maximum")
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): LimitExceededException = this
+end LimitExceededException
 
 /** Thrown when a numeric value is outside the valid range of the target type (e.g., Int overflow). */
 case class RangeException(value: Long, targetType: String, min: Long, max: Long)(using Frame)
     extends SchemaException(s"Value $value out of range for $targetType ($min to $max)")
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RangeException = this
+end RangeException
 
 /** Thrown when a smart constructor refuses the decoded fields.
   *
@@ -207,7 +244,9 @@ case class ConstructorRejectedException(path: Seq[String], typeName: String, rej
             "Correct the input, or decode with a schema whose constructor accepts it.",
         rejection
     )
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): ConstructorRejectedException = copy(path = f(path))(using frame)
+end ConstructorRejectedException
 
 // --- Validation ---
 
@@ -264,6 +303,16 @@ case class SchemaNotSerializableException(detail: String)(using Frame)
 case class RepresentationUnsupportedException(codec: String, representation: String)(using Frame)
     extends SchemaException(
         s"Codec '$codec' cannot express the '$representation' sum representation. Use a self-describing codec (such as: Json, Yaml, Ion, MsgPack) or a different representation."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when a schema transform is used to encode through a codec whose reader cannot read the result back. `flatten` regroups the
+  * flat keys on decode by reading each value without its schema, which needs a self-describing codec, so a codec such as Protobuf
+  * refuses it. Raised before any bytes are written.
+  */
+case class TransformUnsupportedException(codec: String, transform: String)(using Frame)
+    extends SchemaException(
+        s"Codec '$codec' cannot carry the '$transform' schema transform. Use a self-describing codec (such as: Json, Yaml, Ion, MsgPack, Bson) or a schema without it."
     )
     with TransformException derives CanEqual
 

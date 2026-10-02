@@ -49,8 +49,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
                 val iter        = singleField.iterator
                 stack = ObjectFrame(iter, Maybe.empty) :: stack
                 1
-            case other =>
-                throw TypeMismatchException(Seq.empty, "Record or Variant", other.toString)
+            case _ => mismatch("object")
     end objectStart
 
     def objectEnd(): Unit =
@@ -74,8 +73,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
                 }
                 stack = ArrayFrame(asRecords) :: stack
                 entries.size
-            case other =>
-                throw TypeMismatchException(Seq.empty, "Sequence", other.toString)
+            case _ => mismatch("array")
     end arrayStart
 
     def arrayEnd(): Unit =
@@ -136,54 +134,57 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         // tool argument and let the server treat it as a real path; that's the correctness gap this rejects.
         currentValue match
             case Structure.Value.Str(s) => s
-            case other                  => throw TypeMismatchException(Seq.empty, "String", other.toString)
+            case _                      => mismatch("string")
 
-    def int(): Int =
-        currentValue match
-            case Structure.Value.Integer(l) => l.toInt
-            case Structure.Value.Decimal(d) => d.toInt
-            case Structure.Value.BigNum(bd) => bd.toInt
-            case other                      => throw TypeMismatchException(Seq.empty, "Int", other.toString)
+    def int(): Int = integral("Int", Int.MinValue, Int.MaxValue).toInt
 
-    def long(): Long =
-        currentValue match
-            case Structure.Value.Integer(l) => l
-            case Structure.Value.Decimal(d) => d.toLong
-            case Structure.Value.BigNum(bd) => bd.toLong
-            case other                      => throw TypeMismatchException(Seq.empty, "Long", other.toString)
+    def long(): Long = integral("Long", Long.MinValue, Long.MaxValue)
 
     def float(): Float =
         currentValue match
             case Structure.Value.Decimal(d) => d.toFloat
             case Structure.Value.Integer(l) => l.toFloat
             case Structure.Value.BigNum(bd) => bd.toFloat
-            case other                      => throw TypeMismatchException(Seq.empty, "Float", other.toString)
+            case _                          => mismatch("number")
 
     def double(): Double =
         currentValue match
             case Structure.Value.Decimal(d) => d
             case Structure.Value.Integer(l) => l.toDouble
             case Structure.Value.BigNum(bd) => bd.toDouble
-            case other                      => throw TypeMismatchException(Seq.empty, "Double", other.toString)
+            case _                          => mismatch("number")
 
     def boolean(): Boolean =
         currentValue match
             case Structure.Value.Bool(b) => b
-            case other                   => throw TypeMismatchException(Seq.empty, "Boolean", other.toString)
+            case _                       => mismatch("boolean")
 
-    def short(): Short =
-        currentValue match
-            case Structure.Value.Integer(l) => l.toShort
-            case Structure.Value.Decimal(d) => d.toShort
-            case Structure.Value.BigNum(bd) => bd.toShort
-            case other                      => throw TypeMismatchException(Seq.empty, "Short", other.toString)
+    def short(): Short = integral("Short", Short.MinValue, Short.MaxValue).toShort
 
-    def byte(): Byte =
+    def byte(): Byte = integral("Byte", Byte.MinValue, Byte.MaxValue).toByte
+
+    /** The number at the cursor as a whole number within `min` to `max`. A tree holds a number as its source wrote it, so a fraction
+      * or a value past the bounds is refused here rather than truncated or wrapped into another value.
+      */
+    private def integral(target: String, min: Long, max: Long): Long =
+        def bounded(value: Long): Long =
+            if value < min || value > max then throw RangeException(value, target, min, max) else value
+        def outside: Nothing  = throw TypeMismatchException(Seq.empty, target, "a number outside its range")
+        def fraction: Nothing = throw TypeMismatchException(Seq.empty, target, "a number with a fraction")
         currentValue match
-            case Structure.Value.Integer(l) => l.toByte
-            case Structure.Value.Decimal(d) => d.toByte
-            case Structure.Value.BigNum(bd) => bd.toByte
-            case other                      => throw TypeMismatchException(Seq.empty, "Byte", other.toString)
+            case Structure.Value.Integer(l) => bounded(l)
+            case Structure.Value.Decimal(d) =>
+                if d.isNaN || d.isInfinite || d != Math.rint(d) then fraction
+                else
+                    val whole = BigDecimal(d)
+                    if whole.isValidLong then bounded(whole.toLong) else outside
+            case Structure.Value.BigNum(bd) =>
+                if !bd.isWhole then fraction
+                else if bd.isValidLong then bounded(bd.toLong)
+                else outside
+            case _ => mismatch("number")
+        end match
+    end integral
 
     def char(): Char =
         // Strict: a Char field requires a single-character String. Accepting multi-character strings and silently
@@ -191,7 +192,9 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         // to reject non-Str inputs; the symmetric strict-on-text rule applies here.
         currentValue match
             case Structure.Value.Str(s) if s.length == 1 => s.charAt(0)
-            case other                                   => throw TypeMismatchException(Seq.empty, "Char", other.toString)
+            case Structure.Value.Str(s)                  =>
+                throw TypeMismatchException(Seq.empty, "a single character", s"a string of length ${s.length}")
+            case _ => mismatch("string")
 
     def isNil(): Boolean =
         currentValue match
@@ -235,32 +238,63 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
         currentValue match
             case Structure.Value.Bytes(value) => value
             case Structure.Value.Str(s)       =>
-                Span.fromUnsafe(Base64s.decodeExact(s))
-            case other => throw TypeMismatchException(Seq.empty, "Span[Byte]", other.toString)
+                val decoded = Result.catching[IllegalArgumentException](Base64s.decodeExact(s)).mapFailure(_ => "not Base64")
+                Span.fromUnsafe(parsedText(s, "Base64", decoded))
+            case _ => mismatch("string")
 
     def bigInt(): BigInt =
         currentValue match
-            case Structure.Value.BigNum(bd) => bd.toBigInt
+            case Structure.Value.BigNum(bd) =>
+                if bd.isWhole then bd.toBigInt else throw TypeMismatchException(Seq.empty, "BigInt", "a number with a fraction")
             case Structure.Value.Integer(l) => BigInt(l)
-            case other                      => throw TypeMismatchException(Seq.empty, "BigInt", other.toString)
+            case _                          => mismatch("number")
 
     def bigDecimal(): BigDecimal =
         currentValue match
             case Structure.Value.BigNum(bd) => bd
             case Structure.Value.Integer(l) => BigDecimal(l)
             case Structure.Value.Decimal(d) => BigDecimal(d)
-            case other                      => throw TypeMismatchException(Seq.empty, "BigDecimal", other.toString)
+            case _                          => mismatch("number")
 
     def instant(): java.time.Instant =
         currentValue match
             case Structure.Value.Instant(value) => value
-            case Structure.Value.Str(s)         => java.time.Instant.parse(s)
-            case other                          => throw TypeMismatchException(Seq.empty, "Instant", other.toString)
+            case Structure.Value.Str(s)         => parsedText(s, "Instant", TimeText.instant(s))
+            case _                              => mismatch("string")
 
     def duration(): java.time.Duration =
         currentValue match
             case Structure.Value.Duration(value) => value
-            case Structure.Value.Str(s)          => java.time.Duration.parse(s)
-            case other                           => throw TypeMismatchException(Seq.empty, "Duration", other.toString)
+            case Structure.Value.Str(s)          => parsedText(s, "Duration", TimeText.duration(s))
+            case _                               => mismatch("string")
 
+    /** The value at the cursor is not of the `expected` kind. Both kinds are named as the JSON reader names them, so a value that
+      * reaches a field through a captured tree (flatten, a catch-all, a discriminator buffer) fails with the text it would have read
+      * directly.
+      */
+    private def mismatch(expected: String): Nothing =
+        throw TypeMismatchException(Seq.empty, expected, StructureValueReader.kindOf(currentValue))
+
+    /** A value parsed from a string node. A failure is a type mismatch rather than a `ParseException`, which names the codec that read
+      * the input: this reader reads a tree some codec already parsed, and does not know which.
+      */
+    private def parsedText[A](text: String, expected: String, parsed: Result[String, A]): A =
+        parsed.foldOrThrow(identity, reason => throw TypeMismatchException(Seq.empty, s"$expected ($reason)", s"'$text'"))
+
+end StructureValueReader
+
+object StructureValueReader:
+
+    /** The kind of a value, in the words a decode failure reports it with. */
+    private[kyo] def kindOf(value: Structure.Value): String =
+        value match
+            case _: Structure.Value.Record | _: Structure.Value.MapEntries | _: Structure.Value.VariantCase => "object"
+            case _: Structure.Value.Sequence                                                                => "array"
+            case _: Structure.Value.Str                                                                     => "string"
+            case _: Structure.Value.Bool                                                                    => "boolean"
+            case _: Structure.Value.Integer | _: Structure.Value.Decimal | _: Structure.Value.BigNum        => "number"
+            case _: Structure.Value.Bytes                                                                   => "bytes"
+            case _: Structure.Value.Instant                                                                 => "timestamp"
+            case _: Structure.Value.Duration                                                                => "duration"
+            case Structure.Value.Null                                                                       => "null"
 end StructureValueReader

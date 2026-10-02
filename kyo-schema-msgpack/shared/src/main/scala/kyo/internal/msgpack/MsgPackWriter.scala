@@ -22,6 +22,7 @@ import scala.annotation.tailrec
 final class MsgPackWriter(config: MsgPack.Config) extends Writer:
 
     override def canWriteTopLevelNonObject: Boolean = true
+    override def isSelfDescribing: Boolean          = true
     override def codecName: String                  = "MsgPack"
 
     import MsgPackFormat.*

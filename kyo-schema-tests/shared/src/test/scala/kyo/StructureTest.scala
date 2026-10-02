@@ -1547,11 +1547,16 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "json long parse error throws ParseException" in {
-            val r = JsonReader("\"abc\"")
-            // readNumber will fail because "abc" starts with '"', not a digit
+            val r  = JsonReader("3.14")
             val ex = intercept[ParseException](r.long())
             discard(summon[ParseException <:< DecodeException])
             assert(ex.getMessage.contains("Cannot parse"))
+        }
+
+        "json long of a string throws TypeMismatchException naming both kinds" in {
+            val r  = JsonReader("\"abc\"")
+            val ex = intercept[TypeMismatchException](r.long())
+            assert((ex.expected, ex.actual) == ("number", "string"))
         }
 
         "json short overflow throws ParseException" in {
@@ -2150,4 +2155,36 @@ class StructureTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a Structure.Value field in a renamed record stays undecodable through a reader that cannot introspect" in {
+        val bytes  = Schema[STPlainHolder].encode[Protobuf](STPlainHolder(1, "x"))
+        val result = Result.catching[SchemaNotSerializableException](Schema[STRenamedHolder].decode[Protobuf](bytes))
+        val raised = result match
+            case Result.Failure(_: SchemaNotSerializableException)                 => true
+            case Result.Success(Result.Panic(_: SchemaNotSerializableException))   => true
+            case Result.Success(Result.Failure(_: SchemaNotSerializableException)) => true
+            case _                                                                 => false
+        assert(raised, result.toString)
+    }
+
+    "a sum encodes to a Structure.Value and back under a non-object representation" in {
+        val circle: SSRShape = SSRCircle(2.0)
+        val cases            = Chunk(
+            Schema[SSRShape].tupleFlat   -> Structure.Value.Sequence(Chunk(Structure.Value.Str("SSRCircle"), Structure.Value.Decimal(2.0))),
+            Schema[SSRShape].tupleTagged -> Structure.Value.Sequence(Chunk(
+                Structure.Value.Str("SSRCircle"),
+                Structure.Value.Record(Chunk("radius" -> Structure.Value.Decimal(2.0)))
+            )),
+            Schema[SSRShape].untagged -> Structure.Value.Record(Chunk("radius" -> Structure.Value.Decimal(2.0)))
+        )
+        cases.foreach { (schema, expected) =>
+            val encoded = Result.catching[SchemaException](Structure.encode(circle)(using schema))
+            assert(encoded == Result.succeed(expected), s"${schema.representation}: $encoded")
+            assert(Structure.decode(expected)(using schema) == Result.succeed(circle), s"${schema.representation}")
+        }
+    }
+
 end StructureTest
+
+// The same wire key "a_b" and field "v", as a String and as a Structure.Value, for decoding one's Protobuf bytes as the other.
+case class STPlainHolder(a_b: Int, v: String) derives CanEqual, Schema
+case class STRenamedHolder(@kyo.schema.rename("a_b") ab: Int, v: Structure.Value) derives CanEqual, Schema

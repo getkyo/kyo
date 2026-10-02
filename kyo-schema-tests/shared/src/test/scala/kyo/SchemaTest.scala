@@ -2240,6 +2240,14 @@ class SchemaTest extends kyo.test.Test[Any]:
             assertUnknownField(result, "firstName")
         }
 
+        "a parent's rename does not reach a nested record's field of the same name" in {
+            val schema = Schema[MTRenamedCityHolder].rename("city", "town")
+            val value  = MTRenamedCityHolder("x", MTAddress("a", "b", "c"))
+            val wire   = schema.encodeString[Json](value)
+            assert(wire == """{"town":"x","home":{"street":"a","city":"b","zip":"c"}}""", wire)
+            assert(schema.decodeString[Json](wire) == Result.succeed(value))
+        }
+
         "field-case wire names are accepted and unrelated fields are rejected" in {
             val schema = Schema[StrictFieldCase]
                 .renameAllFields(Schema.NameCase.SnakeCase)
@@ -2710,7 +2718,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out                                    = schema.encodeString[Json](value)
         assert(
-            out == """{"tags":[{"key":"x","value":1}],"count":7,"who":"alice"}""",
+            out == """{"who":"alice","tags":[{"key":"x","value":1}],"count":7}""",
             s"the bound given's array wire form must survive a rename: $out"
         )
         val back = schema.decodeString[Json](out).getOrThrow
@@ -2722,7 +2730,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         val schema = Schema[MTStringDictRecord].rename(_.name, "who")
         val value  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out    = schema.encodeString[Json](value)
-        assert(out == """{"tags":{"x":1},"count":7,"who":"alice"}""", s"the object form is the default given's form: $out")
+        assert(out == """{"who":"alice","tags":{"x":1},"count":7}""", s"the object form is the default given's form: $out")
         val back = schema.decodeString[Json](out).getOrThrow
         assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
     }
@@ -3596,11 +3604,11 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(schema.decodeString[Json](json) == Result.succeed(value))
         }
 
-        "an intermediate sealed abstract class delegates to its own sum instead of a zero-field product" in {
+        "an intermediate sealed abstract class adds its cases as variants instead of becoming a zero-field product" in {
             val schema        = Schema.derived[SCCTop]
             val value: SCCTop = SCCTop.Mid.Concrete(5)
             val json          = schema.encodeString[Json](value)
-            assert(json == """{"Mid":{"Concrete":{"n":5}}}""", s"wire: $json")
+            assert(json == """{"Concrete":{"n":5}}""", s"wire: $json")
             assert(schema.decodeString[Json](json) == Result.succeed(value))
         }
 
@@ -3854,7 +3862,21 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a record declared in the scope of an opaque type over String keeps its annotations, derived inside the scope and outside" in {
+        val value = OSHolder.Labelled("a", 1)
+        assert(OSHolder.insideJson == """{"the_label":"a","count":1}""", OSHolder.insideJson)
+        val outside = Schema.derived[OSHolder.Labelled]
+        assert(outside.encodeString[Json](value) == """{"the_label":"a","count":1}""")
+        assert(Json.decode[OSHolder.Labelled]("""{"the_label":"a","count":1}""") == Result.succeed(value))
+    }
+
 end SchemaTest
+
+object OSHolder:
+    opaque type Code = String
+    final case class Labelled(@kyo.schema.rename("the_label") label: String, count: Int) derives Schema, CanEqual
+    val insideJson: String = Json.encode(Labelled("a", 1))
+end OSHolder
 
 sealed abstract case class DVPort private (value: Int) derives CanEqual
 object DVPort:
@@ -3975,6 +3997,7 @@ case class Cart(items: Chunk[String], note: Maybe[String]) derives Schema, CanEq
 
 case class StrictPerson(id: Int, name: String) derives CanEqual, Schema
 case class StrictRename(firstName: String, lastName: String) derives CanEqual, Schema
+case class MTRenamedCityHolder(city: String, home: MTAddress) derives CanEqual, Schema
 case class StrictFieldCase(firstName: String, lastName: String) derives CanEqual, Schema
 case class StrictInner(value: Int) derives CanEqual, Schema
 case class StrictOuter(name: String, inner: StrictInner) derives CanEqual, Schema

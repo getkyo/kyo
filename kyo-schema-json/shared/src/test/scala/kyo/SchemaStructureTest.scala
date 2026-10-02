@@ -2238,4 +2238,80 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
     }
 
+    "a Structure.Value field decodes through every reader that wraps JSON" - {
+        import SchemaStructureTest.*
+
+        val obj = Structure.Value.Record(Chunk("x" -> Structure.Value.Integer(1)))
+
+        "in a record with a renamed field" in {
+            val nested = Json.decode[RenamedHolder]("""{"a_b":1,"v":{"x":1}}""")
+            val scalar = Json.decode[RenamedHolder]("""{"a_b":1,"v":5}""")
+            assert(nested == Result.succeed(RenamedHolder(1, obj)), nested.toString)
+            assert(scalar == Result.succeed(RenamedHolder(1, Structure.Value.Integer(5))), scalar.toString)
+        }
+
+        "as an optional field of a record with a renamed field" in {
+            val present = Json.decode[RenamedMaybeHolder]("""{"a_b":1,"v":{"x":1}}""")
+            assert(present == Result.succeed(RenamedMaybeHolder(1, Present(obj))), present.toString)
+            assert(Json.decode[RenamedMaybeHolder]("""{"a_b":1}""") == Result.succeed(RenamedMaybeHolder(1, Absent)))
+        }
+
+        "in a record renamed by convention" in {
+            val schema = Schema.derived[ConventionHolder].renameAllFields(Schema.NameCase.SnakeCase)
+            val result = schema.decodeString[Json]("""{"a_b":1,"v":{"x":1}}""")
+            assert(result == Result.succeed(ConventionHolder(1, obj)), result.toString)
+        }
+
+        "in a variant under a discriminator and under an adjacent tag" in {
+            val tagged   = Json.decode[TaggedHolder]("""{"type":"TaggedValue","v":{"x":1}}""")
+            val adjacent = Json.decode[AdjacentHolder]("""{"type":"AdjacentValue","content":{"v":{"x":1}}}""")
+            assert(tagged == Result.succeed(TaggedValue(obj)), tagged.toString)
+            assert(adjacent == Result.succeed(AdjacentValue(obj)), adjacent.toString)
+        }
+
+        "in a variant under a discriminator that follows the field" in {
+            val tagged = Json.decode[TaggedHolder]("""{"v":{"x":1},"type":"TaggedValue"}""")
+            assert(tagged == Result.succeed(TaggedValue(obj)), tagged.toString)
+        }
+
+        "in a variant under tupleTagged and tupleFlat" in {
+            val tagged = Schema.derived[TupleHolder].tupleTagged.decodeString[Json]("""["TupleValue",{"v":{"x":1}}]""")
+            val flat   = Schema.derived[TupleHolder].tupleFlat.decodeString[Json]("""["TupleValue",{"x":1}]""")
+            assert(tagged == Result.succeed(TupleValue(obj)), tagged.toString)
+            assert(flat == Result.succeed(TupleValue(obj)), flat.toString)
+        }
+
+        "in a record with a dropped field" in {
+            val schema = Schema[DroppedHolder].drop("secret")
+            val result = schema.decodeString[Json]("""{"ab":1,"v":{"x":1}}""")
+            assert(result == Result.succeed(DroppedHolder(1, "", obj)), result.toString)
+        }
+
+        "filled by a configured default" in {
+            val schema = Schema[DefaultedHolder].default(_.v)(obj)
+            val result = schema.decodeString[Json]("""{"ab":1}""")
+            assert(result == Result.succeed(DefaultedHolder(1, obj)), result.toString)
+        }
+    }
+
+end SchemaStructureTest
+
+object SchemaStructureTest:
+    final case class RenamedHolder(@schema.rename("a_b") ab: Int, v: Structure.Value) derives CanEqual, Schema
+    final case class RenamedMaybeHolder(@schema.rename("a_b") ab: Int, v: Maybe[Structure.Value] = Absent) derives CanEqual, Schema
+    final case class ConventionHolder(aB: Int, v: Structure.Value) derives CanEqual
+
+    @schema.discriminator("type")
+    sealed trait TaggedHolder derives CanEqual, Schema
+    final case class TaggedValue(v: Structure.Value) extends TaggedHolder derives CanEqual
+
+    @schema.adjacent("type", "content")
+    sealed trait AdjacentHolder derives CanEqual, Schema
+    final case class AdjacentValue(v: Structure.Value) extends AdjacentHolder derives CanEqual
+
+    sealed trait TupleHolder derives CanEqual, Schema
+    final case class TupleValue(v: Structure.Value) extends TupleHolder derives CanEqual
+
+    final case class DroppedHolder(ab: Int, secret: String, v: Structure.Value) derives CanEqual, Schema
+    final case class DefaultedHolder(ab: Int, v: Structure.Value) derives CanEqual, Schema
 end SchemaStructureTest

@@ -78,13 +78,13 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] val fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
     @publicInBinary private[kyo] val fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] =
         Chunk.empty[(String, Schema.FieldTransform[A])],
-    @publicInBinary private[kyo] val fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty
+    @publicInBinary private[kyo] val fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
+    @publicInBinary private[kyo] val flattenedFields: Chunk[internal.FlattenedField] = Chunk.empty,
+    @publicInBinary private[kyo] val catchAll: Maybe[internal.CatchAll] = Maybe.empty
 ):
 
     /** The structural representation type. Set by factory/transforms. */
     type Focused
-
-    @publicInBinary private[kyo] def flattenedReadFields: Chunk[(String, String)] = Chunk.empty
 
     @publicInBinary private[kyo] def absentDefaultValue: Maybe[A] = Maybe.empty
 
@@ -125,10 +125,14 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             representationChain match
                 case Maybe.Present(chain) =>
                     internal.SchemaSerializer.readChain(this, reader, chain)
+                case Maybe.Absent if catchAll.nonEmpty =>
+                    internal.SchemaSerializer.readWithCatchAll(this, reader, representation, catchAll.get)
                 case Maybe.Absent =>
                     representation match
                         case Schema.UnionRepresentation.External =>
                             internal.SchemaSerializer.readWithTransforms(this, reader)
+                        case Schema.UnionRepresentation.TagOnly =>
+                            internal.SchemaSerializer.readTagOnly(this, reader)
                         case Schema.UnionRepresentation.Internal(_) =>
                             internal.SchemaSerializer.readWithDiscriminator(this, reader)
                         case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
@@ -234,7 +238,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty ||
             representation.nonDefault || representationChain.isDefined ||
             omitPolicies.nonEmpty || omitNoneAll || omitEmptyCollectionsAll ||
-            fieldTransforms.nonEmpty
+            fieldTransforms.nonEmpty || flattenedFields.nonEmpty || catchAll.nonEmpty
 
     /** Read-side transform flag: discriminator / rename / drop (computed fields are write-only). Marked
       * `@publicInBinary` so `Schema.init`'s inline `serializeRead` can branch on it from a user
@@ -245,7 +249,29 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             variantNaming.nonEmpty || representation.nonDefault || representationChain.isDefined ||
             omitPolicies.nonEmpty || omitNoneAll || omitEmptyCollectionsAll ||
             (unionAmbiguityPolicy != Schema.UnionAmbiguity.Strict) ||
-            denyUnknownFieldsEnabled || fieldDefaults.nonEmpty || fieldTransforms.nonEmpty
+            denyUnknownFieldsEnabled || fieldDefaults.nonEmpty || fieldTransforms.nonEmpty || flattenedFields.nonEmpty ||
+            catchAll.nonEmpty
+
+    // A positional representation has no place for the unmatched input, whichever builder came first.
+    catchAll.foreach(Schema.rejectPositionalCatchAll(representation, representationChain, _))
+
+    /** The flat-key layout of a flattened schema, built when the schema is, so a layout that cannot round-trip (a key collision, a
+      * builder naming a flattened field's own field) raises at the builder call that produced it.
+      */
+    @publicInBinary private[kyo] val flattenLayout: Maybe[internal.FlattenLayout] =
+        if flattenedFields.isEmpty then Maybe.empty else Maybe(internal.FlattenLayout(this))
+
+    /** The variants of a sum that have fields, which tagOnly cannot write; lazy since only a tagOnly schema asks. */
+    @publicInBinary private[kyo] lazy val fieldBearingVariants: Chunk[String] =
+        structure match
+            case Structure.Type.Sum(_, _, _, variants, _, _) =>
+                variants.collect {
+                    case v if (v.variantType match
+                            case Structure.Type.Product(_, _, _, fields, _) => fields.nonEmpty
+                            case _                                          => false
+                        ) => v.name
+                }
+            case _ => Chunk.empty
 
     /** Pre-built root navigator for focus lambda resolution.
       *
@@ -442,8 +468,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * Encodes each variant as a two-field object: `tagKey` holds the resolved variant wire name
       * and `contentKey` holds the variant payload. Unlike the flat discriminator, the payload is
       * carried whole in the content position, so a non-object payload (a bare scalar, an array,
-      * null) survives the round-trip. Decode reads the tag, resolves the variant (accepting any
-      * configured alias), and reconstructs from the content. The tag resolves through the variant
+      * null) survives the round-trip. A payload that encodes to an empty object (a case object, or
+      * a case class whose every field is omitted) writes `tagKey` alone. Decode reads the tag,
+      * resolves the variant (accepting any configured alias), and reconstructs from the content,
+      * reading a missing or null content as an empty object. The tag resolves through the variant
       * naming layer. A decode whose input lacks `tagKey` fails with `MissingTagKeyException`.
       *
       * {{{
@@ -520,6 +548,44 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             representation = Schema.UnionRepresentation.Untagged
         )
     end untagged
+
+    /** Selects the tag-only wire representation for a sum type: each variant is written as its wire name alone.
+      *
+      * For a sum whose variants carry no data, such as an enum of plain values, where the default wrapper
+      * object writes `{"Red":{}}` for what is only a name. The name resolves through the variant naming
+      * layer, and variant aliases are accepted on decode. A string naming no variant fails with
+      * `UnknownVariantException`, and a value that is not a string with `TypeMismatchException`. Every
+      * variant must be a case object, an enum value without parameters, or a case class without fields; a
+      * variant with fields is a compile error naming it. On a codec that cannot write a bare string where
+      * the sum sits (Protobuf), encode fails with `RepresentationUnsupportedException`.
+      *
+      * {{{
+      * enum Color derives Schema:
+      *     case Red, Green
+      * val s = Schema[Color].tagOnly
+      * // s.encodeString[Json](Color.Red) == "\"Red\""
+      * }}}
+      */
+    transparent inline def tagOnly: Any =
+        ${ internal.SchemaTransformMacro.tagOnlyImpl[A, Focused]('this) }
+
+    /** Names the variant a sum decodes input into when no other variant matches it, as `@catchAll()` on the variant does.
+      *
+      * `variantName` is the variant's Scala name, a literal. The variant has one or two fields: a `String` field receives the tag
+      * where the representation has one, and the other field receives the unmatched input through its own schema. An unknown name
+      * or a variant of another shape is a compile error. The representation decides what the variant receives (see
+      * [[kyo.schema.catchAll]]); one it cannot serve fails at the first encode or decode, and `tupleTagged` or `tupleFlat` with a
+      * catch-all fails when the schema is built. Called before `tagOnly`, it admits the named variant to the tag-only check.
+      * `onFailure = true` also gives it input whose tag names a known variant that fails to decode, as `@catchAll(onFailure = true)`
+      * does.
+      *
+      * {{{
+      * val s = Schema[Shape].untagged.catchAll("Other")
+      * // s.decodeString[Json]("""{"side":2}""") gives Other(<the object as a Structure.Value>)
+      * }}}
+      */
+    transparent inline def catchAll(inline variantName: String, inline onFailure: Boolean = false): Any =
+        ${ internal.SchemaTransformMacro.catchAllImpl[A, Focused]('this, 'variantName, 'onFailure) }
 
     /** Configures an ordered fallback chain of wire representations for a sum type.
       *
@@ -618,6 +684,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def variantNames(mappings: (String, String)*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.rejectNamesWithNumbers(variantNaming, "variantNames")
         val pairs = Chunk.from(mappings)
         val known = Schema.variantScalaNames(structure)
         Schema.checkVariantNamesExist(known, pairs.map(_._1))
@@ -627,6 +694,37 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             variantNaming = variantNaming.copy(variantPairs = merged)
         )
     end variantNames
+
+    /** Tags each sealed-trait variant with an integer instead of a name, as `@tagNumber(n)` on the variant does.
+      *
+      * Each pair is `(scalaVariantName, number)`. Where the representation writes a tag (`discriminator`, `adjacent`, `tupleTagged`,
+      * `tupleFlat`, `tagOnly`), the tag is written as the number and decode reads an integer there: a string tag is a
+      * `TypeMismatchException` and an unlisted number an `UnknownVariantException`. A catch-all variant takes the number in an `Int` or
+      * `Long` field. An unknown Scala name raises `UnknownVariantException` and two variants with one number raise
+      * `VariantNameCollisionException`, both at this call. Every variant except the catch-all needs a number, checked at the first
+      * encode or decode since the catch-all may be set afterwards. Variant names (`variantNames`, `renameAllVariants`, `variantAlias`)
+      * and numbers exclude each other: combining them raises `TransformFailedException` at the later call.
+      *
+      * {{{
+      * val s = Schema[Shape].discriminator("type").variantNumbers("Circle" -> 1, "Square" -> 2)
+      * // s.encodeString[Json](Square(3)) == """{"type":2,"side":3}"""
+      * }}}
+      */
+    def variantNumbers(mappings: (String, Int)*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        if variantNaming.variantPairs.nonEmpty || variantNaming.variantCase.nonEmpty || variantNaming.variantAliases.nonEmpty then
+            throw TransformFailedException(
+                "variantNumbers numbers the variants of a sum whose variants are already named by variantNames, renameAllVariants, " +
+                    "variantAlias, @rename or @alias; a numbered variant's tag is its number."
+            )
+        end if
+        val pairs = Chunk.from(mappings)
+        Schema.checkVariantNamesExist(Schema.variantScalaNames(structure), pairs.map(_._1))
+        val merged = variantNaming.variantNumbers.filterNot((name, _) => pairs.exists(_._1 == name)) ++ pairs
+        Schema.checkVariantTargets(merged.map((name, number) => name -> number.toString))
+        Schema.copyWith(this)(
+            variantNaming = variantNaming.copy(variantNumbers = merged)
+        )
+    end variantNumbers
 
     /** Derives every variant's wire name from its Scala name by a case convention.
       *
@@ -643,6 +741,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def renameAllVariants(nameCase: Schema.NameCase)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.rejectNamesWithNumbers(variantNaming, "renameAllVariants")
         val updatedNaming   = variantNaming.copy(variantCase = Maybe(nameCase))
         val newEffectiveSet = Schema.effectiveVariantWires(structure, updatedNaming).toSet
         Schema.checkVariantAliases(newEffectiveSet, variantNaming.variantAliases)
@@ -667,6 +766,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def variantAlias(variantWireName: String, aliases: String*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.rejectNamesWithNumbers(variantNaming, "variantAlias")
         val wires = Schema.effectiveVariantWires(structure, variantNaming)
         Schema.checkVariantWireExists(wires, variantWireName)
         val added        = Chunk.from(aliases).map(a => (a, variantWireName))
@@ -1104,19 +1204,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         val baseOverrides = fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
         if renamedFields.isEmpty then baseOverrides
         else
-            val forwardMap = renamedFields.toMap
-            @scala.annotation.tailrec
-            def resolveTarget(name: String): String =
-                forwardMap.get(name) match
-                    case Some(next) => resolveTarget(next)
-                    case None       => name
             val renamedEntries: Map[String, Int] =
-                sourceFields.flatMap { sf =>
-                    if forwardMap.contains(sf.name) then
-                        val wireName = resolveTarget(sf.name)
-                        val number   = baseOverrides.getOrElse(sf.name, kyo.internal.CodecMacro.fieldId(wireName))
-                        Seq(sf.name -> number, wireName -> number)
-                    else Nil
+                Schema.resolvedRenames(sourceFields.map(_.name), renamedFields).flatMap { (source, wireName) =>
+                    val number = baseOverrides.getOrElse(source, kyo.internal.CodecMacro.fieldId(wireName))
+                    Seq(source -> number, wireName -> number)
                 }.toMap
             baseOverrides ++ renamedEntries
         end if
@@ -1209,6 +1300,18 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     transparent inline def flatten: Any =
         ${ internal.SchemaTransformMacro.flattenImpl[A, Focused]('this) }
+
+    /** Flattens one field's keys into the parent level: a case class's fields, as [[flatten]] does for every such field, a sealed sum's
+      * variant keys, or an optional case class's (`Maybe[R]`) fields.
+      *
+      * The other record fields stay nested, so a record with two fields of one type (`Order(billing: Address, shipping: Address)`)
+      * can flatten one of them, which `flatten` rejects since both would write the same keys. An absent optional record writes none of
+      * its keys and reads back from an input with none of them; an input with some of them but not a required one is a decode failure
+      * at that key. A flattened field is never written under its own name, so one of its keys may be that name. A field of another
+      * type (an optional sum included), or a flattened key that collides with another field's, is a compile error.
+      */
+    transparent inline def flatten[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V]): Any =
+        ${ internal.SchemaTransformMacro.flattenFocusImpl[A, Focused]('this, 'focus) }
 
     /** Adds a new computed field to the structural type Focused.
       *
@@ -1495,18 +1598,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] def resultOf(value: A)(using ev: A <:< Product): Record[Focused] =
         val product = ev(value)
 
-        // Resolve rename chains: name->userName, userName->displayName => name->displayName
-        val forwardMap                          = renamedFields.toMap
-        def resolveTarget(name: String): String =
-            forwardMap.get(name) match
-                case Some(next) => resolveTarget(next)
-                case None       => name
-
-        val resolvedRenames = sourceFields.flatMap { sf =>
-            if forwardMap.contains(sf.name) then
-                Some((sf.name, resolveTarget(sf.name)))
-            else None
-        }
+        val resolvedRenames    = Schema.resolvedRenames(sourceFields.map(_.name), renamedFields)
         val renamedSourceNames = resolvedRenames.map(_._1).toSet
 
         // Iterate original case class fields
@@ -1649,6 +1741,7 @@ object Schema:
 
         override def canWriteTopLevelNonObject: Boolean = delegate.canWriteTopLevelNonObject
         override def canWriteAnnotations: Boolean       = delegate.canWriteAnnotations
+        override def isSelfDescribing: Boolean          = delegate.isSelfDescribing
         override def codecName: String                  = delegate.codecName
         override def capabilities: Codec.Capabilities   = delegate.capabilities
 
@@ -1841,6 +1934,7 @@ object Schema:
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
         variantEffectivePrimaries: Set[String] = Set.empty,
+        catchAll: Maybe[internal.CatchAll] = Maybe.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -1888,7 +1982,8 @@ object Schema:
             denyUnknownFieldsEnabled,
             fieldDefaults,
             fieldTransforms,
-            fieldMaterializedDefaults
+            fieldMaterializedDefaults,
+            catchAll = catchAll
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 val writeWriter           = writerForAnnotations(writer)
@@ -2236,7 +2331,8 @@ object Schema:
       * selected by `discriminator`. `Adjacent(tagKey, contentKey)` is the two-field object
       * `{"type":"Circle","content":{...}}`. `Tuple` is the nested positional array
       * `["Circle",{...}]`. `TupleFlat` is the flattened positional array `["Triangle",10,10,10]`,
-      * coexisting with `Tuple`. `Untagged` is the bare payload `{"radius":10.0}`. The carrier is the
+      * coexisting with `Tuple`. `Untagged` is the bare payload `{"radius":10.0}`. `TagOnly` is the
+      * variant's wire name alone, `"Red"`, for a sum whose variants carry no data. The carrier is the
       * internal `representation` slot, set by the matching builder.
       */
     enum UnionRepresentation derives CanEqual:
@@ -2246,6 +2342,7 @@ object Schema:
         case Tuple
         case TupleFlat
         case Untagged
+        case TagOnly
 
         /** True for every representation other than the inert `External` default. ORed into the
           * transform flags so a configured sum takes the transform-aware engine path.
@@ -2406,19 +2503,22 @@ object Schema:
       * the existing `renamedFields: Chunk[(String, String)]` transform slot. A separate
       * slot from `renamedFields` so variant/field wire-casing never corrupts a field
       * `rename` chain. Empty by default, contributing nothing to the serialization hot
-      * path.
+      * path. `variantNumbers` replaces the variant names: a numbered sum's wire name is the
+      * number's decimal text, written to the wire as an integer.
       */
     private[kyo] case class VariantNaming(
         variantPairs: Chunk[(String, String)] = Chunk.empty,
         variantCase: Maybe[NameCase] = Maybe.empty,
         fieldCase: Maybe[NameCase] = Maybe.empty,
         variantAliases: Chunk[(String, String)] = Chunk.empty,
-        fieldAliases: Chunk[(String, String)] = Chunk.empty
+        fieldAliases: Chunk[(String, String)] = Chunk.empty,
+        variantNumbers: Chunk[(String, Int)] = Chunk.empty
     ) derives CanEqual:
         def isEmpty: Boolean =
             variantPairs.isEmpty && variantCase.isEmpty && fieldCase.isEmpty &&
-                variantAliases.isEmpty && fieldAliases.isEmpty
+                variantAliases.isEmpty && fieldAliases.isEmpty && variantNumbers.isEmpty
         def nonEmpty: Boolean = !isEmpty
+        def numbered: Boolean = variantNumbers.nonEmpty
     end VariantNaming
 
     /** Merges new explicit variant pairs over existing ones, last-write-wins per Scala
@@ -2460,13 +2560,29 @@ object Schema:
         )
     end transformViaWith
 
+    /** Rejects a catch-all under `Tuple` or `TupleFlat`, as the primary representation or in the chain. */
+    private[kyo] def rejectPositionalCatchAll(
+        representation: Schema.UnionRepresentation,
+        chain: Maybe[Chunk[Schema.UnionRepresentation]],
+        catchAll: internal.CatchAll
+    ): Unit =
+        def positional(rep: Schema.UnionRepresentation): Boolean =
+            rep == Schema.UnionRepresentation.Tuple || rep == Schema.UnionRepresentation.TupleFlat
+        if positional(representation) || chain.exists(_.exists(positional)) then
+            throw TransformFailedException(
+                s"catch-all variant '${catchAll.variant}' under a positional representation (tupleTagged, tupleFlat): a positional " +
+                    "array has no place for the unmatched input. Use another representation, or drop the catch-all."
+            )(using Frame.internal)
+        end if
+    end rejectPositionalCatchAll
+
     /** Rejects a representation chain that contains a duplicate entry, at the builder call site. */
     private[kyo] def checkRepresentationChain(chain: Chunk[Schema.UnionRepresentation])(using Frame): Unit =
         if chain.size != chain.distinct.size then throw DuplicateRepresentationException(chain)
     end checkRepresentationChain
 
-    /** True iff `rep` is expressible by a codec with the given capabilities. The three top-level
-      * non-object shapes (Tuple/TupleFlat/Untagged) require `canWriteTopLevelNonObject`; the
+    /** True iff `rep` is expressible by a codec with the given capabilities. The four top-level
+      * non-object shapes (Tuple/TupleFlat/Untagged/TagOnly) require `canWriteTopLevelNonObject`; the
       * object-shaped representations (External/Internal/Adjacent) are always expressible.
       */
     private[kyo] def representationExpressibleBy(
@@ -2475,7 +2591,7 @@ object Schema:
     ): Boolean =
         rep match
             case Schema.UnionRepresentation.Tuple | Schema.UnionRepresentation.TupleFlat |
-                Schema.UnionRepresentation.Untagged =>
+                Schema.UnionRepresentation.Untagged | Schema.UnionRepresentation.TagOnly =>
                 capabilities.canWriteTopLevelNonObject
             case _ => true
     end representationExpressibleBy
@@ -2522,19 +2638,35 @@ object Schema:
         renamedFields: Chunk[(String, String)],
         naming: VariantNaming
     ): Set[String] =
-        val renameMap    = renamedFields.toMap
         val conventionFn = naming.fieldCase.map(nc => internal.NameCaseConversion.convert(nc))
-        @scala.annotation.tailrec
-        def resolveRename(name: String): String =
-            renameMap.get(name) match
-                case Some(next) => resolveRename(next)
-                case None       => name
         sourceFields.map { sf =>
-            val renamed = resolveRename(sf.name)
-            if renamed != sf.name then renamed
-            else conventionFn.map(fn => fn(sf.name)).getOrElse(sf.name)
+            renamedWire(renamedFields, sf.name).getOrElse(conventionFn.map(fn => fn(sf.name)).getOrElse(sf.name))
         }.toSet
     end effectiveFieldWireNames
+
+    /** The name `name` ends with after `renamedFields`, or `Absent` when no rename applies to it.
+      *
+      * The renames are applied in registration order. A rename applies to the name the previous ones left, so a chain resolves to its
+      * last name and a rename back to an earlier name, an identity `@rename` included, ends on that name. It also applies to the source
+      * name, so a builder `rename` of a field supersedes the field's `@rename`, which leaves the field's focus name unchanged. Following
+      * the pairs as a map instead never terminates on a cycle.
+      */
+    @publicInBinary private[kyo] def renamedWire(renamedFields: Chunk[(String, String)], name: String): Maybe[String] =
+        renamedFields.foldLeft(Maybe.empty[String]) { (current, rename) =>
+            if rename._1 == current.getOrElse(name) || rename._1 == name then Present(rename._2) else current
+        }
+
+    /** The source field name whose renames end on `wire`, or `wire` itself when no rename ends there: [[renamedWire]] in reverse. */
+    @publicInBinary private[kyo] def renamedSource(renamedFields: Chunk[(String, String)], wire: String): String =
+        renamedFields.foldRight(wire)((rename, current) => if rename._2 == current then rename._1 else current)
+
+    /** Each source field a rename applies to, paired with the name its renames end on, in source order. */
+    @publicInBinary private[kyo] def resolvedRenames(
+        sourceNames: Seq[String],
+        renamedFields: Chunk[(String, String)]
+    ): Chunk[(String, String)] =
+        if renamedFields.isEmpty then Chunk.empty
+        else Chunk.from(sourceNames).flatMap(name => Chunk.from(renamedWire(renamedFields, name).map(name -> _).toOption))
 
     /** The Scala variant names derived from a sum type's structure, or empty for a
       * non-sum (a product schema has no variants to name).
@@ -2549,7 +2681,7 @@ object Schema:
       * encode-side resolution so `variantAlias` validates against the same vocabulary.
       */
     private[kyo] def effectiveVariantWires(structure: Structure.Type, naming: VariantNaming): Chunk[String] =
-        val explicit   = naming.variantPairs.toMap
+        val explicit   = naming.variantPairs.toMap ++ naming.variantNumbers.map((name, number) => name -> number.toString)
         val convention = naming.variantCase.map(nc => internal.NameCaseConversion.convert(nc))
         variantScalaNames(structure).map { scalaName =>
             explicit.get(scalaName)
@@ -2557,6 +2689,15 @@ object Schema:
                 .getOrElse(scalaName)
         }
     end effectiveVariantWires
+
+    /** Rejects naming a numbered sum's variants by name, since a number replaces the name. */
+    private[kyo] def rejectNamesWithNumbers(naming: VariantNaming, call: String)(using Frame): Unit =
+        if naming.numbered then
+            throw TransformFailedException(
+                s"$call names the variants of a sum whose variants are numbered by variantNumbers or @tagNumber; a numbered " +
+                    "variant's tag is its number."
+            )
+    end rejectNamesWithNumbers
 
     /** Validates that each referenced Scala variant name exists in the derived set,
       * raising the existing `UnknownVariantException` on the first unknown name. Mirrors
@@ -2869,7 +3010,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -2901,7 +3042,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -2933,7 +3074,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -2965,7 +3106,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -2997,7 +3138,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -3029,7 +3170,7 @@ object Schema:
                 def loop(count: Int): Unit =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        builder += inner.serializeRead(reader)
+                        builder += internal.readElementAt(inner, reader, count - 1)
                         loop(count + 1)
                 loop(1)
                 reader.arrayEnd()
@@ -3117,7 +3258,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = valueSchema.serializeRead(reader)
+                        val v = internal.readEntryAt(valueSchema, reader, k)
                         builder += (k -> v)
                         loop(count + 1)
                 loop(1)
@@ -3138,57 +3279,83 @@ object Schema:
     /** Schema for Map[K, V] with non-String keys.
       *
       * `stringMapSchema` is the more specific given for `Map[String, V]` (object encoding); this
-      * general given covers every other key type, so `Map[Int, V]` and friends derive. Each entry
-      * is written as a two-field record (`key`, `value`): the Protobuf
-      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
-      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      * general given covers every other key type, so `Map[Int, V]` and friends derive. A key whose
+      * schema is a string on the wire (an opaque type over `String`, a `transformVia` of
+      * `Schema[String]`) is written as an object keyed by that string, as `stringMapSchema` writes,
+      * and decode also accepts the array of `{key, value}` records such a map was written as before.
+      * `String` itself is not such a key here: binding `mapSchema[String, V]` explicitly is how a
+      * `String`-keyed map keeps the array form. Any other key is written as a two-field record (`key`, `value`) per entry: the Protobuf codec
+      * renders this as a standard proto3 `MapEntry` message, and self-describing codecs render an
+      * array of `{key, value}` objects (such a key cannot be an object field name).
       */
-    given mapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Map[K, V]] =
-        lazy val kSchema = kSchema0
-        lazy val vSchema = vSchema0
+    given mapSchema[K, V](using
+        kSchema0: => Schema[K],
+        vSchema0: => Schema[V],
+        keyForm: internal.MapKeyForm[K]
+    ): Schema[Map[K, V]] =
+        lazy val kSchema                              = kSchema0
+        lazy val vSchema                              = vSchema0
+        lazy val stringKey                            = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+        def readEntryPairs(reader: Reader): Map[K, V] =
+            discard(reader.arrayStart())
+            val builder = Map.newBuilder[K, V]
+            @tailrec
+            def loop(count: Int): Unit =
+                if reader.hasNextElement() then
+                    reader.checkCollectionSize(count)
+                    discard(reader.objectStart())
+                    // hasNextField advances past the inter-field separator (a no-op for
+                    // Protobuf, the comma for a self-describing codec) before each field read.
+                    discard(reader.hasNextField())
+                    discard(reader.field()) // "key"
+                    val k = internal.readPairSideAt(kSchema, reader, count - 1, "key")
+                    // The value-side hasNextField both advances the separator and carries the
+                    // presence signal: proto3 encodes an empty or default value as a key-only
+                    // entry, which decodes to the value schema's absent default.
+                    val v =
+                        if reader.hasNextField() then
+                            discard(reader.field()) // "value"
+                            internal.readPairSideAt(vSchema, reader, count - 1, "value")
+                        else
+                            vSchema.absentDefaultValue match
+                                case Maybe.Present(dv) => dv
+                                case _ => throw MissingFieldException(Seq((count - 1).toString), "value")(using reader.frame)
+                    reader.objectEnd()
+                    builder += (k -> v)
+                    loop(count + 1)
+            loop(1)
+            reader.arrayEnd()
+            builder.result()
+        end readEntryPairs
         Schema.init[Map[K, V]](
             writeFn = (value, writer) =>
-                writer.mapEntriesStart(value.size)
-                value.foreach { (k, v) =>
-                    writer.mapEntryStart()
-                    kSchema.serializeWrite(k, writer)
-                    writer.mapEntryValue()
-                    vSchema.serializeWrite(v, writer)
-                    writer.mapEntryEnd()
-                }
-                writer.mapEntriesEnd()
+                if stringKey then
+                    internal.SchemaSerializer.writeStringKeyed[K, V](
+                        f => value.foreach((k, v) => f(k, v)),
+                        value.size,
+                        kSchema,
+                        vSchema,
+                        writer
+                    )(using
+                        Frame.internal
+                    )
+                else
+                    writer.mapEntriesStart(value.size)
+                    value.foreach { (k, v) =>
+                        writer.mapEntryStart()
+                        kSchema.serializeWrite(k, writer)
+                        writer.mapEntryValue()
+                        vSchema.serializeWrite(v, writer)
+                        writer.mapEntryEnd()
+                    }
+                    writer.mapEntriesEnd()
             ,
             readFn = reader =>
-                discard(reader.arrayStart())
-                val builder = Map.newBuilder[K, V]
-                @tailrec
-                def loop(count: Int): Unit =
-                    if reader.hasNextElement() then
-                        reader.checkCollectionSize(count)
-                        discard(reader.objectStart())
-                        // hasNextField advances past the inter-field separator (a no-op for
-                        // Protobuf, the comma for a self-describing codec) before each field read.
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "key"
-                        val k = kSchema.serializeRead(reader)
-                        // The value-side hasNextField both advances the separator and carries the
-                        // presence signal: proto3 encodes an empty or default value as a key-only
-                        // entry, which decodes to the value schema's absent default.
-                        val v =
-                            if reader.hasNextField() then
-                                discard(reader.field()) // "value"
-                                vSchema.serializeRead(reader)
-                            else
-                                vSchema.absentDefaultValue match
-                                    case Maybe.Present(dv) => dv
-                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
-                        reader.objectEnd()
-                        builder += (k -> v)
-                        loop(count + 1)
-                loop(1)
-                reader.arrayEnd()
-                builder.result()
-            ,
+                if stringKey then
+                    val builder = Map.newBuilder[K, V]
+                    internal.SchemaSerializer.readStringKeyed(kSchema, vSchema, reader)((k, v) => discard(builder += (k -> v)))
+                    builder.result()
+                else readEntryPairs(reader),
             absentDefaultValue = Maybe(Map.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
@@ -3365,7 +3532,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = vSchema.serializeRead(reader)
+                        val v = internal.readEntryAt(vSchema, reader, k)
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[String, V], 1)
@@ -3386,56 +3553,80 @@ object Schema:
     /** Schema for Dict[K, V] with non-String keys.
       *
       * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
-      * general given covers every other key type, so `Dict[Int, V]` and friends derive. Each entry
-      * is written as a two-field record (`key`, `value`): the Protobuf
-      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
-      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      * general given covers every other key type, so `Dict[Int, V]` and friends derive. A key whose
+      * schema is a string on the wire is written as an object, as for [[mapSchema]], and decode also
+      * accepts the array of `{key, value}` records; `String` itself keeps the array form when this
+      * given is bound explicitly. Any other key is written as a two-field record
+      * (`key`, `value`) per entry: the Protobuf codec renders this as a standard proto3 `MapEntry`
+      * message, and self-describing codecs render an array of `{key, value}` objects.
       */
-    given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
-        lazy val kSchema = kSchema0
-        lazy val vSchema = vSchema0
+    given dictSchema[K, V](using
+        kSchema0: => Schema[K],
+        vSchema0: => Schema[V],
+        keyForm: internal.MapKeyForm[K]
+    ): Schema[Dict[K, V]] =
+        lazy val kSchema                               = kSchema0
+        lazy val vSchema                               = vSchema0
+        lazy val stringKey                             = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+        def readEntryPairs(reader: Reader): Dict[K, V] =
+            discard(reader.arrayStart())
+            @tailrec
+            def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
+                if reader.hasNextElement() then
+                    reader.checkCollectionSize(count)
+                    discard(reader.objectStart())
+                    // hasNextField advances past the inter-field separator (a no-op for
+                    // Protobuf, the comma for a self-describing codec) before each field read.
+                    discard(reader.hasNextField())
+                    discard(reader.field()) // "key"
+                    val k = internal.readPairSideAt(kSchema, reader, count - 1, "key")
+                    // The value-side hasNextField both advances the separator and carries the
+                    // presence signal: proto3 encodes an empty or default value as a key-only
+                    // entry, which decodes to the value schema's absent default.
+                    val v =
+                        if reader.hasNextField() then
+                            discard(reader.field()) // "value"
+                            internal.readPairSideAt(vSchema, reader, count - 1, "value")
+                        else
+                            vSchema.absentDefaultValue match
+                                case Maybe.Present(dv) => dv
+                                case _ => throw MissingFieldException(Seq((count - 1).toString), "value")(using reader.frame)
+                    reader.objectEnd()
+                    loop(dict.update(k, v), count + 1)
+                else dict
+            val dict = loop(Dict.empty[K, V], 1)
+            reader.arrayEnd()
+            dict
+        end readEntryPairs
         Schema.init[Dict[K, V]](
             writeFn = (value, writer) =>
-                writer.mapEntriesStart(value.size)
-                value.foreach { (k, v) =>
-                    writer.mapEntryStart()
-                    kSchema.serializeWrite(k, writer)
-                    writer.mapEntryValue()
-                    vSchema.serializeWrite(v, writer)
-                    writer.mapEntryEnd()
-                }
-                writer.mapEntriesEnd()
+                if stringKey then
+                    internal.SchemaSerializer.writeStringKeyed[K, V](
+                        f => value.foreach((k, v) => f(k, v)),
+                        value.size,
+                        kSchema,
+                        vSchema,
+                        writer
+                    )(using
+                        Frame.internal
+                    )
+                else
+                    writer.mapEntriesStart(value.size)
+                    value.foreach { (k, v) =>
+                        writer.mapEntryStart()
+                        kSchema.serializeWrite(k, writer)
+                        writer.mapEntryValue()
+                        vSchema.serializeWrite(v, writer)
+                        writer.mapEntryEnd()
+                    }
+                    writer.mapEntriesEnd()
             ,
             readFn = reader =>
-                discard(reader.arrayStart())
-                @tailrec
-                def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
-                    if reader.hasNextElement() then
-                        reader.checkCollectionSize(count)
-                        discard(reader.objectStart())
-                        // hasNextField advances past the inter-field separator (a no-op for
-                        // Protobuf, the comma for a self-describing codec) before each field read.
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "key"
-                        val k = kSchema.serializeRead(reader)
-                        // The value-side hasNextField both advances the separator and carries the
-                        // presence signal: proto3 encodes an empty or default value as a key-only
-                        // entry, which decodes to the value schema's absent default.
-                        val v =
-                            if reader.hasNextField() then
-                                discard(reader.field()) // "value"
-                                vSchema.serializeRead(reader)
-                            else
-                                vSchema.absentDefaultValue match
-                                    case Maybe.Present(dv) => dv
-                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
-                        reader.objectEnd()
-                        loop(dict.update(k, v), count + 1)
-                    else dict
-                val dict = loop(Dict.empty[K, V], 1)
-                reader.arrayEnd()
-                dict
-            ,
+                if stringKey then
+                    var dict = Dict.empty[K, V]
+                    internal.SchemaSerializer.readStringKeyed(kSchema, vSchema, reader)((k, v) => dict = dict.update(k, v))
+                    dict
+                else readEntryPairs(reader),
             absentDefaultValue = Maybe(Dict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
@@ -3475,7 +3666,7 @@ object Schema:
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
-                        val v = vSchema.serializeRead(reader)
+                        val v = internal.readEntryAt(vSchema, reader, k)
                         loop(map.update(k, v), count + 1)
                     else map
                 val map = loop(OrderedDict.empty[String, V], 1)
@@ -3496,11 +3687,13 @@ object Schema:
     /** Schema for OrderedDict[K, V] with non-String keys.
       *
       * `stringOrderedDictSchema` is the more specific given for `OrderedDict[String, V]` (object
-      * encoding); this general given covers every other key type. Each entry is written as a
-      * two-field record (`key`, `value`), the same form `mapSchema` and `dictSchema` use: the
-      * Protobuf codec renders this as a standard proto3 `MapEntry` message, and self-describing
-      * codecs render an array of `{key, value}` objects (a non-String key cannot be an object field
-      * name).
+      * encoding); this general given covers every other key type. A key whose schema is a string on
+      * the wire is written as an object, as for [[mapSchema]], and decode also accepts the array of
+      * `{key, value}` records; `String` itself keeps the array form when this given is bound
+      * explicitly. Any other key is written as a two-field record (`key`, `value`), the
+      * same form `mapSchema` and `dictSchema` use: the Protobuf codec renders this as a standard
+      * proto3 `MapEntry` message, and self-describing codecs render an array of `{key, value}`
+      * objects.
       *
       * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
       * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
@@ -3509,51 +3702,73 @@ object Schema:
       * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
       * map fields, so a foreign Protobuf implementation may reorder entries.
       */
-    given orderedDictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
-        lazy val kSchema = kSchema0
-        lazy val vSchema = vSchema0
+    given orderedDictSchema[K, V](using
+        kSchema0: => Schema[K],
+        vSchema0: => Schema[V],
+        keyForm: internal.MapKeyForm[K]
+    ): Schema[OrderedDict[K, V]] =
+        lazy val kSchema                                      = kSchema0
+        lazy val vSchema                                      = vSchema0
+        lazy val stringKey                                    = !keyForm.literalString && internal.SchemaSerializer.isStringKey(kSchema)
+        def readEntryPairs(reader: Reader): OrderedDict[K, V] =
+            discard(reader.arrayStart())
+            @tailrec
+            def loop(map: OrderedDict[K, V], count: Int): OrderedDict[K, V] =
+                if reader.hasNextElement() then
+                    reader.checkCollectionSize(count)
+                    discard(reader.objectStart())
+                    // hasNextField advances past the inter-field separator (a no-op for
+                    // Protobuf, the comma for a self-describing codec) before each field read.
+                    discard(reader.hasNextField())
+                    discard(reader.field()) // "key"
+                    val k = internal.readPairSideAt(kSchema, reader, count - 1, "key")
+                    // The value-side hasNextField both advances the separator and carries the
+                    // presence signal: proto3 encodes an empty or default value as a key-only
+                    // entry, which decodes to the value schema's absent default.
+                    val v =
+                        if reader.hasNextField() then
+                            discard(reader.field()) // "value"
+                            internal.readPairSideAt(vSchema, reader, count - 1, "value")
+                        else
+                            vSchema.absentDefaultValue match
+                                case Maybe.Present(dv) => dv
+                                case _ => throw MissingFieldException(Seq((count - 1).toString), "value")(using reader.frame)
+                    reader.objectEnd()
+                    loop(map.update(k, v), count + 1)
+                else map
+            val map = loop(OrderedDict.empty[K, V], 1)
+            reader.arrayEnd()
+            map
+        end readEntryPairs
         Schema.init[OrderedDict[K, V]](
             writeFn = (value, writer) =>
-                writer.mapEntriesStart(value.size)
-                value.foreach { (k, v) =>
-                    writer.mapEntryStart()
-                    kSchema.serializeWrite(k, writer)
-                    writer.mapEntryValue()
-                    vSchema.serializeWrite(v, writer)
-                    writer.mapEntryEnd()
-                }
-                writer.mapEntriesEnd()
+                if stringKey then
+                    internal.SchemaSerializer.writeStringKeyed[K, V](
+                        f => value.foreach((k, v) => f(k, v)),
+                        value.size,
+                        kSchema,
+                        vSchema,
+                        writer
+                    )(using
+                        Frame.internal
+                    )
+                else
+                    writer.mapEntriesStart(value.size)
+                    value.foreach { (k, v) =>
+                        writer.mapEntryStart()
+                        kSchema.serializeWrite(k, writer)
+                        writer.mapEntryValue()
+                        vSchema.serializeWrite(v, writer)
+                        writer.mapEntryEnd()
+                    }
+                    writer.mapEntriesEnd()
             ,
             readFn = reader =>
-                discard(reader.arrayStart())
-                @tailrec
-                def loop(map: OrderedDict[K, V], count: Int): OrderedDict[K, V] =
-                    if reader.hasNextElement() then
-                        reader.checkCollectionSize(count)
-                        discard(reader.objectStart())
-                        // hasNextField advances past the inter-field separator (a no-op for
-                        // Protobuf, the comma for a self-describing codec) before each field read.
-                        discard(reader.hasNextField())
-                        discard(reader.field()) // "key"
-                        val k = kSchema.serializeRead(reader)
-                        // The value-side hasNextField both advances the separator and carries the
-                        // presence signal: proto3 encodes an empty or default value as a key-only
-                        // entry, which decodes to the value schema's absent default.
-                        val v =
-                            if reader.hasNextField() then
-                                discard(reader.field()) // "value"
-                                vSchema.serializeRead(reader)
-                            else
-                                vSchema.absentDefaultValue match
-                                    case Maybe.Present(dv) => dv
-                                    case _                 => throw MissingFieldException(Seq.empty, "value")(using reader.frame)
-                        reader.objectEnd()
-                        loop(map.update(k, v), count + 1)
-                    else map
-                val map = loop(OrderedDict.empty[K, V], 1)
-                reader.arrayEnd()
-                map
-            ,
+                if stringKey then
+                    var map = OrderedDict.empty[K, V]
+                    internal.SchemaSerializer.readStringKeyed(kSchema, vSchema, reader)((k, v) => map = map.update(k, v))
+                    map
+                else readEntryPairs(reader),
             absentDefaultValue = Maybe(OrderedDict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
@@ -3694,9 +3909,9 @@ object Schema:
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty,
-        flattenedReadFields: Chunk[(String, String)] = Chunk.empty
+        flattenedFields: Chunk[internal.FlattenedField] = Chunk.empty
     ): Schema[A] { type Focused = F2 } =
-        internal.SchemaFactory.createFrom[A, F2](source, checks, computedFields, renamedFields, droppedFields, flattenedReadFields)
+        internal.SchemaFactory.createFrom[A, F2](source, checks, computedFields, renamedFields, droppedFields, flattenedFields)
 
     /** Internal factory for creating Schema with a specific Focused type, preserving all state. Used by methods that return
       * `Schema[A] { type Focused = E }` without changing E.
@@ -3732,7 +3947,8 @@ object Schema:
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
-        flattenedReadFields0: Chunk[(String, String)] = Chunk.empty,
+        flattenedFields0: Chunk[internal.FlattenedField] = Chunk.empty,
+        catchAll0: Maybe[internal.CatchAll] = Maybe.empty,
         absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
@@ -3763,11 +3979,12 @@ object Schema:
             denyUnknownFieldsEnabled,
             fieldDefaults,
             fieldTransforms,
-            fieldMaterializedDefaults
+            fieldMaterializedDefaults,
+            flattenedFields0,
+            catchAll0
         ):
             type Focused = E
-            @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
-            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit                     =
+            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 val writeWriter           = writerForAnnotations(writer)
                 val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
                 try
@@ -3826,7 +4043,8 @@ object Schema:
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = self.fieldDefaults,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = self.fieldTransforms,
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = self.fieldMaterializedDefaults,
-        flattenedReadFields: Chunk[(String, String)] = self.flattenedReadFields,
+        flattenedFields: Chunk[internal.FlattenedField] = self.flattenedFields,
+        catchAll: Maybe[internal.CatchAll] = self.catchAll,
         absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
@@ -3860,7 +4078,8 @@ object Schema:
             fieldDefaults = fieldDefaults,
             fieldTransforms = fieldTransforms,
             fieldMaterializedDefaults = fieldMaterializedDefaults,
-            flattenedReadFields0 = flattenedReadFields,
+            flattenedFields0 = flattenedFields,
+            catchAll0 = catchAll,
             absentDefaultValue = absentDefaultValue,
             structure = structure
         )

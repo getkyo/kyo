@@ -232,20 +232,12 @@ final class IonReader private (
                 case Str(v)       => v
                 case Symbol(v)    => v
                 case other        => mismatch("timestamp", other)
-        try java.time.Instant.parse(text)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                throw ParseException(Ion(), text, s"Instant (${e.getMessage})")(using _frame)
-        end try
+        TimeText.instant(text).foldOrThrow(identity, reason => throw ParseException(Ion(), text, s"Instant ($reason)")(using _frame))
     end instant
 
     def duration(): java.time.Duration =
         val text = string()
-        try java.time.Duration.parse(text)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                throw ParseException(Ion(), text, s"Duration (${e.getMessage})")(using _frame)
-        end try
+        TimeText.duration(text).foldOrThrow(identity, reason => throw ParseException(Ion(), text, s"Duration ($reason)")(using _frame))
     end duration
 
     override def captureValue(): Reader =

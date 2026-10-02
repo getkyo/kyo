@@ -898,6 +898,14 @@ class ProtobufTest extends kyo.test.Test[Any]:
         )
     }
 
+    "a pinned field number of a record nested in a renamed record reaches the wire" in {
+        val inner   = PBNestedPinned(1, "y")
+        val renamed = Schema[PBRenamedHolder].encode[Protobuf](PBRenamedHolder("l", inner))
+        val mirror  = Schema[PBMirrorHolder].encode[Protobuf](PBMirrorHolder("l", inner))
+        assert(renamed.toArray.toList == mirror.toArray.toList)
+        assert(Schema[PBRenamedHolder].decode[Protobuf](mirror) == Result.succeed(PBRenamedHolder("l", inner)))
+    }
+
     "all four field-customization features compose and round-trip through Json and Protobuf" in {
         // strict + transform + decode-default + whenDefault-omit on one schema, exercised through
         // BOTH the self-describing (Json) and binary (Protobuf numeric field-id) codecs. The binary
@@ -1949,3 +1957,8 @@ case class PB1716SeqStr(items: Seq[String]) derives Schema, CanEqual
 // Fixtures for rename Protobuf round-trip regression tests.
 case class PBRenameSimple(id: Int, label: String) derives Schema, CanEqual
 case class PBRenameAnnotated(@rename("wire_id") id: Int, @rename("wire_label") label: String) derives Schema, CanEqual
+
+// A pinned record nested in a renamed one, and the same wire shape with no transform.
+case class PBNestedPinned(@proto.fieldNumber(5) x: Int, y: String) derives Schema, CanEqual
+case class PBRenamedHolder(@rename("wire_label") label: String, inner: PBNestedPinned) derives Schema, CanEqual
+case class PBMirrorHolder(wire_label: String, inner: PBNestedPinned) derives Schema, CanEqual

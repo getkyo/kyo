@@ -383,6 +383,10 @@ private[kyo] object YamlEvents:
 
     abstract class EventCodecWriter(config: Yaml.WriterConfig) extends Codec.Writer:
 
+        override def canWriteTopLevelNonObject: Boolean = true
+        override def isSelfDescribing: Boolean          = true
+        override def codecName: String                  = "Yaml"
+
         private var started: Boolean  = false
         private var finished: Boolean = false
         private var numericBuffer     = new Array[Byte](32)

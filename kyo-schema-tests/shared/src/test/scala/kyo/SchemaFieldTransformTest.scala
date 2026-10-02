@@ -225,7 +225,127 @@ class SchemaFieldTransformTest extends kyo.test.Test[Any]:
         val _: Schema[CrossTransformItem] = schema
     }
 
+    "@omit(WhenDefault) on a transformed field compares the field's value, not its transformed wire form" in {
+        assert(Json.encode(FieldTransformFlagged()) == "{}")
+        assert(Json.encode(FieldTransformFlagged(urgent = true)) == """{"urgent":64}""")
+        assert(Json.decode[FieldTransformFlagged]("{}") == Result.succeed(FieldTransformFlagged()))
+        assert(Json.decode[FieldTransformFlagged]("""{"urgent":64}""") == Result.succeed(FieldTransformFlagged(urgent = true)))
+    }
+
+    "a field annotation that carries a closure survives each structural transform of a schema derived inside an object" - {
+        import FieldTransformOps.*
+
+        "flatten(_.field)" in {
+            val value = FlattenOne("ab", FieldTransformInner(1, 2))
+            assert(Json.encode(value) == """{"code":"AB","x":1,"y":2}""")
+            assert(Json.decode[FlattenOne]("""{"code":"AB","x":1,"y":2}""") == Result.succeed(value))
+        }
+
+        "flatten" in {
+            val value = FlattenAll("ab", FieldTransformInner(1, 2))
+            assert(Json.encode(value) == """{"code":"AB","x":1,"y":2}""")
+            assert(Json.decode[FlattenAll]("""{"code":"AB","x":1,"y":2}""") == Result.succeed(value))
+        }
+
+        "drop" in {
+            assert(Json.encode(Dropped("ab", 1)) == """{"code":"AB"}""")
+        }
+
+        "rename" in {
+            assert(Json.encode(Renamed("ab", 1)) == """{"code":"AB","count":1}""")
+            assert(Json.decode[Renamed]("""{"code":"AB","count":1}""") == Result.succeed(Renamed("ab", 1)))
+        }
+
+        "select" in {
+            assert(Json.encode(Selected("ab", 1)) == """{"code":"AB"}""")
+        }
+
+        "add" in {
+            assert(Json.encode(Added("ab", 1)) == """{"code":"AB","n":1,"double":2}""")
+        }
+
+        "fold" in {
+            assert(fieldNames(Folded("ab", 1)) == Chunk("code", "n"))
+        }
+
+        "an @omit(omit.When(...)) field beside a flattened record field" in {
+            assert(Json.encode(OmitFlatten(-1, FieldTransformInner(1, 2))) == """{"x":1,"y":2}""")
+            assert(Json.encode(OmitFlatten(3, FieldTransformInner(1, 2))) == """{"count":3,"x":1,"y":2}""")
+        }
+
+        "an @omit(omit.WhenDefault) field with a case-object default beside a flattened record field" in {
+            assert(Json.encode(DefaultFlatten(inner = FieldTransformInner(1, 2))) == """{"x":1,"y":2}""")
+            assert(Json.encode(DefaultFlatten(SA27bMode.Draft, FieldTransformInner(1, 2))) == """{"mode":"draft","x":1,"y":2}""")
+            assert(Json.decode[DefaultFlatten]("""{"x":1,"y":2}""") == Result.succeed(DefaultFlatten(inner = FieldTransformInner(1, 2))))
+        }
+    }
+
 end SchemaFieldTransformTest
+
+object FieldTransformFlag extends kyo.schema.Transformer.Of[Boolean](
+        Schema.intSchema.transform[Boolean](flags => (flags & 64) != 0)(set => if set then 64 else 0)
+    )
+case class FieldTransformFlagged(
+    @kyo.schema.transform(FieldTransformFlag) @kyo.schema.omit(kyo.schema.omit.WhenDefault) urgent: Boolean = false
+) derives CanEqual, Schema
+
+object FieldTransformUpper extends kyo.schema.Transformer.Full[String]:
+    def write(value: String, writer: Codec.Writer): Unit = writer.string(value.toUpperCase)
+    def read(reader: Codec.Reader): String               = reader.string().toLowerCase
+
+// Each schema is derived where it is transformed, inside an object, as a companion given or a method body: the shape in which a
+// transform macro's receiver is a derivation tree rather than a reference to a given.
+object FieldTransformOps:
+    import kyo.schema.transform
+
+    final case class FlattenOne(@transform(FieldTransformUpper) code: String, inner: FieldTransformInner) derives CanEqual
+    object FlattenOne:
+        given Schema[FlattenOne] = Schema[FlattenOne].flatten(_.inner)
+
+    final case class FlattenAll(@transform(FieldTransformUpper) code: String, inner: FieldTransformInner) derives CanEqual
+    object FlattenAll:
+        given Schema[FlattenAll] = Schema[FlattenAll].flatten
+
+    final case class Dropped(@transform(FieldTransformUpper) code: String, n: Int) derives CanEqual
+    object Dropped:
+        given Schema[Dropped] = Schema[Dropped].drop("n")
+
+    final case class Renamed(@transform(FieldTransformUpper) code: String, n: Int) derives CanEqual
+    object Renamed:
+        given Schema[Renamed] = Schema[Renamed].rename("n", "count")
+
+    final case class Selected(@transform(FieldTransformUpper) code: String, n: Int) derives CanEqual
+    object Selected:
+        given Schema[Selected] = Schema[Selected].select("code")
+
+    final case class Added(@transform(FieldTransformUpper) code: String, n: Int) derives CanEqual
+    object Added:
+        given Schema[Added] = Schema[Added].add("double")(_.n * 2)
+
+    object Negative extends kyo.schema.OmitPredicate:
+        def test(value: Structure.Value): Boolean = value match
+            case Structure.Value.Integer(n) => n < 0
+            case _                          => false
+    end Negative
+
+    final case class OmitFlatten(@kyo.schema.omit(kyo.schema.omit.When(Negative)) count: Int, inner: FieldTransformInner)
+    object OmitFlatten:
+        given Schema[OmitFlatten] = Schema[OmitFlatten].flatten(_.inner)
+
+    final case class DefaultFlatten(
+        @kyo.schema.omit(kyo.schema.omit.WhenDefault) mode: SA27bMode = SA27bMode.Published,
+        inner: FieldTransformInner
+    ) derives CanEqual
+    object DefaultFlatten:
+        given Schema[DefaultFlatten] = Schema[DefaultFlatten].flatten(_.inner)
+
+    final case class Folded(@transform(FieldTransformUpper) code: String, n: Int)
+
+    def fieldNames(value: Folded): Chunk[String] =
+        Schema[Folded].fold(value)(Chunk.empty[String])([N <: String, V] =>
+            (acc: Chunk[String], field: Field[N, V], _: V) => acc :+ field.name
+        )
+end FieldTransformOps
 
 case class FieldTransformCart(name: String, quantity: Int) derives CanEqual, Schema
 case class FieldTransformInner(x: Int, y: Int) derives CanEqual, Schema

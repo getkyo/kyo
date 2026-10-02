@@ -39,7 +39,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     def objectStart(): Int =
         checkDepth()
         skipWhitespace()
-        expect('{')
+        if pos >= input.size || input(pos) != '{' then wrongKind("object", "Expected '{'")
+        advance()
         skipWhitespace()
         if pos < input.size && peek() == '}' then 0 else -1
     end objectStart
@@ -53,7 +54,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     def arrayStart(): Int =
         checkDepth()
         skipWhitespace()
-        expect('[')
+        if pos >= input.size || input(pos) != '[' then wrongKind("array", "Expected '['")
+        advance()
         skipWhitespace()
         if pos < input.size && peek() == ']' then 0 else -1
     end arrayStart
@@ -66,6 +68,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     def field(): String =
         skipWhitespace()
+        if pos >= input.size || input(pos) != '"' then error("Expected a field name")
         val name = string()
         skipWhitespace()
         expect(':')
@@ -156,7 +159,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
       */
     private def hasNext(close: Byte): Boolean =
         skipWhitespace()
-        if pos >= input.size then false
+        // Answering false here would let a record decoder read a cut-off object as a complete one and report its fields missing.
+        if pos >= input.size then error(s"Expected '${close.toChar}' but reached end of input")
         else
             val next = input(pos)
             previousSignificantByte match
@@ -188,7 +192,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     def string(): String =
         skipWhitespace()
-        if pos >= input.size || input(pos) != '"' then error("Expected '\"'")
+        if pos >= input.size || input(pos) != '"' then wrongKind("string", "Expected '\"'")
         pos += 1
         val start = pos
         skipPlainStringBytes()
@@ -221,7 +225,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val start = pos
         val neg   = pos < input.size && input(pos) == '-'
         if neg then pos += 1
-        if pos >= input.size || input(pos) < '0' || input(pos) > '9' then error("Expected number")
+        if pos >= input.size || input(pos) < '0' || input(pos) > '9' then
+            if neg then error("Expected number") else wrongKind("number", "Expected number")
         val digitsStart                                                          = pos
         @tailrec def parseDigits(result: Int, overflow: Boolean): (Int, Boolean) =
             if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
@@ -252,7 +257,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         val start = pos
         val neg   = pos < input.size && input(pos) == '-'
         if neg then pos += 1
-        if pos >= input.size || input(pos) < '0' || input(pos) > '9' then error("Expected number")
+        if pos >= input.size || input(pos) < '0' || input(pos) > '9' then
+            if neg then error("Expected number") else wrongKind("number", "Expected number")
         val digitsStart                                                            = pos
         @tailrec def parseDigits(result: Long, overflow: Boolean): (Long, Boolean) =
             if pos < input.size && input(pos) >= '0' && input(pos) <= '9' then
@@ -288,6 +294,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Float value: '$s'")
             end if
         else
+            requireNumberStart()
             val start = pos
             scanNumber()
             val end      = pos
@@ -314,6 +321,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else error(s"Invalid Double value: '$s'")
             end if
         else
+            requireNumberStart()
             val start = pos
             scanNumber()
             val end      = pos
@@ -346,17 +354,26 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             input(pos + 4) == 'e'
         then
             pos += 5; false
-        else error("Expected boolean")
+        else wrongKind("boolean", "Expected boolean")
         end if
     end boolean
 
     def short(): Short =
         skipWhitespace()
+        requireNumberStart()
         parseNumberStr("Short")(_.toShort)
+    end short
 
     def byte(): Byte =
         skipWhitespace()
+        requireNumberStart()
         parseNumberStr("Byte")(_.toByte)
+    end byte
+
+    // A number starts with a digit or a minus sign; anything else is a value of another kind or malformed input.
+    private def requireNumberStart(): Unit =
+        if pos >= input.size || !(input(pos) == '-' || (input(pos) >= '0' && input(pos) <= '9')) then
+            wrongKind("number", "Expected number")
 
     def char(): Char =
         skipWhitespace()
@@ -474,20 +491,12 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
 
     def instant(): java.time.Instant =
         val s = string()
-        try java.time.Instant.parse(s)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Instant value: '$s' (${e.getMessage})")
-        end try
+        TimeText.instant(s).foldOrThrow(identity, reason => error(s"Invalid Instant value: '$s' ($reason)"))
     end instant
 
     def duration(): java.time.Duration =
         val s = string()
-        try java.time.Duration.parse(s)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Duration value: '$s' (${e.getMessage})")
-        end try
+        TimeText.duration(s).foldOrThrow(identity, reason => error(s"Invalid Duration value: '$s' ($reason)"))
     end duration
 
     // Internal parsing methods
@@ -725,6 +734,29 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         if input(pos) != b then error(s"Expected '${b.toChar}', got '${input(pos).toChar}'")
         pos += 1
     end expectByte
+
+    /** Fails a read that expected `expected` at `pos`: a type mismatch when a value of another kind starts there, since the input is
+      * well-formed JSON and only its shape is wrong, and a parse failure otherwise.
+      */
+    private def wrongKind(expected: String, parseMessage: String): Nothing =
+        def literalAt(text: String): Boolean =
+            pos + text.length <= input.size && text.indices.forall(i => input(pos + i) == text.charAt(i))
+        val actual =
+            if pos >= input.size then ""
+            else
+                input(pos) match
+                    case '"'                                                                           => "string"
+                    case '{'                                                                           => "object"
+                    case '['                                                                           => "array"
+                    case b if b >= '0' && b <= '9'                                                     => "number"
+                    case '-' if pos + 1 < input.size && input(pos + 1) >= '0' && input(pos + 1) <= '9' => "number"
+                    case 't' if literalAt("true")                                                      => "boolean"
+                    case 'f' if literalAt("false")                                                     => "boolean"
+                    case 'n' if literalAt("null")                                                      => "null"
+                    case _                                                                             => ""
+        if actual.isEmpty then error(parseMessage)
+        else throw TypeMismatchException(Nil, expected, actual)(using _frame)
+    end wrongKind
 
     private[kyo] def requireEndOfInput(): Unit =
         skipWhitespace()

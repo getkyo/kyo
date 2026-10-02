@@ -44,6 +44,9 @@ case class SA15Prod(@rename("first_name") firstName: String) derives Schema
 // SA15b: @rename on a Maybe field, whose schema is built from a tag for an opaque type
 case class SA15bProd(@rename("middle_name") middleName: Maybe[String]) derives Schema
 
+// SA15c: @rename to the field's own name
+case class SA15cProd(@rename("name") name: String, n: Int) derives Schema, CanEqual
+
 // SA16: @discriminator on sealed trait, @rename on a variant
 @discriminator("type") sealed trait SA16Sum derives Schema
 @rename("para") case class SA16V1(x: Int) extends SA16Sum derives Schema
@@ -71,7 +74,6 @@ case class SA20B(y: String) extends SA20Sum derives Schema
 @doc("a documented product") case class SA21Prod(@doc("identifier field") id: Int) derives Schema
 
 // SA22: @alias on a field combined with @rename
-// Field Scala name is "fieldName" (not "name") to avoid resolveTarget self-loop when source==wire.
 case class SA22Prod(@rename("name") @alias("fullName", "n") fieldName: String) derives Schema
 
 // SA23: @alias on a variant (routes onto variantAliases, not fieldAliases)
@@ -90,6 +92,21 @@ case class SA26Prod(@omit(schema.omit.WhenEmpty) xs: Chunk[Int]) derives Schema
 
 // SA27: @omit(omit.WhenDefault) on an Int field with a Scala default
 case class SA27Prod(@omit(schema.omit.WhenDefault) n: Int = 0) derives Schema
+
+// SA27b: @omit(omit.WhenDefault) on fields whose own Schema writes them in another shape than their structure: a @tagOnly case
+// object and a product with a renamed field
+@tagOnly() sealed trait SA27bMode derives CanEqual
+object SA27bMode:
+    @rename("draft") case object Draft         extends SA27bMode
+    @rename("published") case object Published extends SA27bMode
+    given Schema[SA27bMode] = Schema.derived[SA27bMode]
+end SA27bMode
+case class SA27bBox(@rename("w") v: Int) derives Schema, CanEqual
+case class SA27bProd(
+    x: Int,
+    @omit(schema.omit.WhenDefault) mode: SA27bMode = SA27bMode.Published,
+    @omit(schema.omit.WhenDefault) box: SA27bBox = SA27bBox(1)
+) derives Schema, CanEqual
 
 // SA28: @omit composes with @rename
 case class SA28Prod(@rename("a_field") @omit(schema.omit.WhenNone) a: Maybe[Int]) derives Schema
@@ -372,6 +389,14 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         )
     }
 
+    "@rename to the field's own name keeps the wire key, on every surface that resolves a rename" in {
+        assert(Json.encode(SA15cProd("ada", 1)) == """{"name":"ada","n":1}""")
+        assert(Json.decode[SA15cProd]("""{"name":"ada","n":1}""") == Result.succeed(SA15cProd("ada", 1)))
+        assert(Schema[SA15cProd].toStructureValue(SA15cProd("ada", 1)) ==
+            Structure.Value.Record(Chunk("name" -> Structure.Value.Str("ada"), "n" -> Structure.Value.Integer(1))))
+        assert(Schema[SA15cProd].fieldIdNameOverrides.keySet == Set("name"))
+    }
+
     "@rename on a variant changes the wire tag" in {
         val enc = Json.encode[SA16Sum](SA16V1(1))
         assert(enc == """{"type":"para","x":1}""", s"renamed variant tag must be 'para': $enc")
@@ -502,6 +527,12 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
             decFromEmpty == Result.succeed(SA27Prod(0)),
             s"absent field must reconstruct from Scala default (0): $decFromEmpty"
         )
+    }
+
+    "@omit(Omit.WhenDefault) compares the value as its own Schema writes it, a @tagOnly case object and a renamed product included" in {
+        assert(Json.encode(SA27bProd(1)) == """{"x":1}""")
+        assert(Json.encode(SA27bProd(1, SA27bMode.Draft, SA27bBox(2))) == """{"x":1,"mode":"draft","box":{"w":2}}""")
+        assert(Json.decode[SA27bProd]("""{"x":1}""") == Result.succeed(SA27bProd(1)))
     }
 
     "@omit composes with @rename" in {

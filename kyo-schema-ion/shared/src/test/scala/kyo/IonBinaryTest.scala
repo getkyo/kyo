@@ -163,9 +163,10 @@ class IonBinaryTest extends kyo.test.Test[Any]:
 
         "decode surfaces a non-serializable schema as Result.Panic, not an uncaught throw" in {
             val encoded = IonBinary.encode(1)
-            val result  =
-                given Schema[Int] = Schema[Int]
-                IonBinary.decode[Int](encoded)
+            // A structural type has no given, so Schema[A] builds the navigation-only schema, which has no serialization.
+            val result =
+                given Schema[Record.~["name", String]] = Schema[Record.~["name", String]]
+                IonBinary.decode[Record.~["name", String]](encoded)
             result match
                 case Result.Panic(ex: SchemaNotSerializableException) =>
                     assert(ex.getMessage.contains("does not have serialization"))

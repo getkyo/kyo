@@ -11,9 +11,19 @@ object OpaqueFields:
     opaque type Boxed[A] <: "value" ~ A & "label" ~ String = "value" ~ A & "label" ~ String
 end OpaqueFields
 
+/** A record declared in the scope of an opaque type over `String`, where `String` and `Kind` are the same type to the compiler. */
+object OpaqueScope:
+    opaque type Kind = String
+    final case class Labelled(label: String, kind: Kind)
+    final case class Boxed[A](value: A, label: String)
+    val inside: List[Field[?, ?]]      = Fields.fields[Labelled]
+    val insideBoxed: List[Field[?, ?]] = Fields.fields[Boxed[Int]]
+end OpaqueScope
+
 case class Person(name: String, age: Int)
 case class Point(x: Int, y: Int)
 case class Wrapper[A](value: A, label: String)
+case class WrapperWithDefault[A](value: A, label: String = "none")
 
 class FieldsTest extends kyo.test.Test[Any]:
 
@@ -75,6 +85,12 @@ class FieldsTest extends kyo.test.Test[Any]:
     "case class: generic case class" in {
         val names = Fields.names[Wrapper[Int]]
         assert(names == Set("value", "label"))
+    }
+
+    "case class: a generic case class's default value" in {
+        val fs                                      = Fields.fields[WrapperWithDefault[Int]]
+        val expected: List[(String, Maybe[String])] = List("value" -> Maybe.empty, "label" -> Maybe("none"))
+        assert(fs.map(f => f.name -> f.default.map(_.toString)) == expected)
     }
 
     "case class: generic Have resolves parameterized type" in {
@@ -211,6 +227,20 @@ class FieldsTest extends kyo.test.Test[Any]:
 
     "bounded opaque: SameNames rejects different fields" in {
         typeCheckFailure("""summon[Fields.SameNames[OpaqueFields.Contact, Point]]""")
+    }
+
+    "a case class in an opaque type's scope: each field's tag is the type its declaration names, or the type argument it takes" in {
+        given CanEqual[Any, Any] = CanEqual.derived
+        val outside              = Fields.fields[OpaqueScope.Labelled]
+        Chunk(OpaqueScope.inside, outside).foreach { fields =>
+            assert(fields.map(_.name) == List("label", "kind"))
+            assert((fields(0).tag: Any) == (Tag[String]: Any))
+            assert((fields(1).tag: Any) == (Tag[OpaqueScope.Kind]: Any))
+        }
+        assert((Tag[OpaqueScope.Kind]: Any) != (Tag[String]: Any))
+        assert(OpaqueScope.insideBoxed.map(_.name) == List("value", "label"))
+        assert((OpaqueScope.insideBoxed(0).tag: Any) == (Tag[Int]: Any))
+        assert((OpaqueScope.insideBoxed(1).tag: Any) == (Tag[String]: Any))
     }
 
 end FieldsTest

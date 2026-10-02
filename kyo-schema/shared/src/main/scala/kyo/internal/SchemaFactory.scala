@@ -26,7 +26,7 @@ private[kyo] object SchemaFactory:
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty,
-        flattenedReadFields: Chunk[(String, String)] = Chunk.empty
+        flattenedFields: Chunk[FlattenedField] = Chunk.empty
     ): Schema[A] { type Focused = F2 } =
         // Compute updated field metadata:
         // - drop removes all path-keyed entries whose first segment is the dropped field
@@ -91,7 +91,8 @@ private[kyo] object SchemaFactory:
             fieldDefaults = source.fieldDefaults,
             fieldTransforms = source.fieldTransforms,
             fieldMaterializedDefaults = source.fieldMaterializedDefaults,
-            flattenedReadFields0 = (source.flattenedReadFields ++ flattenedReadFields).distinct
+            flattenedFields0 = source.flattenedFields ++ flattenedFields,
+            catchAll0 = source.catchAll
         )
     end createFrom
 

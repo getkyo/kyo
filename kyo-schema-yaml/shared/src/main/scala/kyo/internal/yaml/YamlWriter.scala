@@ -9,6 +9,7 @@ import scala.annotation.tailrec
 final private[kyo] class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
 
     override def canWriteTopLevelNonObject: Boolean = true
+    override def isSelfDescribing: Boolean          = true
     override def codecName: String                  = "Yaml"
 
     import Yaml.WriterConfig.*

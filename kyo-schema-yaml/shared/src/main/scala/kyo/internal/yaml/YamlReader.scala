@@ -37,7 +37,15 @@ final private[kyo] class YamlReader private (
 
     override def frame: Frame = _frame
 
+    // The value is captured first and read from the captured reader's events. Reading the events in place is wrong in two states:
+    // a delegate holds the value, or the reader is pulling from its source mid-document, where `prepare` would rebuild the events from
+    // the start of the source and drop the pull position.
     override def readStructure(): Structure.Value =
+        captureValue() match
+            case captured: YamlReader => captured.structureFromEvents()
+            case other                => error(s"Expected a captured YAML value, got ${other.getClass.getSimpleName}")
+
+    private def structureFromEvents(): Structure.Value =
         peek match
             case _: MappingStart =>
                 discard(objectStart())
@@ -45,7 +53,7 @@ final private[kyo] class YamlReader private (
                 @tailrec def loop(): Unit =
                     if hasNextField() then
                         val name = field()
-                        discard(acc.addOne((name, readStructure())))
+                        discard(acc.addOne((name, structureFromEvents())))
                         loop()
                 loop()
                 objectEnd()
@@ -55,11 +63,21 @@ final private[kyo] class YamlReader private (
                 val acc                   = ArrayBuffer.empty[Structure.Value]
                 @tailrec def loop(): Unit =
                     if hasNextElement() then
-                        discard(acc.addOne(readStructure()))
+                        discard(acc.addOne(structureFromEvents()))
                         loop()
                 loop()
                 arrayEnd()
                 Structure.Value.Sequence(Chunk.from(acc.toSeq))
+            case Alias(name, mark) =>
+                // The anchored node may be a collection, so it is read through the anchor's own reader rather than as a scalar.
+                startAlias(name, mark)
+                delegate match
+                    case Present(reader) =>
+                        delegate = Absent
+                        delegateDepth = 0
+                        reader.readStructure()
+                    case Absent => error(s"Unknown alias '${name.value}'")
+                end match
             case _ =>
                 scalarValue() match
                     case ScalarValue.Null       => Structure.Value.Null
@@ -71,7 +89,7 @@ final private[kyo] class YamlReader private (
                             Structure.Value.Decimal(n.toDouble)
                         else Structure.Value.Integer(n.toLong)
         end match
-    end readStructure
+    end structureFromEvents
 
     override private[kyo] def resetLimits(maxDepth: Int, maxCollectionSize: Int): Unit =
         super.resetLimits(maxDepth, maxCollectionSize)
@@ -433,20 +451,12 @@ final private[kyo] class YamlReader private (
 
     def instant(): java.time.Instant =
         val value = string()
-        try java.time.Instant.parse(value)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Instant value: '$value' (${e.getMessage})")
-        end try
+        kyo.internal.TimeText.instant(value).foldOrThrow(identity, reason => error(s"Invalid Instant value: '$value' ($reason)"))
     end instant
 
     def duration(): java.time.Duration =
         val value = string()
-        try java.time.Duration.parse(value)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                error(s"Invalid Duration value: '$value' (${e.getMessage})")
-        end try
+        kyo.internal.TimeText.duration(value).foldOrThrow(identity, reason => error(s"Invalid Duration value: '$value' ($reason)"))
     end duration
 
     override def initFields(n: Int): Array[AnyRef] =

@@ -35,6 +35,66 @@ case class SSRUShortVal(s: Short) extends SSRUIntegral derives CanEqual
 case class SSRUByteVal(b: Byte)   extends SSRUIntegral derives CanEqual
 case class SSRUIntVal(n: Int)     extends SSRUIntegral derives CanEqual
 
+// --- SSRF* fixtures: sealed sub-traits under a root ---
+sealed trait SSRFRoot derives CanEqual, Schema
+sealed trait SSRFGroup                   extends SSRFRoot
+final case class SSRFLeaf(x: Int)        extends SSRFGroup derives CanEqual
+case object SSRFMark                     extends SSRFGroup
+sealed trait SSRFDeep                    extends SSRFGroup
+final case class SSRFDeepLeaf(z: String) extends SSRFDeep derives CanEqual
+final case class SSRFDirect(y: Int)      extends SSRFRoot derives CanEqual
+
+sealed trait SSRFPlain derives CanEqual, Schema
+sealed trait SSRFPlainGroup                                            extends SSRFPlain
+final case class SSRFPlainLeaf(x: Int)                                 extends SSRFPlainGroup derives CanEqual
+final case class SSRFPlainDirect(z: String)                            extends SSRFPlain derives CanEqual
+final case class SSRFPlainOther(tag: String, payload: Structure.Value) extends SSRFPlainGroup derives CanEqual
+
+sealed trait SSRFShared derives CanEqual, Schema
+sealed trait SSRFSharedA                extends SSRFShared
+sealed trait SSRFSharedB                extends SSRFShared
+final case class SSRFSharedBoth(x: Int) extends SSRFSharedA with SSRFSharedB derives CanEqual
+final case class SSRFSharedOnly(y: Int) extends SSRFSharedB derives CanEqual
+
+sealed trait SSRFChain derives CanEqual, Schema
+sealed trait SSRFChain1                extends SSRFChain
+sealed trait SSRFChain2                extends SSRFChain with SSRFChain1
+sealed trait SSRFChain3                extends SSRFChain with SSRFChain2
+sealed trait SSRFChain4                extends SSRFChain with SSRFChain3
+sealed trait SSRFChain5                extends SSRFChain with SSRFChain4
+sealed trait SSRFChain6                extends SSRFChain with SSRFChain5
+sealed trait SSRFChain7                extends SSRFChain with SSRFChain6
+sealed trait SSRFChain8                extends SSRFChain with SSRFChain7
+sealed trait SSRFChain9                extends SSRFChain with SSRFChain8
+sealed trait SSRFChain10               extends SSRFChain with SSRFChain9
+sealed trait SSRFChain11               extends SSRFChain with SSRFChain10
+sealed trait SSRFChain12               extends SSRFChain with SSRFChain11
+final case class SSRFChainLeaf(x: Int) extends SSRFChain12 derives CanEqual
+
+@kyo.schema.tagOnly
+sealed trait SSRFColor derives CanEqual, Schema
+sealed trait SSRFWarm extends SSRFColor
+case object SSRFRed   extends SSRFWarm
+case object SSRFBlue  extends SSRFColor
+
+@kyo.schema.discriminator("type")
+sealed trait SSRFTagged derives CanEqual, Schema
+sealed trait SSRFTaggedGroup extends SSRFTagged
+@kyo.schema.rename("leaf")
+final case class SSRFTaggedLeaf(x: Int) extends SSRFTaggedGroup derives CanEqual
+@kyo.schema.catchAll()
+final case class SSRFTaggedOther(tag: String, payload: Structure.Value) extends SSRFTaggedGroup derives CanEqual
+@kyo.schema.rename("direct")
+final case class SSRFTaggedDirect(y: Int) extends SSRFTagged derives CanEqual
+
+sealed trait SSRFNested derives CanEqual
+sealed trait SSRFNestedGroup            extends SSRFNested
+final case class SSRFNestedLeaf(x: Int) extends SSRFNestedGroup derives CanEqual
+object SSRFNestedGroup:
+    given Schema[SSRFNestedGroup] = Schema.derived[SSRFNestedGroup].discriminator("kind")
+object SSRFNested:
+    given Schema[SSRFNested] = Schema.derived[SSRFNested].adjacent("op", "body")
+
 sealed trait SSRShape derives CanEqual, Schema
 case class SSRCircle(radius: Double)                    extends SSRShape derives CanEqual
 case class SSRSquare(side: Double)                      extends SSRShape derives CanEqual
@@ -43,6 +103,10 @@ case object SSRUnit                                     extends SSRShape derives
 case class SSRPi(value: Double)                         extends SSRShape derives CanEqual
 case class SSRLine(p1: SSRPoint, p2: SSRPoint)          extends SSRShape derives CanEqual
 case class SSRPoint(x: Double, y: Double) derives CanEqual, Schema
+case class SSRDrawing(drawingTitle: String, shape: SSRShape) derives CanEqual
+object SSRDrawing:
+    given Schema[SSRShape]   = Schema[SSRShape].tupleFlat
+    given Schema[SSRDrawing] = Schema.derived[SSRDrawing]
 
 // Fixtures for variant-name collision under SnakeCase convention.
 // FooBar -> foo_bar; Foo_Bar -> [Foo, Bar] -> foo_bar: two distinct Scala names, one wire name.
@@ -50,9 +114,124 @@ sealed trait SSRFrmCollide derives CanEqual, Schema
 case class FooBar(x: Int)  extends SSRFrmCollide derives CanEqual
 case class Foo_Bar(y: Int) extends SSRFrmCollide derives CanEqual
 
+// --- SWR* fixtures: a variant's own field annotations under each representation ---
+@schema.discriminator("type")
+sealed trait SWRRx derives CanEqual, Schema
+case class SWREmoji(emoji: String) extends SWRRx derives CanEqual
+@schema.rename("custom_emoji")
+case class SWRCustomEmoji(@schema.rename("custom_emoji_id") id: String) extends SWRRx derives CanEqual
+
+object SWRUpper extends schema.Transformer.Full[String]:
+    def write(value: String, writer: Codec.Writer): Unit = writer.string(value.toUpperCase)
+    def read(reader: Codec.Reader): String               = reader.string().toLowerCase
+
+@schema.discriminator("type")
+sealed trait SWRElement derives CanEqual, Schema
+@schema.rename("button")
+case class SWRButton(
+    @schema.transform(SWRUpper) text: String,
+    @schema.rename("action_id") actionId: String,
+    @schema.alias("hint_text") hint: Maybe[String] = Absent
+) extends SWRElement derives CanEqual
+
+sealed trait SWRExternal derives CanEqual, Schema
+case class SWRExternalCase(@schema.rename("custom_emoji_id") id: String) extends SWRExternal derives CanEqual
+
+@schema.untagged()
+sealed trait SWRUntagged derives CanEqual, Schema
+case class SWRUntaggedCase(@schema.rename("custom_emoji_id") id: String) extends SWRUntagged derives CanEqual
+
+enum SSRNumber derives CanEqual:
+    case Whole(value: Long)
+    case Fraction(value: Double)
+    case Flag(value: Boolean)
+end SSRNumber
+object SSRNumber:
+    given Schema[SSRNumber.Whole]    = Schema.longSchema.transform[SSRNumber.Whole](SSRNumber.Whole(_))(_.value)
+    given Schema[SSRNumber.Fraction] = Schema.doubleSchema.transform[SSRNumber.Fraction](SSRNumber.Fraction(_))(_.value)
+    given Schema[SSRNumber.Flag]     = Schema.booleanSchema.transform[SSRNumber.Flag](SSRNumber.Flag(_))(_.value)
+    given Schema[SSRNumber]          = Schema.derived[SSRNumber].untagged.unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+end SSRNumber
+
+sealed trait SSRSignal derives CanEqual, Schema
+case object SSRResumed                                                            extends SSRSignal
+case class SSRHello(interval: Int)                                                extends SSRSignal derives CanEqual
+case class SSRDefer(@schema.omit(schema.omit.WhenDefault) quiet: Boolean = false) extends SSRSignal derives CanEqual
+case class SSRNote(note: Maybe[String])                                           extends SSRSignal derives CanEqual
+
+@schema.adjacent("type", "content")
+sealed trait SWRAdjacent derives CanEqual, Schema
+case class SWRAdjacentCase(@schema.rename("custom_emoji_id") id: String) extends SWRAdjacent derives CanEqual
+
+// --- SWP* fixtures: a variant whose first field is renamed, under the positional and keyed representations ---
+sealed trait SWPShape derives CanEqual, Schema
+case class SWPPoint(@schema.rename("x_coord") x: Int, y: Int, z: Int) extends SWPShape derives CanEqual
+
+// The same variant with its field under the Scala name, as data written before variant renames reached the wire.
+@schema.discriminator("type")
+sealed trait SWPOldShape derives CanEqual, Schema
+@schema.rename("SWPPoint")
+case class SWPOldPoint(x: Int, y: Int, z: Int) extends SWPOldShape derives CanEqual
+
+// 701810 is CodecMacro.fieldId("x"), the number the field had before the rename reached the wire.
+@schema.discriminator("type")
+sealed trait SWPPinnedShape derives CanEqual, Schema
+@schema.rename("SWPPoint")
+case class SWPPinnedPoint(@schema.rename("x_coord") @schema.proto.fieldNumber(701810) x: Int, y: Int, z: Int)
+    extends SWPPinnedShape derives CanEqual
+
+// --- SWO* fixtures: a variant field's own @omit policy, with an empty collection ---
+sealed trait SWOBag derives CanEqual, Schema
+case class SWOItems(@schema.omit(schema.omit.WhenEmpty) items: List[String], label: String) extends SWOBag derives CanEqual
+case class SWONote(note: Maybe[String], label: String)                                      extends SWOBag derives CanEqual
+sealed trait SWONested derives CanEqual, Schema
+case class SWONestedCase(bag: SWOBag) extends SWONested derives CanEqual
+
+// --- SWF* fixtures: a record holding a sum, for field transforms on a nested path ---
+case class SWFHolder(shape: SSRShape) derives CanEqual, Schema
+
+// --- SWG* fixtures: a variant's own given, used by the sum ---
+@schema.discriminator("type")
+sealed trait SWGEvent derives CanEqual, Schema
+case class SWGUserJoined(userId: Long, chatTitle: String) extends SWGEvent derives CanEqual
+object SWGUserJoined:
+    given Schema[SWGUserJoined] = Schema.derived[SWGUserJoined].renameAllFields(Schema.NameCase.SnakeCase)
+
+@schema.discriminator("type")
+sealed trait SWGPay derives CanEqual, Schema
+case class SWGCard(last4: String) extends SWGPay derives CanEqual
+object SWGCard:
+    def make(last4: String): Result[String, SWGCard] =
+        if last4.length == 4 then Result.succeed(SWGCard(last4)) else Result.fail(s"bad last4: $last4")
+    given Schema[SWGCard] = Schema.derivedVia(make)
+end SWGCard
+case class SWGCash(amount: Int) extends SWGPay derives CanEqual
+
+sealed trait SWGTokenized derives CanEqual, Schema
+sealed abstract case class SWGToken private (value: String) extends SWGTokenized
+object SWGToken:
+    def make(value: String): Result[String, SWGToken] =
+        if value.nonEmpty then Result.succeed(new SWGToken(value) {}) else Result.fail("empty token")
+    given Schema[SWGToken] = Schema.derivedVia(make)
+end SWGToken
+case class SWGPlain(n: Int) extends SWGTokenized derives CanEqual
+
+// A JWT's `aud` (RFC 7519 section 4.1.3): one string or an array of them, a union with a parameterized member.
+case class SSRUAudience(aud: String | Chunk[String], extra: Maybe[Int | Chunk[Int]] = Absent) derives CanEqual, Schema
+
 class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
+
+    "a union with a parameterized member derives without an unchecked type test and round-trips each member" in {
+        val one  = SSRUAudience("bot")
+        val many = SSRUAudience(Chunk("bot", "other"), Present(Chunk(1, 2)))
+        val ints = SSRUAudience("bot", Present(7))
+        assert(Json.encode(one) == """{"aud":"bot"}""")
+        assert(Json.encode(many) == """{"aud":["bot","other"],"extra":[1,2]}""")
+        assert(Json.encode(ints) == """{"aud":"bot","extra":7}""")
+        assert(Chunk(one, many, ints).map(v => Json.decode[SSRUAudience](Json.encode(v))) == Chunk(one, many, ints).map(Result.succeed))
+    }
 
     // =========================================================================
     // Group: enum shape
@@ -65,8 +244,9 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         val tup  = Schema.UnionRepresentation.Tuple
         val tupF = Schema.UnionRepresentation.TupleFlat
         val unt  = Schema.UnionRepresentation.Untagged
+        val tag  = Schema.UnionRepresentation.TagOnly
 
-        // Total match over all six arms compiles with no missing-case warning.
+        // Total match over all seven arms compiles with no missing-case warning.
         def describeAll(r: Schema.UnionRepresentation): String = r match
             case Schema.UnionRepresentation.External       => "external"
             case Schema.UnionRepresentation.Internal(_)    => "internal"
@@ -74,6 +254,7 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
             case Schema.UnionRepresentation.Tuple          => "tuple"
             case Schema.UnionRepresentation.TupleFlat      => "tupleFlat"
             case Schema.UnionRepresentation.Untagged       => "untagged"
+            case Schema.UnionRepresentation.TagOnly        => "tagOnly"
 
         assert(describeAll(ext) == "external")
         assert(describeAll(int) == "internal")
@@ -81,6 +262,7 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(describeAll(tup) == "tuple")
         assert(describeAll(tupF) == "tupleFlat")
         assert(describeAll(unt) == "untagged")
+        assert(describeAll(tag) == "tagOnly")
         // Case-specific field access via pattern match
         val intTagKey = int match
             case Schema.UnionRepresentation.Internal(k) => k
@@ -131,6 +313,23 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         val circle: SSRShape = SSRCircle(10.0)
         val baseWire         = base.encodeString[Json](circle)
         assert(baseWire == """{"SSRCircle":{"radius":10.0}}""")
+    }
+
+    "untagged FirstMatch: a whole-number variant declared first does not take a fraction, which falls to the next" in {
+        val schema = summon[Schema[SSRNumber]]
+        assert(schema.decodeString[Json]("6") == Result.succeed(SSRNumber.Whole(6L)))
+        assert(schema.decodeString[Json]("1.5") == Result.succeed(SSRNumber.Fraction(1.5)))
+        assert(schema.decodeString[Json]("true") == Result.succeed(SSRNumber.Flag(true)))
+    }
+
+    "adjacent: a null content reads as no content, so a variant without fields decodes" in {
+        val schema = Schema[SSRSignal].adjacent("t", "d")
+        assert(schema.decodeString[Json]("""{"t":"SSRResumed","d":null}""") == Result.succeed(SSRResumed))
+        assert(schema.decodeString[Json]("""{"d":null,"t":"SSRResumed"}""") == Result.succeed(SSRResumed))
+        assert(schema.decodeString[Json]("""{"t":"SSRResumed"}""") == Result.succeed(SSRResumed))
+        schema.decodeString[Json]("""{"t":"SSRHello","d":null}""") match
+            case Result.Failure(e: MissingFieldException) => assert(e.fieldName == "interval")
+            case other                                    => fail(s"expected MissingFieldException, got $other")
     }
 
     "representation survives copyWith / focus composition" in {
@@ -215,11 +414,27 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(wire == """{"type":"SSRCircle","content":{"radius":10.0}}""")
     }
 
-    "adjacent empty-payload encode emits empty content object" in {
+    "adjacent empty-payload encode omits the content key" in {
         val schema         = Schema[SSRShape].adjacent("type", "content")
         val unit: SSRShape = SSRUnit
         val wire           = schema.encodeString[Json](unit)
-        assert(wire == """{"type":"SSRUnit","content":{}}""")
+        assert(wire == """{"type":"SSRUnit"}""")
+    }
+
+    "adjacent: a payload whose every field is omitted writes no content, and reads back" in {
+        val schema = Schema[SSRSignal].adjacent("t", "d")
+        val values = Chunk[SSRSignal](SSRDefer(), SSRDefer(true), SSRNote(Absent), SSRNote(Present("x")), SSRHello(1))
+        val wires  = values.map(v => schema.encodeString[Json](v))
+        assert(wires == Chunk(
+            """{"t":"SSRDefer"}""",
+            """{"t":"SSRDefer","d":{"quiet":true}}""",
+            """{"t":"SSRNote"}""",
+            """{"t":"SSRNote","d":{"note":"x"}}""",
+            """{"t":"SSRHello","d":{"interval":1}}"""
+        ))
+        assert(wires.map(w => schema.decodeString[Json](w)) == values.map(Result.succeed(_)))
+        assert(values.map(v => schema.decodeString[Yaml](schema.encodeString[Yaml](v))) == values.map(Result.succeed(_)))
+        assert(values.map(v => schema.decodeString[Ion](schema.encodeString[Ion](v))) == values.map(Result.succeed(_)))
     }
 
     // =========================================================================
@@ -288,6 +503,14 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
 
         assert(flatWire == """["SSRLine",{"x":1.0,"y":2.0},{"x":3.0,"y":4.0}]""")
         assert(tupleWire == """["SSRTriangle",{"a":10.0,"b":10.0,"c":10.0}]""")
+    }
+
+    "a tupleFlat field of a transformed parent encodes on a self-describing codec" in {
+        val schema = summon[Schema[SSRDrawing]].renameAllFields(Schema.NameCase.SnakeCase)
+        val value  = SSRDrawing("d", SSRCircle(2.0))
+        val wire   = schema.encodeString[Json](value)
+        assert(wire == """{"drawing_title":"d","shape":["SSRCircle",2.0]}""", wire)
+        assert(schema.decodeString[Json](wire) == Result.succeed(value))
     }
 
     // =========================================================================
@@ -720,6 +943,21 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(tupleResult == Result.succeed(SSRACircle(10.0)))
     }
 
+    "a renamed variant's Scala name is not its tag under Internal, Adjacent, Tuple and TupleFlat" in {
+        def rejects(result: Result[DecodeException, SSRAShape]): Unit =
+            result match
+                case Result.Failure(e: UnknownVariantException) => assert(e.variantName == "SSRACircle")
+                case other                                      => fail(s"expected UnknownVariantException, got $other")
+        rejects(Schema[SSRAShape].discriminator("type").variantNames("SSRACircle" -> "circle")
+            .decodeString[Json]("""{"type":"SSRACircle","radius":10.0}"""))
+        rejects(Schema[SSRAShape].adjacent("t", "c").variantNames("SSRACircle" -> "circle")
+            .decodeString[Json]("""{"t":"SSRACircle","c":{"radius":10.0}}"""))
+        rejects(Schema[SSRAShape].tupleTagged.variantNames("SSRACircle" -> "circle")
+            .decodeString[Json]("""["SSRACircle",{"radius":10.0}]"""))
+        rejects(Schema[SSRAShape].tupleFlat.variantNames("SSRACircle" -> "circle")
+            .decodeString[Json]("""["SSRACircle",10.0]"""))
+    }
+
     "alias accepted on decode under TupleFlat" in {
         val schema = Schema[SSRAShape].tupleFlat.variantAlias("SSRACircle", "circ_v1")
         val wire   = """["circ_v1",10.0]"""
@@ -1114,6 +1352,110 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(aliasResult == Result.succeed(value), s"Alias 'circ' must decode to SSRUCircle(10.0); got: $aliasResult")
     }
 
+    "a sealed sub-trait without a Schema of its own" - {
+
+        val leaves: Chunk[SSRFRoot] = Chunk(SSRFLeaf(1), SSRFMark, SSRFDeepLeaf("d"), SSRFDirect(2))
+
+        "adds its leaves to the root's variants, in declaration order" in {
+            Schema[SSRFRoot].structure match
+                case sum: Structure.Type.Sum =>
+                    assert(sum.variants.map(_.name) == Chunk("SSRFLeaf", "SSRFMark", "SSRFDeepLeaf", "SSRFDirect"))
+                case other => fail(s"expected a sum, got $other")
+        }
+
+        "the wrapper object keys each leaf by its own name" in {
+            assert(leaves.map(Json.encode(_)) == Chunk(
+                """{"SSRFLeaf":{"x":1}}""",
+                """{"SSRFMark":{}}""",
+                """{"SSRFDeepLeaf":{"z":"d"}}""",
+                """{"SSRFDirect":{"y":2}}"""
+            ))
+            assert(leaves.map(v => Json.decode[SSRFRoot](Json.encode(v))) == leaves.map(Result.succeed(_)))
+        }
+
+        "a discriminator tags each leaf with its own name and keeps its fields" in {
+            val schema = Schema[SSRFRoot].discriminator("type")
+            assert(leaves.map(schema.encodeString[Json](_)) == Chunk(
+                """{"type":"SSRFLeaf","x":1}""",
+                """{"type":"SSRFMark"}""",
+                """{"type":"SSRFDeepLeaf","z":"d"}""",
+                """{"type":"SSRFDirect","y":2}"""
+            ))
+            assert(leaves.map(v => schema.decodeString[Json](schema.encodeString[Json](v))) == leaves.map(Result.succeed(_)))
+        }
+
+        "adjacent, tupleTagged and tupleFlat round-trip each leaf" in {
+            val schemas = Chunk(Schema[SSRFRoot].adjacent("t", "c"), Schema[SSRFRoot].tupleTagged, Schema[SSRFRoot].tupleFlat)
+            assert(Schema[SSRFRoot].adjacent("t", "c").encodeString[Json](SSRFDeepLeaf("d")) == """{"t":"SSRFDeepLeaf","c":{"z":"d"}}""")
+            schemas.foreach { schema =>
+                assert(leaves.map(v => schema.decodeString[Json](schema.encodeString[Json](v))) == leaves.map(Result.succeed(_)))
+            }
+            succeed
+        }
+
+        "untagged writes each leaf's fields alone and reads them back" in {
+            // Without a case object, which untagged would read from any object.
+            val schema                   = Schema[SSRFPlain].untagged
+            val values: Chunk[SSRFPlain] = Chunk(SSRFPlainLeaf(1), SSRFPlainDirect("d"))
+            assert(values.map(schema.encodeString[Json](_)) == Chunk("""{"x":1}""", """{"z":"d"}"""))
+            assert(values.map(v => schema.decodeString[Json](schema.encodeString[Json](v))) == values.map(Result.succeed(_)))
+        }
+
+        "tag-only writes a leaf case object by its own name" in {
+            val warm: SSRFColor = SSRFRed
+            assert(Json.encode(warm) == "\"SSRFRed\"")
+            assert(Json.decode[SSRFColor]("\"SSRFRed\"") == Result.succeed(SSRFRed))
+            assert(Json.decode[SSRFColor]("\"SSRFBlue\"") == Result.succeed(SSRFBlue))
+        }
+
+        "the catch-all builder names a leaf of a sub-trait" in {
+            val schema = Schema[SSRFPlain].discriminator("type").catchAll("SSRFPlainOther")
+            val other  = Structure.Value.Record(Chunk("type" -> Structure.Value.Str("zzz")))
+            assert(schema.decodeString[Json]("""{"type":"zzz"}""") == Result.succeed(SSRFPlainOther("zzz", other)))
+            assert(schema.decodeString[Json]("""{"type":"SSRFPlainLeaf","x":1}""") == Result.succeed(SSRFPlainLeaf(1)))
+        }
+
+        "a leaf under two sub-traits is one variant" in {
+            Schema[SSRFShared].structure match
+                case sum: Structure.Type.Sum => assert(sum.variants.map(_.name) == Chunk("SSRFSharedBoth", "SSRFSharedOnly"))
+                case other                   => fail(s"expected a sum, got $other")
+            val both: SSRFShared = SSRFSharedBoth(1)
+            assert(Json.encode(both) == """{"SSRFSharedBoth":{"x":1}}""")
+            assert(Json.decode[SSRFShared]("""{"SSRFSharedBoth":{"x":1}}""") == Result.succeed(both))
+        }
+
+        "sub-traits mixed into one another derive, each leaf once" in {
+            // 2^11 paths lead to SSRFChainLeaf; the derivation visits each sub-trait once, so this compiles at all.
+            Schema[SSRFChain].structure match
+                case sum: Structure.Type.Sum => assert(sum.variants.map(_.name) == Chunk("SSRFChainLeaf"))
+                case other                   => fail(s"expected a sum, got $other")
+            val leaf: SSRFChain = SSRFChainLeaf(1)
+            assert(Json.decode[SSRFChain](Json.encode(leaf)) == Result.succeed(leaf))
+        }
+
+        "navigation reaches a leaf by its own name" in {
+            val schema = Schema[SSRFRoot]
+            assert(schema.focus(_.SSRFDeepLeaf).tag =:= Tag[SSRFDeepLeaf])
+            assert(schema.fieldNames == Set("SSRFLeaf", "SSRFMark", "SSRFDeepLeaf", "SSRFDirect"))
+        }
+
+        "a leaf's annotations apply under the root, the catch-all included" in {
+            val leaf: SSRFTagged = SSRFTaggedLeaf(1)
+            assert(Json.encode(leaf) == """{"type":"leaf","x":1}""")
+            assert(Json.decode[SSRFTagged]("""{"type":"leaf","x":1}""") == Result.succeed(leaf))
+            assert(Json.decode[SSRFTagged]("""{"type":"direct","y":2}""") == Result.succeed(SSRFTaggedDirect(2)))
+            val other = Structure.Value.Record(Chunk("type" -> Structure.Value.Str("zzz")))
+            assert(Json.decode[SSRFTagged]("""{"type":"zzz"}""") == Result.succeed(SSRFTaggedOther("zzz", other)))
+        }
+    }
+
+    "a sealed sub-trait with a Schema of its own stays one variant, encoded by that schema" in {
+        val leaf: SSRFNested = SSRFNestedLeaf(1)
+        val wire             = Json.encode(leaf)
+        assert(wire == """{"op":"SSRFNestedGroup","body":{"kind":"SSRFNestedLeaf","x":1}}""")
+        assert(Json.decode[SSRFNested](wire) == Result.succeed(leaf))
+    }
+
     "chain decode over empty variantDecoders yields typed NoVariantMatchException" in {
         // A schema whose variantDecoders is empty reaches readChain, which dispatches to
         // readUntagged (via readForRepresentation), which immediately throws NoVariantMatchException
@@ -1131,4 +1473,212 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         end match
     }
 
+    // =========================================================================
+    // Group: a variant's own field annotations
+    // =========================================================================
+
+    "a variant field's @rename sets its wire key under a discriminator, on encode and decode" in {
+        val value: SWRRx = SWRCustomEmoji("e1")
+        val wire         = """{"type":"custom_emoji","custom_emoji_id":"e1"}"""
+        assert(Json.encode(value) == wire)
+        assert(Json.decode[SWRRx](wire) == Result.succeed(value))
+        assert(Json.decode[SWRRx]("""{"type":"custom_emoji","id":"e1"}""").isFailure)
+    }
+
+    "a variant field's @rename, @alias and @transform all apply together" in {
+        val value: SWRElement = SWRButton("go", "a1")
+        assert(Json.encode(value) == """{"type":"button","text":"GO","action_id":"a1"}""")
+        assert(Json.decode[SWRElement]("""{"type":"button","text":"GO","action_id":"a1","hint_text":"h"}""") ==
+            Result.succeed(SWRButton("go", "a1", Present("h"))))
+    }
+
+    "a variant field's @rename applies under the external, untagged and adjacent representations" in {
+        assert(Json.encode(SWRExternalCase("e1"): SWRExternal) == """{"SWRExternalCase":{"custom_emoji_id":"e1"}}""")
+        assert(Json.decode[SWRExternal]("""{"SWRExternalCase":{"custom_emoji_id":"e1"}}""") == Result.succeed(SWRExternalCase("e1")))
+        assert(Json.encode(SWRUntaggedCase("e1"): SWRUntagged) == """{"custom_emoji_id":"e1"}""")
+        assert(Json.decode[SWRUntagged]("""{"custom_emoji_id":"e1"}""") == Result.succeed(SWRUntaggedCase("e1")))
+        assert(Json.encode(SWRAdjacentCase("e1"): SWRAdjacent) == """{"type":"SWRAdjacentCase","content":{"custom_emoji_id":"e1"}}""")
+        assert(Json.decode[SWRAdjacent]("""{"type":"SWRAdjacentCase","content":{"custom_emoji_id":"e1"}}""") ==
+            Result.succeed(SWRAdjacentCase("e1")))
+    }
+
+    "a variant's renamed field keeps its declaration position under tupleFlat and tupleTagged" in {
+        val point: SWPShape = SWPPoint(1, 2, 3)
+        Chunk(
+            Schema[SWPShape].tupleFlat   -> """["SWPPoint",1,2,3]""",
+            Schema[SWPShape].tupleTagged -> """["SWPPoint",{"x_coord":1,"y":2,"z":3}]"""
+        ).foreach { (schema, expected) =>
+            val wire = schema.encodeString[Json](point)
+            assert(wire == expected, wire)
+            val decoded = schema.decodeString[Json](wire)
+            assert(decoded == Result.succeed(point), s"${schema.representation}: $decoded")
+        }
+    }
+
+    "a variant's renamed field keeps its declaration position under the keyed representations" in {
+        val point: SWPShape = SWPPoint(1, 2, 3)
+        Chunk(
+            Schema[SWPShape]                    -> """{"SWPPoint":{"x_coord":1,"y":2,"z":3}}""",
+            Schema[SWPShape].discriminator("t") -> """{"t":"SWPPoint","x_coord":1,"y":2,"z":3}""",
+            Schema[SWPShape].adjacent("t", "c") -> """{"t":"SWPPoint","c":{"x_coord":1,"y":2,"z":3}}""",
+            Schema[SWPShape].untagged           -> """{"x_coord":1,"y":2,"z":3}"""
+        ).foreach { (schema, expected) =>
+            val wire = schema.encodeString[Json](point)
+            assert(wire == expected, wire)
+            val decoded = schema.decodeString[Json](wire)
+            assert(decoded == Result.succeed(point), s"${schema.representation}: $decoded")
+        }
+    }
+
+    "a variant's renamed field round-trips on Protobuf under every object-shaped representation" in {
+        val point: SWPShape = SWPPoint(1, 2, 3)
+        Chunk(
+            Schema[SWPShape],
+            Schema[SWPShape].discriminator("t"),
+            Schema[SWPShape].adjacent("t", "c")
+        ).foreach { schema =>
+            val decoded = schema.decode[Protobuf](schema.encode[Protobuf](point))
+            assert(decoded == Result.succeed(point), s"${schema.representation}: $decoded")
+        }
+    }
+
+    "a variant's renamed field is numbered by its wire name on Protobuf; pinning the old number reads older data" in {
+        val older = Schema[SWPOldShape].encode[Protobuf](SWPOldPoint(1, 2, 3))
+        // the older bytes carry the field under the Scala name's number, so it reads as absent: proto3's default, 0
+        val renamed = Schema[SWPShape].discriminator("type").decode[Protobuf](older)
+        assert(renamed == Result.succeed(SWPPoint(0, 2, 3)), renamed.toString)
+        assert(kyo.internal.CodecMacro.fieldId("x") == 701810)
+        val pinned = Schema[SWPPinnedShape].decode[Protobuf](older)
+        assert(pinned == Result.succeed(SWPPinnedPoint(1, 2, 3)), pinned.toString)
+    }
+
+    "a variant's own given, configured with a builder, is the schema the sum uses" in {
+        val value: SWGEvent = SWGUserJoined(1, "t")
+        val wire            = """{"type":"SWGUserJoined","user_id":1,"chat_title":"t"}"""
+        assert(Json.encode(value) == wire)
+        assert(Json.decode[SWGEvent](wire) == Result.succeed(value))
+    }
+
+    "a variant's derivedVia given rejects through the sum as it does standalone" in {
+        val result = Json.decode[SWGPay]("""{"type":"SWGCard","last4":"12"}""")
+        assert(result.failure.exists(_.isInstanceOf[ConstructorRejectedException]), result.toString)
+        assert(Json.decode[SWGPay]("""{"type":"SWGCard","last4":"1234"}""") == Result.succeed(SWGCard("1234")))
+        assert(Json.decode[SWGPay]("""{"type":"SWGCash","amount":5}""") == Result.succeed(SWGCash(5)))
+    }
+
+    "a sum derives when a variant has a private constructor and a derivedVia given" in {
+        val token: SWGTokenized = SWGToken.make("abc") match
+            case Result.Success(t) => t
+            case other             => fail(s"expected a token, got $other")
+        val wire = Json.encode(token)
+        assert(wire == """{"SWGToken":{"value":"abc"}}""")
+        assert(Json.decode[SWGTokenized](wire) == Result.succeed(token))
+        assert(Json.decode[SWGTokenized]("""{"SWGToken":{"value":""}}""").failure.exists(_.isInstanceOf[ConstructorRejectedException]))
+    }
+
+    "transformField on a variant path is rejected, pointing at the variant's own schema" in {
+        typeCheckFailure("""Schema[kyo.SWRRx].transformField(_.SWRCustomEmoji.id)((v, w) => w.string(v))(r => r.string())""")(
+            "Apply .transformField to a Schema of a specific case class variant instead"
+        )
+    }
+
+    "transformFieldWrite and transformFieldRead on a variant path are rejected, pointing at the variant's own schema" in {
+        typeCheckFailure("""Schema[kyo.SWRRx].transformFieldWrite(_.SWRCustomEmoji.id)((v, w) => w.string(v))""")(
+            "Apply .transformFieldWrite to a Schema of a specific case class variant instead"
+        )
+        typeCheckFailure("""Schema[kyo.SWRRx].transformFieldRead(_.SWRCustomEmoji.id)(r => r.string())""")(
+            "Apply .transformFieldRead to a Schema of a specific case class variant instead"
+        )
+    }
+
+    "a field transform on a path that crosses a sum is rejected" in {
+        typeCheckFailure("""Schema[kyo.SWFHolder].transformField(_.shape.SSRCircle.radius)((v, w) => w.double(v))(r => r.double())""")(
+            "Schema.transformField takes a field of the schema's own type; `_.shape.SSRCircle.radius` names a nested field. " +
+                "Apply .transformField to a Schema of the nested field's type instead."
+        )
+    }
+
+    "a field transform on a multi-segment path is rejected, for each of the three builders" in {
+        typeCheckFailure("""Schema[kyo.MTPersonAddr].transformField(_.address.city)((v, w) => w.string(v))(r => r.string())""")(
+            "Schema.transformField takes a field of the schema's own type; `_.address.city` names a nested field."
+        )
+        typeCheckFailure("""Schema[kyo.MTPersonAddr].transformFieldWrite(_.address.city)((v, w) => w.string(v))""")(
+            "Schema.transformFieldWrite takes a field of the schema's own type; `_.address.city` names a nested field."
+        )
+        typeCheckFailure("""Schema[kyo.MTPersonAddr].transformFieldRead(_.address.city)(r => r.string())""")(
+            "Schema.transformFieldRead takes a field of the schema's own type; `_.address.city` names a nested field."
+        )
+    }
+
+    "a variant field's own @omit applies under every representation and decodes back" in {
+        val bag: SWOBag = SWOItems(Nil, "a")
+        Chunk(
+            Schema[SWOBag]                    -> """{"SWOItems":{"label":"a"}}""",
+            Schema[SWOBag].discriminator("t") -> """{"t":"SWOItems","label":"a"}""",
+            Schema[SWOBag].adjacent("t", "c") -> """{"t":"SWOItems","c":{"label":"a"}}""",
+            Schema[SWOBag].tupleTagged        -> """["SWOItems",{"label":"a"}]""",
+            Schema[SWOBag].untagged           -> """{"label":"a"}"""
+        ).foreach { (schema, expected) =>
+            val wire = schema.encodeString[Json](bag)
+            assert(wire == expected, wire)
+            val decoded = schema.decodeString[Json](wire)
+            assert(decoded == Result.succeed(bag), s"${schema.representation}: $decoded")
+        }
+    }
+
+    "an omitted or absent variant field keeps its position under tupleFlat" in {
+        val schema = Schema[SWOBag].tupleFlat
+        Chunk[(SWOBag, String)](
+            SWOItems(Nil, "a")        -> """["SWOItems",[],"a"]""",
+            SWONote(Maybe.empty, "a") -> """["SWONote",null,"a"]""",
+            SWONote(Maybe("n"), "a")  -> """["SWONote","n","a"]"""
+        ).foreach { (bag, expected) =>
+            val wire = schema.encodeString[Json](bag)
+            assert(wire == expected, wire)
+            val decoded = schema.decodeString[Json](wire)
+            assert(decoded == Result.succeed(bag), decoded.toString)
+        }
+    }
+
+    "an absent field nested in a tupleFlat payload keeps its keyed form" in {
+        val schema = Schema[SWONested].tupleFlat
+        val value  = SWONestedCase(SWONote(Maybe.empty, "a"))
+        val wire   = schema.encodeString[Json](value)
+        assert(wire == """["SWONestedCase",{"SWONote":{"label":"a"}}]""", wire)
+        assert(schema.decodeString[Json](wire) == Result.succeed(value))
+    }
+
+    "variant naming reaches every representation that writes a variant's name" in {
+        val circle: SSRAShape = SSRACircle(1.0)
+        val adjacent          = Schema[SSRAShape].adjacent("t", "c").variantNames("SSRACircle" -> "circle")
+        assert(adjacent.encodeString[Json](circle) == """{"t":"circle","c":{"radius":1.0}}""")
+        assert(adjacent.decodeString[Json]("""{"t":"circle","c":{"radius":1.0}}""") == Result.succeed(circle))
+        assert(Schema[SSRAShape].tupleTagged.variantNames("SSRACircle" -> "circle").encodeString[Json](circle) ==
+            """["circle",{"radius":1.0}]""")
+        assert(Schema[SSRAShape].tupleFlat.variantNames("SSRACircle" -> "circle").encodeString[Json](circle) == """["circle",1.0]""")
+    }
+
+    "the wrapper-object format keeps the Scala variant names" in {
+        val circle: SSRAShape = SSRACircle(1.0)
+        assert(Schema[SSRAShape].variantNames("SSRACircle" -> "circle").encodeString[Json](circle) == """{"SSRACircle":{"radius":1.0}}""")
+        assert(Schema[SSRAShape].renameAllVariants(Schema.NameCase.SnakeCase).encodeString[Json](circle) ==
+            """{"SSRACircle":{"radius":1.0}}""")
+        val renamed: SSRARenamed = SSRARenamedCircle(1)
+        assert(Json.encode(renamed) == """{"SSRARenamedCircle":{"r":1}}""")
+    }
+
+    "a union of case classes takes a discriminator" in {
+        val schema = summon[Schema[SSRAPhoto | SSRAVideo]].discriminator("type")
+        val wire   = schema.encodeString[Json](SSRAPhoto("a"))
+        assert(wire == """{"type":"SSRAPhoto","url":"a"}""", wire)
+        assert(schema.decodeString[Json](wire) == Result.succeed(SSRAPhoto("a")))
+    }
+
 end SchemaUnionRepresentationTest
+
+sealed trait SSRARenamed derives CanEqual, Schema
+@kyo.schema.rename("circle")
+case class SSRARenamedCircle(r: Int) extends SSRARenamed derives CanEqual
+
+case class SSRAPhoto(url: String) derives CanEqual, Schema
+case class SSRAVideo(src: String) derives CanEqual, Schema

@@ -75,9 +75,14 @@ object Tag extends kyo.internal.TagPlatformSpecific:
       * @return
       *   A Tag for type A
       */
-    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = false) }
+    inline given derive[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = false, declared = false) }
 
-    private[kyo] inline def dynamic[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = true) }
+    private[kyo] inline def dynamic[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = true, declared = false) }
+
+    /** The tag of a type read from a declaration, such as a case class field's declared type, which no opaque-type substitution
+      * reaches; see `TagMacro.deriveImpl`.
+      */
+    private[kyo] inline def declared[A]: Tag[A] = ${ TagMacro.deriveImpl[A](allowDynamic = false, declared = true) }
 
     extension [A](self: Tag[A])
 

@@ -10,6 +10,7 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
     import IonBinaryFormat.*
 
     override def canWriteTopLevelNonObject: Boolean = true
+    override def isSelfDescribing: Boolean          = true
     override def canWriteAnnotations: Boolean       = config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit
     override def codecName: String                  = CodecName
 

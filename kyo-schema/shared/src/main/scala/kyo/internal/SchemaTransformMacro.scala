@@ -65,6 +65,44 @@ object SchemaTransformMacro:
         Expr(nameOf(declared(Symbol.spliceOwner).getOrElse(tpe)).stripSuffix("$"))
     end typeNameImpl
 
+    /** Implements Schema[A].tagOnly. */
+    def tagOnlyImpl[A: Type, F: Type](meta: Expr[Schema[A]])(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+        val tpe      = TypeRepr.of[A].dealias
+        val sym      = tpe.typeSymbol
+        val variants = if sym.isClassDef && sym.flags.is(Flags.Sealed) then FocusMacro.sumVariants(tpe, sym) else Nil
+        MacroUtils.requireTagOnlyVariants(sym, variants, "Schema.tagOnly", _ => true)
+        '{
+            Schema.copyWith($meta)(representation = Schema.UnionRepresentation.TagOnly)
+                .asInstanceOf[Schema[A] { type Focused = F }]
+        }
+    end tagOnlyImpl
+
+    /** Implements Schema[A].catchAll("Variant"). */
+    def catchAllImpl[A: Type, F: Type](meta: Expr[Schema[A]], variantName: Expr[String], onFailure: Expr[Boolean])(using
+        Quotes
+    ): Expr[Any] =
+        import quotes.reflect.*
+        val name = variantName.value.getOrElse(
+            report.errorAndAbort("Schema.catchAll takes the variant's Scala name as a literal string.", variantName)
+        )
+        val tpe = TypeRepr.of[A].dealias
+        val sym = tpe.typeSymbol
+        if !(sym.isClassDef && sym.flags.is(Flags.Sealed)) then
+            report.errorAndAbort(s"Schema.catchAll: ${tpe.show} is not a sealed trait; a catch-all is a variant of a sum.")
+        val variants = FocusMacro.sumVariants(tpe, sym)
+        val child    = variants.find(_.name.stripSuffix("$") == name).getOrElse(
+            report.errorAndAbort(
+                s"Schema.catchAll: ${sym.name} has no variant named '$name'. Its variants: " +
+                    s"${variants.map(_.name.stripSuffix("$")).mkString(", ")}."
+            )
+        )
+        val carrier = FocusMacro.catchAllCarrier(tpe, sym, child, "Schema.catchAll", onFailure)
+        '{
+            Schema.copyWith($meta)(catchAll = kyo.Maybe($carrier)).asInstanceOf[Schema[A] { type Focused = F }]
+        }
+    end catchAllImpl
+
     /** Implements Schema[A].drop("fieldName").
       *
       * Validates that fieldName exists in F's expanded type, then returns Schema[A] { type Focused = F' } where F' = F minus the named
@@ -283,10 +321,19 @@ object SchemaTransformMacro:
     /** Implements Schema[A].flatten.
       *
       * For each field in Focused whose value type is a case class, replaces the field with the case class's sub-fields. Primitive and
-      * non-case-class fields pass through unchanged.
+      * non-case-class fields pass through unchanged. Each flattened field's schema is the one summoned here, and its wire names decide
+      * where the flat keys go (`FlattenLayout`). Two fields sharing a name at this level, a flattened field's own name included, cannot
+      * share one flat record, so they are rejected here; a collision only the wire names reveal is rejected when the schema is built.
       */
     def flattenImpl[A: Type, F: Type](
         meta: Expr[Schema[A]]
+    )(using Quotes): Expr[Any] =
+        flattenFieldsImpl[A, F](meta, None)
+
+    /** Flattens the case class fields of F, or only the one named `only`, which must be one. */
+    private def flattenFieldsImpl[A: Type, F: Type](
+        meta: Expr[Schema[A]],
+        only: Option[String]
     )(using Quotes): Expr[Any] =
         import quotes.reflect.*
 
@@ -298,27 +345,108 @@ object SchemaTransformMacro:
         // Collect all fields from expanded F
         val fields = MacroUtils.collectFields(expanded)
 
+        def isRecord(valueType: TypeRepr): Boolean =
+            val sym = valueType.dealias.typeSymbol
+            sym.isClassDef && sym.flags.is(Flags.Case)
+        def isSum(valueType: TypeRepr): Boolean =
+            val sym = valueType.dealias.typeSymbol
+            sym.flags.is(Flags.Sealed) && (sym.flags.is(Flags.Trait) || sym.flags.is(Flags.Abstract) || sym.flags.is(Flags.Enum))
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        val maybeSymbol                = TypeRepr.of[Maybe[Any]].typeSymbol
+        // Matched by the constructor's symbol: Maybe is opaque, and a quoted `'[Maybe[t]]` pattern does not match it here.
+        def maybeOf(valueType: TypeRepr): Option[TypeRepr] =
+            valueType.widen match
+                case AppliedType(constructor, List(inner)) if constructor.typeSymbol == maybeSymbol => Some(inner)
+                case _                                                                              => None
+        def isOptionalRecord(valueType: TypeRepr): Boolean = maybeOf(valueType).exists(isRecord)
+        only.foreach { name =>
+            fields.find(_._1 == name) match
+                case Some((_, valueType)) if isRecord(valueType) || isSum(valueType) || isOptionalRecord(valueType) => ()
+                case Some((_, valueType)) if maybeOf(valueType).exists(isSum)                                       =>
+                    report.errorAndAbort(
+                        s"flatten(_.$name): the field '$name' is a ${valueType.show}, an optional sum; only an optional record can move to " +
+                            "the parent level, since an absent sum leaves no keys to tell its variants apart."
+                    )
+                case Some((_, valueType)) =>
+                    report.errorAndAbort(
+                        s"flatten(_.$name): the field '$name' is a ${valueType.show}, not a case class or a sealed sum; only a record's or a " +
+                            "variant's fields can move to the parent level."
+                    )
+                case None =>
+                    report.errorAndAbort(s"flatten(_.$name): no field '$name'. Available fields: ${fields.map(_._1).mkString(", ")}.")
+        }
+
+        // A sum's variants are alternatives, so their fields may share names with each other; each one only has to differ from
+        // every other field of the parent, since a variant's fields and the parent's fields share one record.
+        def variantFields(sum: TypeRepr): List[(String, String)] =
+            def children(sym: Symbol): List[Symbol] =
+                sym.children.flatMap(c => if c.flags.is(Flags.Sealed) && !c.flags.is(Flags.Case) then children(c) else List(c))
+            children(sum.dealias.typeSymbol).flatMap(variant => variant.caseFields.map(f => f.name -> s"${variant.name}.${f.name}"))
+        end variantFields
+
         val tildeType = TypeRepr.of[Record.~]
 
         // For each field, check if its value type is a case class
-        val flattenedPairs     = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        val flattenedSchemas = scala.collection.mutable.ListBuffer.empty[Expr[FlattenedField]]
+        val labels           = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        val sumLabels        = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        def childSchemaOf(valueType: TypeRepr, name: String): Expr[Schema[?]] =
+            valueType.asType match
+                case '[c] =>
+                    Expr.summon[Schema[c]].getOrElse(
+                        report.errorAndAbort(s"flatten: no Schema[${valueType.show}] is available for the field '$name'.")
+                    )
+        // A flattened record is never written under its own name, so the name is no label: one of its fields may carry it.
+        def recordLabels(valueType: TypeRepr, name: String): Unit =
+            valueType.dealias.typeSymbol.caseFields.foreach(field => labels += field.name -> s"$name.${field.name}")
         val resultFieldEntries = fields.flatMap { (name, valueType) =>
             val sym = valueType.dealias.typeSymbol
-            if sym.isClassDef && sym.flags.is(Flags.Case) then
+            if isRecord(valueType) && only.forall(_ == name) then
+                flattenedSchemas += '{ FlattenedField(${ Expr(name) }, ${ childSchemaOf(valueType, name) }, false) }
+                recordLabels(valueType, name)
                 // Expand the nested case class into its sub-fields
-                val nestedFields = sym.caseFields.map { field =>
+                sym.caseFields.map { field =>
                     val fieldName = field.name
                     val fieldType = valueType.dealias.memberType(field)
                     val nameType  = ConstantType(StringConstant(fieldName))
-                    flattenedPairs += fieldName -> name
-                    fieldName                   -> tildeType.appliedTo(List(nameType, fieldType))
+                    fieldName -> tildeType.appliedTo(List(nameType, fieldType))
                 }
-                nestedFields
+            else if isOptionalRecord(valueType) && only.contains(name) then
+                // As a flattened sum does, an optional record stays one field of the value: only its keys move on the wire.
+                val inner = maybeOf(valueType).get
+                flattenedSchemas += '{ FlattenedField(${ Expr(name) }, ${ childSchemaOf(inner, name) }, true) }
+                recordLabels(inner, name)
+                val nameType = ConstantType(StringConstant(name))
+                List(name -> tildeType.appliedTo(List(nameType, valueType)))
+            else if isSum(valueType) && only.contains(name) then
+                labels += name -> name
+                // A flattened sum stays one field of the value; only its keys move on the wire, so Focused keeps it as written.
+                flattenedSchemas += '{ FlattenedField(${ Expr(name) }, ${ childSchemaOf(valueType, name) }, false) }
+                sumLabels ++= variantFields(valueType).map((field, label) => field -> s"$name.$label")
+                val nameType = ConstantType(StringConstant(name))
+                List(name -> tildeType.appliedTo(List(nameType, valueType)))
             else
+                labels += name -> name
                 // Non-case-class: keep as-is
                 val nameType = ConstantType(StringConstant(name))
                 List(name -> tildeType.appliedTo(List(nameType, valueType)))
             end if
+        }
+        labels.map(_._1).distinct.foreach { key =>
+            val targeting = labels.collect { case (`key`, label) => label }.distinct
+            if targeting.size > 1 then
+                report.errorAndAbort(
+                    s"flatten: Wire name '$key' is targeted by ${targeting.size} fields: ${targeting.mkString(", ")}. " +
+                        "Give each field a distinct wire name."
+                )
+            end if
+        }
+        sumLabels.foreach { (key, sumLabel) =>
+            labels.collectFirst { case (`key`, label) if !sumLabel.startsWith(s"$label.") => label }.foreach { label =>
+                report.errorAndAbort(
+                    s"flatten: Wire name '$key' is targeted by 2 fields: $label, $sumLabel. Give each field a distinct wire name."
+                )
+            }
         }
         val resultFields = resultFieldEntries.map(_._2)
 
@@ -326,12 +454,8 @@ object SchemaTransformMacro:
             // No fields at all, return same type
             meta
         else
-            val flattenedPairsExpr = Expr.ofList(
-                flattenedPairs.toList.map { (child, parent) =>
-                    '{ ${ Expr(child) } -> ${ Expr(parent) } }
-                }
-            )
-            val newType = resultFields.reduce(AndType(_, _))
+            val flattenedSchemasExpr = Expr.ofList(flattenedSchemas.toList)
+            val newType              = resultFields.reduce(AndType(_, _))
             newType.asType match
                 case '[f2] =>
                     '{
@@ -340,12 +464,21 @@ object SchemaTransformMacro:
                             $meta.checks,
                             $meta.computedFields,
                             $meta.renamedFields,
-                            flattenedReadFields = Chunk.from($flattenedPairsExpr)
+                            flattenedFields = Chunk.from($flattenedSchemasExpr)
                         )
                     }
             end match
         end if
-    end flattenImpl
+    end flattenFieldsImpl
+
+    /** Implements Schema[A].flatten(_.field). */
+    def flattenFocusImpl[A: Type, F: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, ?]]
+    )(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+        flattenFieldsImpl[A, F](meta, Some(extractFocusFieldName(focus.asTerm)))
+    end flattenFocusImpl
 
     /** Implements Schema[A].foldFields[R](value)(init)(f).
       *
@@ -425,18 +558,7 @@ object SchemaTransformMacro:
             }
 
             // Renamed fields (runtime: erased types)
-            // Resolve rename chains: name->userName, userName->displayName => name->displayName
-            val forwardMap                          = theMeta.renamedFields.toMap
-            def resolveTarget(name: String): String =
-                forwardMap.get(name) match
-                    case Some(next) => resolveTarget(next)
-                    case None       => name
-            val resolvedRenames = theMeta.sourceFields.flatMap { sf =>
-                if forwardMap.contains(sf.name) then
-                    Some((sf.name, resolveTarget(sf.name)))
-                else None
-            }
-            resolvedRenames.foreach { case (sourceName, targetName) =>
+            Schema.resolvedRenames(theMeta.sourceFields.map(_.name), theMeta.renamedFields).foreach { case (sourceName, targetName) =>
                 val originalIdx = theMeta.sourceFields.indexWhere(_.name == sourceName)
                 if originalIdx >= 0 then
                     val rawValue     = product.productElement(originalIdx)
@@ -463,6 +585,30 @@ object SchemaTransformMacro:
       * inline`, the macro sees the unexpanded AST containing `Apply(Select(_, "selectDynamic"), List(Literal(StringConstant(name))))`. This
       * method walks the lambda body to find that call and extract the string constant.
       */
+    /** The field names a focus lambda selects, outermost first. Inlining copies each `selectDynamic` call into several trees, so a
+      * segment is identified by the position of its name literal, not by its name.
+      */
+    private def focusPathSegments(using Quotes)(lambda: quotes.reflect.Term): List[String] =
+        import quotes.reflect.*
+        val found = scala.collection.mutable.LinkedHashMap.empty[Int, String]
+        object collector extends TreeTraverser:
+            override def traverseTree(tree: Tree)(owner: Symbol): Unit =
+                tree match
+                    case Apply(TypeApply(Select(_, "selectDynamic"), _), List(lit @ Literal(StringConstant(name)))) =>
+                        discard(found.getOrElseUpdate(lit.pos.start, name))
+                    case Apply(Select(_, "selectDynamic"), List(lit @ Literal(StringConstant(name)))) =>
+                        discard(found.getOrElseUpdate(lit.pos.start, name))
+                    case Inlined(Some(call), _, _) =>
+                        traverseTree(call)(owner)
+                    case _ => ()
+                end match
+                traverseTreeChildren(tree)(owner)
+            end traverseTree
+        end collector
+        collector.traverseTree(lambda)(Symbol.spliceOwner)
+        found.toList.sortBy(_._1).map(_._2)
+    end focusPathSegments
+
     private def extractFocusFieldName(using Quotes)(lambda: quotes.reflect.Term): String =
         import quotes.reflect.*
 
@@ -578,13 +724,7 @@ object SchemaTransformMacro:
         val nameStr = extractFocusFieldName(focus.asTerm)
         val schema  = meta.asExprOf[Schema[A] { type Focused = F }]
         '{
-            def sourceFieldName(name: String): String =
-                $schema.renamedFields.find(_._2 == name) match
-                    case Some((source, _)) => sourceFieldName(source)
-                    case None              => name
-                end match
-            end sourceFieldName
-            val fieldName    = sourceFieldName(${ Expr(nameStr) })
+            val fieldName    = Schema.renamedSource($schema.renamedFields, ${ Expr(nameStr) })
             val fieldSchema  = scala.compiletime.summonInline[Schema[V]]
             val fieldDefault = Schema.FieldDefault(
                 () => $supplier,
@@ -603,7 +743,7 @@ object SchemaTransformMacro:
         write: Expr[(V, Codec.Writer) => Unit],
         read: Expr[Codec.Reader => V]
     )(using Quotes): Expr[Schema[A] { type Focused = F }] =
-        transformFieldFocusImpl[A, F, V](meta, focus, Maybe(write), Maybe(read))
+        transformFieldFocusImpl[A, F, V]("transformField", meta, focus, Maybe(write), Maybe(read))
     end transformFieldFocusImpl
 
     def transformFieldWriteFocusImpl[A: Type, F: Type, V: Type](
@@ -611,7 +751,7 @@ object SchemaTransformMacro:
         focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
         write: Expr[(V, Codec.Writer) => Unit]
     )(using Quotes): Expr[Schema[A] { type Focused = F }] =
-        transformFieldFocusImpl[A, F, V](meta, focus, Maybe(write), Maybe.empty)
+        transformFieldFocusImpl[A, F, V]("transformFieldWrite", meta, focus, Maybe(write), Maybe.empty)
     end transformFieldWriteFocusImpl
 
     def transformFieldReadFocusImpl[A: Type, F: Type, V: Type](
@@ -619,16 +759,27 @@ object SchemaTransformMacro:
         focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
         read: Expr[Codec.Reader => V]
     )(using Quotes): Expr[Schema[A] { type Focused = F }] =
-        transformFieldFocusImpl[A, F, V](meta, focus, Maybe.empty, Maybe(read))
+        transformFieldFocusImpl[A, F, V]("transformFieldRead", meta, focus, Maybe.empty, Maybe(read))
     end transformFieldReadFocusImpl
 
     private def transformFieldFocusImpl[A: Type, F: Type, V: Type](
+        opName: String,
         meta: Expr[Schema[A]],
         focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
         write: Maybe[Expr[(V, Codec.Writer) => Unit]],
         read: Maybe[Expr[Codec.Reader => V]]
     )(using Quotes): Expr[Schema[A] { type Focused = F }] =
         import quotes.reflect.*
+        assertNotSealedTrait[A](opName)
+        // A transform is registered under one field name of A and applied to A's own record, so a path into a nested field (or across
+        // a sum into a variant) would register it where no record has that field.
+        val segments = focusPathSegments(focus.asTerm)
+        if segments.size > 1 then
+            report.errorAndAbort(
+                s"Schema.$opName takes a field of the schema's own type; `_.${segments.mkString(".")}` names a nested field. " +
+                    s"Apply .$opName to a Schema of the nested field's type instead."
+            )
+        end if
         val nameStr                                             = extractFocusFieldName(focus.asTerm)
         val schema                                              = meta.asExprOf[Schema[A] { type Focused = F }]
         val writeExpr: Expr[Maybe[(Any, Codec.Writer) => Unit]] =

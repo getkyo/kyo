@@ -18,7 +18,8 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     private val KindArray: 2    = 2
     private type FrameKind = KindDocument.type | KindArray.type
 
-    override def codecName: String = "Bson"
+    override def codecName: String         = "Bson"
+    override def isSelfDescribing: Boolean = true
 
     final private class WriteFrame(val kind: FrameKind):
         val fields: OrderedDictBuilder[String, BsonValue] = OrderedDictBuilder.init[String, BsonValue]

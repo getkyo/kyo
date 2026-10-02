@@ -31,6 +31,12 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(record.dict("userName") == "Alice")
         }
 
+        "a renamed field keeps its declaration position on the wire" in {
+            val schema = Schema[MTUser].rename("name", "userName").drop("ssn")
+            val wire   = schema.encodeString[Json](user)
+            assert(wire == """{"userName":"Alice","age":30,"email":"alice@example.com"}""", wire)
+        }
+
         "select fields from a type" in {
             val m   = Schema[MTUser].select("name", "age")
             val got = m.focus(_.name).get(user)
@@ -153,6 +159,25 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(m.focus(_.age).tag =:= Tag[Int])
             assert(m.focus(_.email).tag =:= Tag[String])
             assert(m.focus(_.ssn).tag =:= Tag[String])
+        }
+
+        "a field renamed away and back keeps its own name on every surface that resolves a rename" in {
+            val m = Schema[MTUser].rename("name", "userName").rename("userName", "name").drop("ssn")
+            assert(m.encodeString[Json](user) == """{"name":"Alice","age":30,"email":"alice@example.com"}""")
+            assert(m.decodeString[Json]("""{"name":"Alice","age":30,"email":"alice@example.com"}""").map(_.name) ==
+                Result.succeed("Alice"))
+            assert(m.toRecord(user).dict("name") == "Alice")
+            assert(m.fieldIdNameOverrides.keySet == Set("name"))
+        }
+
+        "a rename chain names the field by its last name in the JSON Schema" in {
+            val m = Schema[MTUser].rename("name", "userName").rename("userName", "displayName")
+            Json.jsonSchema[MTUser](using m) match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.properties.map(_._1).toSet == Set("displayName", "age", "email", "ssn"))
+                    assert(obj.required.toSet == Set("displayName", "age", "email", "ssn"))
+                case other => fail(s"expected an object schema, got $other")
+            end match
         }
 
         // --- add (6 tests) ---

@@ -108,6 +108,12 @@ object Codec:
         private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
             _schemaTransformOverrides = next
 
+        /** Whether the field name this reader last parsed is a Scala field name rather than a wire key. A positional wire (`tupleFlat`)
+          * carries no names, so its reader presents each element under the field's declared name, and the transform layer must take it
+          * as is instead of translating it as a wire key (a renamed field's declared name reads as renamed away).
+          */
+        private[kyo] def presentsSourceFieldNames: Boolean = false
+
         /** Fails unless everything left after the decoded root value is insignificant.
           *
           * Decoding a value is not the same as decoding the input. A reader that stops at the end of
@@ -410,6 +416,19 @@ object Codec:
           * make the Tuple, TupleFlat, and Untagged sum representations available with that codec.
           */
         def canWriteTopLevelNonObject: Boolean = false
+
+        /** Whether this codec's reader can read back any value this writer wrote without the value's schema, because the reader is a
+          * [[Codec.IntrospectingReader]]. Self-describing codecs (Json, Yaml, Ion, MsgPack, Bson) return true. A field-number-driven
+          * binary codec (Protobuf) leaves the default false, so a schema transform that regroups values on decode, such as `flatten`,
+          * raises [[TransformUnsupportedException]] before writing rather than producing bytes it cannot read. Positive opt-in.
+          */
+        def isSelfDescribing: Boolean = false
+
+        /** Whether the record being written must keep every field, because its fields are read back by position (a `tupleFlat`
+          * payload): an absent optional field is written as null and a configured omit policy does not apply, where both would
+          * otherwise leave the field off and shift every later position.
+          */
+        private[kyo] def writesEveryField: Boolean = false
 
         /** The public codec name, used in user-facing error messages such as [[RepresentationUnsupportedException]].
           *

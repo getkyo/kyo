@@ -40,7 +40,12 @@ private[kyo] object TagMacro:
     // simply derives the encoding.
     @volatile private var encodedCache: Map[String, String] = Map.empty
 
-    def deriveImpl[A: SType](allowDynamic: Boolean)(using Quotes): Expr[String | Tag.internal.Dynamic] =
+    /** @param declared
+      *   `A` was read from a declaration (a case class field's declared type, with no type parameter or abstract member the summoning
+      *   site fills in) rather than inferred at the splice site. The compiler substitutes opaque types only where it infers, so such a
+      *   type is exactly what the author wrote and the collapsed-opaque refusal does not apply to it.
+      */
+    def deriveImpl[A: SType](allowDynamic: Boolean, declared: Boolean)(using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
         // Collect source-position offsets of every class symbol in the type tree,
         // recursively walking into applied type arguments and the components of
@@ -90,7 +95,7 @@ private[kyo] object TagMacro:
                 case None => ()
             end match
         end if
-        refuseCollapsed(TypeRepr.of[A], opaqueScope)
+        refuseCollapsed(TypeRepr.of[A], opaqueScope, declared)
         val (staticDB, dynamicDB) = deriveDB[A](TypeRepr.of[A])
         val encodedStr            = Tag.internal.encode(staticDB)
         val encoded               = Expr(encodedStr)
@@ -247,7 +252,8 @@ private[kyo] object TagMacro:
         Quotes
     )(
         root: quotes.reflect.TypeRepr,
-        scope: List[(quotes.reflect.Symbol, quotes.reflect.TypeRepr)]
+        scope: List[(quotes.reflect.Symbol, quotes.reflect.TypeRepr)],
+        declared: Boolean
     ): Unit =
         import quotes.reflect.*
         if scope.nonEmpty then
@@ -271,7 +277,7 @@ private[kyo] object TagMacro:
                     case _: RecursiveType             => false
                     case _                            => true
 
-            scope.find((_, underlying) => !walkable(underlying)).foreach { (sym, underlying) =>
+            scope.find((_, underlying) => !declared && !walkable(underlying)).foreach { (sym, underlying) =>
                 report.errorAndAbort(
                     s"[Tag.opaque.unwalkable] Cannot derive Tag[${root.show}] here.\n\n" +
                         s"This code is inside the scope of opaque type ${sym.name}, its declaring template or companion " +
@@ -363,7 +369,7 @@ private[kyo] object TagMacro:
                         check(high)
                     case _ => ()
 
-            check(root.dealiasKeepOpaques.simplified)
+            if !declared then check(root.dealiasKeepOpaques.simplified)
         end if
     end refuseCollapsed
 

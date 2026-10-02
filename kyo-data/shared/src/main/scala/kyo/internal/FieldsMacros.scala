@@ -6,9 +6,29 @@ import scala.quoted.*
 
 object FieldsMacros:
 
-    /** If `tpe` is a case class, return its fields as `("name" ~ ValueType)` TypeReprs. */
-    private def caseClassFields(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[Vector[quotes.reflect.TypeRepr]] =
+    /** If `tpe` is a case class, return its fields as `("name" ~ ValueType)` TypeReprs, each paired with its value type when that type
+      * is fixed by the declaration. A field whose declared type mentions a type parameter or an abstract type member takes that part
+      * from the type the caller asked for, which the compiler may have inferred, so only the other fields' types are known to be
+      * exactly what the author wrote.
+      */
+    private def caseClassFields(using
+        Quotes
+    )(tpe: quotes.reflect.TypeRepr): Option[Vector[(quotes.reflect.TypeRepr, Option[quotes.reflect.TypeRepr])]] =
         import quotes.reflect.*
+        def siteDependent(t: TypeRepr): Boolean =
+            t match
+                case AppliedType(tycon, args) => siteDependent(tycon) || args.exists(siteDependent)
+                case AndType(a, b)            => siteDependent(a) || siteDependent(b)
+                case OrType(a, b)             => siteDependent(a) || siteDependent(b)
+                case TypeBounds(low, high)    => siteDependent(low) || siteDependent(high)
+                case AnnotatedType(under, _)  => siteDependent(under)
+                // an opaque type is Deferred too, but its declaration fixes it
+                case ref: TypeRef =>
+                    val s = ref.typeSymbol
+                    s.isTypeParam || (s.flags.is(Flags.Deferred) && !s.flags.is(Flags.Opaque))
+                case _: ConstantType => false
+                case _: TermRef      => false
+                case _               => true
         val sym = tpe.typeSymbol
         if sym.isClassDef && sym.flags.is(Flags.Case) then
             val tildeType = TypeRepr.of[Record.~]
@@ -16,7 +36,8 @@ object FieldsMacros:
                 val fieldName = field.name
                 val fieldType = tpe.memberType(field)
                 val nameType  = ConstantType(StringConstant(fieldName))
-                tildeType.appliedTo(List(nameType, fieldType))
+                val declared  = Option.when(!siteDependent(sym.typeRef.memberType(field).widenByName))(fieldType)
+                tildeType.appliedTo(List(nameType, fieldType)) -> declared
             Some(fields.toVector)
         else
             None
@@ -34,7 +55,9 @@ object FieldsMacros:
             sym.caseFields.zipWithIndex.flatMap: (field, idx) =>
                 val methodName = s"$$lessinit$$greater$$default$$${idx + 1}"
                 companion.methodMember(methodName).headOption.map: method =>
-                    val call = Ref(companion).select(method)
+                    val select = Ref(companion).select(method)
+                    // A generic case class's default method takes the class's type parameters.
+                    val call = if method.paramSymss.exists(_.exists(_.isTypeParam)) then select.appliedToTypes(tpe.typeArgs) else select
                     field.name -> call.asExprOf[Any]
             .toMap
         else
@@ -45,7 +68,7 @@ object FieldsMacros:
     def deriveImpl[A: Type](using Quotes): Expr[Fields[A]] =
         import quotes.reflect.*
 
-        def decompose(tpe: TypeRepr): Vector[TypeRepr] =
+        def decompose(tpe: TypeRepr): Vector[(TypeRepr, Option[TypeRepr])] =
             tpe.dealias match
                 case AndType(l, r) => decompose(l) ++ decompose(r)
                 case OrType(l, r)  => decompose(l) ++ decompose(r)
@@ -55,7 +78,7 @@ object FieldsMacros:
                         caseClassFields(tpe).getOrElse:
                             DeclaredBounds.upper(tpe) match
                                 case Some(hi) => decompose(hi)
-                                case None     => Vector(tpe)
+                                case None     => Vector(tpe -> None)
 
         def tupled(typs: Vector[TypeRepr]): TypeRepr =
             typs match
@@ -74,15 +97,24 @@ object FieldsMacros:
             defaultExpr: Expr[Maybe[Any]]
         )
 
-        def extractComponent(tpe: TypeRepr): Option[ComponentInfo] =
+        def extractComponent(tpe: TypeRepr, declared: Option[TypeRepr]): Option[ComponentInfo] =
             tpe match
                 case AppliedType(_, List(ConstantType(StringConstant(name)), valueType)) =>
                     val nameExpr = Expr(name)
-                    val tagExpr  = valueType.asType match
-                        case '[v] =>
-                            Expr.summon[Tag[v]].getOrElse(
-                                report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
-                            )
+                    // Inside an opaque type's scope an implicit `Tag[String]` is refused, since it may stand for a substituted
+                    // opaque type; a declared field type cannot, so it is derived directly.
+                    val tagExpr = declared match
+                        case Some(declaredType) =>
+                            // The type argument is the declared type as a tree: a quoted `'[v]` pattern would bind `v` to the
+                            // dealiased type, which inside the scope is the underlying.
+                            val tagModule = Symbol.requiredModule("kyo.Tag")
+                            TypeApply(Select(Ref(tagModule), tagModule.methodMember("declared").head), List(Inferred(declaredType))).asExpr
+                        case None =>
+                            valueType.asType match
+                                case '[v] =>
+                                    Expr.summon[Tag[v]].getOrElse(
+                                        report.errorAndAbort(s"Cannot summon Tag for field '$name': ${valueType.show}")
+                                    )
                     val nestedExpr = valueType.asType match
                         case '[Record[f]] =>
                             Expr.summon[Fields[f]] match
@@ -95,7 +127,7 @@ object FieldsMacros:
                     Some(ComponentInfo(name, nameExpr, tagExpr, nestedExpr, defaultExpr))
                 case _ => None
 
-        val infos      = components.flatMap(extractComponent)
+        val infos      = components.flatMap((tpe, declared) => extractComponent(tpe, declared))
         val fieldsList = Expr.ofList(infos.map(ci =>
             '{
                 Field[String, Any](
@@ -107,7 +139,7 @@ object FieldsMacros:
             }
         ).toList)
 
-        tupled(components).asType match
+        tupled(components.map(_._1)).asType match
             case '[type x <: Tuple; x] =>
                 '{ Fields.createAux[A, x]($fieldsList) }
         end match
