@@ -85,16 +85,15 @@ private[kyo] object RouteUtil:
 
         if hasParams then
             val queryBuilder  = new StringBuilder
-            val headerBuilder = ChunkBuilder.init[String]
+            val headerBuilder = ChunkBuilder.init[(String, String)]
             val cookieBuilder = encodeRequestParams(fields, dict, queryBuilder, headerBuilder)
             cookieBuilder match
                 case Present(cb) =>
-                    discard(headerBuilder += "Cookie")
-                    discard(headerBuilder += cb.toString)
+                    discard(headerBuilder += ("Cookie" -> cb.toString))
                 case Absent =>
             end match
-            val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
-            val url          = request.url.rawQuery match
+            val extraHeaders: HttpHeaders = headerBuilder.result()
+            val url                       = request.url.rawQuery match
                 case Present(rq) =>
                     if queryBuilder.nonEmpty then s"$basePath?$rq&$queryBuilder"
                     else s"$basePath?$rq"
@@ -370,10 +369,10 @@ private[kyo] object RouteUtil:
             encodeResponseBody(bodyField, response.fields.dict, status, response.headers, boundary)(onEmpty, onBuffered, onStreaming)
         else
             val dict          = response.fields.dict
-            val headerBuilder = ChunkBuilder.init[String]
+            val headerBuilder = ChunkBuilder.init[(String, String)]
             encodeResponseParams(fields, dict, headerBuilder)
-            val extraHeaders = HttpHeaders.fromChunk(headerBuilder.result())
-            val headers      = if extraHeaders.isEmpty then response.headers
+            val extraHeaders: HttpHeaders = headerBuilder.result()
+            val headers                   = if extraHeaders.isEmpty then response.headers
             else response.headers.concat(extraHeaders)
             encodeResponseBody(bodyField, dict, status, headers, boundary)(onEmpty, onBuffered, onStreaming)
         end if
@@ -513,7 +512,7 @@ private[kyo] object RouteUtil:
         fields: Chunk[HttpRoute.Field[?]],
         dict: Dict[String, Any],
         queryBuilder: StringBuilder,
-        headerBuilder: ChunkBuilder[String]
+        headerBuilder: ChunkBuilder[(String, String)]
     ): Maybe[StringBuilder] =
         @tailrec def loop(i: Int, cookieBuilder: Maybe[StringBuilder]): Maybe[StringBuilder] =
             if i >= fields.size then cookieBuilder
@@ -532,8 +531,7 @@ private[kyo] object RouteUtil:
                                         .append(java.net.URLEncoder.encode(encoded, "UTF-8")))
                                     cookieBuilder
                                 case HttpRoute.Field.Param.Location.Header =>
-                                    discard(headerBuilder += wireName)
-                                    discard(headerBuilder += encoded)
+                                    discard(headerBuilder += (wireName -> encoded))
                                     cookieBuilder
                                 case HttpRoute.Field.Param.Location.Cookie =>
                                     // The request-side mirror of Set-Cookie serialization, and the same grammar applies: RFC 6265
@@ -564,7 +562,7 @@ private[kyo] object RouteUtil:
     private def encodeResponseParams(
         fields: Chunk[HttpRoute.Field[?]],
         dict: Dict[String, Any],
-        headerBuilder: ChunkBuilder[String]
+        headerBuilder: ChunkBuilder[(String, String)]
     ): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < fields.size then
@@ -574,13 +572,11 @@ private[kyo] object RouteUtil:
                         dict.get(param.fieldName).flatMap(unwrapOptional(param.optional, _)).foreach { v =>
                             param.kind match
                                 case HttpRoute.Field.Param.Location.Header =>
-                                    discard(headerBuilder += wireName)
-                                    discard(headerBuilder += param.codec.asInstanceOf[HttpCodec[Any]].encode(v))
+                                    discard(headerBuilder += (wireName -> param.codec.asInstanceOf[HttpCodec[Any]].encode(v)))
                                 case HttpRoute.Field.Param.Location.Cookie =>
                                     v match
                                         case cookie: HttpCookie[?] =>
-                                            discard(headerBuilder += "Set-Cookie")
-                                            discard(headerBuilder += HttpHeaders.serializeCookie(wireName, cookie))
+                                            discard(headerBuilder += ("Set-Cookie" -> HttpHeaders.serializeCookie(wireName, cookie)))
                                         case _ =>
                                 case _ =>
                         }

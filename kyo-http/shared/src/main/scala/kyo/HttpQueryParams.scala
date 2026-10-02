@@ -2,15 +2,16 @@ package kyo
 
 /** Query parameters for HTTP requests.
   *
-  * An ordered, multi-valued collection of name-value string pairs representing URL query parameters. Backed by a `Seq[(String, String)]` —
-  * zero allocation when empty (`Nil`). Parameters preserve insertion order and allow duplicate keys (`?tag=a&tag=b`).
+  * An ordered, multi-valued collection of name-value string pairs representing URL query parameters. Any `Seq[(String, String)]` of pairs
+  * is an `HttpQueryParams`, so a `List`, `Vector` or `Chunk` of pairs can be passed wherever query parameters are expected. Parameters
+  * preserve insertion order and allow duplicate keys (`?tag=a&tag=b`).
   *
   * @see
   *   [[kyo.HttpClient]] Convenience methods accept HttpQueryParams
   * @see
   *   [[kyo.HttpUrl]] Carries parsed query parameters
   */
-opaque type HttpQueryParams = Seq[(String, String)]
+opaque type HttpQueryParams >: Seq[(String, String)] = Seq[(String, String)]
 
 object HttpQueryParams:
     val empty: HttpQueryParams = Nil
