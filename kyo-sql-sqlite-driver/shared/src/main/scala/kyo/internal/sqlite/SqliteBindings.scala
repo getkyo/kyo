@@ -129,6 +129,20 @@ private[kyo] trait SqliteBindings extends Ffi:
       */
     def interrupt(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Unit
 
+    /** Sets how the connection's next calls spend a lock wait, and clears [[busyDeferred]]. `1` declines the wait, so the call returns
+      * `SQLITE_BUSY` at once and the caller waits off the native thread; `0` sleeps in SQLite's busy handler up to the busy timeout. See
+      * `kyo_sqlite.c`.
+      */
+    def busyDefer(db: Ffi.Handle[SqliteDb], defer: Int)(using AllowUnsafe): Unit
+
+    /** `1` when the busy handler declined a wait SQLite asked for since the last [[busyDefer]]. SQLite asks only where waiting can resolve
+      * the lock, so a `SQLITE_BUSY` without it is final.
+      */
+    def busyDeferred(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** `1` when no transaction is open on the connection, `0` inside one. */
+    def getAutocommit(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
     /** The library's version as an integer, `X*1000000 + Y*1000 + Z`, read at runtime so a build that falls back to a host library reports
       * what it actually linked.
       */

@@ -114,6 +114,50 @@ class DoltLiteWasmTest extends Test:
         }
     }
 
+    // deviation: the writer waits for the lock between real-clock retries.
+    "a statement waiting on another connection's lock waits on its fiber, so the holder can commit" in {
+        // A call into WebAssembly runs on the only JS thread, so a writer asleep in SQLite's busy handler would keep the holder from ever
+        // reaching its COMMIT. The rebuilt busy handler has to decline the wait for the writer to wait on its fiber instead.
+        assume(DoltLiteEngineProbe.available, "the DoltLite engine is not published for this platform")
+        Sync.defer(java.lang.System.setProperty("kyo.ffi.js.transport", "wasm")).andThen {
+            DoltLiteWasm.init.andThen {
+                Scope.run {
+                    for
+                        // memdb shares a database named with a leading slash between connections; the WebAssembly build has no
+                        // file system to share one through.
+                        name <- Sync.defer(s"/kyo-wasm-lock-${java.lang.System.nanoTime}")
+                        memdb = SqliteVfs("memdb")
+                        holder <- SqlClient.init(s"doltlite://$name", SqlConfig(maxConnections = 1).extension(memdb))
+                        writer <-
+                            SqlClient.init(s"doltlite://$name", SqlConfig(maxConnections = 1, acquireTimeout = 20.seconds).extension(memdb))
+                        _       <- DB.run(holder)(holder.executeRaw("CREATE TABLE t (id INTEGER)"))
+                        held    <- Latch.init(1)
+                        release <- Latch.init(1)
+                        holding <- Fiber.initUnscoped(DB.run(holder) {
+                            holder.transaction(Absent, readOnly = false) {
+                                holder.executeRaw("INSERT INTO t VALUES (0)").andThen(held.release).andThen(release.await)
+                            }
+                        })
+                        _       <- held.await
+                        writing <-
+                            Fiber.initUnscoped(Abort.run[SqlException](DB.run(writer)(writer.executeRaw("INSERT INTO t VALUES (1)"))))
+                        _ <- Loop.foreach {
+                            Sync.Unsafe.defer(kyo.internal.sqlite.SqliteLockWait.waiting).map { waiting =>
+                                if waiting >= 1 then Loop.done(()) else Async.sleep(1.millis).andThen(Loop.continue)
+                            }
+                        }
+                        _       <- release.release
+                        _       <- holding.get
+                        written <- writing.get
+                        rows    <- DB.run(holder)(holder.query("SELECT count(*) FROM t")).map(_(0).decode[Long](0))
+                    yield
+                        assert(written.isSuccess, s"the writer: $written")
+                        assert(rows == 2L, s"rows: $rows")
+                }
+            }
+        }
+    }
+
     "a trailing semicolon and whitespace are not a second statement" in {
         withWasm { dolt =>
             dolt.query("SELECT 1;  ").map(rows => assert(rows.size == 1, s"got ${rows.size} rows"))

@@ -8,8 +8,10 @@ import kyo.AtomicBoolean
 import kyo.AtomicRef
 import kyo.Cache
 import kyo.Chunk
+import kyo.Clock
 import kyo.Duration
 import kyo.Frame
+import kyo.Kyo
 import kyo.Local
 import kyo.Maybe
 import kyo.Maybe.Absent
@@ -244,6 +246,45 @@ object Connection:
       */
     private[kyo] val custodyLocal: Local[Maybe[Custody]] = Local.init(Maybe.empty)
 
+    /** The phases one open has entered, each with the instant it began, so an open that outlives its budget can say which phase the budget
+      * ran out in and what the earlier ones cost.
+      *
+      * Read unsafely because the pool renders it inside the timeout's callback, which cannot suspend. Phases are marked from the open's own
+      * fiber and read from the timer's, hence the atomic.
+      */
+    final private[kyo] class OpenProgress(clock: Clock)(using AllowUnsafe):
+        private val phases = AtomicRef.Unsafe.init(Chunk.empty[(String, Duration)])
+
+        def enter(phase: String)(using AllowUnsafe): Unit =
+            val at = clock.unsafe.nowMonotonic()
+            discard(phases.updateAndGet(_.append((phase, at))))
+
+        /** Each phase with its elapsed time, the last one measured to now since it had not finished; [[Absent]] when none was entered. */
+        def render()(using AllowUnsafe): Maybe[String] =
+            val entered = phases.get()
+            if entered.isEmpty then Absent
+            else
+                val ends = entered.drop(1).map(_._2).append(clock.unsafe.nowMonotonic())
+                val each = entered.zip(ends).map { case ((phase, start), end) => s"$phase ${end.minusOrZero(start).toMillis} ms" }
+                Present(s"phases ${each.mkString(", ")} (unfinished)")
+            end if
+        end render
+    end OpenProgress
+
+    object OpenProgress:
+        /** The current open's [[OpenProgress]], bound by the pool around [[Factory.open]]. Inheritable, so it reaches the `timeoutWithError`
+          * child fiber the open runs in.
+          */
+        private[kyo] val local: Local[Maybe[OpenProgress]] = Local.init(Maybe.empty)
+
+        /** Marks the start of `phase` in the current open. Nothing outside an open the pool is timing. */
+        def enter(phase: String)(using Frame): Unit < Sync =
+            local.use {
+                case Present(progress) => Sync.Unsafe.defer(progress.enter(phase))
+                case Absent            => Kyo.unit
+            }
+    end OpenProgress
+
     /** How the pool opens one session, and the only thing it is given that knows which engine is behind it.
       *
       * An implementation owns everything that reaching a specific server involves: the TLS negotiation the engine's handshake defines, the
@@ -257,6 +298,11 @@ object Connection:
     abstract class Factory[C <: Connection]:
         /** Opens one session to `address`, authenticating with `password` where the engine's handshake asks for one, under `config`. */
         def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using Frame): C < (Async & Abort[SqlException])
+
+        /** What the engine can say about an open that ran out of its budget, read at that instant: state shared across opens that the open's
+          * own phases do not show, such as how many calls are queued ahead of it. Unsafe because it is read inside the timeout's callback.
+          */
+        private[kyo] def openDiagnostics()(using AllowUnsafe): Maybe[String] = Absent
     end Factory
 
     /** Whether an exchange that ended with `error` left the session idle.

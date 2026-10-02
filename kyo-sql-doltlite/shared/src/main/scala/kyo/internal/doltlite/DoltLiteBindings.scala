@@ -120,6 +120,17 @@ private[kyo] trait DoltLiteBindings extends SqliteBindings:
       */
     def interrupt(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Unit
 
+    /** Sets how the connection's next calls spend a lock wait, and clears [[busyDeferred]]: `1` declines the wait so the call returns
+      * `SQLITE_BUSY` at once, `0` sleeps in SQLite's busy handler up to the busy timeout. See `kyo_sqlite.c`.
+      */
+    def busyDefer(db: Ffi.Handle[SqliteDb], defer: Int)(using AllowUnsafe): Unit
+
+    /** `1` when the busy handler declined a wait SQLite asked for since the last [[busyDefer]]; a `SQLITE_BUSY` without it is final. */
+    def busyDeferred(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** `1` when no transaction is open on the connection, `0` inside one. */
+    def getAutocommit(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
     /** The linked library's version as an integer, `X*1000000 + Y*1000 + Z`. */
     def libversionNumber()(using AllowUnsafe): Int
 
@@ -156,6 +167,9 @@ private[kyo] object DoltLiteBindings extends Ffi.Config(
             "changes64"           -> "sqlite3_changes64",
             "lastInsertRowid"     -> "sqlite3_last_insert_rowid",
             "interrupt"           -> "sqlite3_interrupt",
+            "busyDefer"           -> "kyo_sqlite3_busy_defer",
+            "busyDeferred"        -> "kyo_sqlite3_busy_deferred",
+            "getAutocommit"       -> "sqlite3_get_autocommit",
             "libversionNumber"    -> "sqlite3_libversion_number"
         ),
         headers = Chunk("doltlite.h"),

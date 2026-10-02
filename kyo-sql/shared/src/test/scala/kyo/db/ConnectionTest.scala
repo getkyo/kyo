@@ -1,6 +1,7 @@
 package kyo.db
 
 import kyo.*
+import kyo.internal.client.SqlConnectionPool
 
 /** Contract tests for [[Connection]]'s companion: the shared lifecycle policy ([[Connection.leftSessionIdle]],
   * [[Connection.isProtocolFatal]]), the handshake bracket ([[Connection.closingOnFailure]]), the user-name refusal
@@ -262,6 +263,60 @@ class ConnectionTest extends Test:
                 assert(e.cause.isInstanceOf[kyo.net.NetException], s"expected the transport's NetException as the cause, got ${e.cause}")
                 assert(e.cause.getMessage != "connect refused", "the cause must be the transport's own failure, not a placeholder")
             case other => fail(s"Expected a connect failure, got $other")
+        }
+    }
+
+    // ── OpenProgress ──────────────────────────────────────────────────────────
+
+    "OpenProgress renders each phase's elapsed time, the last one unfinished" in {
+        Clock.withTimeControl { control =>
+            Clock.use { clock =>
+                Sync.Unsafe.defer(new Connection.OpenProgress(clock)).map { progress =>
+                    Sync.Unsafe.defer(progress.enter("connect"))
+                        .andThen(control.advance(3.millis))
+                        .andThen(Sync.Unsafe.defer(progress.enter("handshake")))
+                        .andThen(control.advance(40.millis))
+                        .andThen(Sync.Unsafe.defer(progress.render()))
+                        .map(rendered => assert(rendered == Present("phases connect 3 ms, handshake 40 ms (unfinished)")))
+                }
+            }
+        }
+    }
+
+    "OpenProgress renders nothing when no phase was entered" in {
+        Clock.use { clock =>
+            Sync.Unsafe.defer(new Connection.OpenProgress(clock).render()).map(rendered => assert(rendered == Absent))
+        }
+    }
+
+    "OpenProgress.enter outside an open the pool is timing records nothing and does not fail" in {
+        Connection.OpenProgress.enter("connect").andThen(succeed)
+    }
+
+    "an open that outlives its budget reports the phase it was in and the engine's diagnostics" in {
+        Latch.init(1).map { entered =>
+            val factory = new Connection.Factory[Connection]:
+                def open(address: SqlConfig.Address, password: Maybe[String], config: SqlConfig)(using
+                    Frame
+                ): Connection < (Async & Abort[SqlException]) =
+                    Connection.OpenProgress.enter("connect")
+                        .andThen(Connection.OpenProgress.enter("handshake"))
+                        .andThen(entered.release)
+                        .andThen(Async.never)
+                override private[kyo] def openDiagnostics()(using AllowUnsafe): Maybe[String] = Present("2 calls queued")
+            val address = SqlConfig.Address.Network("stub", "stub-host", 1, "stubdb", Absent)
+            Clock.withTimeControl { control =>
+                // Unsafe: SqlConnectionPool.init uses AllowUnsafe for ring-buffer initialisation.
+                Sync.Unsafe.defer(SqlConnectionPool.init(SqlConfig(), factory, Present(1.second), summon[Frame])).map { pool =>
+                    Fiber.initUnscoped(Abort.run[SqlException](pool.openDedicated(address, Absent, SqlConfig()))).map { opening =>
+                        entered.await.andThen(control.advance(1.second)).andThen(opening.get).map {
+                            case Result.Failure(e: SqlConnectionEstablishTimeoutException) =>
+                                assert(e.diagnostics == Present("phases connect 0 ms, handshake 1000 ms (unfinished); 2 calls queued"))
+                            case other => fail(s"Expected the establish timeout, got $other")
+                        }
+                    }
+                }
+            }
         }
     }
 

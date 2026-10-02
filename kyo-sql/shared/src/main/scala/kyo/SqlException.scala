@@ -218,20 +218,27 @@ final case class SqlConnectionAcquireTimeoutException(acquireTimeout: Duration)(
   *
   * @param timeout
   *   the budget that expired
-  * @param host
-  *   the server the connection was being opened to
-  * @param port
-  *   its port
+  * @param address
+  *   the server, or for an embedded engine the file, the connection was being opened to
   * @param budgetSource
   *   where the budget came from: the URL's `connectTimeout`, or the config's `acquireTimeout` standing in for it
+  * @param diagnostics
+  *   where the open was when the budget ran out, as far as the engine reports it: the phases it had entered with their timings, and engine
+  *   state such as calls queued ahead of it
   */
-final case class SqlConnectionEstablishTimeoutException(timeout: Duration, address: SqlConfig.Address, budgetSource: String)(using Frame)
+final case class SqlConnectionEstablishTimeoutException(
+    timeout: Duration,
+    address: SqlConfig.Address,
+    budgetSource: String,
+    diagnostics: Maybe[String] = Absent
+)(using Frame)
     extends SqlConnectionException(
         // The address rather than a host and port, because an embedded engine has neither and its open can still time
         // out on the file. What the budget COVERS differs the same way, so the sentence naming it does too.
         s"Opening a connection to ${SqlConnectionEstablishTimeoutException.describe(address)} timed out after ${timeout.show}. " +
             SqlConnectionEstablishTimeoutException.budgetCovers(address) +
-            s" Raise it with $budgetSource."
+            s" Raise it with $budgetSource." +
+            diagnostics.fold("")(d => s" At expiry: $d.")
     ) with SqlRetryable
 
 object SqlConnectionEstablishTimeoutException:

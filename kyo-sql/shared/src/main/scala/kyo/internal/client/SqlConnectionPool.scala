@@ -702,12 +702,27 @@ final private[kyo] class SqlConnectionPool[C <: Connection](
                 else SqlConnectionEstablishTimeoutException.fromConnectTimeout
             if budget == Duration.Infinity then factory.open(address, password, config)
             else
-                Async.timeoutWithError(
-                    budget,
-                    Result.Failure(SqlConnectionEstablishTimeoutException(budget, address, source))
-                )(factory.open(address, password, config))
+                Clock.use { clock =>
+                    Sync.Unsafe.defer(new Connection.OpenProgress(clock)).map { progress =>
+                        Connection.OpenProgress.local.let(Present(progress)) {
+                            Async.timeoutWithError(
+                                budget,
+                                // Evaluated when the budget runs out, so it describes the open at that instant.
+                                Result.Failure(SqlConnectionEstablishTimeoutException(budget, address, source, expiryDiagnostics(progress)))
+                            )(factory.open(address, password, config))
+                        }
+                    }
+                }
             end if
     end connect
+
+    /** The open's phases and the engine's own report, joined; [[Absent]] when neither has anything to say. */
+    private def expiryDiagnostics(progress: Connection.OpenProgress): Maybe[String] =
+        // Unsafe: read inside the timeout's callback, which cannot suspend; both reads are snapshots of atomics.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        val parts         = Chunk(progress.render(), factory.openDiagnostics()).flatMap(_.toChunk)
+        if parts.isEmpty then Absent else Present(parts.mkString("; "))
+    end expiryDiagnostics
 
     /** Opens a connection outside the pool's lease machinery, for a subsystem that owns it for the connection's whole life and never
       * returns it: the notification listener is the one caller.

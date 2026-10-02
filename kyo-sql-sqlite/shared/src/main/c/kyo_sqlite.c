@@ -144,6 +144,74 @@ KYO_SQLITE_API int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {
 }
 
 /*
+** How a connection spends a lock wait. sqlite3_busy_timeout sleeps on the thread that made the call,
+** and on Node that thread is one of the four libuv workers every blocking call in the process shares:
+** four statements waiting on a lock stall every other SQLite call, including the COMMIT of the
+** connection holding that lock, which then cannot release it until their timeouts expire.
+**
+** In DEFER mode the handler records that SQLite asked to wait and declines, so the call returns
+** SQLITE_BUSY at once and the driver waits on its fiber before retrying. SQLite calls the handler only
+** where waiting can help, never for a deadlock or a stale WAL snapshot, so the record is what tells a
+** retryable busy from a final one. WAIT mode is SQLite's own schedule, for a call that cannot be
+** retried: a step after its statement produced a row would restart the statement.
+**
+** The state hangs off the connection as client data, so SQLite frees it as the connection closes.
+*/
+typedef struct {
+  int timeoutMillis;
+  int defer;
+  int deferred;
+} kyo_busy_state;
+
+static const char kyo_busy_key[] = "kyo_busy";
+
+static kyo_busy_state *kyo_busy(sqlite3 *db) {
+  return (kyo_busy_state *)sqlite3_get_clientdata(db, kyo_busy_key);
+}
+
+/* WAIT mode follows sqliteDefaultBusyCallback's table, so it spends the timeout as
+** sqlite3_busy_timeout would. The driver's retry in DEFER mode follows the same table. */
+static int kyo_busy_handler(void *arg, int count) {
+  static const int delays[] = {1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100};
+  static const int totals[] = {0, 1, 3, 8, 18, 33, 53, 78, 103, 128, 178, 228};
+  enum { NDELAY = sizeof(delays) / sizeof(delays[0]) };
+  kyo_busy_state *s = (kyo_busy_state *)arg;
+  int delay, prior;
+  if (s->defer) {
+    s->deferred = 1;
+    return 0;
+  }
+  if (count < NDELAY) {
+    delay = delays[count];
+    prior = totals[count];
+  } else {
+    delay = delays[NDELAY - 1];
+    prior = totals[NDELAY - 1] + delay * (count - (NDELAY - 1));
+  }
+  if (prior + delay > s->timeoutMillis) {
+    delay = s->timeoutMillis - prior;
+    if (delay <= 0) return 0;
+  }
+  sqlite3_sleep(delay);
+  return 1;
+}
+
+/* Sets how the connection's next calls spend a lock wait, and clears the record of a declined one. */
+KYO_SQLITE_API void kyo_sqlite3_busy_defer(sqlite3 *db, int defer) {
+  kyo_busy_state *s = kyo_busy(db);
+  if (s) {
+    s->defer = defer;
+    s->deferred = 0;
+  }
+}
+
+/* 1 when the handler declined a wait SQLite asked for since the last kyo_sqlite3_busy_defer. */
+KYO_SQLITE_API int kyo_sqlite3_busy_deferred(sqlite3 *db) {
+  kyo_busy_state *s = kyo_busy(db);
+  return s ? s->deferred : 0;
+}
+
+/*
 ** The per-connection settings the driver requires, none of them SQLite's default. Applied together so
 ** a connection cannot be handed out half-configured, returning the FIRST failure so a caller sees the
 ** setting that actually failed.
@@ -154,6 +222,7 @@ KYO_SQLITE_API int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {
 */
 KYO_SQLITE_API int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeoutMillis) {
   int rc;
+  kyo_busy_state *busy;
 
   /* Without this a quoted identifier that does not resolve becomes a string literal, so a renamed
   ** column yields rows carrying its own name as text instead of an error. */
@@ -174,5 +243,13 @@ KYO_SQLITE_API int kyo_sqlite3_configure_connection(sqlite3 *db, int busyTimeout
   rc = sqlite3_exec(db, "PRAGMA trusted_schema=OFF", 0, 0, 0);
   if (rc != SQLITE_OK) return rc;
 
-  return sqlite3_busy_timeout(db, busyTimeoutMillis);
+  busy = (kyo_busy_state *)sqlite3_malloc(sizeof *busy);
+  if (!busy) return SQLITE_NOMEM;
+  busy->timeoutMillis = busyTimeoutMillis;
+  busy->defer = 0;
+  busy->deferred = 0;
+  /* On failure SQLite has already run the destructor on the block. */
+  rc = sqlite3_set_clientdata(db, kyo_busy_key, busy, sqlite3_free);
+  if (rc != SQLITE_OK) return rc;
+  return sqlite3_busy_handler(db, kyo_busy_handler, busy);
 }

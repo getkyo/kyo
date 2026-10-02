@@ -91,6 +91,15 @@ class SqlExceptionTest extends Test:
         assert(ex.getMessage.contains("5"))
     }
 
+    "SqlConnectionEstablishTimeoutException follows its budget sentence with the diagnostics it carries" in {
+        val address = SqlConfig.Address.Local("sqlite", "/tmp/app.db")
+        val plain   = SqlConnectionEstablishTimeoutException(2.seconds, address, SqlConnectionEstablishTimeoutException.fromConnectTimeout)
+        val probed  = plain.copy(diagnostics = Present("phases open 2000 ms (unfinished)"))
+        assert(plain.getMessage.contains("Raise it with `connectTimeout` in the URL."))
+        assert(!plain.getMessage.contains("At expiry"))
+        assert(probed.getMessage.contains("Raise it with `connectTimeout` in the URL. At expiry: phases open 2000 ms (unfinished)."))
+    }
+
     "SqlConnectionUrlParseException carries the raw URL and scheme" in {
         val ex = SqlConnectionUrlParseException("bogus://x", "bogus")
         assert(ex.url == "bogus://x")

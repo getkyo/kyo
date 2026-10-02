@@ -253,11 +253,62 @@ object SqliteWasmFacade:
                         else
                             rc = execSimpleRaw(db, "PRAGMA trusted_schema=OFF")
                             if rc != SqliteOk then rc
-                            else call("sqlite3_busy_timeout", db, busyTimeoutMillis).asInstanceOf[Int]
+                            else
+                                busyStates.update(db, new BusyState(busyTimeoutMillis))
+                                // The handler's argument is the handle itself, which is what its state is keyed by.
+                                capi.applyDynamic("sqlite3_busy_handler")(db, busyHandler, db).asInstanceOf[Int]
+                            end if
                         end if
                     end if
                 end if
             end if
+
+        /** A connection's lock-wait mode and the record of a declined wait: what the C shim keeps as client data on the connection. */
+        final private class BusyState(val timeoutMillis: Int):
+            var defer: Boolean    = false
+            var deferred: Boolean = false
+        end BusyState
+
+        private val busyStates = scala.collection.mutable.HashMap.empty[Int, BusyState]
+
+        private val BusyDelays = Array(1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100)
+        private val BusyTotals = Array(0, 1, 3, 8, 18, 33, 53, 78, 103, 128, 178, 228)
+
+        /** `kyo_busy_handler`: declines and records in defer mode, otherwise SQLite's default schedule within the timeout. */
+        private val busyHandler: js.Function2[Int, Int, Int] = (db, count) =>
+            busyStates.get(db) match
+                case None                       => 0
+                case Some(state) if state.defer =>
+                    state.deferred = true
+                    0
+                case Some(state) =>
+                    val last           = BusyDelays.length - 1
+                    val (delay, prior) =
+                        if count < BusyDelays.length then (BusyDelays(count), BusyTotals(count))
+                        else (BusyDelays(last), BusyTotals(last) + BusyDelays(last) * (count - last))
+                    val wait = if prior + delay > state.timeoutMillis then state.timeoutMillis - prior else delay
+                    if wait <= 0 then 0
+                    else
+                        discard(capi.applyDynamic("sqlite3_sleep")(wait))
+                        1
+                    end if
+
+        private val busyDefer: js.Function2[Int, Int, Unit] = (db, defer) =>
+            busyStates.get(db).foreach { state =>
+                state.defer = defer != 0
+                state.deferred = false
+            }
+
+        private val busyDeferred: js.Function1[Int, Int] = db =>
+            busyStates.get(db).fold(0)(state => if state.deferred then 1 else 0)
+
+        /** Drops the busy state with the handle. A close deferred by unfinalized statements runs no further statement, so the state is not
+          * consulted again.
+          */
+        private val closeV2: js.Function1[Int, Int] = db =>
+            val rc = call("sqlite3_close_v2", db).asInstanceOf[Int]
+            discard(busyStates.remove(db))
+            rc
 
         private def execSimpleRaw(db: Int, sql: String): Int =
             withCString(sql)(pSql => call("sqlite3_exec", db, pSql, 0, 0, 0).asInstanceOf[Int])
@@ -330,7 +381,10 @@ object SqliteWasmFacade:
             "kyo_sqlite3_column_text_bytes"     -> columnTextBytes,
             "kyo_sqlite3_column_blob_bytes"     -> columnBlobBytes,
             "kyo_sqlite3_column_decltype_bytes" -> columnDecltypeBytes,
-            "sqlite3_close_v2"                  -> int1("sqlite3_close_v2"),
+            "kyo_sqlite3_busy_defer"            -> busyDefer,
+            "kyo_sqlite3_busy_deferred"         -> busyDeferred,
+            "sqlite3_close_v2"                  -> closeV2,
+            "sqlite3_get_autocommit"            -> int1("sqlite3_get_autocommit"),
             "sqlite3_step"                      -> int1("sqlite3_step"),
             "sqlite3_finalize"                  -> int1("sqlite3_finalize"),
             "sqlite3_reset"                     -> int1("sqlite3_reset"),

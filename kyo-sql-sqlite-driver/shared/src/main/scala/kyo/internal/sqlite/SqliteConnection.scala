@@ -20,7 +20,9 @@ final private[kyo] class SqliteConnection(
     lifetime: Meter,
     openFlag: AtomicBoolean,
     inFlightFlag: AtomicBoolean,
-    inTransactionFlag: AtomicBoolean
+    inTransactionFlag: AtomicBoolean,
+    busyTimeoutMillis: Int,
+    path: String
 ) extends Connection:
 
     import SqliteConnection.*
@@ -83,17 +85,18 @@ final private[kyo] class SqliteConnection(
             // The in-flight flag is held for the whole stream rather than per step: between two steps the cursor is open even though
             // nothing is executing, so a stream interrupted while parked would otherwise look idle at the lease exit and the pool would
             // discard the connection instead of cancelling and reclaiming it.
-            Scope.acquireRelease(
-                serialised(prepare(sql, params)).map { stmt =>
-                    inFlightFlag.unsafe.set(true)(using AllowUnsafe.embrace.danger)
-                    stmt
-                }
-            )(stmt => finalizeStatement(stmt)).map { prepared =>
-                val declarations                                                     = readDeclarations(prepared)
-                val codec                                                            = new SqliteRowCodec(declarations)
-                val columns                                                          = readColumns(prepared, declarations)
-                def loop: Unit < (Async & Abort[SqlException] & Emit[Chunk[SqlRow]]) =
-                    serialised(step(prepared)).map { rc =>
+            // The release is registered before the statement exists, so an interrupt landing while it compiles still finalizes it.
+            heldStatement.map { held =>
+                Scope.ensure(Sync.Unsafe.defer(held.releaseHeld())).andThen(serialised(prepare(sql, params, held)))
+            }.map { stmt =>
+                inFlightFlag.unsafe.set(true)(using AllowUnsafe.embrace.danger)
+                stmt
+            }.map { prepared =>
+                val declarations                                                                     = readDeclarations(prepared)
+                val codec                                                                            = new SqliteRowCodec(declarations)
+                val columns                                                                          = readColumns(prepared, declarations)
+                def loop(first: Boolean): Unit < (Async & Abort[SqlException] & Emit[Chunk[SqlRow]]) =
+                    serialised(step(prepared, first)).map { rc =>
                         if rc == Done then
                             // Lowered here rather than in the scope's release, which runs on every exit including an interrupted one
                             // and runs before the lease decides what to do with the session. Any way out other than Done leaves the
@@ -103,9 +106,9 @@ final private[kyo] class SqliteConnection(
                             // Raised again after every row, because each step runs through `serialised`, whose exit lowers the flag for
                             // the step it wrapped. The cursor is still open, so the session stays in-flight until Done.
                             inFlightFlag.unsafe.set(true)(using AllowUnsafe.embrace.danger)
-                            Emit.value(Chunk(readRow(prepared, columns, codec))).andThen(loop)
+                            Emit.value(Chunk(readRow(prepared, columns, codec))).andThen(loop(first = false))
                     }
-                loop
+                loop(first = true)
             }
         }
     end streamQuery
@@ -257,14 +260,14 @@ final private[kyo] class SqliteConnection(
                 Abort.run[Closed] {
                     meter.run {
                         lifetime.run {
-                            Sync.Unsafe.defer(bindings.closeV2(db)).map(_.safe.get).unit
+                            Sync.Unsafe.defer(SqliteNativeCalls.startClose(bindings, db, path)).map(_.safe.get).unit
                         }
                     }
                 }.unit
         }
 
     def closeNow(using Frame, AllowUnsafe): Unit =
-        if openFlag.unsafe.compareAndSet(true, false) then discard(Sync.Unsafe.evalOrThrow(Sync.Unsafe.defer(bindings.closeV2(db))))
+        if openFlag.unsafe.compareAndSet(true, false) then discard(SqliteNativeCalls.startClose(bindings, db, path))
 
     // --- Internals ---
 
@@ -313,7 +316,9 @@ final private[kyo] class SqliteConnection(
     private def quote(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
 
     private def exec(sql: String)(using Frame): Unit < (Async & Abort[SqlException]) =
-        Sync.Unsafe.defer(bindings.execSimple(db, sql)).map(_.safe.get).map { rc =>
+        SqliteLockWait.deferring(bindings, db, busyTimeoutMillis) {
+            SqliteNativeCalls.run(bindings.execSimple(db, sql))
+        }(SqliteLockWait.isBusy).map { rc =>
             if rc == Ok then () else Abort.fail(failureOf(sql))
         }
 
@@ -322,19 +327,24 @@ final private[kyo] class SqliteConnection(
         SqliteErrors.toException(bindings.extendedErrcode(db), bindings.errmsg(db).value, Present(sql), Present(id))
     end failureOf
 
-    private def prepare(sql: String, params: Chunk[Sql.BoundValue[?]])(using
+    /** A [[SqliteNativeCalls.Held]] for one statement, which releases it by finalizing it. Finalizing twice on one handle is a
+      * use-after-free, and the held statement is taken exactly once whichever exit releases it.
+      */
+    private def heldStatement(using Frame): SqliteNativeCalls.Held[Ffi.Handle[SqliteStmt]] < Sync =
+        Sync.Unsafe.defer(SqliteNativeCalls.Held[Ffi.Handle[SqliteStmt]](stmt => discard(bindings.finalizeStmt(stmt))))
+
+    /** Compiles and binds one statement, depositing it into `held`, whose owner releases it on every exit including a refused bind and
+      * an interrupt that lands while the statement is still being compiled.
+      */
+    private def prepare(sql: String, params: Chunk[Sql.BoundValue[?]], held: SqliteNativeCalls.Held[Ffi.Handle[SqliteStmt]])(using
         Frame
     ): Ffi.Handle[SqliteStmt] < (Async & Abort[SqlException]) =
-        Sync.Unsafe.defer(bindings.prepareOne(db, sql, -1)).map(_.safe.get).map {
-            case Present(stmt) =>
-                // A refused bind must not strand the statement: `prepareOne` already allocated it, and the caller never sees the handle
-                // when the bind fails, so nothing else could finalize it.
-                Abort.run[SqlException](bindParams(stmt, params)).map {
-                    case Result.Success(_) => stmt
-                    case Result.Failure(e) => finalizeStatement(stmt).andThen(Abort.fail(e))
-                    case Result.Panic(t)   => finalizeStatement(stmt).andThen(Abort.panic(t))
-                }
-            case Absent =>
+        // Compiling reads the schema, which takes the shared lock.
+        SqliteLockWait.deferring(bindings, db, busyTimeoutMillis) {
+            SqliteNativeCalls.runHolding(bindings.prepareOne(db, sql, -1))(identity, Present(held))
+        }(stmt => stmt.isEmpty && SqliteLockWait.isBusy(bindings.extendedErrcode(db)(using AllowUnsafe.embrace.danger))).map {
+            case Present(stmt) => bindParams(stmt, params).andThen(stmt)
+            case Absent        =>
                 given AllowUnsafe = AllowUnsafe.embrace.danger
                 val code          = bindings.extendedErrcode(db)
                 // A successful prepare leaves the code at OK, so OK here means the shim refused a trailing statement
@@ -377,14 +387,18 @@ final private[kyo] class SqliteConnection(
             }
         }
 
-    private def step(stmt: Ffi.Handle[SqliteStmt])(using Frame): Int < (Async & Abort[SqlException]) =
-        Sync.Unsafe.defer(bindings.step(stmt)).map(_.safe.get).map { rc =>
+    /** Advances `stmt`. `first` is whether it has produced no row yet, the only position a lock wait can be retried from: a failed step
+      * resets the statement, so retrying a later one would run it again from its first row.
+      */
+    private def step(stmt: Ffi.Handle[SqliteStmt], first: Boolean)(using Frame): Int < (Async & Abort[SqlException]) =
+        val call = SqliteNativeCalls.run(bindings.step(stmt))
+        val rc   =
+            if first then SqliteLockWait.deferring(bindings, db, busyTimeoutMillis)(call)(SqliteLockWait.isBusy)
+            else SqliteLockWait.inNative(bindings, db)(call)
+        rc.map { rc =>
             if rc == Row || rc == Done then rc else Abort.fail(failureOf(""))
         }
-
-    /** Sync rather than Async, with no I/O to wait on, so it can be the finalizer of a `Sync.ensure` around the stepping. */
-    private def finalizeStatement(stmt: Ffi.Handle[SqliteStmt])(using Frame): Unit < Sync =
-        Sync.defer(discard(bindings.finalizeStmt(stmt)(using AllowUnsafe.embrace.danger)))
+    end step
 
     private def readDeclarations(stmt: Ffi.Handle[SqliteStmt])(using Frame): Chunk[Maybe[String]] =
         given AllowUnsafe = AllowUnsafe.embrace.danger
@@ -426,24 +440,18 @@ final private[kyo] class SqliteConnection(
     private def runQueryOrExecute(sql: String, params: Chunk[Sql.BoundValue[?]])(using
         Frame
     ): (Chunk[SqlRow], Long) < (Async & Abort[SqlException]) =
-        prepare(sql, params).map { stmt =>
-            AtomicBoolean.init(false).map { finalized =>
-                // Finalizing twice on one handle is a use-after-free, and this has to happen on three different exits, so the flag
-                // makes it idempotent.
-                def finalizeOnce(using Frame): Unit < Sync =
-                    finalized.compareAndSet(false, true).map {
-                        case true  => finalizeStatement(stmt)
-                        case false => ()
-                    }
-                // A refused step must not skip the finalize: an unfinalized statement stays allocated and holds its locks. Running the
-                // stepping to a `Result` puts the finalize on the value path, before `Abort.get` re-raises; the `Sync.ensure` covers
-                // the interrupt, which arrives another way.
-                Sync.ensure(finalizeOnce) {
+        heldStatement.map { held =>
+            def finalizeOnce(using Frame): Unit < Sync = Sync.Unsafe.defer(held.releaseHeld())
+            // A refused step must not skip the finalize: an unfinalized statement stays allocated and holds its locks. Running the
+            // stepping to a `Result` puts the finalize on the value path, before `Abort.get` re-raises; the `Sync.ensure`, armed before
+            // the statement exists, covers a refused bind and the interrupt, which arrive another way.
+            Sync.ensure(finalizeOnce) {
+                prepare(sql, params, held).map { stmt =>
                     val declarations                                                            = readDeclarations(stmt)
                     val codec                                                                   = new SqliteRowCodec(declarations)
                     val columns                                                                 = readColumns(stmt, declarations)
                     def loop(acc: Chunk[SqlRow]): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-                        step(stmt).map { rc =>
+                        step(stmt, first = acc.isEmpty).map { rc =>
                             if rc == Done then acc else loop(acc.append(readRow(stmt, columns, codec)))
                         }
                     Abort.run[SqlException] {
