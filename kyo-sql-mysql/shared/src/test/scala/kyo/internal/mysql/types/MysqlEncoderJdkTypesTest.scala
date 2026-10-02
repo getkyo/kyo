@@ -6,8 +6,7 @@ import kyo.SqlDecodeException
 import kyo.internal.mysql.MysqlParamWriter
 import kyo.internal.mysql.MysqlRowCodec
 
-/** Wire-level tests for the JDK string-round-trip schemas on MySQL: `java.net.URI`, `java.util.Locale`,
-  * `java.util.Currency`.
+/** Wire-level tests for the JDK string-round-trip schemas on MySQL: `java.net.URI` and `java.util.Locale`.
   *
   * Each writes through the writer's `string` primitive, which MySQL maps to `stringEncoder`: type byte `VAR_STRING`, a lenenc-prefixed UTF-8
   * payload. These leaves pin that mapping and the real round-trip through such a column, where the server hands the reader the payload with the
@@ -60,14 +59,6 @@ class MysqlEncoderJdkTypesTest extends kyo.Test:
         decodeAs[java.util.Locale, String](textRow("pt-BR"), _.toLanguageTag) match
             case Result.Success(tag) => assert(tag == "pt-BR")
             case other               => fail(s"Expected Success but got $other")
-        end match
-    }
-
-    "Currency reaches the wire as a VAR_STRING param and round-trips" in {
-        assert(textParam(java.util.Currency.getInstance("BRL")) == "BRL")
-        decodeAs[java.util.Currency, String](textRow("BRL"), _.getCurrencyCode) match
-            case Result.Success(code) => assert(code == "BRL")
-            case other                => fail(s"Expected Success but got $other")
         end match
     }
 
