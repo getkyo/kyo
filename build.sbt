@@ -1682,7 +1682,8 @@ lazy val `kyo-system-doltfs` =
 // what the suites reuse: core's `Test` base and mocks, and the engine conformance fixtures in
 // `kyo-sql-sqlite-driver` and `kyo-sql-dolt-api`. A test-only diff follows exactly these edges, so an engine
 // module taken `test->test` without need re-runs this whole module on every change to its own tests.
-// `publish / skip` keeps the shipped artifact count at three.
+// It has only test sources, so there is nothing to publish; the battery external backends run ships as
+// `kyo-sql-conformance`.
 lazy val `kyo-sql-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
