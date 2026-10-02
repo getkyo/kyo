@@ -433,6 +433,26 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
 
     "HTTP integration" - {
 
+        "an upgrade answered with a status other than 101 fails with the handshake leaf, naming the url without its query and the status" in {
+            val plain  = HttpHandler.getText("ws/plain") { _ => "no" }
+            val secret = Seq("Secret", "W7").mkString
+            withWsServer(plain) { url =>
+                Kyo.foreach(Chunk(s"ws/plain?token=$secret", "ws/missing")) { path =>
+                    Abort.run[HttpException](HttpClient.webSocket(s"ws://${url.host}:${url.port}/$path")(_ => Kyo.unit))
+                }.map { results =>
+                    val refused = results.map(_.failure.collect { case e: HttpWebSocketHandshakeException => (e.url, e.status) })
+                    assert(
+                        refused == Chunk(
+                            Present((s"ws://${url.host}:${url.port}/ws/plain", 404)),
+                            Present((s"ws://${url.host}:${url.port}/ws/missing", 404))
+                        ),
+                        results.toString
+                    )
+                    assert(!results.toString.contains(secret))
+                }
+            }
+        }
+
         "websocket alongside http handlers" in {
             val httpHandler = HttpHandler.getText("api/hello") { _ => "world" }
             withWsServer(httpHandler, HttpHandler.webSocket("ws/echo")(echo)) { url =>

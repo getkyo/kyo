@@ -880,7 +880,7 @@ val echo =
 
 Call `ws.close(code, reason)` to initiate a close handshake (defaults to code `1000`). After the connection closes, `put` and `take` fail with `Abort[Closed]`, and `ws.closeReason` returns the code and reason sent by the peer. `HttpWebSocket.Config` tunes the connection: `bufferSize` (channel capacity, default 32), `maxFrameSize` (default 16 MiB), `autoPingInterval` for keep-alive pings, `closeTimeout`, and `subprotocols`. Pass it to either `HttpClient.webSocket(url, headers, config)` or `HttpHandler.webSocket(path, config)`.
 
-WebSocket-specific failures are represented by `HttpWebSocketException`, with `HttpWebSocketHandshakeException` as the public API leaf for handshake failures. Current client non-101 upgrade validation surfaces `HttpProtocolException`, while filter and `Halt` status rejection surfaces `HttpStatusException`.
+WebSocket-specific failures are represented by `HttpWebSocketException`. A server that answers the upgrade with any status other than 101 fails the client with `HttpWebSocketHandshakeException`, carrying the URL (without its query) and that status; an answer that is not an HTTP/1.x status line, or a 101 with a wrong `Sec-WebSocket-Accept` or an unoffered subprotocol, is an `HttpProtocolException`. A client filter or `Halt` that rejects the upgrade surfaces `HttpStatusException`.
 
 Caution: the backend does not close the outbound channel when the peer goes away. If you compose separate sender and receiver fibers, include `ws.onPeerClose` in the race or those fibers hang when the peer closes the connection:
 
