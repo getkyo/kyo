@@ -1,8 +1,8 @@
-package kyo.internal
+package kyo.internal.slack
 
 import kyo.*
 
-/** The reconnect policy layer above `SlackSocketEngine`, driven by
+/** The reconnect policy layer above `SocketEngine`, driven by
   * `SlackConfig.Reconnect`. The single owner of engine lifecycle: it is the only
   * code that constructs, swaps, and closes engines (the receive loop reads the
   * active engine ref but never closes one). The hard case is `Overlap`: bring the
@@ -14,14 +14,15 @@ import kyo.*
   * stays bounded to two engine generations, never a lifetime accumulator.
   *
   * `link_disabled` is terminal under every policy; the engine raises
-  * `SlackTerminalException` and the controller propagates it.
+  * `SlackLinkDisabledException` and the controller propagates it.
   */
-private[kyo] object SlackReconnect:
+private[kyo] object Reconnect:
 
-    /** A bounded rolling seen-`envelope_id` window: the ids the PRIOR engine delivered
-      * plus the ids the CURRENT engine has delivered. A re-delivered id is suppressed
-      * when it is in EITHER set, so an id the old engine delivered and Slack re-pushes
-      * onto the new engine during the overlap is acked but not re-delivered. `advance`
+    /** A bounded rolling seen-`envelope_id` window: the ids the PRIOR engine acknowledged
+      * plus the ids the CURRENT engine has acknowledged. A re-delivered id is suppressed
+      * when it is in EITHER set, so an id the old engine acknowledged and Slack re-pushes
+      * onto the new engine during the overlap is acked but not re-delivered. An id whose
+      * delivery produced no ack is in neither set, so its next push is delivered. `advance`
       * rolls the window forward at a rotation: the current ids become the prior window
       * and the current set is emptied, so the set is bounded to two engine generations,
       * never a lifetime accumulator. After two rotations an id falls out of the window
@@ -34,9 +35,9 @@ private[kyo] object SlackReconnect:
     ):
         /** True if this id is in the prior window or the current set. */
         private[kyo] def seenBefore(id: SlackId.EnvelopeId)(using Frame): Boolean < Sync =
-            prior.use(p => current.use(c => p.contains(id) || c.contains(id)))
+            prior.get.map(p => current.get.map(c => p.contains(id) || c.contains(id)))
 
-        /** Record this id as delivered by the current engine. */
+        /** Record this id as acknowledged by the current engine. */
         private[kyo] def remember(id: SlackId.EnvelopeId)(using Frame): Unit < Sync =
             current.updateAndGet(_ + id).unit
 
@@ -64,25 +65,25 @@ private[kyo] object SlackReconnect:
       * rotation swapped it.
       */
     final private[kyo] class Controller private[kyo] (
-        private[kyo] val active: AtomicRef[SlackSocketEngine],
-        private[kyo] val open: () => SlackSocketEngine < (Async & Abort[SlackException]),
+        private[kyo] val active: AtomicRef[SocketEngine],
+        private[kyo] val open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
         private[kyo] val config: SlackConfig
     ):
         /** Run the receive loop under the reconnect policy until a clean stop or a
           * terminal `link_disabled`. On a routine disconnect, rotate per policy.
           */
-        private[kyo] def start[S](
-            using Isolate[S, Abort[SlackException] & Async, S]
+        private[kyo] def start[E, S](
+            using Isolate[S, Abort[E] & Async, S]
         )(
-            handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-        )(using Frame): Unit < (S & Async & Abort[SlackException]) =
+            handler: SlackEnvelope[?] => SlackAck < (S & Async & Abort[E])
+        )(using Frame): Unit < (S & Async & Abort[SlackException.Connect | SlackLinkDisabledException | E]) =
             newDedup.map(dedup => loop(active, dedup, open, config, handler))
 
         /** Close the CURRENTLY active engine (the scope finalizer / `Slack.close`
           * teardown). Idempotent; total.
           */
         private[kyo] def closeActive(using Frame): Unit < Async =
-            active.use(_.closeNow)
+            active.get.map(_.closeNow)
     end Controller
 
     /** Open the first engine via `open` and seed a `Controller` with it as the
@@ -90,45 +91,49 @@ private[kyo] object SlackReconnect:
       * (never a leaked second one).
       */
     private[kyo] def open(
-        open: () => SlackSocketEngine < (Async & Abort[SlackException]),
+        open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
         config: SlackConfig
-    )(using Frame): Controller < (Async & Abort[SlackException]) =
-        open().map(first => AtomicRef.init[SlackSocketEngine](first).map(active => new Controller(active, open, config)))
+    )(using Frame): Controller < (Async & Abort[SlackException.Connect]) =
+        open().map(first => AtomicRef.init[SocketEngine](first).map(active => new Controller(active, open, config)))
 
-    /** Seed a `Controller` from an ALREADY-OPENED engine (the `Slack.receive`
-      * path: the connection's existing engine is the first active engine, so `receive`
-      * does not open a duplicate and `close` tears down that same engine). `open`
-      * supplies fresh engines for subsequent rotations only.
+    /** Seed a `Controller` from an ALREADY-OPENED engine: the controller a client from
+      * `Slack.init` holds for its whole life, so every `receive` starts on the engine active
+      * at that moment and `close` tears down that same engine, whatever rotations came
+      * before. `open` supplies fresh engines for rotations only.
       */
     private[kyo] def controllerFrom(
-        first: SlackSocketEngine,
-        open: () => SlackSocketEngine < (Async & Abort[SlackException]),
+        first: SocketEngine,
+        open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
         config: SlackConfig
     )(using Frame): Controller < Sync =
-        AtomicRef.init[SlackSocketEngine](first).map(active => new Controller(active, open, config))
+        AtomicRef.init[SocketEngine](first).map(active => new Controller(active, open, config))
 
-    private def loop[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+    private def loop[E, S](
+        using Isolate[S, Abort[E] & Async, S]
     )(
-        active: AtomicRef[SlackSocketEngine],
+        active: AtomicRef[SocketEngine],
         dedup: OverlapDedup,
-        open: () => SlackSocketEngine < (Async & Abort[SlackException]),
+        open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
         config: SlackConfig,
-        handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-    )(using Frame): Unit < (S & Async & Abort[SlackException]) =
-        active.use { engine =>
-            engine.receiveLoopWithReconnect(
-                handler,
-                dedup,
-                onRoutineDisconnect = _ =>
-                    config.reconnect match
-                        case SlackConfig.Reconnect.Off       => Reaction.Stop
-                        case SlackConfig.Reconnect.Immediate => Reaction.Reconnect(overlap = false)
-                        case SlackConfig.Reconnect.Overlap   => Reaction.Reconnect(overlap = true)
-            ).map {
-                case Reaction.Stop               => Kyo.unit
-                case Reaction.Reconnect(overlap) =>
-                    rotate(active, dedup, open, engine, overlap, handler).andThen(loop(active, dedup, open, config, handler))
+        handler: SlackEnvelope[?] => SlackAck < (S & Async & Abort[E])
+    )(using Frame): Unit < (S & Async & Abort[SlackException.Connect | SlackLinkDisabledException | E]) =
+        Loop.foreach {
+            active.get.map { engine =>
+                engine.receiveLoopWithReconnect(
+                    handler,
+                    dedup,
+                    onRoutineDisconnect = _ =>
+                        config.reconnect match
+                            case SlackConfig.Reconnect.Off       => Reaction.Stop
+                            case SlackConfig.Reconnect.Immediate => Reaction.Reconnect(overlap = false)
+                            case SlackConfig.Reconnect.Overlap   => Reaction.Reconnect(overlap = true)
+                ).map {
+                    // Stopping drains and flushes like a rotation: the teardown after the loop is closeNow, which drops
+                    // the buffered residue and any ack still in outbound.
+                    case Reaction.Stop =>
+                        engine.drainBufferedInbound(handler, dedup).andThen(engine.closeTransport).andThen(Loop.done[Unit])
+                    case Reaction.Reconnect(overlap) => rotate(active, dedup, open, engine, overlap, handler).andThen(Loop.continue[Unit])
+                }
             }
         }
 
@@ -155,32 +160,35 @@ private[kyo] object SlackReconnect:
       * residue (deliver+ack) BEFORE closing it, then opens the new engine and clears the
       * dedup (no overlap window survives).
       */
-    private def rotate[S](
-        using Isolate[S, Abort[SlackException] & Async, S]
+    private def rotate[E, S](
+        using Isolate[S, Abort[E] & Async, S]
     )(
-        active: AtomicRef[SlackSocketEngine],
+        active: AtomicRef[SocketEngine],
         dedup: OverlapDedup,
-        open: () => SlackSocketEngine < (Async & Abort[SlackException]),
-        engineOld: SlackSocketEngine,
+        open: () => SocketEngine < (Async & Abort[SlackException.Connect]),
+        engineOld: SocketEngine,
         overlap: Boolean,
-        handler: SlackEnvelope => SlackAck < (S & Async & Abort[SlackException])
-    )(using Frame): Unit < (S & Async & Abort[SlackException]) =
+        handler: SlackEnvelope[?] => SlackAck < (S & Async & Abort[E])
+    )(using Frame): Unit < (S & Async & Abort[SlackException.Connect | SlackLinkDisabledException | E]) =
         if overlap then
-            // Roll the window forward carrying the old engine's ids, bring the new engine
-            // up live (initUnscoped awaits the readiness gate) and switch the active ref
-            // BEFORE engineOld stops, so both sockets overlap and no inbound frame is lost.
-            // Then drain engineOld's buffered residue and close it.
             dedup.advance.andThen {
                 open().map { engineNew =>
                     active.set(engineNew).andThen {
-                        engineOld.drainBufferedInbound(handler, dedup).andThen(engineOld.closeTransport)
+                        // Once engineNew is active, the controller's teardown no longer reaches engineOld, so this rotation
+                        // closes it on every ending: a handler failure or an interrupt during the drain included.
+                        AtomicBoolean.init(false).map { closed =>
+                            Scope.run {
+                                Scope.ensure(closed.get.map(done => if done then Kyo.unit else engineOld.closeNow)).andThen {
+                                    engineOld.drainBufferedInbound(handler, dedup)
+                                        .andThen(engineOld.closeTransport)
+                                        .andThen(closed.set(true))
+                                }
+                            }
+                        }
                     }
                 }
             }
         else
-            // Drain engineOld's already-buffered residue (deliver+ack) and close it, then
-            // open the new engine. The gap Immediate accepts is for NEW frames only; the
-            // residue is frames Slack already delivered, so it must not be dropped.
             engineOld.drainBufferedInbound(handler, dedup).andThen {
                 engineOld.closeTransport.andThen {
                     dedup.clear.andThen {
@@ -197,4 +205,4 @@ private[kyo] object SlackReconnect:
         case Reconnect(overlap: Boolean)
     end Reaction
 
-end SlackReconnect
+end Reconnect

@@ -37,19 +37,25 @@ object SlashModalDemo extends KyoApp:
 
     run {
         Demos.connect { config =>
-            Slack.run(config) {
-                case SlackEnvelope.SlashCommand(_, command) =>
-                    Slack.viewsOpen(command.triggerId, modal("Fill this in and submit."))
-                        .andThen(SlackAck.CommandResponse(SlackMessage(command.channel, "opened a modal")))
+            val loop = Slack.run(config)([A] =>
+                (env: SlackEnvelope[A]) =>
+                    env match
+                        case e: SlackEnvelope.SlashCommand =>
+                            Slack.viewsOpen(e.payload.triggerId, modal("Fill this in and submit."))
+                                .andThen(SlackAck.CommandResponse(SlackAck.CommandResponse.Visibility.Ephemeral, "opened a modal"))
 
-                case SlackEnvelope.Interactive(_, SlackInteraction.BlockActions(_, _, _, Present(viewId), _)) =>
-                    Slack.viewsUpdate(viewId, modal("Refreshed in place :sparkles:")).andThen(SlackAck.Ack)
+                        case e: SlackEnvelope.Interactive =>
+                            e.payload match
+                                case SlackInteraction.BlockActions(_, _, _, Present(viewId), _, _, _) =>
+                                    Slack.viewsUpdate(viewId, modal("Refreshed in place :sparkles:")).andThen(SlackAck.Ack)
+                                case _: SlackInteraction.ViewSubmission =>
+                                    SlackAck.ViewResponse(SlackAck.ViewAction.Clear)
+                                case _ => SlackAck.Ack
 
-                case SlackEnvelope.Interactive(_, SlackInteraction.ViewSubmission(_, _, _)) =>
-                    SlackAck.ViewResponse(SlackAck.ViewAction.Clear)
-
-                case _ => SlackAck.Ack
-            }
+                        case _: SlackEnvelope.Acknowledged => SlackAck.Ack
+                        case _: SlackEnvelope.Plain        => Kyo.unit
+            )
+            loop
         }
     }
 end SlashModalDemo
