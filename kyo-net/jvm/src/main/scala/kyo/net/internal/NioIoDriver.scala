@@ -8,7 +8,6 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
-import javax.net.ssl.SSLEngineResult
 import kyo.*
 import kyo.net.NetConnectionIoException
 import kyo.net.NetDriverUnsupportedException
@@ -28,12 +27,9 @@ import scala.jdk.CollectionConverters.*
   * the channel's `SelectionKey`. The event loop (started via `start()`) calls `Selector.select()` in a tight loop, dispatches each ready
   * key, and completes the pending promise.
   *
-  * For TLS connections, reads are dispatched through `dispatchReadTls`, which feeds raw ciphertext from the kernel into the `SSLEngine` and
-  * delivers decrypted plaintext. Writes go through `writeTls`, which wraps plaintext into TLS records before writing to the channel.
-  *
-  * Note: `tryUnwrapBuffered` is called at the start of every TLS read to drain any application data the JDK SSLEngine already unwrapped (e.g.
-  * from the last handshake record or a coalesced TCP segment). Without this, the selector may never fire again because the kernel buffer is
-  * empty even though decrypted bytes are available.
+  * For TLS connections every engine operation goes through the handle's [[NioTlsState]]: `dispatchReadTls` reads and unwraps through it,
+  * and writes wrap through it. Every TLS read first unwraps what is already buffered (the last handshake flight's coalesced records, a grace
+  * probe's staging): that ciphertext is out of the kernel, so the selector would never fire for it.
   */
 final private[kyo] class NioIoDriver private (@volatile private[net] var selector: Selector)
     extends IoDriver[NioHandle]:
@@ -303,31 +299,39 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end awaitRead
 
     private def awaitReadAdmitted(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        // Check for buffered TLS data before registering with selector.
-        // After handshake, netInBuf may already contain application data.
+        // A TLS read first takes plaintext already decrypted, then unwraps what the handshake or a grace probe left buffered: neither
+        // has a socket event left to wake the selector for it.
         handle.tls match
             case Present(tls) =>
-                // plaintext decrypted for a read that lost the slot precedes anything decrypted after it
-                val carried = handle.carriedPlaintext.getAndSet(Chunk.empty)
-                if !carried.isEmpty then promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(concatChunks(carried)))))
-                else
-                    // staged probe ciphertext must unwrap before any fresh ciphertext
-                    feedGraceStaging(handle, tls)
-                    tryUnwrapBuffered(tls) match
-                        case Present(buffered) =>
-                            Log.live.unsafe.debug(s"$label awaitRead ${handleLabel(handle)} found buffered TLS data size=${buffered.size}")
-                            promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(buffered)))
-                        case Absent if tls.peerCleanClose =>
-                            // Buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
-                            // ReadPump tears down instead of waiting on the selector for ciphertext the peer will never send.
-                            promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                        case Absent =>
-                            // A grace probe latched a bare FIN (truncation) while backpressured: surface it now rather than arming for ciphertext
-                            // the peer will never send (a live consumer must see the end promptly).
-                            if handle.peerClosed then promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                            else armRead(handle, promise)
-                    end match
-                end if
+                tls.takePlaintext() match
+                    case Present(plaintext) => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plaintext))))
+                    case Absent             =>
+                        tls.unwrapBuffered(handle.graceStaging) match
+                            case NioTlsState.Inbound.Busy =>
+                                // Another operation holds the engine with ciphertext of this read possibly buffered: arm, and have the
+                                // selector carrier unwrap for it once the engine is free.
+                                armRead(handle, promise)
+                                discard(pendingStagedDeliveries.offer(handle))
+                                discard(selector.wakeup())
+                            case NioTlsState.Inbound.Decrypted =>
+                                // Another carrier can deliver the carry between the unwrap and this take; then this read waits for more.
+                                tls.takePlaintext() match
+                                    case Present(plaintext) =>
+                                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plaintext))))
+                                    case Absent => armRead(handle, promise)
+                            case NioTlsState.Inbound.CleanClose =>
+                                // Buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
+                                // ReadPump tears down instead of waiting on the selector for ciphertext the peer will never send.
+                                promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
+                            case NioTlsState.Inbound.PeerFin =>
+                                promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                            case NioTlsState.Inbound.Pending =>
+                                // A grace probe latched a bare FIN (truncation) while backpressured: surface it now rather than arming for
+                                // ciphertext the peer will never send (a live consumer must see the end promptly).
+                                if handle.peerClosed then promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                                else armRead(handle, promise)
+                        end match
+                end match
             case Absent =>
                 drainGraceStaging(handle) match
                     case Present(staged) =>
@@ -527,7 +531,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     /** Take and concatenate the staging exactly once (getAndSet: one drainer wins). */
     private def drainGraceStaging(handle: NioHandle)(using AllowUnsafe): Maybe[Array[Byte]] =
         val taken = handle.graceStaging.getAndSet(Chunk.empty)
-        if taken.isEmpty then Absent else Present(concatChunks(taken))
+        if taken.isEmpty then Absent else Present(NioIoDriver.concatChunks(taken))
     end drainGraceStaging
 
     /** Put drained staging back ahead of anything staged since, so it stays in arrival order. */
@@ -537,36 +541,6 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             if !handle.graceStaging.compareAndSet(cur, Chunk(staged).concat(cur)) then loop()
         loop()
     end returnGraceStaging
-
-    private def concatChunks(chunks: Chunk[Array[Byte]]): Array[Byte] =
-        val total = chunks.foldLeft(0)(_ + _.length)
-        val out   = new Array[Byte](total)
-        var pos   = 0
-        chunks.foreach { a =>
-            // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
-            java.lang.System.arraycopy(a, 0, out, pos, a.length)
-            pos += a.length
-        }
-        out
-    end concatChunks
-
-    /** Feed any grace-probe-staged CIPHERTEXT into `tls.netInBuf` (growing to fit). Called before the first [[tryUnwrapBuffered]] and before any
-      * fresh socket read, so staged ciphertext always precedes fresh ciphertext; drains graceStaging exactly once, a no-op when there is none.
-      */
-    private def feedGraceStaging(handle: NioHandle, tls: NioTlsState)(using AllowUnsafe): Unit =
-        drainGraceStaging(handle) match
-            case Present(staged) =>
-                val needed = tls.netInBuf.position() + staged.length
-                if needed > tls.netInBuf.capacity() then
-                    val grown = ByteBuffer.allocate(needed)
-                    tls.netInBuf.flip()
-                    grown.put(tls.netInBuf)
-                    tls.netInBuf = grown
-                end if
-                discard(tls.netInBuf.put(staged))
-            case Absent => ()
-        end match
-    end feedGraceStaging
 
     /** Poll-carrier drain of the deferred probe arms (the [[drainUpgradeArms]] twin). */
     private def drainGraceProbeArms()(using AllowUnsafe): Unit =
@@ -628,7 +602,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         if budget <= 0 || stagedBytes(handle) >= NioIoDriver.GraceProbeStagingCap then armed = false
                     else if n < 0 then
                         handle.peerClosed = true
-                        handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
+                        handle.tls.foreach(_.markPeerEof())
                         armed = false
                     else
                         // re-install as a standing FIN watch; CAS against Absent so a pump re-arm that won the slot is not clobbered.
@@ -642,7 +616,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             catch
                 case _: IOException =>
                     handle.peerClosed = true
-                    handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
+                    handle.tls.foreach(_.markPeerEof())
             end try
             // Probe side of the staging handoff (see armRead's post-arm re-check): after the last stash, a pump arm that raced this dispatch
             // may own the slot with its staging pre-check already behind it, so hand the staged bytes over now. Same-carrier with every other
@@ -655,7 +629,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     private def drainStagedDeliveries()(using AllowUnsafe): Unit =
         var handle = pendingStagedDeliveries.poll()
         while handle ne null do
-            deliverStagedToArm(handle)
+            // Not deliverStagedToArm: a TLS read that found the engine busy queued itself here for ciphertext the engine holds buffered,
+            // which its staging and carry checks do not see. Upgrading stays excluded: the detach path owns the salvage order.
+            if !handle.upgrading then deliverStaged(handle)
             handle = pendingStagedDeliveries.poll()
         end while
     end drainStagedDeliveries
@@ -673,10 +649,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * next one, armed after that drain. With no pump read to take them the bytes go back to the staging, or to the upgrade salvage when an
       * upgrade took the slot.
       *
-      * TLS: staged bytes are ciphertext; feed them to the engine, and carry what unwraps (see [[carryPlaintext]]) to the read holding the
-      * slot, or a CleanClose when the records ended in the peer's close_notify. A partial record stays parked in netInBuf for the next socket
-      * read to extend, exactly like dispatchReadTls's need-more-data path. The engine gate is tried, not spun: a writeTls holding it means
-      * retry on a later cycle via re-offer (there is no socket readiness to re-arm against).
+      * TLS: staged bytes are ciphertext; unwrap them, and hand the carried plaintext (see [[deliverCarried]]) to the read holding the
+      * slot, or a CleanClose when the records ended in the peer's close_notify. A partial record stays buffered in the engine for the next
+      * socket read to extend. A busy engine means retry on a later cycle via re-offer (there is no socket readiness to re-arm against).
       */
     private def deliverStagedToArm(handle: NioHandle)(using AllowUnsafe): Unit =
         if stagedDeliveryDue(handle) then deliverStaged(handle)
@@ -685,7 +660,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
       * and [[deliverStaged]].
       */
     private[net] def stagedDeliveryDue(handle: NioHandle)(using AllowUnsafe): Boolean =
-        !handle.upgrading && (!handle.graceStaging.get().isEmpty || !handle.carriedPlaintext.get().isEmpty)
+        !handle.upgrading && (!handle.graceStaging.get().isEmpty || handle.tls.exists(_.hasPlaintext))
 
     /** The delivery half of [[deliverStagedToArm]], acting on whatever the slot and the staging hold now, and only while a pump read holds
       * the slot: with none the bytes stay staged for the next read's pre-check. SELECTOR-CARRIER ONLY.
@@ -705,23 +680,16 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         end if
                     }
                 case Present(tls) =>
-                    if !handle.engineGate.compareAndSet(false, true) then
-                        discard(pendingStagedDeliveries.offer(handle))
-                        discard(selector.wakeup())
-                    else
-                        // Read promises complete only after the gate is released, so synchronous teardown callbacks on them can re-acquire it
-                        // (the dispatchReadTls discipline).
-                        var cleanClose = false
-                        try
-                            feedGraceStaging(handle, tls)
-                            tryUnwrapBuffered(tls) match
-                                case Present(plaintext) => carryPlaintext(handle, plaintext)
-                                case Absent             => cleanClose = tls.peerCleanClose
-                        finally
-                            handle.engineGate.set(false)
-                        end try
-                        if !deliverCarried(handle) && cleanClose then discard(handOver(handle, ReadOutcome.CleanClose))
-                    end if
+                    tls.unwrapBuffered(handle.graceStaging) match
+                        case NioTlsState.Inbound.Busy =>
+                            discard(pendingStagedDeliveries.offer(handle))
+                            discard(selector.wakeup())
+                        case NioTlsState.Inbound.CleanClose =>
+                            if !deliverCarried(handle, tls) then discard(handOver(handle, ReadOutcome.CleanClose))
+                        case NioTlsState.Inbound.PeerFin =>
+                            if !deliverCarried(handle, tls) then discard(handOver(handle, ReadOutcome.PeerFin))
+                        case NioTlsState.Inbound.Decrypted | NioTlsState.Inbound.Pending =>
+                            discard(deliverCarried(handle, tls))
             end match
         end if
     end deliverStaged
@@ -740,32 +708,16 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end match
     end handOver
 
-    /** Keep TLS plaintext the selector carrier decrypted until a read takes it: the engine cannot decrypt it again. SELECTOR-CARRIER ONLY,
-      * the single producer; a read's pre-check drains it from another carrier.
+    /** Hand the decrypted plaintext waiting in `tls` to the pump read holding the slot, returning it to the carry when none does; true
+      * when there was some to hand. Plaintext goes to whichever read holds the slot now, so a read that lost the slot while the engine
+      * decrypted never takes plaintext the engine cannot produce again. SELECTOR-CARRIER ONLY.
       */
-    private def carryPlaintext(handle: NioHandle, plaintext: Span[Byte])(using AllowUnsafe): Unit =
-        @tailrec def loop(): Unit =
-            val cur = handle.carriedPlaintext.get()
-            if !handle.carriedPlaintext.compareAndSet(cur, cur.append(plaintext.toArrayUnsafe)) then loop()
-        loop()
-    end carryPlaintext
-
-    /** Hand the carried plaintext to the pump read holding the slot, keeping it carried when none does; true when there was some to
-      * hand. Never under the engine gate: the read's promise completes here. SELECTOR-CARRIER ONLY.
-      */
-    private def deliverCarried(handle: NioHandle)(using AllowUnsafe): Boolean =
-        val carried = handle.carriedPlaintext.getAndSet(Chunk.empty)
-        if carried.isEmpty then false
-        else
-            val bytes = concatChunks(carried)
-            if !handOver(handle, ReadOutcome.Bytes(Span.fromUnsafe(bytes))) then
-                @tailrec def putBack(): Unit =
-                    val cur = handle.carriedPlaintext.get()
-                    if !handle.carriedPlaintext.compareAndSet(cur, Chunk(bytes).concat(cur)) then putBack()
-                putBack()
-            end if
-            true
-        end if
+    private def deliverCarried(handle: NioHandle, tls: NioTlsState)(using AllowUnsafe): Boolean =
+        tls.takePlaintext() match
+            case Absent             => false
+            case Present(plaintext) =>
+                if !handOver(handle, ReadOutcome.Bytes(Span.fromUnsafe(plaintext))) then tls.returnPlaintext(plaintext)
+                true
     end deliverCarried
 
     /** STARTTLS upgrade producer (selector carrier): read at most one buffer of peer ciphertext and hand it to the handshake through the handle's
@@ -947,13 +899,9 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     def awaitAccept(handle: NioHandle, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         promise.completeDiscard(Result.Panic(NetDriverUnsupportedException(label, "awaitAccept")))
 
-    /** Run a TLS engine op on the NIO driver. The NIO driver's selector-carrier read path (dispatchReadTls) and caller-carrier write path
-      * (writeTls) acquire the per-connection engine ownership gate directly at their call sites, so no two carriers touch one connection's
-      * JDK SSLEngine concurrently. NEED_TASK delegated tasks run inline inside the held ownership (a Fiber-per-task would stall indefinitely
-      * waiting for the selector-carrier to schedule it while the selector-carrier is blocked waiting for the NEED_TASK result).
-      *
-      * This override exists to document the NIO ownership model. External callers (PosixTransport, tests) that reach NioIoDriver via the
-      * IoDriver interface call op() directly; the gate is already held by whichever NIO call site is currently executing.
+    /** Run a TLS engine op on the NIO driver. The NIO driver never submits one: its JDK SSLEngine is reached only through [[NioTlsState]],
+      * whose every operation holds the engine's own gate, so no two carriers touch one connection's engine concurrently. External callers
+      * (PosixTransport, tests) that reach NioIoDriver via the IoDriver interface get op() run directly.
       */
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
 
@@ -961,7 +909,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         if data.isEmpty || offset >= data.size then WriteResult.Done
         else
             handle.tls match
-                case Present(tls) => writeTls(handle, data, offset, tls)
+                case Present(tls) => tls.write(handle.channel, data, offset)
                 case Absent       => writePlain(handle, data, offset)
 
     private def writePlain(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
@@ -980,66 +928,6 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             end if
         catch
             case _: IOException => WriteResult.Error
-
-    private def writeTls(handle: NioHandle, data: Span[Byte], offset: Int, tls: NioTlsState)(using AllowUnsafe): WriteResult =
-        // Acquire per-connection engine ownership before any SSLEngine call. The selector-carrier
-        // unwrap path (dispatchReadTls) and this caller-carrier wrap path both need exclusive access
-        // to the JDK SSLEngine; the gate serializes them. The engine op is brief (one wrap + socket
-        // write per call), so a spin avoids a park and the associated scheduling overhead.
-        @tailrec def spinAcquire(): Unit =
-            if !handle.engineGate.compareAndSet(false, true) then spinAcquire()
-        spinAcquire()
-        try
-            // If there is pending ciphertext from a previous partial write, flush it first
-            val canProceed =
-                if tls.pendingCiphertext then
-                    val n = handle.channel.write(tls.netOutBuf)
-                    if n < 0 then Left(WriteResult.Error)
-                    else if tls.netOutBuf.hasRemaining then
-                        // Still can't flush: remain in pending state, return the original span at the current offset
-                        Left(WriteResult.Partial(data, offset))
-                    else
-                        tls.pendingCiphertext = false
-                        Right(())
-                    end if
-                else Right(())
-            canProceed match
-                case Left(result) => result
-                case Right(_)     =>
-                    // src starts at offset so the wrap loop consumes only the unsent region [offset, data.size).
-                    val src = ByteBuffer.wrap(data.toArrayUnsafe, offset, data.size - offset)
-                    // Loop wrapping: SSLEngine wraps one TLS record per call (~16KB),
-                    // so large payloads need multiple wrap+flush iterations
-                    @tailrec def wrapLoop(): WriteResult =
-                        if !src.hasRemaining then WriteResult.Done
-                        else
-                            tls.netOutBuf.clear()
-                            val result = tls.engine.wrap(src, tls.netOutBuf)
-                            tls.netOutBuf.flip()
-                            if result.getStatus eq javax.net.ssl.SSLEngineResult.Status.BUFFER_OVERFLOW then
-                                WriteResult.Error
-                            else
-                                // Try one write: if socket buffer is full, return Partial
-                                val n = handle.channel.write(tls.netOutBuf)
-                                if n < 0 then WriteResult.Error
-                                else if tls.netOutBuf.hasRemaining then
-                                    // Socket buffer full: save state and return the original span at the current ByteBuffer position.
-                                    // src.position() tracks how many bytes from data[offset..] have been consumed, so the Partial offset is
-                                    // src.position() (ByteBuffer positions are absolute within the wrapped array: position() == consumed so far
-                                    // from data[offset..], i.e. the new absolute offset into data).
-                                    tls.pendingCiphertext = true
-                                    WriteResult.Partial(data, src.position())
-                                else wrapLoop()
-                                end if
-                            end if
-                    wrapLoop()
-            end match
-        catch
-            case _: IOException => WriteResult.Error
-        finally
-            handle.engineGate.set(false)
-        end try
-    end writeTls
 
     /** Remove pending operations for a channel and fail their promises with Closed. */
     private def cleanupPending(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
@@ -1905,101 +1793,23 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     )(using AllowUnsafe): Unit =
         // All compareAndSet calls pass the SAME cell object read in dispatchRead: AtomicReference.compareAndSet
         // uses reference equality (eq), so the exact ReadArmCell reference is the CAS key.
-        // Acquire per-connection engine ownership before any SSLEngine call so the selector-carrier
-        // unwrap path (here) and the caller-carrier wrap path (writeTls) never touch the SSLEngine
-        // concurrently. If the write path holds the gate, re-arm for the next selector wakeup rather
-        // than spinning on the selector carrier (which would block other connections' read events).
-        if !handle.engineGate.compareAndSet(false, true) then
+        def rearm(): Unit =
             pendingReads.put(channel, handle)
             discard(registerInterest(channel, SelectionKey.OP_READ))
-        else
-            // Collect the completion thunk; the gate is released in finally BEFORE the thunk runs so
-            // synchronous teardown callbacks (ReadPump.onComplete -> closeHandle -> NioHandle.close ->
-            // spinAcquire) never try to re-acquire the gate while the selector carrier still holds it.
-            var complete: () => Unit = () => ()
-            // Plaintext goes through the carry and reaches whichever read holds the slot once the gate is released (deliverCarried), so a
-            // read that lost the slot meanwhile never takes plaintext the engine cannot produce again.
-            var carried = !handle.carriedPlaintext.get().isEmpty
-            try
-                if carried then () // carried plaintext precedes anything this dispatch would decrypt; the socket is read on the next arm
-                else
-                    // staged ciphertext unwraps before fresh (see feedGraceStaging)
-                    feedGraceStaging(handle, tls)
-                    // Check for buffered data from a previous read (e.g. post-handshake leftover)
-                    tryUnwrapBuffered(tls) match
-                        case Present(buffered) =>
-                            given Frame = Frame.internal
-                            Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} buffered plaintext=${buffered.size}")
-                            carryPlaintext(handle, buffered)
-                            carried = true
-                        case Absent if tls.peerCleanClose =>
-                            // The buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
-                            // ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
-                            if handle.readArm.compareAndSet(cell, Absent) then
-                                complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                        case Absent =>
-                            val buf = handle.readBuffer
-                            buf.clear()
-                            val n = channel.read(buf)
-                            if n < 0 then
-                                // Peer ended the TCP stream. If a close_notify was already consumed (peerCleanClose set by tryUnwrapBuffered) this
-                                // FIN follows an orderly close; otherwise it is a bare FIN with no close_notify, the truncation-attack condition
-                                // (RFC 8446 6.1). Record peerEof for the bare-FIN case so status reports Truncated; do not overwrite an
-                                // already-observed clean close. Mirrors the engine path's recv == 0 -> peerEof handling (PollerIoDriver /
-                                // IoUringDriver).
-                                if !tls.peerCleanClose then tls.peerEof = true
-                                if handle.readArm.compareAndSet(cell, Absent) then
-                                    complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                            else if n == 0 then
-                                // Spurious wakeup: no data ready. Restore entry and re-arm.
-                                pendingReads.put(channel, handle)
-                                discard(registerInterest(channel, SelectionKey.OP_READ))
-                            else
-                                buf.flip()
-                                // Grow netInBuf if needed to hold existing data + new data
-                                val needed = tls.netInBuf.position() + buf.remaining()
-                                if needed > tls.netInBuf.capacity() then
-                                    val grown = ByteBuffer.allocate(needed)
-                                    tls.netInBuf.flip()
-                                    grown.put(tls.netInBuf)
-                                    tls.netInBuf = grown
-                                end if
-                                tls.netInBuf.put(buf)
-                                // Try to unwrap the newly fed ciphertext (staging already drained by the pre-read feedGraceStaging above)
-                                tryUnwrapBuffered(tls) match
-                                    case Present(plaintext) =>
-                                        given Frame = Frame.internal
-                                        Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} plaintext=${plaintext.size}")
-                                        carryPlaintext(handle, plaintext)
-                                        carried = true
-                                    case Absent if tls.peerCleanClose =>
-                                        // The newly fed ciphertext was the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose
-                                        // immediately so the ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
-                                        if handle.readArm.compareAndSet(cell, Absent) then
-                                            complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                                    case Absent =>
-                                        // Got ciphertext but no complete TLS record yet: need more data, re-arm.
-                                        pendingReads.put(channel, handle)
-                                        discard(registerInterest(channel, SelectionKey.OP_READ))
-                                end match
-                            end if
-                    end match
-                end if
-            catch
-                case _: IOException =>
-                    // A read IOException (e.g. a TCP RST) ends the inbound stream abruptly with no close_notify: a truncation, not an orderly close.
-                    // Record peerEof unless a close_notify was already consumed, so status reports Truncated rather than Active.
-                    if !tls.peerCleanClose then tls.peerEof = true
-                    if handle.readArm.compareAndSet(cell, Absent) then
-                        complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-            finally
-                handle.engineGate.set(false)
-            end try
-            // Run the completion after the gate is released. Synchronous callbacks on the promise
-            // (e.g. ReadPump.onComplete -> teardownHandle -> NioHandle.close -> spinAcquire) are now
-            // safe: the gate is free when they run on the selector carrier.
-            if carried then discard(deliverCarried(handle))
-            else complete()
+        def finish(outcome: ReadOutcome): Unit =
+            if handle.readArm.compareAndSet(cell, Absent) then promise.completeDiscard(Result.succeed(outcome))
+        // Plaintext already decrypted precedes anything this dispatch would decrypt; the socket is read on the next arm.
+        if !deliverCarried(handle, tls) then
+            tls.unwrapFromSocket(handle.graceStaging, channel, handle.readBuffer) match
+                // Never spin on the selector carrier for an engine a write holds: that would stall every other connection's events.
+                case NioTlsState.Inbound.Busy      => rearm()
+                case NioTlsState.Inbound.Pending   => rearm()
+                case NioTlsState.Inbound.Decrypted => discard(deliverCarried(handle, tls))
+                // The records ended in the peer's close_notify (orderly close, RFC 8446 6.1): the ReadPump tears down rather than
+                // waiting for ciphertext the peer will never send.
+                case NioTlsState.Inbound.CleanClose => finish(ReadOutcome.CleanClose)
+                case NioTlsState.Inbound.PeerFin    => finish(ReadOutcome.PeerFin)
+            end match
         end if
     end dispatchReadTls
 
@@ -2055,59 +1865,6 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end match
     end dispatchAccept
 
-    /** Try to unwrap any buffered ciphertext already sitting in tls.netInBuf.
-      *
-      * After a TLS handshake, the last socket read may have contained both the final handshake record AND application data. The application
-      * data remains in netInBuf. If we only wait for the selector, the kernel buffer is empty (data already read), so the selector never
-      * fires and the connection hangs.
-      *
-      * Returns Present(plaintext) if any application data was unwrapped, Absent otherwise.
-      */
-    private[kyo] def tryUnwrapBuffered(tls: NioTlsState)(using AllowUnsafe): Maybe[Span[Byte]] =
-        tls.netInBuf.flip()
-        if !tls.netInBuf.hasRemaining then
-            tls.netInBuf.compact()
-            Absent
-        else
-            val plaintext = tls.decryptAcc
-            plaintext.reset()
-            @tailrec def unwrapLoop(): Unit =
-                tls.appInBuf.clear()
-                val result = tls.engine.unwrap(tls.netInBuf, tls.appInBuf)
-                val status = result.getStatus
-                if status eq SSLEngineResult.Status.OK then
-                    tls.appInBuf.flip()
-                    val n = tls.appInBuf.remaining()
-                    if n > 0 then
-                        // Bulk get: ensureCapacityFor before reading array (growth may reallocate arr), then direct ByteBuffer.get.
-                        plaintext.ensureCapacityFor(n)
-                        tls.appInBuf.get(plaintext.array, plaintext.size, n)
-                        plaintext.advance(n)
-                    end if
-                    unwrapLoop()
-                else if status eq SSLEngineResult.Status.CLOSED then
-                    // The unwrap that consumed the peer's close_notify record reports CLOSED and makes the inbound side done (RFC 8446 6.1
-                    // orderly close). Record it so the connection's status reports CleanClose rather than Truncated: this is the orderly
-                    // counterpart to a bare TCP FIN. Mirrors JdkSslEngine.readPlain's Status.CLOSED / isInboundDone -> -3 clean-close return,
-                    // converging the inline NIO path with the engine-driver path. The loop stops here: a close_notify is the last record on the
-                    // inbound stream, so there is nothing further to drain.
-                    tls.peerCleanClose = true
-                end if
-            end unwrapLoop
-            unwrapLoop()
-            // Belt-and-suspenders: a close_notify could be consumed by an unwrap that also surfaced as a non-CLOSED status (e.g. delivered
-            // coalesced behind the last app record). isInboundDone becomes true once the peer's close_notify has been processed, so checking it
-            // after the loop catches the clean close in every position. Mirrors JdkSslEngine.readPlain's isInboundDone clean-close detection.
-            if tls.engine.isInboundDone then tls.peerCleanClose = true
-            tls.netInBuf.compact()
-            if plaintext.size > 0 then
-                Present(Span.fromUnsafe(plaintext.toByteArray))
-            else
-                Absent
-            end if
-        end if
-    end tryUnwrapBuffered
-
 end NioIoDriver
 
 private[kyo] object NioIoDriver:
@@ -2142,4 +1899,16 @@ private[kyo] object NioIoDriver:
       */
     private[net] def forSelector(selector: Selector)(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(selector)
+
+    private[net] def concatChunks(chunks: Chunk[Array[Byte]]): Array[Byte] =
+        val total = chunks.foldLeft(0)(_ + _.length)
+        val out   = new Array[Byte](total)
+        var pos   = 0
+        chunks.foreach { a =>
+            // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
+            java.lang.System.arraycopy(a, 0, out, pos, a.length)
+            pos += a.length
+        }
+        out
+    end concatChunks
 end NioIoDriver

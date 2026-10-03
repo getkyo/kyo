@@ -6,14 +6,9 @@ import javax.net.ssl.SSLEngineResult
 import kyo.*
 import kyo.net.Test
 
-/** Deterministic structural test for NIO TLS read allocation reuse.
+/** NioTlsState's engine ownership and its read-side unwrap, against a real in-memory JDK TLS session.
   *
-  * Verifies that NioIoDriver.tryUnwrapBuffered writes decoded plaintext into the per-handle reused accumulator (NioTlsState.decryptAcc)
-  * rather than a per-call local buffer. The pin: after a call that decodes K bytes, decryptAcc.size equals K, because tryUnwrapBuffered
-  * resets the accumulator at the start and advances it by the decoded byte count without resetting at the end. A per-call local buffer
-  * leaves decryptAcc.size at zero, making the assertion fail.
-  *
-  * This test is JVM-only because NioTlsState depends on javax.net.ssl.SSLEngine, which is absent on Scala Native and Scala.js.
+  * JVM-only because NioTlsState depends on javax.net.ssl.SSLEngine, which is absent on Scala Native and Scala.js.
   */
 class NioTlsStateTest extends Test:
 
@@ -49,8 +44,19 @@ class NioTlsStateTest extends Test:
         end if
     end stepEngine
 
-    /** Drive a full TLS handshake between client and server engines in memory. Returns true when both engines report done. */
-    private def driveHandshake(client: SSLEngine, server: SSLEngine): Boolean =
+    /** A client and a server engine with a completed TLS handshake, driven in memory. */
+    private def handshakedPair()(using kyo.test.AssertScope): (SSLEngine, SSLEngine) =
+        val serverConfig = kyo.net.NetTlsConfig(
+            certChainPath = Present(kyo.net.internal.TlsTestCert.certPath),
+            privateKeyPath = Present(kyo.net.internal.TlsTestCert.keyPath)
+        )
+        val clientConfig = kyo.net.NetTlsConfig(trustAll = true, hostnameVerification = false)
+        val server       = NioTransport.createSslContext(serverConfig, isServer = true).createSSLEngine("localhost", -1)
+        server.setUseClientMode(false)
+        server.beginHandshake()
+        val client = NioTransport.createSslContext(clientConfig, isServer = false).createSSLEngine("localhost", -1)
+        client.setUseClientMode(true)
+        client.beginHandshake()
         var clientDone = false
         var serverDone = false
         var rounds     = 0
@@ -59,11 +65,12 @@ class NioTlsStateTest extends Test:
             if !clientDone then clientDone = stepEngine(client, server)
             if !serverDone then serverDone = stepEngine(server, client)
         end while
-        clientDone && serverDone
-    end driveHandshake
+        assert(clientDone && serverDone, "TLS handshake did not complete within 200 rounds")
+        (client, server)
+    end handshakedPair
 
     /** Encrypt `plaintext` bytes using `sender` and return the resulting TLS ciphertext record. */
-    private def encryptRecord(sender: SSLEngine, plaintext: Array[Byte])(using kyo.test.AssertScope, Frame): Array[Byte] =
+    private def encryptRecord(sender: SSLEngine, plaintext: Array[Byte])(using kyo.test.AssertScope): Array[Byte] =
         val src    = ByteBuffer.wrap(plaintext)
         val netBuf = ByteBuffer.allocate(sender.getSession.getPacketBufferSize + 512)
         val res    = sender.wrap(src, netBuf)
@@ -74,77 +81,104 @@ class NioTlsStateTest extends Test:
         out
     end encryptRecord
 
-    /** tryUnwrapBuffered writes decoded plaintext into the per-handle reused accumulator.
-      *
-      * After each call that decodes K>0 bytes, decryptAcc.size equals K. If tryUnwrapBuffered used a fresh per-call buffer instead,
-      * the field's size would remain 0 after each call because only the local buffer would be advanced.
-      */
-    "Nio TLS read decodes into the reused per-handle accumulator" in {
-        val N = 16
+    private def staged(records: Array[Byte]*): AtomicRef.Unsafe[Chunk[Array[Byte]]] =
+        AtomicRef.Unsafe.init(Chunk.from(records))
 
-        val serverConfig = kyo.net.NetTlsConfig(
-            certChainPath = Present(kyo.net.internal.TlsTestCert.certPath),
-            privateKeyPath = Present(kyo.net.internal.TlsTestCert.keyPath)
-        )
-        val clientConfig = kyo.net.NetTlsConfig(trustAll = true, hostnameVerification = false)
+    "each unwrap decodes into the reused per-session accumulator" in {
+        val (client, server) = handshakedPair()
+        val tls              = NioTlsState.init(client)
+        (0 until 16).foreach { i =>
+            val plaintext = Array.tabulate[Byte](i + 1)(j => (j + i).toByte)
+            val result    = tls.unwrapBuffered(staged(encryptRecord(server, plaintext)))
+            val taken     = tls.takePlaintext().map(_.toList)
+            // The accumulator keeps the pass's byte count until the next pass resets it, so a per-call buffer would leave it at 0.
+            assert(
+                (result, taken, tls.lastDecryptSize) == (NioTlsState.Inbound.Decrypted, Present(plaintext.toList), plaintext.length),
+                s"iteration $i"
+            )
+        }
+        succeed
+    }
 
-        val serverCtx = NioTransport.createSslContext(serverConfig, isServer = true)
-        val clientCtx = NioTransport.createSslContext(clientConfig, isServer = false)
-
-        val serverEngine = serverCtx.createSSLEngine("localhost", -1)
-        serverEngine.setUseClientMode(false)
-        serverEngine.beginHandshake()
-
-        val clientEngine = clientCtx.createSSLEngine("localhost", -1)
-        clientEngine.setUseClientMode(true)
-        clientEngine.beginHandshake()
-
-        assert(driveHandshake(clientEngine, serverEngine), "TLS handshake did not complete within 200 rounds")
-
-        val session     = clientEngine.getSession
-        val netInBuf    = ByteBuffer.allocate(session.getPacketBufferSize)
-        val netOutBuf   = ByteBuffer.allocate(session.getPacketBufferSize)
-        val appInBuf    = ByteBuffer.allocate(session.getApplicationBufferSize)
-        val tlsState    = NioTlsState(clientEngine, netInBuf, netOutBuf, appInBuf)
-        val capturedAcc = tlsState.decryptAcc
-
-        val driver = NioIoDriver.init()
-
-        try
-            var i = 0
-            while i < N do
-                val plaintext  = Array.tabulate[Byte](i + 1)(j => (j + i).toByte)
-                val ciphertext = encryptRecord(serverEngine, plaintext)
-
-                // Write ciphertext into netInBuf in write mode; tryUnwrapBuffered does flip() itself.
-                tlsState.netInBuf.clear()
-                tlsState.netInBuf.put(ciphertext)
-
-                val result = driver.tryUnwrapBuffered(tlsState)
-
-                assert(result.isDefined, s"tryUnwrapBuffered returned Absent on iteration $i")
-                val got = result.get.toArray
-                assert(got.toList == plaintext.toList, s"iteration $i: expected ${plaintext.toList}, got ${got.toList}")
-
-                // Identity check: the field must be the same instance (not reallocated).
-                assert(tlsState.decryptAcc eq capturedAcc, s"decryptAcc was reallocated on iteration $i")
-
-                // Size pin: tryUnwrapBuffered resets at start and advances by the decoded byte count
-                // without resetting at the end. So decryptAcc.size must equal the plaintext length.
-                // If tryUnwrapBuffered used a per-call local buffer instead of the field, the field's
-                // size would remain 0 after the call, making this assertion fail.
-                val accSize = tlsState.decryptAcc.size
-                assert(
-                    accSize == plaintext.length,
-                    s"iteration $i: decryptAcc.size=$accSize but expected ${plaintext.length}; field unused or not advanced"
+    "an unwrap while another operation holds the engine is Busy and leaves its staged ciphertext staged" in {
+        val (client, server) = handshakedPair()
+        val engine           = new UnwrapCallbackEngine(client)
+        val tls              = NioTlsState.init(engine)
+        val first            = staged(encryptRecord(server, Array[Byte](1, 2, 3)))
+        val second           = staged(encryptRecord(server, Array[Byte](4, 5, 6)))
+        // The outer unwrap holds the engine while its engine.unwrap runs; the nested attempt comes from inside it.
+        var nested: Maybe[NioTlsState.Inbound] = Absent
+        engine.onNextUnwrap(() => nested = Present(tls.unwrapBuffered(second)))
+        val outer      = tls.unwrapBuffered(first)
+        val stillThere = second.get().size
+        val firstText  = tls.takePlaintext().map(_.toList)
+        val later      = tls.unwrapBuffered(second)
+        val secondText = tls.takePlaintext().map(_.toList)
+        assert(
+            (nested, stillThere, outer, firstText, later, secondText) ==
+                (
+                    Present(NioTlsState.Inbound.Busy),
+                    1,
+                    NioTlsState.Inbound.Decrypted,
+                    Present(List[Byte](1, 2, 3)),
+                    NioTlsState.Inbound.Decrypted,
+                    Present(List[Byte](4, 5, 6))
                 )
+        )
+    }
 
-                i += 1
-            end while
-            succeed
-        finally
-            driver.close()
-        end try
+    "plaintext decrypted by two unwraps waits in decrypt order, and a returned take goes back ahead of it" in {
+        val (client, server) = handshakedPair()
+        val tls              = NioTlsState.init(client)
+        discard(tls.unwrapBuffered(staged(encryptRecord(server, Array[Byte](1, 2)))))
+        val taken = tls.takePlaintext()
+        discard(tls.unwrapBuffered(staged(encryptRecord(server, Array[Byte](3, 4)))))
+        taken.foreach(tls.returnPlaintext)
+        assert(tls.takePlaintext().map(_.toList) == Present(List[Byte](1, 2, 3, 4)))
     }
 
 end NioTlsStateTest
+
+/** `inner`, running a one-shot callback right after its next `unwrap`: inside an engine operation, where NioTlsState holds the engine
+  * and has decrypted plaintext it has not yet handed out.
+  */
+final private[internal] class UnwrapCallbackEngine(inner: SSLEngine) extends SSLEngine:
+    private var pending: Maybe[() => Unit] = Absent
+
+    def onNextUnwrap(f: () => Unit): Unit = pending = Present(f)
+
+    def clearNextUnwrap(): Unit = pending = Absent
+
+    override def unwrap(src: ByteBuffer, dsts: Array[ByteBuffer], offset: Int, length: Int): SSLEngineResult =
+        val result = inner.unwrap(src, dsts, offset, length)
+        val run    = pending
+        pending = Absent
+        run.foreach(_())
+        result
+    end unwrap
+
+    override def wrap(srcs: Array[ByteBuffer], offset: Int, length: Int, dst: ByteBuffer): SSLEngineResult =
+        inner.wrap(srcs, offset, length, dst)
+    override def getDelegatedTask(): Runnable                          = inner.getDelegatedTask()
+    override def closeInbound(): Unit                                  = inner.closeInbound()
+    override def isInboundDone(): Boolean                              = inner.isInboundDone()
+    override def closeOutbound(): Unit                                 = inner.closeOutbound()
+    override def isOutboundDone(): Boolean                             = inner.isOutboundDone()
+    override def getSupportedCipherSuites(): Array[String]             = inner.getSupportedCipherSuites()
+    override def getEnabledCipherSuites(): Array[String]               = inner.getEnabledCipherSuites()
+    override def setEnabledCipherSuites(suites: Array[String]): Unit   = inner.setEnabledCipherSuites(suites)
+    override def getSupportedProtocols(): Array[String]                = inner.getSupportedProtocols()
+    override def getEnabledProtocols(): Array[String]                  = inner.getEnabledProtocols()
+    override def setEnabledProtocols(protocols: Array[String]): Unit   = inner.setEnabledProtocols(protocols)
+    override def getSession(): javax.net.ssl.SSLSession                = inner.getSession()
+    override def beginHandshake(): Unit                                = inner.beginHandshake()
+    override def getHandshakeStatus(): SSLEngineResult.HandshakeStatus = inner.getHandshakeStatus()
+    override def setUseClientMode(mode: Boolean): Unit                 = inner.setUseClientMode(mode)
+    override def getUseClientMode(): Boolean                           = inner.getUseClientMode()
+    override def setNeedClientAuth(need: Boolean): Unit                = inner.setNeedClientAuth(need)
+    override def getNeedClientAuth(): Boolean                          = inner.getNeedClientAuth()
+    override def setWantClientAuth(want: Boolean): Unit                = inner.setWantClientAuth(want)
+    override def getWantClientAuth(): Boolean                          = inner.getWantClientAuth()
+    override def setEnableSessionCreation(flag: Boolean): Unit         = inner.setEnableSessionCreation(flag)
+    override def getEnableSessionCreation(): Boolean                   = inner.getEnableSessionCreation()
+end UnwrapCallbackEngine

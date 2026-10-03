@@ -80,7 +80,7 @@ class NioHandleTest extends Test:
             val engine = ctx.createSSLEngine()
             val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Frame.internal)
             handle.tls match
-                case Present(state) => assert(state.engine eq engine)
+                case Present(state) => assert(state.drives(engine))
                 case Absent         => fail("expected Present tls state")
             succeed
         finally
@@ -99,9 +99,10 @@ class NioHandleTest extends Test:
             val handle  = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Frame.internal)
             handle.tls match
                 case Present(state) =>
-                    assert(state.netInBuf.capacity() == session.getPacketBufferSize)
-                    assert(state.netOutBuf.capacity() == session.getPacketBufferSize)
-                    assert(state.appInBuf.capacity() == session.getApplicationBufferSize)
+                    assert(
+                        state.bufferCapacities ==
+                            (session.getPacketBufferSize, session.getPacketBufferSize, session.getApplicationBufferSize)
+                    )
                 case Absent =>
                     fail("expected Present tls state")
             end match

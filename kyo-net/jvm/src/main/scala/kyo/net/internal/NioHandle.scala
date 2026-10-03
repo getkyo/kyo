@@ -6,7 +6,6 @@ import javax.net.ssl.SSLEngine
 import kyo.*
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.util.HandleId
-import scala.annotation.tailrec
 
 /** One entry in the read-arm owner table. Each [[NioHandle.armRead]] call wraps the caller's promise in a freshly allocated `ReadArmCell`
   * object. The selector carrier completes ONLY the current owner's promise by CAS-ing on the cell object reference
@@ -46,12 +45,6 @@ final private[kyo] class NioHandle private (
     val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
     // System.identityHashCode: identity-based seed for the handle id; fully qualified so kyo.System does not shadow it.
     val id: HandleId = HandleId.next(java.lang.System.identityHashCode(channel))
-    // Per-connection engine ownership gate. Acquired by the selector-carrier unwrap path (dispatchReadTls)
-    // and the caller-carrier wrap path (writeTls) before any SSLEngine call, so wrap and unwrap never
-    // overlap for one connection. The gate is also acquired before engine.closeOutbound / final wrap in
-    // the close path, so a close cannot overlap an in-progress engine op.
-    // Unsafe: AtomicBoolean.Unsafe initialized at object-construction time inside the class body.
-    val engineGate: AtomicBoolean.Unsafe = AtomicBoolean.Unsafe.init(false)
     // The read-arm OWNER cell. Each armRead installs a fresh ReadArmCell (a new wrapper allocation
     // per arm); the selector carrier completes ONLY the current owner's promise via a reference-equality
     // CAS on the stored cell. A stale arm holds an older ReadArmCell heap object; even when both arms
@@ -108,11 +101,6 @@ final private[kyo] class NioHandle private (
     // getAndSet(Chunk.empty) at each read entry. Bounded by NioIoDriver.GraceProbeStagingCap so a live chatty peer cannot turn the fd leak into a
     // heap leak. Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val graceStaging: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
-
-    // TLS plaintext the selector carrier decrypted for a read that lost the slot before the plaintext reached it. The engine cannot
-    // decrypt it again, so it is the next read's, ahead of any byte decrypted after it. Unsafe: AtomicRef.Unsafe initialized at
-    // object-construction time inside the class body.
-    val carriedPlaintext: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */
@@ -142,41 +130,11 @@ private[kyo] object NioHandle:
     def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine, peerCloseGrace: Duration, createdAt: Frame)(using
         AllowUnsafe
     ): NioHandle =
-        val session   = engine.getSession
-        val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
-        val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
-        val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
-        val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
-        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace, createdAt)
-    end initTls
+        new NioHandle(channel, bufferSize, Present(NioTlsState.init(engine)), peerCloseGrace, createdAt)
 
     /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */
     def close(handle: NioHandle)(using AllowUnsafe): Unit =
-        handle.tls.foreach { tls =>
-            // Unsafe: spinAcquire spins on engineGate (AtomicBoolean.Unsafe). The spin is bounded because
-            // the gate is held only for the duration of one engine wrap cycle (brief), so progress is
-            // guaranteed. Acquired before closeOutbound/wrap so close_notify generation is serialized with
-            // any in-progress engine op (dispatchReadTls or writeTls) that may be running concurrently.
-            // Released in finally so a throw in closeOutbound or wrap does not leak the gate permanently.
-            @tailrec def spinAcquire(): Unit =
-                if !handle.engineGate.compareAndSet(false, true) then spinAcquire()
-            spinAcquire()
-            try
-                tls.engine.closeOutbound()
-                // Generate the close_notify alert record (RFC 8446 6.1 / RFC 5246 7.2.1). The wrap call
-                // produces the alert into a scratch buffer to avoid a data race with the selector thread's
-                // tls.netOutBuf. The send is best-effort and non-blocking: if the kernel send buffer is full
-                // the alert is dropped and the peer observes a bare FIN (truncation-observable), but that is
-                // the same outcome as not sending it at all, and the close still completes immediately.
-                val empty  = ByteBuffer.allocate(0)
-                val notify = ByteBuffer.allocate(tls.engine.getSession.getPacketBufferSize)
-                tls.engine.wrap(empty, notify)
-                notify.flip()
-                if notify.hasRemaining then discard(handle.channel.write(notify))
-            catch case _: Exception => ()
-            finally handle.engineGate.set(false)
-            end try
-        }
+        handle.tls.foreach(_.closeOutbound(handle.channel))
         try handle.channel.close()
         catch case _: java.io.IOException => ()
     end close

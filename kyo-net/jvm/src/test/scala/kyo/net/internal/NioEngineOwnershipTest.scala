@@ -12,7 +12,7 @@ import kyo.net.internal.TlsTestCert
 /** NIO per-connection engine ownership: behavioral tests confirming the gate works through real TLS I/O.
   *
   * The NIO driver is the only backend where the selector-carrier read path (dispatchReadTls) and the caller-carrier write path (writeTls) can
-  * both touch the same connection's JDK SSLEngine from different threads. The engineGate on NioHandle serializes them.
+  * both touch the same connection's JDK SSLEngine from different threads. The engine gate inside NioTlsState serializes them.
   *
   * SSLEngine is stateful and not thread-safe. Concurrent calls from the selector thread (during a read-arm completion) and the caller thread
   * (during a write) corrupt the TLS session. The corruption is observable: the decrypted frame no longer matches the original plaintext, or
@@ -42,7 +42,7 @@ class NioEngineOwnershipTest extends Test:
 
     /** Server echo fiber for TLS connections. Suspends on each inbound take via the Async effect, so the scheduler (not the NIO selector
       * carrier) resumes the fiber when data arrives. This breaks the synchronous callback chain that would otherwise run writeTls directly on
-      * the selector thread while dispatchReadTls still holds the engineGate, causing the write's spinAcquire to deadlock.
+      * the selector thread while dispatchReadTls is still inside its engine operation.
       */
     private def startEchoFiber(conn: Connection)(using Frame): Unit =
         discard(Fiber.Unsafe.init {
@@ -110,7 +110,7 @@ class NioEngineOwnershipTest extends Test:
         (c, s)
     end openPair
 
-    "NioHandle.engineGate" - {
+    "NioTlsState engine gate" - {
 
         // After a TLS handshake completes, the gate must be released (false) so the first post-handshake
         // write and read can proceed. If the gate remained held after the handshake, writeTls would spin
@@ -210,9 +210,9 @@ class NioEngineOwnershipTest extends Test:
                 engine.setUseClientMode(true)
                 val handle = NioHandle.initTls(client, 4096, engine, Duration.Infinity, Frame.internal)
 
-                assert(!handle.engineGate.get(), "gate must start unowned")
+                assert(!handle.tls.exists(_.engineHeld), "gate must start unowned")
                 NioHandle.close(handle)
-                assert(!handle.engineGate.get(), "gate must be released after close (finally block ran)")
+                assert(handle.tls.isDefined && !handle.tls.exists(_.engineHeld), "gate must be released after close (finally block ran)")
                 assert(!handle.channel.isOpen, "channel must be closed")
             finally
                 try client.close()
@@ -222,7 +222,7 @@ class NioEngineOwnershipTest extends Test:
         }
 
         // Two independent NIO TLS connections carry concurrent traffic. The gate is per-connection
-        // (one engineGate AtomicBoolean per NioHandle), so holding the gate on one handle has no
+        // (one gate per NioTlsState), so holding the gate on one handle has no
         // effect on the other. If the gate were shared, one connection holding it while reading would
         // block the other connection's writes. Each connection sends frames concurrently and receives
         // them; both must complete with correct data.

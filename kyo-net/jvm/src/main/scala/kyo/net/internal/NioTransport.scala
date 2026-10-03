@@ -4,13 +4,11 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
 import java.net.StandardSocketOptions
-import java.nio.ByteBuffer
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.channels.UnresolvedAddressException
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.X509TrustManager
 import kyo.*
@@ -691,73 +689,65 @@ final private[kyo] class NioTransport private (
                     s"pinned TLS provider '${tls.tlsProvider.get}' is not supported by the NIO transport (only 'jdk')"
                 )
             end if
-            val sslContext = NioTransport.createSslContext(tls, isServer)
-            val engine     = sslContext.createSSLEngine(host, port)
-            engine.setUseClientMode(!isServer)
-            // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
-            // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
-            // NioTransport.enabledProtocols helper so the inline NIO path and the JDK-floor provider pin identically.
-            engine.setEnabledProtocols(NioTransport.enabledProtocols(tls))
+            // The engine is configured here and then reachable only through the NioTlsState it is handed to.
+            val tlsState = NioTlsState.init {
+                val sslContext = NioTransport.createSslContext(tls, isServer)
+                val engine     = sslContext.createSSLEngine(host, port)
+                engine.setUseClientMode(!isServer)
+                // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
+                // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
+                // NioTransport.enabledProtocols helper so the inline NIO path and the JDK-floor provider pin identically.
+                engine.setEnabledProtocols(NioTransport.enabledProtocols(tls))
 
-            if !isServer then
-                // Verifying client with NO reference identity: FAIL CLOSED. A chain-valid certificate with no name bound is never an
-                // acceptable silent outcome (RFC 9525 §6.1; CWE-295). This mirrors SslEngineProvider.createEngine exactly so the inline NIO
-                // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
-                // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
-                if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
-                    throw NetTlsConfigException(
-                        "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
-                            "or hostnameVerification = false to opt out of name verification)"
-                    )
+                if !isServer then
+                    // Verifying client with NO reference identity: FAIL CLOSED. A chain-valid certificate with no name bound is never an
+                    // acceptable silent outcome (RFC 9525 §6.1; CWE-295). This mirrors SslEngineProvider.createEngine exactly so the inline NIO
+                    // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
+                    // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
+                    if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
+                        throw NetTlsConfigException(
+                            "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
+                                "or hostnameVerification = false to opt out of name verification)"
+                        )
+                    end if
+                    if host.nonEmpty then
+                        // Only set endpoint identification when we have a real hostname to verify against.
+                        // trustAll disables all verification (chain + hostname). hostnameVerification = false
+                        // disables only hostname verification (e.g. sslmode=verify-ca).
+                        val params = engine.getSSLParameters
+                        if tls.hostnameVerification && !tls.trustAll then
+                            params.setEndpointIdentificationAlgorithm("HTTPS")
+                        tls.sniHostname.foreach { sni =>
+                            params.setServerNames(java.util.List.of(new javax.net.ssl.SNIHostName(sni)))
+                        }
+                        engine.setSSLParameters(params)
+                    end if
+                else
+                    // Server role: honor clientAuth. The SSLContext already has a TrustManager built from caCertPath (createSslContext), so a
+                    // requested client certificate is validated against it; without setNeed/WantClientAuth the server would never request one and
+                    // clientAuth would be silently ignored.
+                    tls.clientAuth match
+                        case NetTlsConfig.ClientAuth.Required => engine.setNeedClientAuth(true)
+                        case NetTlsConfig.ClientAuth.Optional => engine.setWantClientAuth(true)
+                        case NetTlsConfig.ClientAuth.None     => ()
                 end if
-                if host.nonEmpty then
-                    // Only set endpoint identification when we have a real hostname to verify against.
-                    // trustAll disables all verification (chain + hostname). hostnameVerification = false
-                    // disables only hostname verification (e.g. sslmode=verify-ca).
-                    val params = engine.getSSLParameters
-                    if tls.hostnameVerification && !tls.trustAll then
-                        params.setEndpointIdentificationAlgorithm("HTTPS")
-                    tls.sniHostname.foreach { sni =>
-                        params.setServerNames(java.util.List.of(new javax.net.ssl.SNIHostName(sni)))
-                    }
-                    engine.setSSLParameters(params)
-                end if
-            else
-                // Server role: honor clientAuth. The SSLContext already has a TrustManager built from caCertPath (createSslContext), so a
-                // requested client certificate is validated against it; without setNeed/WantClientAuth the server would never request one and
-                // clientAuth would be silently ignored.
-                tls.clientAuth match
-                    case NetTlsConfig.ClientAuth.Required => engine.setNeedClientAuth(true)
-                    case NetTlsConfig.ClientAuth.Optional => engine.setWantClientAuth(true)
-                    case NetTlsConfig.ClientAuth.None     => ()
-            end if
 
-            engine.beginHandshake()
+                engine.beginHandshake()
+                engine
+            }
 
-            // Create handle in raw mode (tls = Absent) for handshake.
-            // The driver reads raw ciphertext during handshake.
+            // Create handle in raw mode (tls = Absent) for handshake: the driver reads raw ciphertext until the handshake attaches tlsState.
             val handle = existingHandle.getOrElse {
                 val h = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
                 discard(driver.registerChannel(h))
                 h
             }
 
-            // Create TLS state but don't attach yet: handshake uses raw I/O
-            val session   = engine.getSession
-            val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
-            val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
-            val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
-            val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
-
-            // Replay any handshake ciphertext the plaintext ReadPump already pulled off the socket
-            // (STARTTLS upgrade case). driveHandshake expects netInBuf in write mode at entry (its
-            // first action is netInBuf.flip() to expose accumulated bytes for unwrap), and netInBuf
-            // is freshly allocated at position 0 in write mode, so we simply put the pre-read bytes:
-            // the handshake's buffered-unwrap path then consumes them before issuing any socket read.
-            // Absent/empty preRead writes nothing, leaving behavior identical to a fresh handshake.
+            // Replay any handshake ciphertext the plaintext ReadPump already pulled off the socket (STARTTLS upgrade case): the handshake's
+            // buffered unwrap consumes it before issuing any socket read.
             preRead.foreach { spans =>
                 spans.foreach { span =>
-                    if span.nonEmpty then discard(netInBuf.put(span.toArrayUnsafe))
+                    if span.nonEmpty then tlsState.feedCiphertext(span.toArrayUnsafe)
                 }
             }
             // STARTTLS handoff (upgrade path only): the handshake now takes over reading from the retiring plaintext pump. Set handshakeReading so a
@@ -768,7 +758,7 @@ final private[kyo] class NioTransport private (
             if existingHandle.isDefined then
                 handle.handshakeReading = true
                 val drained = driver.drainUpgradeSalvage(handle)
-                drained.foreach(arr => discard(netInBuf.put(arr)))
+                drained.foreach(tlsState.feedCiphertext)
                 // The upgrade producer is armed ON DEMAND by the handshake itself: driveHandshake's NEED_UNWRAP park (below) calls
                 // armUpgradeProducerRead for each read it needs, so the selector carrier reads exactly one peer flight per park and is idle once the
                 // handshake stops parking at FINISHED. No standing self-re-arming producer is bootstrapped here: a standing producer over-reads past
@@ -792,14 +782,11 @@ final private[kyo] class NioTransport private (
 
     /** Capture application plaintext the handshake's unwrap produced during a STARTTLS upgrade window. When a peer sends application data coalesced
       * with (or right after) its final handshake flight, the selector-carrier upgrade producer reads it and `driveHandshake`'s unwrap decrypts it
-      * into appInBuf; it belongs to the upgraded connection, not the handshake, so stash it on the handle (delivered to the upgraded inbound at
-      * [[completeConnect]]) instead of discarding it. A no-op for a fresh (non-upgrade) handshake or when the unwrap produced no application plaintext.
+      * as application plaintext; it belongs to the upgraded connection, not the handshake, so stash it on the handle (delivered to the upgraded
+      * inbound at [[completeConnect]]) instead of discarding it. A no-op when the unwrap produced no application plaintext.
       */
-    private def captureUpgradeAppData(handle: NioHandle, appInBuf: ByteBuffer, produced: Int)(using AllowUnsafe): Unit =
-        if handle.upgrading && produced > 0 then
-            appInBuf.flip()
-            val arr = new Array[Byte](produced)
-            appInBuf.get(arr)
+    private def captureUpgradeAppData(handle: NioHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
+        if arr.length > 0 then
             @tailrec def append(): Unit =
                 val cur = handle.upgradeAppData.get()
                 if !handle.upgradeAppData.compareAndSet(cur, cur.append(arr)) then append()
@@ -816,7 +803,7 @@ final private[kyo] class NioTransport private (
     end deliverUpgradeAppData
 
     /** Drain any ciphertext left when the handshake reached FINISHED into application plaintext for the upgraded connection. The main source is
-      * (1) the peer's first application record arriving coalesced with its final handshake flight, sitting unconsumed in netInBuf. A backstop source is
+      * (1) the peer's first application record arriving coalesced with its final handshake flight, left buffered in the engine. A backstop source is
       * (2) a residual [[NioHandle.upgradeHandoff]] Carryover (demand-driven, the producer stops at the last handshake read so it does not normally read
       * a post-FINISHED flight; the Carryover drain remains for safety). Both are ciphertext the upgraded connection owns: unwrap them here (on the
       * carrier that completed the handshake, after the producer is retired so nothing stages more) and stash the plaintext, delivered to the inbound in
@@ -829,28 +816,7 @@ final private[kyo] class NioTransport private (
             val carry = handle.upgradeHandoff.getAndSet(UpgradeHandoff.Idle) match
                 case staged: UpgradeHandoff.Carryover => staged.bytes
                 case _                                => Array.emptyByteArray
-            tlsState.netInBuf.flip() // read mode: expose any coalesced leftover
-            val leftover = tlsState.netInBuf.remaining()
-            if leftover > 0 || carry.length > 0 then
-                // Concatenate leftover (earlier in the stream) then the Carryover into one exact-sized buffer, so a record split across the two is
-                // reassembled and no fixed-size netInBuf overflow is possible for a large coalesced echo.
-                val combined = ByteBuffer.allocate(leftover + carry.length)
-                discard(combined.put(tlsState.netInBuf))
-                discard(combined.put(carry))
-                combined.flip()
-                tlsState.netInBuf.clear()
-                var more = combined.hasRemaining
-                while more do
-                    tlsState.appInBuf.clear()
-                    val res = tlsState.engine.unwrap(combined, tlsState.appInBuf)
-                    captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
-                    more = (res.getStatus eq SSLEngineResult.Status.OK) && res.bytesConsumed() > 0 && combined.hasRemaining
-                end while
-                // A trailing partial record (BUFFER_UNDERFLOW) returns to netInBuf for the ReadPump to complete with its next socket read.
-                if combined.hasRemaining then discard(tlsState.netInBuf.put(combined))
-            else
-                discard(tlsState.netInBuf.clear())
-            end if
+            tlsState.drainLeftover(carry).foreach(captureUpgradeAppData(handle, _))
         end if
     end drainUpgradeLeftover
 
@@ -867,64 +833,48 @@ final private[kyo] class NioTransport private (
         connectPromise: IOPromise[NetException, Connection[NioHandle]],
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
-        val engine = tlsState.engine
-        val hs     = engine.getHandshakeStatus
+        import NioTlsState.HandshakeUnwrap
+        val hs = tlsState.handshakeStatus
         if hs eq SSLEngineResult.HandshakeStatus.NEED_UNWRAP then
-            // First check if netInBuf has buffered data from a previous read
-            // (multiple TLS records can arrive in a single read)
-            tlsState.netInBuf.flip()
+            // First unwrap what is buffered from a previous read (multiple TLS records can arrive in a single read).
             // needMoreData: true = fall through to read from network, false = handled
             val needMoreData =
-                if tlsState.netInBuf.hasRemaining then
-                    tlsState.appInBuf.clear()
-                    try
-                        val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
-                        captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
-                        tlsState.netInBuf.compact()
-                        val status = res.getStatus
-                        if status eq SSLEngineResult.Status.OK then
-                            driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
-                            false
-                        else if status eq SSLEngineResult.Status.CLOSED then
-                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                            false
-                        else if status eq SSLEngineResult.Status.BUFFER_OVERFLOW then
-                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                            false
-                        else
-                            // BUFFER_UNDERFLOW: need more data from network
-                            true
-                        end if
-                    catch
-                        case e: Exception =>
-                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
-                            false
-                    end try
-                else
-                    tlsState.netInBuf.compact()
-                    true
-                end if
+                try
+                    tlsState.handshakeUnwrap(Absent, keepPlaintext = handle.upgrading) match
+                        case HandshakeUnwrap.Empty                        => true
+                        case HandshakeUnwrap.Unwrapped(status, plaintext) =>
+                            captureUpgradeAppData(handle, plaintext)
+                            if status eq SSLEngineResult.Status.OK then
+                                driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                                false
+                            else if status eq SSLEngineResult.Status.BUFFER_UNDERFLOW then true
+                            else
+                                // CLOSED or BUFFER_OVERFLOW
+                                connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                                false
+                            end if
+                catch
+                    case e: Exception =>
+                        connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
+                        false
             end needMoreData
 
             if needMoreData then
                 // Feed one peer ciphertext flight into the engine, unwrap, and re-drive the handshake (or fail on a bad status). Shared by the
                 // non-upgrade read path and the STARTTLS upgrade handoff path below.
                 def feedCipher(arr: Array[Byte]): Unit =
-                    tlsState.netInBuf.put(arr)
-                    tlsState.netInBuf.flip()
-                    tlsState.appInBuf.clear()
                     try
-                        val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
-                        captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
-                        tlsState.netInBuf.compact()
-                        val status = res.getStatus
-                        if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
-                            driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
-                        else if status eq SSLEngineResult.Status.CLOSED then
-                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                        else // BUFFER_OVERFLOW
-                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                        end if
+                        tlsState.handshakeUnwrap(Present(arr), keepPlaintext = handle.upgrading) match
+                            case HandshakeUnwrap.Empty =>
+                                driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                            case HandshakeUnwrap.Unwrapped(status, plaintext) =>
+                                captureUpgradeAppData(handle, plaintext)
+                                if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
+                                    driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                                else
+                                    // CLOSED or BUFFER_OVERFLOW
+                                    connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                                end if
                     catch
                         case e: Exception =>
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
@@ -995,16 +945,11 @@ final private[kyo] class NioTransport private (
             end if
         else if hs eq SSLEngineResult.HandshakeStatus.NEED_WRAP then
             try
-                tlsState.netOutBuf.clear()
-                val emptyBuf = ByteBuffer.allocate(0)
-                discard(engine.wrap(emptyBuf, tlsState.netOutBuf))
-                tlsState.netOutBuf.flip()
-                // Try one write: if socket buffer full, await writable asynchronously
-                discard(handle.channel.write(tlsState.netOutBuf))
-                if tlsState.netOutBuf.hasRemaining then
-                    flushHandshakeWrite(handle, tlsState, host, port, connectPromise, channelCapacity)
-                else
+                // One write: with the socket buffer full, await writable asynchronously
+                if tlsState.handshakeWrap(handle.channel) then
                     driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                else
+                    flushHandshakeWrite(handle, tlsState, host, port, connectPromise, channelCapacity)
                 end if
             catch
                 case e: Exception =>
@@ -1016,11 +961,7 @@ final private[kyo] class NioTransport private (
             // firing, so under high concurrency a handshake could stall indefinitely at NEED_TASK; inline execution has no extra fiber and no
             // scheduling dependency.
             try
-                var task = engine.getDelegatedTask
-                while task != null do
-                    task.run()
-                    task = engine.getDelegatedTask
-                end while
+                tlsState.runDelegatedTasks()
                 driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
             catch
                 case e: Exception =>
@@ -1034,7 +975,8 @@ final private[kyo] class NioTransport private (
             //   2. stopUpgradeProducer clears any still-armed producer cell + OP_READ + pendingReads (a no-op in the common demand-driven case where
             //      the last read already retired the cell), so no later readiness dispatch reads into the slot; pendingReads removal is the gate.
             //   3. drainUpgradeLeftover, still while upgrading is true (captureUpgradeAppData keys off it), pulls any application record the peer
-            //      coalesced with its final handshake flight (left in netInBuf), plus any residual slot Carryover (a backstop), and stashes the plaintext.
+            //      coalesced with its final handshake flight (left buffered in the engine), plus any residual slot Carryover (a backstop), and stashes
+            //      the plaintext.
             // A no-op for a fresh (non-upgrade) handshake that never set the flags or armed a producer.
             handle.handshakeReading = false
             driver.stopUpgradeProducer(handle)
@@ -1047,7 +989,7 @@ final private[kyo] class NioTransport private (
             // first arm forces an unconditional selector.wakeup(), guaranteeing one poll cycle where reassertPendingInterest re-applies OP_READ
             // on the selector carrier. A no-op for a fresh (non-upgrade) connect (wasUpgrade=false), whose connect already cycles the selector.
             handle.forceReadArmWakeup = wasUpgrade
-            engine.setEnableSessionCreation(false) // disable renegotiation
+            tlsState.finishHandshake()
             // Switch handle to TLS mode: driver will now unwrap/wrap inline
             handle.tls = Present(tlsState)
             completeConnect(handle, connectPromise, channelCapacity)
@@ -1071,12 +1013,11 @@ final private[kyo] class NioTransport private (
             result match
                 case Result.Success(_) =>
                     try
-                        discard(handle.channel.write(tlsState.netOutBuf))
-                        if tlsState.netOutBuf.hasRemaining then
+                        if tlsState.flushOutbound(handle.channel) then
+                            driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
+                        else
                             // Still not flushed: await writable again
                             flushHandshakeWrite(handle, tlsState, host, port, connectPromise, channelCapacity)
-                        else
-                            driveHandshake(handle, tlsState, host, port, connectPromise, channelCapacity)
                         end if
                     catch
                         case e: Exception =>
@@ -1716,7 +1657,7 @@ private[kyo] object NioTransport:
       *   - The underlying channel is closed (connection was closed before this was called).
       *   - The engine has no peer certificates (e.g. the connection is a plain-TCP server-side accepted connection).
       */
-    private[kyo] def serverCertificateHash(handle: NioHandle): Maybe[Span[Byte]] =
+    private[kyo] def serverCertificateHash(handle: NioHandle)(using AllowUnsafe): Maybe[Span[Byte]] =
         import java.security.MessageDigest
         // Guard: if the channel is already closed, the connection is torn down, so return Absent.
         if !handle.channel.isOpen then Absent
@@ -1724,18 +1665,7 @@ private[kyo] object NioTransport:
             handle.tls match
                 case Absent            => Absent
                 case Present(tlsState) =>
-                    try
-                        val certs = tlsState.engine.getSession.getPeerCertificates
-                        if certs == null || certs.isEmpty then Absent
-                        else
-                            val leafDer = certs(0).getEncoded
-                            val digest  = MessageDigest.getInstance("SHA-256")
-                            val hash    = digest.digest(leafDer)
-                            Present(Span.from(hash))
-                        end if
-                    catch
-                        case _: javax.net.ssl.SSLPeerUnverifiedException => Absent
-                        case _: Exception                                => Absent
+                    tlsState.peerLeafCertificate.map(leafDer => Span.from(MessageDigest.getInstance("SHA-256").digest(leafDer)))
             end match
         end if
     end serverCertificateHash

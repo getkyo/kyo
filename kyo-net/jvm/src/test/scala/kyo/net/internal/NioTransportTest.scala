@@ -2,7 +2,6 @@ package kyo.net.internal
 
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
-import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.NetConfig
@@ -131,12 +130,7 @@ class NioTransportTest extends Test:
                 val handle = conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle
                 val engine = javax.net.ssl.SSLContext.getDefault.createSSLEngine()
                 engine.setUseClientMode(true)
-                handle.tls = Present(NioTlsState(
-                    engine,
-                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
-                    ByteBuffer.allocate(engine.getSession.getPacketBufferSize),
-                    ByteBuffer.allocate(engine.getSession.getApplicationBufferSize)
-                ))
+                handle.tls = Present(NioTlsState.init(engine))
                 Abort.run[kyo.net.NetException | Timeout](
                     Async.timeout(5.seconds)(
                         transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16).safe.get
