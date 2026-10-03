@@ -8,9 +8,11 @@ import kyo.*
   * transport is a process-lifetime shared singleton, closing the driver would wedge every unrelated caller forever with
   * "... is closed".
   *
-  * Every scenario runs on every registered backend via [[eachBackend]] (io_uring/epoll/kqueue/nio), drives a failure
+  * Every scenario runs on every registered backend via [[eachBackendWatched]] (io_uring/epoll/kqueue/nio), drives a failure
   * load, and then asserts a co-tenant clean-echo listener on the SAME transport still round-trips: if the driver closed
-  * itself under the load, that liveness probe fails with "... is closed".
+  * itself under the load, that liveness probe fails with "... is closed". A driver that wedges instead is caught by the
+  * watch: each scenario ticks once per unit of work the driver completes for it, and only work that needs the driver may
+  * tick, since a tick from a timer or a local loop would keep a wedged leaf looking alive.
   */
 class TransportResilienceTest extends Test:
 
@@ -77,91 +79,96 @@ class TransportResilienceTest extends Test:
             }
         }
 
-    // Every leaf runs on the process-lifetime transport they all share, so a connection an interrupted leaf leaves open (a timed-out leaf,
+    // Every leaf runs on the process-lifetime transport they all share, so a connection an interrupted leaf leaves open (a stalled leaf,
     // a cancelled suite) stays registered on that transport for every leaf after it.
-    "a connection whose user is interrupted mid-read is closed, so its server side sees the close" - eachBackend { transport =>
-        val served                             = Promise.Unsafe.init[(Connection, Fiber[Unit, Any]), Any]()
-        val reading                            = Promise.Unsafe.init[Unit, Any]()
-        def serveDrain(conn: Connection): Unit =
-            served.completeDiscard(Result.succeed((conn, serve(conn)(drainLoop(conn)))))
-        for
-            listener <- transport.listen("127.0.0.1", 0, 16)(serveDrain).safe.get
-            _        <- Scope.ensure(Sync.defer(listener.close()))
-            client   <- Fiber.initUnscoped(Abort.run[NetException | Closed](withConnection(transport, listener.port) { conn =>
-                Sync.defer(reading.completeDiscard(Result.succeed(()))).andThen(conn.inbound.safe.take)
-            }))
-            _      <- reading.safe.get
-            server <- served.safe.get
-            _      <- client.interrupt
-            // The drain ends only on the client's close, so this waits for exactly that, with no clock.
-            _ <- server._2.getResult
-        yield assert(!server._1.isOpen, "the server side must close once the interrupted client's connection is closed")
-        end for
+    "a connection whose user is interrupted mid-read is closed, so its server side sees the close" - eachBackendWatched {
+        (transport, progress) =>
+            val served                             = Promise.Unsafe.init[(Connection, Fiber[Unit, Any]), Any]()
+            val reading                            = Promise.Unsafe.init[Unit, Any]()
+            def serveDrain(conn: Connection): Unit =
+                served.completeDiscard(Result.succeed((conn, serve(conn)(drainLoop(conn)))))
+            for
+                listener <- transport.listen("127.0.0.1", 0, 16)(serveDrain).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                client   <- Fiber.initUnscoped(Abort.run[NetException | Closed](withConnection(transport, listener.port) { conn =>
+                    Sync.defer(reading.completeDiscard(Result.succeed(()))).andThen(conn.inbound.safe.take)
+                }))
+                _      <- reading.safe.get
+                _      <- progress.tick
+                server <- served.safe.get
+                _      <- progress.tick
+                _      <- client.interrupt
+                // The drain ends only on the client's close, so this waits for exactly that, with no clock.
+                _ <- server._2.getResult
+            yield assert(!server._1.isOpen, "the server side must close once the interrupted client's connection is closed")
+            end for
     }
 
     // ---- mass simultaneous in-flight invalidation (server mass-close) ----------------------------------------------
 
-    "mass in-flight invalidation under sustained concurrent reads (server restart) does not wedge the driver" - eachBackend { transport =>
-        // Many long-lived connections with reads in flight while the server goes away all at once, RST-ing every
-        // in-flight read simultaneously: modeled by closing EVERY currently-connected server side in one sweep,
-        // repeatedly, while sustained concurrent clients round-trip and reconnect.
-        val serverConns                             = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
-        val stop                                    = new JAtomicBoolean(false)
-        val clients                                 = 48
-        val iters                                   = 40
-        val perConn                                 = 6
-        val msg                                     = "ping".getBytes("UTF-8")
-        def registeringEcho(conn: Connection): Unit =
-            discard(serverConns.add(conn))
-            discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(echoLoop(conn))))
-        end registeringEcho
-        for
-            cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
-            _             <- Scope.ensure(Sync.defer(cleanListener.close()))
-            churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringEcho).safe.get
-            _             <- Scope.ensure(Sync.defer(churnListener.close()))
-            churn = Loop(0) { _ =>
-                if stop.get() then Loop.done(())
-                else
-                    Sync.defer {
-                        val it = serverConns.iterator()
-                        while it.hasNext do
-                            val c = it.next()
-                            discard(serverConns.remove(c))
-                            try c.close()
-                            catch case _: Throwable => ()
-                        end while
-                    }.andThen(Async.sleep(2.millis)).andThen(Loop.continue(0))
-            }
-            load = Async.foreach(0 until clients, clients) { _ =>
-                Loop(0) { i =>
-                    if i >= iters then Loop.done(())
+    "mass in-flight invalidation under sustained concurrent reads (server restart) does not wedge the driver" - eachBackendWatched {
+        (transport, progress) =>
+            // Many long-lived connections with reads in flight while the server goes away all at once, RST-ing every
+            // in-flight read simultaneously: modeled by closing EVERY currently-connected server side in one sweep,
+            // repeatedly, while sustained concurrent clients round-trip and reconnect.
+            val serverConns                             = java.util.concurrent.ConcurrentHashMap.newKeySet[Connection]()
+            val stop                                    = new JAtomicBoolean(false)
+            val clients                                 = 48
+            val iters                                   = 40
+            val perConn                                 = 6
+            val msg                                     = "ping".getBytes("UTF-8")
+            def registeringEcho(conn: Connection): Unit =
+                discard(serverConns.add(conn))
+                discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(echoLoop(conn))))
+            end registeringEcho
+            for
+                cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
+                _             <- Scope.ensure(Sync.defer(cleanListener.close()))
+                churnListener <- transport.listen("127.0.0.1", 0, 256)(registeringEcho).safe.get
+                _             <- Scope.ensure(Sync.defer(churnListener.close()))
+                churn = Loop(0) { _ =>
+                    if stop.get() then Loop.done(())
                     else
-                        Abort.run[NetException | Closed] {
-                            withConnection(transport, churnListener.port) { conn =>
-                                Loop(0) { j =>
-                                    if j >= perConn then Loop.done(())
-                                    else
-                                        conn.outbound.safe.put(Span.fromUnsafe(msg))
-                                            .andThen(conn.inbound.safe.take)
-                                            .andThen(Loop.continue(j + 1))
-                                }
-                            }
-                        }.andThen(Loop.continue(i + 1))
+                        Sync.defer {
+                            val it = serverConns.iterator()
+                            while it.hasNext do
+                                val c = it.next()
+                                discard(serverConns.remove(c))
+                                try c.close()
+                                catch case _: Throwable => ()
+                            end while
+                        }.andThen(Async.sleep(2.millis)).andThen(Loop.continue(0))
                 }
-            }.andThen(Sync.defer(discard(stop.set(true))))
-            _ <- Async.zip(load, churn)
-            _ <- assertAlive(transport, cleanListener.port, "mass-invalidation")
-        yield
-            cleanListener.close()
-            churnListener.close()
-            succeed
-        end for
+                load = Async.foreach(0 until clients, clients) { _ =>
+                    Loop(0) { i =>
+                        if i >= iters then Loop.done(())
+                        else
+                            Abort.run[NetException | Closed] {
+                                withConnection(transport, churnListener.port) { conn =>
+                                    Loop(0) { j =>
+                                        if j >= perConn then Loop.done(())
+                                        else
+                                            conn.outbound.safe.put(Span.fromUnsafe(msg))
+                                                .andThen(conn.inbound.safe.take)
+                                                .andThen(progress.tick)
+                                                .andThen(Loop.continue(j + 1))
+                                    }
+                                }
+                            }.andThen(progress.tick).andThen(Loop.continue(i + 1))
+                    }
+                }.andThen(Sync.defer(discard(stop.set(true))))
+                _ <- Async.zip(load, churn)
+                _ <- assertAlive(transport, cleanListener.port, "mass-invalidation")
+            yield
+                cleanListener.close()
+                churnListener.close()
+                succeed
+            end for
     }
 
     // ---- connect-refused storm -------------------------------------------------------------------------------------
 
-    "connect-refused storm: concurrent connects to a dead port do not wedge the driver" - eachBackend { transport =>
+    "connect-refused storm: concurrent connects to a dead port do not wedge the driver" - eachBackendWatched { (transport, progress) =>
         for
             cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _             <- Scope.ensure(Sync.defer(cleanListener.close()))
@@ -172,7 +179,7 @@ class TransportResilienceTest extends Test:
             _ <- Async.foreach(0 until 400, 64) { _ =>
                 Abort.run[NetException | Closed] {
                     withConnection(transport, deadPort)(_ => ())
-                }.unit
+                }.andThen(progress.tick)
             }
             _ <- assertAlive(transport, cleanListener.port, "connect-refused")
         yield
@@ -182,7 +189,7 @@ class TransportResilienceTest extends Test:
 
     // ---- abrupt local close during an in-flight read ---------------------------------------------------------------
 
-    "abrupt local close during an in-flight read does not wedge the driver" - eachBackend { transport =>
+    "abrupt local close during an in-flight read does not wedge the driver" - eachBackendWatched { (transport, progress) =>
         // The client arms a read (no data will come: the handler never echoes) and closes the connection out from under
         // that armed read, racing the driver's read dispatch. Repeated under concurrency.
         for
@@ -196,7 +203,7 @@ class TransportResilienceTest extends Test:
                         // Race a close against an armed read: start the read, close concurrently.
                         Async.zip(Abort.run(conn.inbound.safe.take).unit, Sync.defer(conn.close())).unit
                     }
-                }.unit
+                }.andThen(progress.tick)
             }
             _ <- assertAlive(transport, cleanListener.port, "abrupt-close")
         yield
@@ -207,7 +214,7 @@ class TransportResilienceTest extends Test:
 
     // ---- listener open/close churn racing connects -----------------------------------------------------------------
 
-    "listener open/close churn racing connects does not wedge the driver" - eachBackend { transport =>
+    "listener open/close churn racing connects does not wedge the driver" - eachBackendWatched { (transport, progress) =>
         for
             cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
             _             <- Scope.ensure(Sync.defer(cleanListener.close()))
@@ -221,9 +228,9 @@ class TransportResilienceTest extends Test:
                                 withConnection(transport, port) { conn =>
                                     conn.outbound.safe.put(Span.fromUnsafe("x".getBytes("UTF-8")))
                                 }
-                            }.unit
+                            }.andThen(progress.tick)
                         }.unit
-                        Async.zip(connects, Sync.defer(churnListener.close())).andThen(Loop.continue(round + 1))
+                        Async.zip(connects, Sync.defer(churnListener.close())).andThen(progress.tick).andThen(Loop.continue(round + 1))
                     }
             }
             _ <- assertAlive(transport, cleanListener.port, "listener-churn")
@@ -234,8 +241,8 @@ class TransportResilienceTest extends Test:
 
     // ---- mixed healthy + failing under concurrency: failures stay isolated ------------------------------------------
 
-    "a mix of healthy and abruptly-closed connections keeps healthy ones round-tripping (isolation)" - eachBackend {
-        transport =>
+    "a mix of healthy and abruptly-closed connections keeps healthy ones round-tripping (isolation)" - eachBackendWatched {
+        (transport, progress) =>
             val seq = new java.util.concurrent.atomic.AtomicInteger(0)
             // Half the accepted connections are abruptly closed by the server before echoing; the other half echo.
             def mixed(conn: Connection): Unit =
@@ -258,7 +265,7 @@ class TransportResilienceTest extends Test:
                                 .andThen(Abort.run(conn.inbound.safe.take))
                                 .unit
                         }
-                    }.unit
+                    }.andThen(progress.tick)
                 }
                 _ <- assertAlive(transport, cleanListener.port, "isolation")
             yield
@@ -269,7 +276,7 @@ class TransportResilienceTest extends Test:
 
     // ---- cancellation: interrupting an in-flight operation must stay contained to that operation --------------------
 
-    "interrupting in-flight reads at concurrency does not wedge the driver" - eachBackend { transport =>
+    "interrupting in-flight reads at concurrency does not wedge the driver" - eachBackendWatched { (transport, progress) =>
         // A silent server never echoes, so each client read parks. Interrupting the parked read must fail only that one
         // read (Interrupted/Closed) and never escape the poll loop to close the driver. Repeated under concurrency.
         for
@@ -282,7 +289,7 @@ class TransportResilienceTest extends Test:
                     withConnection(transport, silentListener.port) { conn =>
                         Fiber.initUnscoped(Abort.run[Closed](conn.inbound.safe.take).unit).map(_.interrupt.unit)
                     }
-                }.unit
+                }.andThen(progress.tick)
             }
             _ <- assertAlive(transport, cleanListener.port, "interrupt-read")
         yield
@@ -292,31 +299,32 @@ class TransportResilienceTest extends Test:
         end for
     }
 
-    "a firing read timeout (Async.timeout) against a silent server does not wedge the driver" - eachBackend { transport =>
-        // An Async.timeout that EXPIRES on an in-flight read (the server never responds) and interrupts it. The timeout's
-        // interrupt runs the connection teardown; it must stay contained to that connection.
-        for
-            cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
-            _              <- Scope.ensure(Sync.defer(cleanListener.close()))
-            silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
-            _              <- Scope.ensure(Sync.defer(silentListener.close()))
-            _              <- Async.foreach(0 until 200, 40) { _ =>
-                Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
-                        Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take)).unit
-                    }
-                }.unit
-            }
-            _ <- assertAlive(transport, cleanListener.port, "read-timeout")
-        yield
-            cleanListener.close()
-            silentListener.close()
-            succeed
-        end for
+    "a firing read timeout (Async.timeout) against a silent server does not wedge the driver" - eachBackendWatched {
+        (transport, progress) =>
+            // An Async.timeout that EXPIRES on an in-flight read (the server never responds) and interrupts it. The timeout's
+            // interrupt runs the connection teardown; it must stay contained to that connection.
+            for
+                cleanListener  <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
+                _              <- Scope.ensure(Sync.defer(cleanListener.close()))
+                silentListener <- transport.listen("127.0.0.1", 0, 128)(drain).safe.get
+                _              <- Scope.ensure(Sync.defer(silentListener.close()))
+                _              <- Async.foreach(0 until 200, 40) { _ =>
+                    Abort.run[NetException | Closed] {
+                        withConnection(transport, silentListener.port) { conn =>
+                            Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take)).unit
+                        }
+                    }.andThen(progress.tick)
+                }
+                _ <- assertAlive(transport, cleanListener.port, "read-timeout")
+            yield
+                cleanListener.close()
+                silentListener.close()
+                succeed
+            end for
     }
 
-    "cancellation of in-flight reads during server-restart churn does not wedge the driver" - eachBackend {
-        transport =>
+    "cancellation of in-flight reads during server-restart churn does not wedge the driver" - eachBackendWatched {
+        (transport, progress) =>
             // In-flight reads are CANCELLED (interrupted) at the same time the server mass-closes their connections
             // (RST), so the caller-carrier connection teardown races the poll carrier dispatching the peer RST/FIN on
             // that same fd. A driver whose per-connection dispatch is not total, or whose cancel is not confined to the
@@ -360,7 +368,7 @@ class TransportResilienceTest extends Test:
                                     // while it is still parked.
                                     Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take)).unit
                                 }
-                            }.andThen(Loop.continue(i + 1))
+                            }.andThen(progress.tick).andThen(Loop.continue(i + 1))
                     }
                 }.andThen(Sync.defer(discard(stop.set(true))))
                 _ <- Async.zip(load, churn)
