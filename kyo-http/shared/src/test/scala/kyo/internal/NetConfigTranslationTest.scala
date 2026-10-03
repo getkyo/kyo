@@ -4,8 +4,6 @@ import kyo.*
 import kyo.internal.transport.NetConfigTranslation
 import kyo.net.NetAddress
 import kyo.net.NetConfig
-import kyo.net.NetConfigException
-import kyo.net.NetPlatform
 import kyo.net.NetTlsConfig
 
 class NetConfigTranslationTest extends kyo.test.Test[Any]:
@@ -23,7 +21,7 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
                 minVersion = HttpTlsConfig.Version.TLS12,
                 maxVersion = HttpTlsConfig.Version.TLS13
             )
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.trustAll == true)
             assert(result.sniHostname == Present("sni.example"))
             assert(result.certChainPath == Present("cert.pem"))
@@ -45,62 +43,56 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
                 minVersion = HttpTlsConfig.Version.TLS12,
                 maxVersion = HttpTlsConfig.Version.TLS13
             )
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.caCertPath == Absent)
             assert(result.hostnameVerification == true)
         }
 
         "maps ClientAuth case None" in {
             val http   = HttpTlsConfig(clientAuth = HttpTlsConfig.ClientAuth.None)
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.clientAuth == NetTlsConfig.ClientAuth.None)
         }
 
         "maps ClientAuth case Optional" in {
             val http   = HttpTlsConfig(clientAuth = HttpTlsConfig.ClientAuth.Optional)
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.clientAuth == NetTlsConfig.ClientAuth.Optional)
         }
 
         "maps ClientAuth case Required" in {
             val http   = HttpTlsConfig(clientAuth = HttpTlsConfig.ClientAuth.Required)
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.clientAuth == NetTlsConfig.ClientAuth.Required)
         }
 
         "maps Version TLS12 for both minVersion and maxVersion" in {
             val http   = HttpTlsConfig(minVersion = HttpTlsConfig.Version.TLS12, maxVersion = HttpTlsConfig.Version.TLS12)
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.minVersion == NetTlsConfig.Version.TLS12)
             assert(result.maxVersion == NetTlsConfig.Version.TLS12)
         }
 
         "maps Version TLS13 for both minVersion and maxVersion" in {
             val http   = HttpTlsConfig(minVersion = HttpTlsConfig.Version.TLS13, maxVersion = HttpTlsConfig.Version.TLS13)
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout).getOrThrow
+            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.minVersion == NetTlsConfig.Version.TLS13)
             assert(result.maxVersion == NetTlsConfig.Version.TLS13)
         }
 
         "default input differs from NetTlsConfig.default in the handshake deadline alone" in {
-            // The translator no longer decides the handshake deadline: the caller passes it, and kyo-http deliberately passes Infinity while
-            // kyo-net's own default is 30s. So the result cannot equal NetTlsConfig.default, and asserting it did would be asserting that the
-            // server's Infinity gets discarded. Full equality is still asserted, against the value the caller actually supplied, so any drift
-            // in the other ten fields still fails here.
+            // kyo-http passes Infinity where kyo-net's own default is 30s, so the result cannot equal NetTlsConfig.default; asserting it
+            // did would assert that the server's Infinity gets discarded. Full equality against the value passed still catches drift in
+            // the other ten fields.
             val handshakeTimeout = HttpTransportConfig.default.handshakeTimeout
             val result           = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, handshakeTimeout)
-            assert(handshakeTimeout == Duration.Infinity)
-            assert(result == Result.succeed(NetTlsConfig.default.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited)))
+            assert(handshakeTimeout == NetTlsConfig.HandshakeTimeout.unlimited)
+            assert(result == NetTlsConfig.default.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited))
         }
 
         "passing kyo-net's own default deadline reproduces NetTlsConfig.default exactly" in {
-            val result = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, NetTlsConfig.default.handshakeTimeout.duration)
-            assert(result == Result.succeed(NetTlsConfig.default))
-        }
-
-        "a zero handshake deadline is refused with NetConfigException naming the setting" in {
-            val result = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, Duration.Zero)
-            assert(result.failure.map(_.setting) == Present("handshakeTimeout"))
+            val result = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, NetTlsConfig.default.handshakeTimeout)
+            assert(result == NetTlsConfig.default)
         }
 
     }
@@ -125,10 +117,10 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
         "copies the two connection-shape fields by name" in {
             val http = HttpTransportConfig.default
-                .channelCapacity(7)
-                .readChunkSize(2048)
-            val result = NetConfigTranslation.toNetConfig(http).getOrThrow
-            assert(result.channelCapacity.value == 7)
+                .channelCapacity(NetConfig.Size(7))
+                .readChunkSize(2.kib)
+            val result = NetConfigTranslation.toNetConfig(http)
+            assert(result.channelCapacity == NetConfig.Size(7))
             assert(result.readChunkSize == 2.kib)
         }
 
@@ -137,98 +129,40 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             // translator has only the connection shape to carry. Asserting the field list keeps a re-added timeout from silently
             // reappearing in a config half the call sites ignore. peerCloseGrace is intentionally not mapped: kyo-http keeps NetConfig's
             // finite default (it wants the reclaim).
-            val fields = NetConfigTranslation.toNetConfig(HttpTransportConfig.default).getOrThrow.productElementNames.toList
+            val fields = NetConfigTranslation.toNetConfig(HttpTransportConfig.default).productElementNames.toList
             assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace"))
         }
 
         "does not map maxHeaderSize: kyo.net.NetConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {
             // A custom maxHeaderSize must not leak into the net config, and must not perturb the mapped fields.
-            val http   = HttpTransportConfig.default.maxHeaderSize(4096)
-            val result = NetConfigTranslation.toNetConfig(http).getOrThrow
-            assert(result.channelCapacity.value == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
+            val http   = HttpTransportConfig.default.maxHeaderSize(4.kib)
+            val result = NetConfigTranslation.toNetConfig(http)
+            assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
         }
 
         "default input maps the connection-shape fields from HttpTransportConfig.default" in {
-            val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default).getOrThrow
-            assert(result.channelCapacity.value == HttpTransportConfig.default.channelCapacity)
-            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize.bytes)
+            val result = NetConfigTranslation.toNetConfig(HttpTransportConfig.default)
+            assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
         }
 
-        "a channel capacity below one is refused with NetConfigException naming the setting" in {
-            val capacity = NetConfigTranslation.toNetConfig(HttpTransportConfig.default.channelCapacity(0))
-            assert(capacity.failure.map(e => (e.setting, e.value)) == Present(("channelCapacity", "0")))
-        }
-
-        "a read chunk size is a byte size, narrowed where the transport uses it rather than refused" in {
-            assert(NetConfigTranslation.toNetConfig(HttpTransportConfig.default.readChunkSize(0)).map(_.readChunkSize) == Result.succeed(
-                ByteSize.Zero
-            ))
+        "a read chunk size is a byte size, carried as given and narrowed where the transport uses it" in {
+            assert(NetConfigTranslation.toNetConfig(HttpTransportConfig.default.readChunkSize(ByteSize.Zero)).readChunkSize ==
+                ByteSize.Zero)
         }
 
         "the server handshake deadline reaches the TLS config, including Infinity" in {
             // The regression this guards: kyo-http servers default handshakeTimeout to Infinity while NetTlsConfig.default is 30s, so a
             // translation that dropped the value would silently arm a 30s slowloris reap on every kyo-http server.
-            assert(HttpTransportConfig.default.handshakeTimeout == Duration.Infinity)
+            assert(HttpTransportConfig.default.handshakeTimeout.duration == Duration.Infinity)
             val carried = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, HttpTransportConfig.default.handshakeTimeout)
-            assert(carried.map(_.handshakeTimeout.duration) == Result.succeed(Duration.Infinity))
-            val finite = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, 250.millis)
-            assert(finite.map(_.handshakeTimeout.duration) == Result.succeed(250.millis))
+            assert(carried.handshakeTimeout.duration == Duration.Infinity)
+            val finite =
+                NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, NetTlsConfig.HandshakeTimeout.init(250.millis).getOrThrow)
+            assert(finite.handshakeTimeout.duration == 250.millis)
         }
 
-    }
-
-    "a refused setting fails the operation on its NetException row, before any socket" - {
-
-        "connect" in {
-            import AllowUnsafe.embrace.danger
-            val opened = NetConfigTranslation.connect(
-                NetPlatform.transport,
-                Absent,
-                "127.0.0.1",
-                1,
-                ssl = false,
-                HttpTlsConfig.default,
-                30.seconds,
-                HttpTransportConfig.default.channelCapacity(0)
-            )
-            Abort.run[kyo.net.NetException](opened.safe.get).map { outcome =>
-                assert(outcome.failure.collect { case e: NetConfigException => e.setting } == Present("channelCapacity"))
-            }
-        }
-
-        "a zero connect deadline" in {
-            import AllowUnsafe.embrace.danger
-            val opened = NetConfigTranslation.connect(
-                NetPlatform.transport,
-                Absent,
-                "127.0.0.1",
-                1,
-                ssl = false,
-                HttpTlsConfig.default,
-                Duration.Zero,
-                HttpTransportConfig.default
-            )
-            Abort.run[kyo.net.NetException](opened.safe.get).map { outcome =>
-                assert(outcome.failure.collect { case e: NetConfigException => e.setting } == Present("connectTimeout"))
-            }
-        }
-
-        "listen" in {
-            import AllowUnsafe.embrace.danger
-            val bound = NetConfigTranslation.listen(
-                NetPlatform.transport,
-                Absent,
-                "127.0.0.1",
-                0,
-                16,
-                Absent,
-                HttpTransportConfig.default.channelCapacity(0)
-            )(_ => ())
-            Abort.run[kyo.net.NetException](bound.safe.get).map { outcome =>
-                assert(outcome.failure.collect { case e: NetConfigException => e.setting } == Present("channelCapacity"))
-            }
-        }
     }
 
 end NetConfigTranslationTest

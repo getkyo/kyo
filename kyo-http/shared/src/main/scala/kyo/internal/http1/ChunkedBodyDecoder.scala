@@ -139,7 +139,7 @@ private[kyo] object ChunkedBodyDecoder:
     )(using Frame): Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
         val pending = accumulator.size + state.pendingSize
         if pending > maxBytes then
-            Abort.fail(HttpPayloadTooLargeException(pending, maxBytes))
+            Abort.fail(HttpPayloadTooLargeException(pending.bytes, maxBytes.bytes))
         else
             state.drain(accumulator) match
                 case DrainResult.Done =>
@@ -221,7 +221,7 @@ private[kyo] object ChunkedBodyDecoder:
                     else Kyo.unit
                 flush.andThen {
                     if state.pendingSize > maxControlBytes then
-                        Abort.fail(HttpPayloadTooLargeException(state.pendingSize, maxControlBytes))
+                        Abort.fail(HttpPayloadTooLargeException(state.pendingSize.bytes, maxControlBytes.bytes))
                     else
                         // Bytes already in hand are taken without announcing a wait, as in bufferedLoop.
                         inbound.safe.poll.map {

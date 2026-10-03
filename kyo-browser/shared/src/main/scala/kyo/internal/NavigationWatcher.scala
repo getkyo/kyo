@@ -326,7 +326,7 @@ private[kyo] object NavigationWatcher:
                                 Abort.fail(
                                     BrowserNavigationTransportFailedException(navUrl)
                                 )
-                            else if throwOnFailure && HttpStatus.isValid(status) && HttpStatus(status).isError then
+                            else if throwOnFailure && HttpStatus.isValid(status) && HttpStatus.isError(status) then
                                 Abort.fail(
                                     BrowserNavigationFailedException(navUrl, s"HTTP $status")
                                 )
@@ -429,7 +429,7 @@ private[kyo] object NavigationWatcher:
                             PendingDecision.AbortNavigationNeverCommitted(expectedDifferentFrom.fold(navUrl)(_.url), settle)
                         else if isTransportFailure(navUrl) then
                             PendingDecision.AbortTransportFailure(navUrl)
-                        else if throwOnFailure && HttpStatus.isValid(status) && HttpStatus(status).isError then
+                        else if throwOnFailure && HttpStatus.isValid(status) && HttpStatus.isError(status) then
                             PendingDecision.AbortHttpError(navUrl, status)
                         else
                             PendingDecision.DegradeToLoad

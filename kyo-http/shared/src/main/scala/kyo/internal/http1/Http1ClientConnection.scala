@@ -21,7 +21,7 @@ final private[kyo] class Http1ClientConnection(
     inbound: Channel.Unsafe[Span[Byte]],
     outbound: Channel.Unsafe[Span[Byte]],
     headerBuf: GrowableByteBuffer,
-    maxHeaderSize: Int = 65536
+    maxHeaderSize: Int = readBufferCapacity(HttpTransportConfig.default.maxHeaderSize)
 )(using AllowUnsafe, Frame):
 
     /** Reusable response promise that exposes the protected `becomeAvailable` for reuse across requests. */
@@ -187,7 +187,7 @@ private[kyo] object Http1ClientConnection:
     def init(
         inbound: Channel.Unsafe[Span[Byte]],
         outbound: Channel.Unsafe[Span[Byte]],
-        maxHeaderSize: Int = 65536
+        maxHeaderSize: Int = readBufferCapacity(HttpTransportConfig.default.maxHeaderSize)
     )(using AllowUnsafe, Frame): Http1ClientConnection =
         new Http1ClientConnection(inbound, outbound, new GrowableByteBuffer, maxHeaderSize)
 

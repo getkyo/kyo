@@ -77,7 +77,7 @@ object FileLocker extends KyoApp:
             store <- AtomicRef.init(Map.empty[String, Array[Byte]])
             (uploadRoute, downloadRoute, listRoute) = routes(store)
             server <- HttpServer.init(
-                HttpServerConfig.default.port(port).maxContentLength(10 * 1024 * 1024)
+                HttpServerConfig.default.port(port).maxContentLength(10.mib)
                     .openApi("/openapi.json", "File Locker")
             )(uploadRoute, downloadRoute, listRoute, health)
             _ <- Console.printLine(s"FileLocker running on http://localhost:${server.port}")

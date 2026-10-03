@@ -78,9 +78,9 @@ object OTLPClient:
 
         Abort.run[Throwable] {
             HttpClient.withConfig(
-                _.timeout(config.timeout)
-                    .retry(Schedule.exponentialBackoff(1.second, 2.0, 5.seconds).take(5))
+                _.retry(Schedule.exponentialBackoff(1.second, 2.0, 5.seconds).take(5))
                     .retryOn(status => status.code == 429 || status.isServerError)
+                    .timeout(config.timeout)
             ) {
                 HttpUrl.parse(url) match
                     case Result.Failure(err)       => Abort.fail(err)

@@ -15,6 +15,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
+    def buildRouter(handlers: Seq[HttpHandler[?, ?, ?]], cors: Maybe[HttpServerConfig.Cors])(using Frame): HttpRouter =
+        HttpRouter.init(handlers, cors).getOrThrow
+
     /** Helper: collect exactly one complete HTTP response from the outbound channel. Reads headers until CRLFCRLF, extracts Content-Length,
       * then reads exactly that many body bytes. Stops after one complete response, leaving subsequent responses in the channel.
       */
@@ -82,7 +85,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch GET request returns 200" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -103,7 +106,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "a decode error on a keep-alive request is answered 400 without Connection: close, and the connection serves the next request" in {
             val paged  = HttpRoute.getRaw("paged").request(_.query[Int]("page")).response(_.bodyText).handler(_ => HttpResponse.ok("paged"))
             val hello  = HttpHandler.getText("hello")(_ => "world")
-            val router = HttpRouter(Seq(paged, hello), Absent)
+            val router = buildRouter(Seq(paged, hello), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -127,7 +130,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             Latch.init(1).map { proceed =>
                 val slow     = HttpHandler.getText("slow")(_ => proceed.await.andThen("slow done"))
                 val hello    = HttpHandler.getText("hello")(_ => "world")
-                val router   = HttpRouter(Seq(slow, hello), Absent)
+                val router   = buildRouter(Seq(slow, hello), Absent)
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
                 val flag     = AtomicBoolean.Unsafe.init(false)
@@ -155,7 +158,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val outbound = Channel.Unsafe.init[Span[Byte]](1)
             discard(outbound.offer(Span.fromUnsafe("earlier".getBytes(StandardCharsets.US_ASCII))))
             sendRequest(inbound, "POST /upload HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 3\r\n\r\n")
-            UnsafeServerDispatch.serve(HttpRouter(Seq(handler), Absent), inbound, outbound, defaultConfig)
+            UnsafeServerDispatch.serve(buildRouter(Seq(handler), Absent), inbound, outbound, defaultConfig)
             pollUntil(inbound.pendingTakes().contains(1)).map { waiting =>
                 assert(waiting, "the body reader waits for the body the client holds back")
                 outbound.safe.take.map { earlier =>
@@ -172,7 +175,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch returns 404 for unknown path" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -189,7 +192,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch returns 405 for wrong method" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -212,7 +215,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val userId = req.fields.id
                 HttpResponse.ok(userId)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -234,7 +237,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val body = req.fields.body
                 HttpResponse.ok(body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -253,7 +256,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch multiple requests (keep-alive)" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -278,7 +281,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "dispatch Connection: close stops after response" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -313,7 +316,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = HttpHandler.getRaw[Nothing]("fail") { _ =>
                 throw new RuntimeException("handler exploded")
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -333,7 +336,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -356,7 +359,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -387,7 +390,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](256)
             val outbound = Channel.Unsafe.init[Span[Byte]](256)
@@ -421,7 +424,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -450,7 +453,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -476,7 +479,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 HttpResponse.ok(req.fields.body)
             }
             val getHandler = HttpHandler.getText("echo")(_ => "get-ok")
-            val router     = HttpRouter(Seq(postHandler, getHandler), Absent)
+            val router     = buildRouter(Seq(postHandler, getHandler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -510,7 +513,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 // Empty body should produce empty string
                 HttpResponse.ok(s"len=${body.length}")
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -531,7 +534,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(s"size=${req.fields.body.length}")
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](1024)
             val outbound = Channel.Unsafe.init[Span[Byte]](1024)
@@ -551,7 +554,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 sent += thisChunk
             end while
 
-            val largeConfig = defaultConfig.maxContentLength(totalSize + 1)
+            val largeConfig = defaultConfig.maxContentLength((totalSize + 1).bytes)
             UnsafeServerDispatch.serve(router, inbound, outbound, largeConfig)
 
             collectResponse(outbound).map { response =>
@@ -565,7 +568,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -608,7 +611,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "Date header present on 200 response" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -626,7 +629,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "Date header present on error responses" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -659,7 +662,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "Content-Length exceeds max returns 413" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -680,10 +683,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             // Use a small maxContentLength for the test
-            val config   = defaultConfig.maxContentLength(10)
+            val config   = defaultConfig.maxContentLength(10.bytes)
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -704,9 +707,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
-            val config   = defaultConfig.maxContentLength(100)
+            val config   = defaultConfig.maxContentLength(100.bytes)
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -728,9 +731,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         // pipelined follow-up. request2's bytes must NOT be served.
         "413 response closes the connection instead of reusing it (RFC 9112 section 9.3)" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
-            val config   = defaultConfig.maxContentLength(10)
+            val config   = defaultConfig.maxContentLength(10.bytes)
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -759,7 +762,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -787,9 +790,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "Expect: 100-continue with body too large sends 417" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
-            val config   = defaultConfig.maxContentLength(10)
+            val config   = defaultConfig.maxContentLength(10.bytes)
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -810,7 +813,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -838,10 +841,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 discard(served.set(true))
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val idleTimeout = 200.millis
-            val config      = defaultConfig.maxContentLength(10).idleTimeout(idleTimeout)
+            val config      = defaultConfig.maxContentLength(10.bytes).idleTimeout(idleTimeout)
             val inbound     = Channel.Unsafe.init[Span[Byte]](16)
             val outbound    = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -886,9 +889,9 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
-            val config   = defaultConfig.maxContentLength(10)
+            val config   = defaultConfig.maxContentLength(10.bytes)
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
@@ -913,7 +916,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "request with Host header accepted" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -931,7 +934,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "request without Host header returns 400" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -949,7 +952,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "request with empty Host header returns 400" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -967,7 +970,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "multiple Host headers returns 400" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -985,7 +988,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "Host header case-insensitive detection" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1004,7 +1007,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "400 response preserves keep-alive" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1168,7 +1171,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "HttpWebSocket upgrade succeeds" in {
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1189,7 +1192,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "a WebSocket route hit without an upgrade, by a request whose body arrived with its head: 404, the body skipped, the connection kept alive" in {
             val handler  = HttpHandler.webSocket("ws")(wsEcho)
-            val router   = HttpRouter(Seq(handler), Absent)
+            val router   = buildRouter(Seq(handler), Absent)
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
             sendRequest(
@@ -1214,7 +1217,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             Clock.withTimeControl { tc =>
                 Clock.use { clock =>
                     val handler  = HttpHandler.webSocket("ws")(wsEcho)
-                    val router   = HttpRouter(Seq(handler), Absent)
+                    val router   = buildRouter(Seq(handler), Absent)
                     val inbound  = Channel.Unsafe.init[Span[Byte]](64)
                     val outbound = Channel.Unsafe.init[Span[Byte]](64)
                     val config   = defaultConfig.idleTimeout(200.millis).lingeringTimeout(500.millis)
@@ -1240,7 +1243,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "a WebSocket route hit without an upgrade, by a request without a body: 404 and the connection stays keep-alive" in {
             val handler  = HttpHandler.webSocket("ws")(wsEcho)
-            val router   = HttpRouter(Seq(handler), Absent)
+            val router   = buildRouter(Seq(handler), Absent)
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
             sendRequest(inbound, "GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -1261,7 +1264,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "an upgrade on a route that is not a WebSocket, by a request whose body arrived with its head: 404, the body skipped, the route served next" in {
             val handler  = HttpHandler.getText("hello")(_ => "world")
-            val router   = HttpRouter(Seq(handler), Absent)
+            val router   = buildRouter(Seq(handler), Absent)
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
             sendRequest(
@@ -1284,7 +1287,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "a WebSocket route hit without an upgrade, by an HTTP/1.0 request: 404 with Connection: close and the connection closed" in {
             val handler  = HttpHandler.webSocket("ws")(wsEcho)
-            val router   = HttpRouter(Seq(handler), Absent)
+            val router   = buildRouter(Seq(handler), Absent)
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
             sendRequest(inbound, "GET /ws HTTP/1.0\r\nHost: localhost\r\n\r\n")
@@ -1303,7 +1306,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "HttpWebSocket rejects frames exceeding configured maxFrameSize" in {
             Latch.initWith(1) { handlerDone =>
                 val received = AtomicBoolean.Unsafe.init(false)
-                val config   = HttpWebSocket.Config(maxFrameSize = 4)
+                val config   = HttpWebSocket.Config(maxFrameSize = 4.bytes)
                 val handler  = HttpHandler.webSocket("ws", config) { (_, ws) =>
                     Abort.run[Closed](ws.take()).map {
                         case Result.Success(_) =>
@@ -1311,7 +1314,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         case _ => ()
                     }.andThen(handlerDone.release)
                 }
-                val router = HttpRouter(Seq(handler), Absent)
+                val router = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](64)
                 val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1338,7 +1341,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "HttpWebSocket upgrade with correct Sec-WebSocket-Accept" in {
             val clientKey = "dGhlIHNhbXBsZSBub25jZQ=="
             val handler   = HttpHandler.webSocket("ws")(wsEcho)
-            val router    = HttpRouter(Seq(handler), Absent)
+            val router    = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1362,7 +1365,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "parser stops after upgrade" in {
             Latch.initWith(1) { handlerDone =>
                 val handler = HttpHandler.webSocket("ws")((req, ws) => wsEcho(req, ws).andThen(handlerDone.release))
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](64)
                 val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1400,7 +1403,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "WS echo test" in {
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1425,7 +1428,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "WS binary frame" in {
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1456,7 +1459,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "WS ping/pong" in {
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1490,7 +1493,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = HttpHandler.webSocket("ws") { (_, ws) =>
                 Abort.run[Closed](ws.take()).unit
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1524,7 +1527,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "WS upgrade on non-WS route returns 404" in {
             // Only a regular HTTP handler, no WS handler
             val handler = HttpHandler.getText("ws")(_ => "hello")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1543,7 +1546,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             // This test verifies that leftover bytes after the HTTP upgrade headers
             // are correctly forwarded to the WS codec via takeRemainingBytes.
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1575,7 +1578,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "WS connection cleanup tears down pumps" in {
             // Handler that returns immediately — pumps should be torn down
             val handler = HttpHandler.webSocket("ws") { (_, _) => Kyo.unit }
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1612,7 +1615,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "multiple WS connections concurrent" in {
             val handler = HttpHandler.webSocket("ws")(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             // Set up 3 independent connections, each with separate channel pairs
             val n     = 3
@@ -1655,7 +1658,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         "WS upgrade with subprotocol" in {
             val config  = HttpWebSocket.Config(subprotocols = Seq("graphql-transport-ws", "chat"))
             val handler = HttpHandler.webSocket("ws", config)(wsEcho)
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1691,7 +1694,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -1732,7 +1735,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "idle connection closed after timeout" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1769,7 +1772,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "active connection not closed" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1801,7 +1804,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "timeout reset on each request" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1847,7 +1850,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "custom idle timeout respected" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1885,7 +1888,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "idle timeout disabled with Duration.Infinity" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1922,7 +1925,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "timeout fires between keep-alive requests" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -1963,7 +1966,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         "concurrent connections with different idle states" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
-            val router  = HttpRouter(Seq(handler), Absent)
+            val router  = buildRouter(Seq(handler), Absent)
 
             // Connection 1: goes idle after its request
             val inbound1  = Channel.Unsafe.init[Span[Byte]](16)
@@ -2020,7 +2023,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val handler = route.handler { _ =>
                 HttpResponse.ok("streamed data")
             }
-            val router = HttpRouter(Seq(handler), Absent)
+            val router = buildRouter(Seq(handler), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2058,7 +2061,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             "a connection whose first request head never completes is closed after the idle timeout" in {
                 val handler = HttpHandler.getText("hello")(_ => "world")
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2089,7 +2092,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             "the final response to a Connection: close request announces the close and the connection is then closed" in {
                 val handler = HttpHandler.getText("hello")(_ => "world")
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2112,7 +2115,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             "a keep-alive request leaves the connection open for the next request" in {
                 val handler = HttpHandler.getText("hello")(_ => "world")
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2135,7 +2138,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             "the response to an HTTP/1.0 request without keep-alive announces the close and the connection is then closed" in {
                 val handler = HttpHandler.getText("hello")(_ => "world")
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2172,7 +2175,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     val response = HttpResponse.ok.addField("body", body)
                     if handlerKeepAlive then response.setHeader("Connection", "keep-alive") else response
                 }
-                val router   = HttpRouter(Seq(handler), Absent)
+                val router   = buildRouter(Seq(handler), Absent)
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
                 sendRequest(inbound, request)
@@ -2203,7 +2206,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val handler = HttpRoute.getRaw("hello").response(_.bodyText).handler(_ =>
                     HttpResponse.ok("world").setHeader("Connection", "keep-alive")
                 )
-                val router   = HttpRouter(Seq(handler), Absent)
+                val router   = buildRouter(Seq(handler), Absent)
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
                 sendRequest(inbound, "GET /hello HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
@@ -2239,7 +2242,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             Stream.init(Seq(span("first"))).concat(Stream(release.await.andThen(Emit.value(Chunk(span("last"))))))
                         HttpResponse.ok.addField("body", body)
                     }
-                    val router   = HttpRouter(Seq(handler), Absent)
+                    val router   = buildRouter(Seq(handler), Absent)
                     val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                     val outbound = Channel.Unsafe.init[Span[Byte]](16)
                     val probe    = CloseProbe(inbound)
@@ -2276,7 +2279,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             "an HTTP/1.0 request expecting 100-continue gets its final response only" in {
                 val route   = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
                 val handler = route.handler(req => HttpResponse.ok("got " + req.fields.body))
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2298,7 +2301,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         Stream[Span[Byte], Async & Abort[HttpException]](Loop.forever(Emit.value(chunk)))
                     HttpResponse.ok.addField("body", body)
                 }
-                val router = HttpRouter(Seq(handler), Absent)
+                val router = buildRouter(Seq(handler), Absent)
 
                 val inbound     = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound    = Channel.Unsafe.init[Span[Byte]](4)
@@ -2332,7 +2335,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                     ran.set(true)
                     HttpResponse.ok("got " + req.fields.body)
                 }
-                val router = HttpRouter(Seq(handler), Absent)
+                val router = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2369,7 +2372,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             "a request body that keeps arriving is not closed and is answered once complete" in {
                 val route   = HttpRoute.postRaw("upload").request(_.bodyText).response(_.bodyText)
                 val handler = route.handler(req => HttpResponse.ok("got " + req.fields.body))
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2415,7 +2418,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         case other                 => HttpResponse.ok(s"failed $other")
                     }
                 }
-                val router = HttpRouter(Seq(handler), Absent)
+                val router = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2461,7 +2464,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                         }
                         HttpResponse.ok.addField("body", body)
                     }
-                    val router = HttpRouter(Seq(handler), Absent)
+                    val router = buildRouter(Seq(handler), Absent)
 
                     val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                     val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2500,7 +2503,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 // before the peer reads it: the server reads and discards the rest of the body first (RFC 9112 section 9.6).
                 val route   = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
                 val handler = route.handler(_ => HttpResponse.ok("sunk"))
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2554,7 +2557,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             )(using kyo.test.AssertScope) =
                 val route   = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
                 val handler = route.handler(_ => HttpResponse.ok("sunk"))
-                val router  = HttpRouter(Seq(handler), Absent)
+                val router  = buildRouter(Seq(handler), Absent)
 
                 val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                 val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2626,7 +2629,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             }
                         }
                     }
-                    val router = HttpRouter(Seq(handler), Absent)
+                    val router = buildRouter(Seq(handler), Absent)
 
                     val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                     val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2684,7 +2687,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             }
                         }
                     }
-                    val router = HttpRouter(Seq(handler), Absent)
+                    val router = buildRouter(Seq(handler), Absent)
 
                     val inbound  = Channel.Unsafe.init[Span[Byte]](64)
                     val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -2729,7 +2732,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             // not handler A's.
             val handlerA = HttpHandler.getText("pathA")(_ => "response-A")
             val handlerB = HttpHandler.getText("pathB")(_ => "response-B")
-            val router   = HttpRouter(Seq(handlerA, handlerB), Absent)
+            val router   = buildRouter(Seq(handlerA, handlerB), Absent)
 
             val inbound  = Channel.Unsafe.init[Span[Byte]](64)
             val outbound = Channel.Unsafe.init[Span[Byte]](64)
@@ -2803,7 +2806,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                             }
                         }
                     }
-                    val router = HttpRouter(Seq(handler), Absent)
+                    val router = buildRouter(Seq(handler), Absent)
 
                     val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                     val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2831,7 +2834,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                                 started.release.andThen(never.get).andThen("completed-normally")
                             }
                         }
-                        val router = HttpRouter(Seq(handler), Absent)
+                        val router = buildRouter(Seq(handler), Absent)
 
                         val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                         val outbound = Channel.Unsafe.init[Span[Byte]](16)
@@ -2864,8 +2867,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     "a request head over the limit (RFC 6585 section 5, RFC 9110 section 15.5.15)" - {
 
-        val smallHead = HttpServerConfig.default.transportConfig(HttpTransportConfig.default.maxHeaderSize(256))
-        val router    = HttpRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
+        val smallHead = HttpServerConfig.default.transportConfig(HttpTransportConfig.default.maxHeaderSize(256.bytes))
+        val router    = buildRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
 
         /** Everything the dispatch has written so far, without waiting. A refusal of the head is written inside the parser's callback, before
           * the offer that carried the last read returns, so nothing here suspends.
@@ -3024,7 +3027,14 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
             val probe    = CloseProbe(inbound)
-            UnsafeServerDispatch.serve(HttpRouter(handlers, Absent), inbound, outbound, config, closeConnection = probe.hook, clock = clock)
+            UnsafeServerDispatch.serve(
+                buildRouter(handlers, Absent),
+                inbound,
+                outbound,
+                config,
+                closeConnection = probe.hook,
+                clock = clock
+            )
             (inbound, outbound, probe)
         end serveWith
 
@@ -3131,7 +3141,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             refusedStreamedBody("5\r\nhello\r\nZZ\r\n", "HTTP/1.1 400 Bad Request")
 
         "a chunk size line over the control-plane limit is answered 413 with Connection: close, drained, and closed" in
-            refusedStreamedBody("F" * (defaultConfig.maxContentLength + 1), "HTTP/1.1 413 Payload Too Large")
+            refusedStreamedBody("F" * (readBufferCapacity(defaultConfig.maxContentLength) + 1), "HTTP/1.1 413 Payload Too Large")
 
         /** A streaming route that records whether its handler started, finished, or was interrupted, and opens `firstRead` after the first
           * span of its body.
@@ -3164,7 +3174,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val probe    = CloseProbe(inbound)
                 closing.completeDiscard(Result.succeed(()))
                 UnsafeServerDispatch.serve(
-                    HttpRouter(Seq(observed.handler, hello), Absent),
+                    buildRouter(Seq(observed.handler, hello), Absent),
                     inbound,
                     outbound,
                     defaultConfig,
@@ -3192,7 +3202,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 val closing  = Fiber.Promise.Unsafe.init[Unit, Any]()
                 val probe    = CloseProbe(inbound)
                 UnsafeServerDispatch.serve(
-                    HttpRouter(Seq(observed.handler, hello), Absent),
+                    buildRouter(Seq(observed.handler, hello), Absent),
                     inbound,
                     outbound,
                     defaultConfig,
@@ -3246,7 +3256,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
     // them instead of queuing without bound behind a full outbound channel.
     "pipelined requests answered without a handler" - {
 
-        val router  = HttpRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
+        val router  = buildRouter(Seq(HttpHandler.getText("hello")(_ => "world")), Absent)
         val missing = "GET /missing HTTP/1.1\r\nHost: h\r\n\r\n"
 
         /** Takes from `outbound` until `n` answers have gone by. Every answer's head is offered as one span, so a span that starts a status

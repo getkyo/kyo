@@ -9,7 +9,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    private val maxPartSize = HttpServerConfig.default.maxMultipartPartSize
+    private val maxPartSize = readBufferCapacity(HttpServerConfig.default.maxMultipartPartSize)
 
     case class User(name: String, age: Int) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec
@@ -84,10 +84,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .addField("body", parts)
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                      = false
+            var headers                                              = HttpHeaders.empty
+            var body                                                 = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpCookieException]) =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -124,7 +124,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpCookieException])   =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -601,10 +601,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
             )
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                      = false
+            var headers                                              = HttpHeaders.empty
+            var body                                                 = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpCookieException]) =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -650,7 +650,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpCookieException])   =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -892,6 +892,25 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             assert(cookieStr.contains("session=abc"))
             assert(cookieStr.contains("theme=dark"))
             assert(cookieStr.contains("; "))
+        }
+
+        "a cookie value carrying a pair delimiter is refused, not appended" in {
+            val route   = HttpRoute.getRaw("data").request(_.cookie[String]("session"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/data").getOrThrow,
+                HttpHeaders.empty,
+                Record.empty
+            ).addField("session", "abc; admin=true")
+            Abort.run[HttpCookieException](
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected the cookie to be refused"),
+                    onBuffered = (_, _, _) => fail("expected the cookie to be refused"),
+                    onStreaming = (_, _, _) => fail("expected the cookie to be refused")
+                )
+            ).map { result =>
+                assert(result.failure.map(_.part) == Present("the value of cookie 'session'"))
+            }
         }
 
         "URL-encoded special characters in query" in {
@@ -1738,7 +1757,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val oversize = Span.fromUnsafe(Array.fill[Byte](bound + 1)('x'.toByte))
             def oversized(first: String): Stream[Span[Byte], Async & Abort[HttpException]] =
                 Stream.init(Seq(Span.fromUnsafe(first.getBytes("UTF-8")), oversize))
-            val tooLarge = Result.fail(HttpPayloadTooLargeException(bound + 1, bound))
+            val tooLarge = Result.fail(HttpPayloadTooLargeException((bound + 1).bytes, bound.bytes))
 
             "an NDJSON record over the bound fails the stream after the records before it" in {
                 collect(responseBody(ndjson, oversized("{\"name\":\"Alice\",\"age\":30}\n"))).map { (users, ended) =>
@@ -1759,7 +1778,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val partBound        = 1024
             def multipartPartsOf(
                 stream: Stream[Span[Byte], Async & Abort[HttpException]],
-                maxPartSize: Int = HttpServerConfig.default.maxMultipartPartSize
+                maxPartSize: Int = readBufferCapacity(HttpServerConfig.default.maxMultipartPartSize)
             )(using Frame, kyo.test.AssertScope) =
                 RouteUtil.decodeStreamingRequest(
                     multipartRoute,
@@ -1795,7 +1814,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 end delimited
                 def unterminated(dataSize: Int): Stream[Span[Byte], Async & Abort[HttpException]] =
                     Stream.init(Seq(Span.fromUnsafe(body(dataSize))))
-                val oneMore = Result.fail(HttpPayloadTooLargeException(partBound + 1, partBound))
+                val oneMore = Result.fail(HttpPayloadTooLargeException((partBound + 1).bytes, partBound.bytes))
                 multipartPartsOf(delimited(exact), partBound).map { (parts, ended) =>
                     assert(parts.map(_.data.size) == Chunk(exact) && ended == Result.unit, s"observed ${parts.map(_.data.size)} $ended")
                     multipartPartsOf(delimited(exact + 1), partBound).map { (parts, ended) =>
@@ -1829,7 +1848,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 multipartPartsOf(Stream.init(Seq(Span.fromUnsafe(first.getBytes("UTF-8")), data)), partBound).map { (parts, ended) =>
                     assert(parts.map(_.name) == Chunk("f"), s"observed $parts")
                     assert(
-                        ended == Result.fail(HttpPayloadTooLargeException(headersG.length + partBound, partBound)),
+                        ended == Result.fail(HttpPayloadTooLargeException((headersG.length + partBound).bytes, partBound.bytes)),
                         s"observed $ended"
                     )
                 }

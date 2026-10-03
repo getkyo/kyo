@@ -96,7 +96,8 @@ object HttpWebSocket:
       * @param bufferSize
       *   Channel capacity for inbound and outbound message queues. Controls backpressure — when a channel is full, the sender suspends.
       * @param maxFrameSize
-      *   Maximum size in bytes of a single HttpWebSocket frame. Frames exceeding this limit cause the connection to close. Default is 16 MiB,
+      *   Maximum size of a single HttpWebSocket frame, narrowed where it is used as kyo-core's stream reads narrow theirs (zero becomes one
+      *   byte, a size beyond `Int.MaxValue` becomes `Int.MaxValue`). Frames exceeding this limit cause the connection to close. Default is 16 MiB,
       *   which comfortably handles realistic single-frame payloads (Chrome CDP screenshots up to ~4K, large RPC responses, base64-encoded
       *   binary uploads) while still capping pathological remotes. Lower it for memory-sensitive deployments; raise it for clients that need
       *   to receive larger frames in one go.
@@ -109,7 +110,7 @@ object HttpWebSocket:
       */
     case class Config(
         bufferSize: Int = 32,
-        maxFrameSize: Int = 16 * 1024 * 1024,
+        maxFrameSize: ByteSize = 16.mib,
         autoPingInterval: Maybe[Duration] = Absent,
         closeTimeout: Duration = 5.seconds,
         subprotocols: Seq[String] = Seq.empty

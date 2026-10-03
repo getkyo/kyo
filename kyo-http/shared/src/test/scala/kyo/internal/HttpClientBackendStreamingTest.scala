@@ -162,7 +162,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = Duration.Infinity)
+            val config                     = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
                     f1.get.map { resp1 =>
@@ -198,7 +198,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = Duration.Infinity)
+            val config                     = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(streamHeaders, chunk1, chunk2AndEnd)).andThen {
                     f1.get.map { resp1 =>
@@ -224,7 +224,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = Duration.Infinity)
+            val config                     = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
             val closingHeaders             = "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(closingHeaders, chunk1, chunk2AndEnd)).andThen {
@@ -253,7 +253,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = Duration.Infinity)
+            val config                     = HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, streamHeaders +: Seq.fill(backlogChunks)(chunk1)).andThen {
                     f1.get.map { resp1 =>

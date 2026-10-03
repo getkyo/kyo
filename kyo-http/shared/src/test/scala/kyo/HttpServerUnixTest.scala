@@ -129,7 +129,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, kyo.net.Transport.ConnectTimeout.unlimited, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>
@@ -171,7 +171,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                         ))
                         val request = HttpRequest.postRaw(parsedUrl)
                             .addField("body", bodyStream)
-                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, kyo.net.Transport.ConnectTimeout.unlimited, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, request) { resp =>
@@ -196,7 +196,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                     HttpResponse.ok(s"received $totalBytes bytes")
                 }
             }
-            val serverConfig = HttpServerConfig.default.maxContentLength(200000)
+            val serverConfig = HttpServerConfig.default.maxContentLength(200000.bytes)
             tempSocketPath().map { sockPath =>
                 val fullConfig = serverConfig.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
@@ -211,15 +211,16 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                                 val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(chunks)
                                 val request                                                      = HttpRequest.postRaw(parsedUrl)
                                     .addField("body", bodyStream)
-                                client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
-                                    Scope.run {
-                                        Scope.ensure(client.closeNow(conn)).andThen {
-                                            client.sendWith(conn, route, request) { resp =>
-                                                assert(resp.status == HttpStatus.OK)
-                                                assert(resp.fields.body == "received 102400 bytes")
+                                client.connectWith(parsedUrl, kyo.net.Transport.ConnectTimeout.unlimited, HttpTlsConfig(trustAll = true)) {
+                                    conn =>
+                                        Scope.run {
+                                            Scope.ensure(client.closeNow(conn)).andThen {
+                                                client.sendWith(conn, route, request) { resp =>
+                                                    assert(resp.status == HttpStatus.OK)
+                                                    assert(resp.fields.body == "received 102400 bytes")
+                                                }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }
@@ -351,7 +352,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, kyo.net.Transport.ConnectTimeout.unlimited, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>

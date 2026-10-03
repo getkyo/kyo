@@ -3,41 +3,38 @@ package kyo.internal.transport
 import kyo.*
 import kyo.net.NetAddress
 import kyo.net.NetConfig
-import kyo.net.NetConfigException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Transport
 
 /** Translation seam between kyo-http's public config/address vocabulary and kyo-net's internal transport types.
   *
-  * It is the only place a `kyo.net.*` config/address type appears in kyo-http; the `kyo.net.NetTlsConfig` / `kyo.net.NetAddress` types never
-  * escape into a `kyo.Http*` public signature. `toNetTlsConfig` copies the 8 fields shared with `HttpTlsConfig` by name and leaves the 2
+  * It is the only place kyo-http builds a `kyo.net` config or reads a `kyo.net` address: `kyo.net.NetTlsConfig`, `kyo.net.NetConfig` and
+  * `kyo.net.NetAddress` never escape into a `kyo.Http*` public signature. The checked values themselves are shared rather than translated:
+  * a `kyo.Http*` config holds kyo-net's `NetConfig.Size` and deadline types, the one definition of each. `toNetTlsConfig` copies the 8
+  * fields shared with `HttpTlsConfig` by name and leaves the 2
   * kyo-net-only fields (`caCertPath`, `hostnameVerification`) at their defaults, since `HttpTlsConfig` has no field for them. `toHttpAddress`
   * maps the structurally identical address enum case-for-case so `HttpServer.address` keeps returning `HttpAddress`.
   *
-  * kyo-net takes a checked channel capacity and checked deadlines, and kyo-http's transport settings are raw values, so the config
-  * translators return a `Result`.
-  * [[connect]] and [[listen]] are the only callers: a value kyo-net refuses fails the operation's fiber with its [[NetConfigException]], on
-  * the same `Abort[NetException]` row every other transport failure takes.
+  * The checked values a connection needs (the channel capacity, the connect and handshake deadlines) are kyo-net's own types in kyo-http's
+  * config, so every translator is total: a value kyo-net would refuse is refused where the config is built.
   */
 private[kyo] object NetConfigTranslation:
 
-    def toNetTlsConfig(tls: HttpTlsConfig, handshakeTimeout: Duration)(using Frame): Result[NetConfigException, NetTlsConfig] =
-        NetTlsConfig.HandshakeTimeout.init(handshakeTimeout).map { deadline =>
-            NetTlsConfig(
-                trustAll = tls.trustAll,
-                sniHostname = tls.sniHostname,
-                certChainPath = tls.certChainPath,
-                privateKeyPath = tls.privateKeyPath,
-                clientAuth = toNetClientAuth(tls.clientAuth),
-                trustStorePath = tls.trustStorePath,
-                minVersion = toNetVersion(tls.minVersion),
-                maxVersion = toNetVersion(tls.maxVersion),
-                handshakeTimeout = deadline
-                // caCertPath and hostnameVerification take their NetTlsConfig defaults
-                // (Absent / true): HttpTlsConfig has no field for them.
-            )
-        }
+    def toNetTlsConfig(tls: HttpTlsConfig, handshakeTimeout: NetTlsConfig.HandshakeTimeout): NetTlsConfig =
+        NetTlsConfig(
+            trustAll = tls.trustAll,
+            sniHostname = tls.sniHostname,
+            certChainPath = tls.certChainPath,
+            privateKeyPath = tls.privateKeyPath,
+            clientAuth = toNetClientAuth(tls.clientAuth),
+            trustStorePath = tls.trustStorePath,
+            minVersion = toNetVersion(tls.minVersion),
+            maxVersion = toNetVersion(tls.maxVersion),
+            handshakeTimeout = handshakeTimeout
+            // caCertPath and hostnameVerification take their NetTlsConfig defaults
+            // (Absent / true): HttpTlsConfig has no field for them.
+        )
 
     def toHttpAddress(addr: NetAddress): HttpAddress =
         addr match
@@ -52,10 +49,8 @@ private[kyo] object NetConfigTranslation:
       * `NetTlsConfig.handshakeTimeout`. `maxHeaderSize` is intentionally NOT mapped: it is an HTTP-parser limit kyo-http enforces itself
       * (server dispatch and client connection), not a byte-transport concern, so `kyo.net.NetConfig` has no such field.
       */
-    def toNetConfig(c: HttpTransportConfig)(using Frame): Result[NetConfigException, NetConfig] =
-        NetConfig.Size.check("channelCapacity", c.channelCapacity).map { channelCapacity =>
-            NetConfig(channelCapacity = channelCapacity, readChunkSize = c.readChunkSize.bytes)
-        }
+    def toNetConfig(c: HttpTransportConfig): NetConfig =
+        NetConfig(channelCapacity = c.channelCapacity, readChunkSize = c.readChunkSize)
 
     /** Open a client connection: over the Unix socket at `unixSocket` when present, else TLS to `host:port` when `ssl`, else plaintext. */
     def connect(
@@ -65,21 +60,16 @@ private[kyo] object NetConfigTranslation:
         port: Int,
         ssl: Boolean,
         tls: HttpTlsConfig,
-        connectTimeout: Duration,
+        connectTimeout: Transport.ConnectTimeout,
         transportConfig: HttpTransportConfig
     )(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Connection, Abort[NetException]] =
-        val opened =
-            for
-                netConfig <- toNetConfig(transportConfig)
-                deadline  <- Transport.ConnectTimeout.init(connectTimeout)
-                fiber     <- unixSocket match
-                    case Present(path) => Result.succeed(transport.connectUnix(path, deadline, netConfig))
-                    case Absent if ssl =>
-                        toNetTlsConfig(tls, transportConfig.handshakeTimeout)
-                            .map(netTls => transport.connectTls(host, port, netTls, deadline, netConfig))
-                    case Absent => Result.succeed(transport.connect(host, port, deadline, netConfig))
-            yield fiber
-        refusedOr(opened)
+        val netConfig = toNetConfig(transportConfig)
+        unixSocket match
+            case Present(path) => transport.connectUnix(path, connectTimeout, netConfig)
+            case Absent if ssl =>
+                transport.connectTls(host, port, toNetTlsConfig(tls, transportConfig.handshakeTimeout), connectTimeout, netConfig)
+            case Absent => transport.connect(host, port, connectTimeout, netConfig)
+        end match
     end connect
 
     /** Bind a listener: on the Unix socket at `unixSocket` when present, else TLS on `host:port` when `tls` is present, else plaintext. */
@@ -92,25 +82,14 @@ private[kyo] object NetConfigTranslation:
         tls: Maybe[HttpTlsConfig],
         transportConfig: HttpTransportConfig
     )(handler: kyo.net.Connection => Unit)(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Listener, Abort[NetException]] =
-        val bound =
-            toNetConfig(transportConfig).flatMap { netConfig =>
-                (unixSocket, tls) match
-                    case (Present(path), _)     => Result.succeed(transport.listenUnix(path, backlog, netConfig)(handler))
-                    case (Absent, Present(tls)) =>
-                        toNetTlsConfig(tls, transportConfig.handshakeTimeout)
-                            .map(netTls => transport.listenTls(host, port, backlog, netTls, netConfig)(handler))
-                    case _ => Result.succeed(transport.listen(host, port, backlog, netConfig)(handler))
-            }
-        refusedOr(bound)
+        val netConfig = toNetConfig(transportConfig)
+        (unixSocket, tls) match
+            case (Present(path), _)     => transport.listenUnix(path, backlog, netConfig)(handler)
+            case (Absent, Present(tls)) =>
+                transport.listenTls(host, port, backlog, toNetTlsConfig(tls, transportConfig.handshakeTimeout), netConfig)(handler)
+            case _ => transport.listen(host, port, backlog, netConfig)(handler)
+        end match
     end listen
-
-    private def refusedOr[A](
-        checked: Result[NetConfigException, Fiber.Unsafe[A, Abort[NetException]]]
-    )(using AllowUnsafe): Fiber.Unsafe[A, Abort[NetException]] =
-        checked match
-            case Result.Success(fiber)   => fiber
-            case Result.Failure(refused) => Fiber.Unsafe.fromResult(Result.fail(refused))
-            case Result.Panic(thrown)    => Fiber.Unsafe.fromResult(Result.panic(thrown))
 
     private def toNetClientAuth(auth: HttpTlsConfig.ClientAuth): NetTlsConfig.ClientAuth =
         auth match

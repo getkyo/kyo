@@ -40,7 +40,7 @@ private[website] object ServedSite:
     /** Runs `f` with the served site. */
     def serve[A, S](f: Site => A < (Async & S))(using
         Frame
-    ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException] & S) =
+    ): A < (Async & Scope & Abort[WebsiteException | FileSystemException | HttpBindException | HttpRouteException] & S) =
         for
             root      <- repoRoot
             bundleDir <- bundleDir(root)
