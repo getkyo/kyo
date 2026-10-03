@@ -156,6 +156,14 @@ class DispositionTest extends kyo.test.Test[Any]:
             assert(Json.decode[Disposition](Json.encode(d)) == Result.succeed(d))
             assert(Json.decode[Disposition]("""{"kind":"in line","parameters":[]}""").isFailure)
         }
+        "a rejected disposition names the decoding caller's Frame" in {
+            Json.decode[Disposition]("""{"kind":"in line","parameters":[]}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    e.rejection match
+                        case leaf: MimeException => assert(leaf.frame == e.frame, s"rejected at ${leaf.frame}, decoded at ${e.frame}")
+                        case other               => fail(s"expected the constructor's own failure, got $other")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+        }
     }
 
 end DispositionTest

@@ -1023,9 +1023,27 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.awaitRead(handle, promise)
     end awaitRead
 
+    // When true, the next awaitWritable is held instead of registered, until releaseHeldWritable registers it with the real driver. A
+    // loopback socket can drain into the peer's buffer at any moment, so a writable wait registered for real may resolve before a test has
+    // observed the parked state; holding it makes "parked" a state the test ends, not one the kernel ends. Fires once.
+    @volatile var holdNextWritable: Boolean = false
+
+    @volatile private var heldWritable: Maybe[(PosixHandle, Promise.Unsafe[Unit, Abort[Closed | NetException]])] = Absent
+
+    /** Registers the held writable wait with the real driver. */
+    def releaseHeldWritable()(using AllowUnsafe, Frame): Unit =
+        val held = heldWritable
+        heldWritable = Absent
+        held.foreach((handle, promise) => real.awaitWritable(handle, promise))
+    end releaseHeldWritable
+
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         discard(awaitWritableCalls.getAndIncrement())
-        real.awaitWritable(handle, promise)
+        if holdNextWritable then
+            holdNextWritable = false
+            heldWritable = Present((handle, promise))
+        else real.awaitWritable(handle, promise)
+        end if
         val hook = onAwaitWritable
         if hook != null then
             onAwaitWritable = null

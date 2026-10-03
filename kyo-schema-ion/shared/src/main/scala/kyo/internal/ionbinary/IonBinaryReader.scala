@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.IntrospectingReader
 import kyo.Codec.Reader
+import kyo.internal.Numeric
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -35,6 +36,17 @@ private[kyo] enum IonBinaryValue derives CanEqual:
             case ClobValue(_)      => "clob"
             case ListValue(_)      => "list"
             case StructValue(_)    => "struct"
+
+    def kind: Codec.Kind =
+        this match
+            case NullValue(_)                                  => Codec.Kind.Null
+            case BoolValue(_)                                  => Codec.Kind.Boolean
+            case IntValue(_) | FloatValue(_) | DecimalValue(_) => Codec.Kind.Number
+            case TimestampValue(_)                             => Codec.Kind.Timestamp
+            case StringValue(_) | SymbolValue(_)               => Codec.Kind.String
+            case BlobValue(_) | ClobValue(_)                   => Codec.Kind.Bytes
+            case ListValue(_)                                  => Codec.Kind.Array
+            case StructValue(_)                                => Codec.Kind.Object
 end IonBinaryValue
 
 final class IonBinaryReader private (
@@ -66,7 +78,7 @@ final class IonBinaryReader private (
                 checkCollectionSize(fields.size)
                 stack = Obj(fields, 0) :: stack
                 fields.size
-            case other => mismatch("struct", other)
+            case other => mismatch(Codec.Kind.Object, other)
     end objectStart
 
     def objectEnd(): Unit =
@@ -85,7 +97,7 @@ final class IonBinaryReader private (
                 checkCollectionSize(values.size)
                 stack = Arr(values, 0) :: stack
                 values.size
-            case other => mismatch("list", other)
+            case other => mismatch(Codec.Kind.Array, other)
     end arrayStart
 
     def arrayEnd(): Unit =
@@ -138,34 +150,25 @@ final class IonBinaryReader private (
         value match
             case StringValue(v) => v
             case SymbolValue(v) => v
-            case other          => mismatch("string", other)
+            case other          => mismatch(Codec.Kind.String, other)
 
-    def int(): Int =
-        val v = integer()
-        if v < BigInt(Int.MinValue) || v > BigInt(Int.MaxValue) then
-            throw RangeException(if v.isValidLong then v.toLong else 0L, "Int", Int.MinValue.toLong, Int.MaxValue.toLong)(using _frame)
-        v.toInt
-    end int
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def long(): Long =
-        val v = integer()
-        if !v.isValidLong then throw ParseException(IonBinary(), v.toString, "Long")(using _frame)
-        v.toLong
-    end long
+    def long(): Long = integral(Numeric.Target.Int64)
 
-    def short(): Short =
-        val v = int()
-        if v < Short.MinValue || v > Short.MaxValue then
-            throw RangeException(v.toLong, "Short", Short.MinValue.toLong, Short.MaxValue.toLong)(using _frame)
-        v.toShort
-    end short
+    def short(): Short = integral(Numeric.Target.Int16).toShort
 
-    def byte(): Byte =
-        val v = int()
-        if v < Byte.MinValue || v > Byte.MaxValue then
-            throw RangeException(v.toLong, "Byte", Byte.MinValue.toLong, Byte.MaxValue.toLong)(using _frame)
-        v.toByte
-    end byte
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
+
+    private def integral(target: Numeric.Target): Long =
+        given Frame = _frame
+        value match
+            case IntValue(v)     => Numeric.whole(v, target)
+            case DecimalValue(v) => Numeric.whole(v, target)
+            case FloatValue(v)   => Numeric.whole(v, target)
+            case other           => mismatch(Codec.Kind.Number, other)
+        end match
+    end integral
 
     def char(): Char =
         val s = string()
@@ -180,12 +183,12 @@ final class IonBinaryReader private (
             case FloatValue(v)   => v
             case DecimalValue(v) => v.toDouble
             case IntValue(v)     => v.toDouble
-            case other           => mismatch("float", other)
+            case other           => mismatch(Codec.Kind.Number, other)
 
     def boolean(): Boolean =
         value match
             case BoolValue(v) => v
-            case other        => mismatch("bool", other)
+            case other        => mismatch(Codec.Kind.Boolean, other)
 
     def isNil(): Boolean =
         value match
@@ -203,7 +206,7 @@ final class IonBinaryReader private (
         value match
             case BlobValue(v) => v
             case ClobValue(v) => v
-            case other        => mismatch("blob", other)
+            case other        => mismatch(Codec.Kind.Bytes, other)
 
     def bigInt(): BigInt = integer()
 
@@ -212,14 +215,14 @@ final class IonBinaryReader private (
             case DecimalValue(v) => v
             case IntValue(v)     => BigDecimal(v)
             case FloatValue(v)   =>
-                if v.isNaN || v.isInfinite then mismatch("finite decimal", FloatValue(v))
+                if v.isNaN || v.isInfinite then throw TypeMismatchException(Seq.empty, "finite decimal", "float")(using _frame)
                 else BigDecimal(v)
-            case other => mismatch("decimal", other)
+            case other => mismatch(Codec.Kind.Number, other)
 
     def instant(): java.time.Instant =
         value match
             case TimestampValue(v) => v
-            case other             => mismatch("timestamp", other)
+            case other             => mismatch(Codec.Kind.Timestamp, other)
 
     def duration(): java.time.Duration =
         value match
@@ -234,8 +237,8 @@ final class IonBinaryReader private (
                 }
                 (seconds, nanos) match
                     case (Maybe.Present(s), Maybe.Present(n)) => java.time.Duration.ofSeconds(s, n.toLong)
-                    case _                                    => mismatch("Duration struct", value)
-            case other => mismatch("Duration struct", other)
+                    case _                                    => mismatch(Codec.Kind.Duration, value)
+            case other => mismatch(Codec.Kind.Duration, other)
         end match
     end duration
 
@@ -286,10 +289,10 @@ final class IonBinaryReader private (
     private def integer(): BigInt =
         value match
             case IntValue(v) => v
-            case other       => mismatch("int", other)
+            case other       => mismatch(Codec.Kind.Number, other)
 
-    private def mismatch(expected: String, actual: IonBinaryValue): Nothing =
-        throw TypeMismatchException(Seq.empty, expected, actual.display)(using _frame)
+    private def mismatch(expected: Codec.Kind, actual: IonBinaryValue): Nothing =
+        throw Codec.kindMismatch(expected, actual.kind)(using _frame)
 
     private def skipValue(v: IonBinaryValue): Unit =
         v match

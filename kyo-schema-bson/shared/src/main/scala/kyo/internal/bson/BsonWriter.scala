@@ -3,6 +3,7 @@ package kyo.internal.bson
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec
+import kyo.Frame
 import kyo.OrderedDict
 import kyo.OrderedDictBuilder
 import kyo.SchemaNotSerializableException
@@ -10,15 +11,18 @@ import kyo.Span
 import kyo.discard
 import scala.collection.mutable
 
-final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
+final class BsonWriter(config: kyo.Bson.Config)(using site: Frame) extends Codec.Writer:
     import BsonFormat.*
+
+    override def frame: Frame = site
     import BsonValue.*
 
     private val KindDocument: 1 = 1
     private val KindArray: 2    = 2
     private type FrameKind = KindDocument.type | KindArray.type
 
-    override def codecName: String = "Bson"
+    override def codecName: String         = "Bson"
+    override def isSelfDescribing: Boolean = true
 
     final private class WriteFrame(val kind: FrameKind):
         val fields: OrderedDictBuilder[String, BsonValue] = OrderedDictBuilder.init[String, BsonValue]
@@ -260,10 +264,10 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     end writeLE64
 
     private def invalid(message: String): Nothing =
-        throw SchemaNotSerializableException(message)(using kyo.Frame.internal)
+        throw SchemaNotSerializableException(message)(using site)
     end invalid
 
 end BsonWriter
 
 object BsonWriter:
-    def apply(config: kyo.Bson.Config = kyo.Bson.Config.Default): BsonWriter = new BsonWriter(config)
+    def apply(config: kyo.Bson.Config = kyo.Bson.Config.Default)(using Frame): BsonWriter = new BsonWriter(config)

@@ -18,13 +18,59 @@ import kyo.Codec.Writer
   * @see
   *   [[kyo.Structure.Value]] for the value tree data model
   */
-final class StructureValueWriter extends Writer:
+final class StructureValueWriter(target: Maybe[Writer], positionalPayload: Boolean)(using site: Frame) extends Writer:
+
+    def this(target: Maybe[Writer])(using Frame) = this(target, false)
+    def this()(using Frame) = this(Maybe.empty, false)
+
+    override def frame: Frame = site
+
+    // A positional sum's payload is the record directly inside the root variant frame. A variant schema with transforms decides its
+    // omissions against this writer before the payload opens, and materializes its record into a writer of its own, whose root asks
+    // this one; a record nested deeper keeps its fields by name and may omit them.
+    override private[kyo] def writesEveryField: Boolean =
+        def payloadLevel(below: List[StackFrame]): Boolean =
+            below match
+                case (_: VariantFrame) :: Nil => positionalPayload
+                case Nil                      => target.exists(_.writesEveryField)
+                case _                        => false
+        stack match
+            case (_: ObjectFrame) :: below => payloadLevel(below)
+            case below                     => payloadLevel(below)
+        end match
+    end writesEveryField
+
+    // A tree built to be replayed into `target` is subject to `target`'s capabilities: a nested schema's representation and transform
+    // checks run against this writer during materialization, and must refuse exactly what the real codec would refuse. A tree with no
+    // target is the value itself, and a Structure.Value holds any shape.
+    override def canWriteTopLevelNonObject: Boolean = target.forall(_.canWriteTopLevelNonObject)
+    override def isSelfDescribing: Boolean          = target.forall(_.isSelfDescribing)
+    override def capabilities: Codec.Capabilities   = target.map(_.capabilities).getOrElse(super.capabilities)
+    override def codecName: String                  = target.map(_.codecName).getOrElse(super.codecName)
+
+    // A nested schema installs its field-id pins on this writer while it writes its record, and a replay can only apply them if it
+    // knows which record they belong to: each object frame keeps the pins active when it opened, and the finished record is
+    // recorded with them, by identity, as the map framing below is.
+    override def supportsFieldIdOverrides: Boolean                            = target.exists(_.supportsFieldIdOverrides)
+    private var fieldIdOverrides: Map[String, Int]                            = Map.empty
+    override def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
+        fieldIdOverrides = overrides
+        this
+    override def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
+
+    private var fieldIdOverridden: List[(Structure.Value, Map[String, Int])] = Nil
+
+    /** The record nodes in [[getResult]] written while a schema's field-id pins were installed, with those pins, for a caller
+      * replaying this tree through `SchemaSerializer.writeStructureValue`.
+      */
+    private[kyo] def fieldIdOverriddenNodes: List[(Structure.Value, Map[String, Int])] = fieldIdOverridden
 
     sealed private trait StackFrame
     private case class ObjectFrame(
         name: String,
         var currentField: String,
-        fields: scala.collection.mutable.ListBuffer[(String, Structure.Value)]
+        fields: scala.collection.mutable.ListBuffer[(String, Structure.Value)],
+        fieldIdOverrides: Map[String, Int]
     ) extends StackFrame
     private case class ArrayFrame(elements: scala.collection.mutable.ListBuffer[Structure.Value]) extends StackFrame
     private case class VariantFrame(name: String, var value: Structure.Value)                     extends StackFrame
@@ -74,13 +120,15 @@ final class StructureValueWriter extends Writer:
     end addValue
 
     def objectStart(name: String, size: Int): Unit =
-        stack = ObjectFrame(name, "", scala.collection.mutable.ListBuffer.empty) :: stack
+        stack = ObjectFrame(name, "", scala.collection.mutable.ListBuffer.empty, fieldIdOverrides) :: stack
 
     def objectEnd(): Unit =
         stack match
             case (f: ObjectFrame) :: rest =>
                 stack = rest
-                addValue(Structure.Value.Record(Chunk.from(f.fields)))
+                val record = Structure.Value.Record(Chunk.from(f.fields))
+                if f.fieldIdOverrides.nonEmpty then fieldIdOverridden = (record, f.fieldIdOverrides) :: fieldIdOverridden
+                addValue(record)
             case _ =>
                 bug("StructureValueWriter.objectEnd/fieldBytes: no active object frame")
     end objectEnd

@@ -15,7 +15,7 @@ import scala.annotation.targetName
   */
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
     /** Creates a YAML writer using this codec instance's writer configuration. */
-    def newWriter(): Codec.Writer = kyo.internal.yaml.YamlWriter(writerConfig)
+    def newWriter()(using Frame): Codec.Writer = kyo.internal.yaml.YamlWriter(writerConfig)
 
     /** Creates a direct YAML reader over UTF-8 input bytes. */
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =

@@ -224,7 +224,7 @@ final private[kyo] class JsIoDriver private (
       * `socket.write` accepted the bytes. `end()` flushes that output and then sends the FIN; `finish` is Node's signal that every accepted
       * write reached the underlying socket, and the destroy follows it.
       *
-      * The wait is bounded by the handle's `peerCloseGrace`, the window the transport already grants a peer that has stopped reading: a
+      * The wait is bounded by the handle's `closeFlushGrace`, the window a closing connection grants a peer that has stopped reading: a
       * peer that never drains never lets the output finish, and the socket is destroyed regardless when the window ends. `Duration.Infinity`
       * (stdio, whose shim owns no socket) arms no timer. An abort keeps the immediate destroy: the upgrade abandon, the handshake deadline
       * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
@@ -239,8 +239,8 @@ final private[kyo] class JsIoDriver private (
             def destroyNow(): Unit =
                 if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
             val settle: js.Function0[Unit] =
-                if handle.peerCloseGrace.isFinite then
-                    val timer = handle.clock.unsafe.sleep(handle.peerCloseGrace)
+                if handle.closeFlushGrace.isFinite then
+                    val timer = handle.clock.unsafe.sleep(handle.closeFlushGrace)
                     timer.onComplete(_ => destroyNow())
                     () =>
                         destroyNow()

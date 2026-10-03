@@ -964,7 +964,7 @@ A test must pass or fail on the code's behavior, never on how fast the machine r
 - **Ordering / monotonicity**: `assert(b >= a)` across successive reads, or that entries arrived in order.
 - **State / count**: `assert(consumed + remaining == total)`, `assert(peerClosedFlag)`.
 
-**Virtual time** (`Clock.withTimeControl`): the clock advances only when the test tells it to, so sleeps, delays, timeouts, schedules, and stopwatches become exact. Drive a sleeping effect by forking it alongside an advancer and joining; assert exact durations (`elapsed == 5.seconds`, never `>= 5.seconds`). `TimeControl` gives `set`, `advance`, and `awaitPendingSleepers(n)` (advance only after `n` sleepers register, so the tick count is exact rather than a function of interleaving).
+**Virtual time** (`Clock.withTimeControl`): the clock advances only when the test tells it to, so sleeps, delays, timeouts, schedules, and stopwatches become exact. Drive a sleeping effect by forking it alongside an advancer and joining; assert exact durations (`elapsed == 5.seconds`, never `>= 5.seconds`). `TimeControl` gives `set`, `advance`, `awaitPendingSleepers(n)` (advance only after `n` sleepers register, so the tick count is exact rather than a function of interleaving), and `awaitPendingSleeper(duration)` (advance only after the sleep armed for that duration registers). When other timers can share the clock (a request deadline, a pool's idle timer), fence on the duration: any of them satisfies a count before the sleep under test is armed.
 
 ```scala
 Clock.withTimeControl { control =>

@@ -611,12 +611,15 @@ final private[net] class IoUringDriver private[posix] (
       * Both the tail and the guard are mutated only on the engine FIFO worker, so they are single-owner and never race.
       */
     private def writeRaw(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe, Frame): WriteResult =
+        val queued = data.size - offset
+        handle.queueWrite(queued)
         submitEngineOp { () =>
             // endWrite is called inside this FIFO thunk after the append+flush, keeping the write guard held until they finish: a concurrent
             // closeHandle defers freeResources (which clears the pending tail) until this endWrite fires, so the tail is never cleared while
             // the flush reads it. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op.
             try
-                appendRaw(handle, data, offset)
+                try appendRaw(handle, data, offset)
+                finally handle.landQueuedWrite(queued)
                 flushRaw(handle)
             finally discard(handle.endWrite())
             end try
@@ -721,12 +724,15 @@ final private[net] class IoUringDriver private[posix] (
       * worker (the reap enqueues the re-flush as an engine op), so the tail is touched by exactly one carrier.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
+        handle.queueWrite(data.size)
         submitEngineOp { () =>
             // endWrite is called inside this FIFO thunk after the engine ops, keeping the write guard held until the engine is done: a
             // concurrent closeHandle defers the engine free until this endWrite fires, so the engine is never freed while writePlain /
             // drainCiphertext run. The send SQE submitted below reaps asynchronously; its CQE re-flush runs as a SEPARATE later engine op.
             try
-                val ok = encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n))
+                val ok =
+                    try encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n))
+                    finally handle.landQueuedWrite(data.size)
                 if ok then flushTls(handle)
             finally discard(handle.endWrite())
             end try

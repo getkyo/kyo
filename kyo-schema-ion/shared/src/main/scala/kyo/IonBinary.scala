@@ -8,7 +8,7 @@ import kyo.internal.ionbinary.IonBinaryWriter
   * Ion Binary is a self-describing binary encoding for Ion values. This entry point exposes the public binary codec surface.
   */
 final class IonBinary extends Codec:
-    def newWriter(): Codec.Writer = IonBinaryWriter()
+    def newWriter()(using Frame): Codec.Writer = IonBinaryWriter()
 
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         IonBinaryReader(input)

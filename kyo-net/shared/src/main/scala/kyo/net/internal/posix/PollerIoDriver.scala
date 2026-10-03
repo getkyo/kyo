@@ -1102,6 +1102,7 @@ final private[net] class PollerIoDriver private[posix] (
       * queued after it runs.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
+        handle.queueWrite(data.size)
         submitEngineOp { () =>
             // A failed acquire means the handle was closed before this op got a turn (or this op was stranded and force-discharged by a
             // terminal sweep): silently skip the write rather than touching the (possibly freed) engine/buffers. The caller already saw
@@ -1111,10 +1112,12 @@ final private[net] class PollerIoDriver private[posix] (
                     // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then
                     // send as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the
                     // io_uring driver; the inline send + writability re-arm below are the poller's send mechanism.
-                    discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    try discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    finally handle.landQueuedWrite(data.size)
                     flushPending(handle)
                 finally discard(handle.endWrite())
                 end try
+            else handle.landQueuedWrite(data.size)
             end if
         }
         // The pump always sees Done; the actual send runs on the FIFO worker carrier after engine ops complete.
@@ -1576,16 +1579,12 @@ final private[net] class PollerIoDriver private[posix] (
                 // gone, so nothing else can touch the poll-fiber-confined maps closeTeardown clears.
                 if teardownComplete.get() && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed)
             else
-                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
-                closeTeardown(closed)
+                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch, and this carrier runs the
+                // terminal exit itself. Its final drain and pending-close sweeps are what discharge work queued before this close: a TLS
+                // closeHandle's fd close and the writes ahead of it sit on the engine FIFO, and no other consumer will ever run them.
+                terminalTeardown()
                 backend.close(pollerFd)
                 freeScratch()
-                // Mark the teardown finished on this path too. No loop ever ran, so drainFifos will never run either, which is exactly
-                // what these flags are read to mean: submitEngineOp's recheck drains a late op here instead of leaving it queued for a
-                // consumer that does not exist, and closeHandle self-closes inline instead of deferring to that same absent consumer.
-                terminal.set(true)
-                teardownComplete.set(true)
-                sweepPendingWithdrawals()
             end if
         end if
     end close
