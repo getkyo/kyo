@@ -93,6 +93,9 @@ final private[net] class PosixHandle private (
       */
     @volatile var peerCloseGrace: Duration = Duration.Infinity
 
+    /** Close-flush grace window (see [[kyo.net.NetConfig.closeFlushGrace]]), on the handle for the same reason as [[peerCloseGrace]]. */
+    @volatile var closeFlushGrace: Duration = Duration.Infinity
+
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
       * buffer; its CQE then lands on an already-settled (cancelled) promise and the bytes would be lost, hanging the handshake. While

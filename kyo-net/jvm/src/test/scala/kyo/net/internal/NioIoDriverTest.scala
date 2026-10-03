@@ -38,7 +38,7 @@ class NioIoDriverTest extends Test:
     def withDriverAndHandle[A](bufferSize: Int = 4096)(body: (NioIoDriver, NioHandle, SocketChannel) => A): A =
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, bufferSize, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, bufferSize, Duration.Infinity, Duration.Infinity, Frame.internal)
         given Frame      = Frame.internal
         try
             driver.registerChannel(handle)
@@ -195,7 +195,7 @@ class NioIoDriverTest extends Test:
         val ch     = SocketChannel.open()
         ch.configureBlocking(false)
         try
-            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
             assert(result)
             succeed
@@ -213,7 +213,7 @@ class NioIoDriverTest extends Test:
         val ch = SocketChannel.open()
         ch.configureBlocking(false)
         try
-            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
             assert(!result)
             succeed
@@ -228,7 +228,7 @@ class NioIoDriverTest extends Test:
         ch.configureBlocking(false)
         ch.close()
         try
-            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Frame.internal)
+            val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             val result = driver.registerChannel(handle)
             assert(!result)
             succeed
@@ -262,7 +262,7 @@ class NioIoDriverTest extends Test:
     "write returns Error after channel is closed" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         client.close()
         sv.close()
@@ -285,7 +285,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -313,7 +313,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -351,7 +351,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -381,7 +381,7 @@ class NioIoDriverTest extends Test:
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
         val bufSize      = 64
-        val handle       = NioHandle.init(client, bufSize, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, bufSize, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -408,7 +408,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 65536, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 65536, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -445,7 +445,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -632,7 +632,7 @@ class NioIoDriverTest extends Test:
     "staged grace-probe bytes racing a fresh read arm are never stranded" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         stagingRaceLoop(driver, handle, sv, identity)
     }
 
@@ -642,7 +642,7 @@ class NioIoDriverTest extends Test:
         val (client, sv)                 = openLoopbackPair()
         // The handle unwraps with the server engine; the raw test peer encrypts with the client engine, so the probe stages ciphertext and
         // delivery must route it through the engine gate, the TLS arm of the staged handoff.
-        val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Frame.internal)
+        val handle = NioHandle.initTls(client, 4096, serverEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
         stagingRaceLoop(driver, handle, sv, wrapRecord(clientEngine, _))
     }
 
@@ -665,7 +665,7 @@ class NioIoDriverTest extends Test:
     "an awaitRead armed after detachForUpgrade is failed, not stranded" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         Sync.ensure(Sync.defer {
@@ -701,7 +701,7 @@ class NioIoDriverTest extends Test:
     "a read consumed into upgrade salvage is failed by detach, not stranded" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         val flight = Array[Byte](1, 2, 3)
@@ -752,7 +752,7 @@ class NioIoDriverTest extends Test:
     "a read arm racing detachForUpgrade is never stranded" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         val iterations = 400
@@ -812,7 +812,7 @@ class NioIoDriverTest extends Test:
     "a deferred arm whose wakeup raced the selector rebuild is applied after the swap" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         Sync.ensure(Sync.defer {
             sv.close()
@@ -838,7 +838,7 @@ class NioIoDriverTest extends Test:
     "an arm during a pre-detach upgrade window is not spuriously failed" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         Sync.ensure(Sync.defer {
@@ -855,7 +855,7 @@ class NioIoDriverTest extends Test:
             // A second registered handle whose peer writes exposes the arm to the poll carrier: its read completes in dispatchReadyKeys, the LAST
             // step of a cycle body, so its completion proves one full cycle ran with the pre-CAS arm registered, past any path that could spuriously fail it.
             val (barrierClient, barrierPeer) = openLoopbackPair()
-            val barrier                      = NioHandle.init(barrierClient, 4096, Duration.Infinity, Frame.internal)
+            val barrier                      = NioHandle.init(barrierClient, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             driver.registerChannel(barrier)
             Sync.ensure(Sync.defer {
                 barrierPeer.close()
@@ -888,7 +888,7 @@ class NioIoDriverTest extends Test:
     "a stray arm after the upgrade sweep does not disturb the armed producer" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         Sync.ensure(Sync.defer {
@@ -933,7 +933,7 @@ class NioIoDriverTest extends Test:
     "a read consumed by the upgrade producer dispatch is failed, not stranded" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
         val flight = Array[Byte](0x16, 3, 3, 0, 1)
@@ -984,7 +984,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         discard(driver.start())
 
@@ -1008,7 +1008,7 @@ class NioIoDriverTest extends Test:
         val driver  = NioIoDriver.init()
         val ch      = SocketChannel.open()
         ch.configureBlocking(false)
-        val handle = NioHandle.init(ch, 4096, Duration.Infinity, Frame.internal)
+        val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         val p1 = new IOPromise[Closed, Unit]
@@ -1038,7 +1038,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         val p = new IOPromise[Closed, ReadOutcome]
@@ -1064,7 +1064,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
         driver.cancel(handle)
         driver.cancel(handle) // must not throw
@@ -1102,7 +1102,7 @@ class NioIoDriverTest extends Test:
         val driver = NioIoDriver.init()
         discard(driver.start())
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         Sync.ensure(Sync.defer {
             sv.close()
             driver.close()
@@ -1129,7 +1129,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         val p = new IOPromise[Closed, ReadOutcome]
@@ -1151,7 +1151,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         val p = new IOPromise[Closed, ReadOutcome]
@@ -1276,7 +1276,7 @@ class NioIoDriverTest extends Test:
         // Use a small buffer size so the oversized path is exercised
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 16, Duration.Infinity, Frame.internal) // tiny buffer
+        val handle       = NioHandle.init(client, 16, Duration.Infinity, Duration.Infinity, Frame.internal) // tiny buffer
         driver.registerChannel(handle)
         try
             val bigData = Span.fromUnsafe(Array.fill[Byte](8192)(42))
@@ -1309,7 +1309,7 @@ class NioIoDriverTest extends Test:
 
             // Open a real loopback pair to generate a real ready key.
             val (client, sv) = openLoopbackPair()
-            val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+            val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             driver.registerChannel(handle)
 
             val p = new kyo.scheduler.IOPromise[Closed, ReadOutcome]
@@ -1380,8 +1380,8 @@ class NioIoDriverTest extends Test:
             // Part 3: with the guard active. Register the same channels on the driver, start the event
             // loop, then make one channel ready and verify the event is delivered (post-rebuild
             // correctness: the new selector still dispatches real readiness).
-            val handleA = NioHandle.init(clientA, 4096, Duration.Infinity, Frame.internal)
-            val handleB = NioHandle.init(clientB, 4096, Duration.Infinity, Frame.internal)
+            val handleA = NioHandle.init(clientA, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
+            val handleB = NioHandle.init(clientB, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             driver.registerChannel(handleA)
             driver.registerChannel(handleB)
             discard(driver.start())
@@ -1418,7 +1418,7 @@ class NioIoDriverTest extends Test:
         given Frame       = Frame.internal
         val driver        = NioIoDriver.init()
         val (client, sv)  = openLoopbackPair()
-        val handle        = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle        = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         val serverChannel = ServerSocketChannel.open()
         serverChannel.configureBlocking(false)
         serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
@@ -1461,7 +1461,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         val pr = new IOPromise[Closed, ReadOutcome]
@@ -1525,7 +1525,7 @@ class NioIoDriverTest extends Test:
             // Part 2: real event loop. The wakeup guard must not suppress valid wakeups that
             // are needed to deliver real readiness events to promises.
             val (client, sv) = openLoopbackPair()
-            val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+            val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
             driver.registerChannel(handle)
             discard(driver.start())
 
@@ -1573,7 +1573,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         driver.registerChannel(handle)
 
         try
@@ -1652,7 +1652,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         try
             // Initial registration creates a live key.
             assert(driver.registerChannel(handle))
@@ -1711,7 +1711,7 @@ class NioIoDriverTest extends Test:
         val driver  = NioIoDriver.init()
         val ch      = SocketChannel.open()
         ch.configureBlocking(false)
-        val handle = NioHandle.init(ch, 4096, Duration.Infinity, Frame.internal)
+        val handle = NioHandle.init(ch, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         try
             driver.registerChannel(handle)
             // Pre-set the coalescing condition: an in-flight wakeup is pending, so any GUARDED wakeup would coalesce away.
@@ -1751,7 +1751,7 @@ class NioIoDriverTest extends Test:
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
-        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Frame.internal)
+        val handle       = NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal)
         try
             // Live registration + an armed connect, so OP_CONNECT is recorded in the pending-op map (the source of truth the deferred drain reads).
             assert(driver.registerChannel(handle))
@@ -1798,7 +1798,7 @@ class NioIoDriverTest extends Test:
         val driver   = NioIoDriver.init()
         val n        = 8
         val pairs    = Array.fill(n)(openLoopbackPair())
-        val handles  = pairs.map { case (client, _) => NioHandle.init(client, 4096, Duration.Infinity, Frame.internal) }
+        val handles  = pairs.map { case (client, _) => NioHandle.init(client, 4096, Duration.Infinity, Duration.Infinity, Frame.internal) }
         val promises = Array.fill(n)(new IOPromise[Closed, ReadOutcome])
         try
             var i = 0
