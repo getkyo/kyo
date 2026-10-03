@@ -202,7 +202,7 @@ final private[net] class PosixTransport private[posix] (
       * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
       * fds 0/1 (the process owns them).
       */
-    override def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    override def stdio(channelCapacity: kyo.net.NetConfig.Size, readChunkSize: ByteSize)(using
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
@@ -211,8 +211,8 @@ final private[net] class PosixTransport private[posix] (
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
             Fiber.Unsafe.init {
-                val handle           = PosixHandle.stdio(readChunkSize, frame)
-                val conn: Connection = openWith(handle, selectDriver(handle.readFd), channelCapacity)
+                val handle           = PosixHandle.stdio(kyo.net.NetConfig.bytesAtUse(readChunkSize), frame)
+                val conn: Connection = openWith(handle, selectDriver(handle.readFd), channelCapacity.value)
                 if !conn.start() then
                     // Unreachable: openWith (:211-217) registers the connection nowhere a concurrent close could reach before start() runs
                     // immediately above, so the Created -> Established CAS cannot lose here. Defensive assertion, not a reachable path.
@@ -251,21 +251,20 @@ final private[net] class PosixTransport private[posix] (
     // ---------------------------------------------------------------------------------------------------------------------------------------
 
     /** Connect a non-blocking TCP socket to `host:port` and complete with an open plaintext [[Connection]]. */
-    def connect(host: String, port: Int, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connect(host: String, port: Int, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        connectResolving(host, port, nodelay = true, tls = Absent, connectTimeout = connectTimeout, config = config)
+        connectResolving(host, port, nodelay = true, tls = Absent, connectTimeout = connectTimeout.duration, config = config)
     end connect
 
     /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
-    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(
+        using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        connectResolving(host, port, nodelay = true, tls = Present((tls, host)), connectTimeout = connectTimeout, config = config)
+        connectResolving(host, port, nodelay = true, tls = Present((tls, host)), connectTimeout = connectTimeout.duration, config = config)
     end connectTls
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
@@ -307,11 +306,10 @@ final private[net] class PosixTransport private[posix] (
     /** Connect a non-blocking Unix-domain socket to `path` and complete with an open plaintext [[Connection]] (no `TCP_NODELAY`). A Unix path
       * needs no name resolution, so the encoded `sockaddr` is built inline and handed straight to [[connectImpl]] with no resolver fiber.
       */
-    def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connectUnix(path: String, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection]
         connectImpl(
             SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).map((b, l) => (PosixConstants.AF_UNIX, b, l)),
@@ -321,7 +319,7 @@ final private[net] class PosixTransport private[posix] (
             port = -1, // sentinel: a Unix socket has no port; connectFail routes port < 0 to NetUnixConnectException
             tls = Absent,
             promise = promise,
-            connectTimeout = connectTimeout,
+            connectTimeout = connectTimeout.duration,
             config = config
         )
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
@@ -448,8 +446,13 @@ final private[net] class PosixTransport private[posix] (
                     val driver = pool.next()
                     // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read on
                     // this connection uses it without the config having to be reachable from the handle.
-                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)), createdAt = frame)
-                    handle.peerCloseGrace = config.peerCloseGrace
+                    val handle = PosixHandle.socket(
+                        fd,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        connectTarget = Present((addr, len)),
+                        createdAt = frame
+                    )
+                    handle.peerCloseGrace = config.peerCloseGrace.duration
                     handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
                     // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
@@ -667,7 +670,7 @@ final private[net] class PosixTransport private[posix] (
         handle.connectDeadlineDisarm.foreach(_())
         handle.connectDeadlineDisarm = Absent
         tls match
-            case Absent               => completeConnect(handle, driver, promise, config.channelCapacity)
+            case Absent               => completeConnect(handle, driver, promise, config.channelCapacity.value)
             case Present((cfg, host)) =>
                 // buildEngine can throw a NetTlsException (an unavailable pinned provider, an unreadable PEM, or an SSL context/engine init
                 // failure; and on the JDK floor provider, a verifying client with no reference identity, i.e. an empty connect host), so a
@@ -721,8 +724,8 @@ final private[net] class PosixTransport private[posix] (
                 // winner interrupts the loser's timer. The teardown goes through submitEngineOp for the same UAF reason the registered
                 // obligation above does: it must be serialized against any handshake step already in flight on the engine FIFO.
                 // `Duration.Infinity` arms no timer at all.
-                if cfg.handshakeTimeout.isFinite then
-                    val deadline = Clock.live.unsafe.sleep(cfg.handshakeTimeout)
+                if cfg.handshakeTimeout.duration.isFinite then
+                    val deadline = Clock.live.unsafe.sleep(cfg.handshakeTimeout.duration)
                     deadline.onComplete { _ =>
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
@@ -730,7 +733,11 @@ final private[net] class PosixTransport private[posix] (
                                 reaped.set(true)
                                 closeUnwiredHandle(handle, driver, connectPhase = false)
                                 engine.free()
-                                promise.completeDiscard(Result.fail(NetTlsHandshakeTimeoutException(host, port, cfg.handshakeTimeout)))
+                                promise.completeDiscard(Result.fail(NetTlsHandshakeTimeoutException(
+                                    host,
+                                    port,
+                                    cfg.handshakeTimeout.duration
+                                )))
                             }
                     }
                     // The handshake settled first: interrupt the timer so it never fires.
@@ -745,7 +752,7 @@ final private[net] class PosixTransport private[posix] (
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
                             handle.tls = Present(engine)
-                            completeConnect(handle, driver, promise, config.channelCapacity),
+                            completeConnect(handle, driver, promise, config.channelCapacity.value),
                     onFailed = cause =>
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
@@ -788,7 +795,7 @@ final private[net] class PosixTransport private[posix] (
         // capacity the originating connect asked for, with no config stored on the connection itself.
         connection.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(connection, cfg, channelCapacity)
+            upgradeConnection(connection, cfg, channelCapacity)
         }
         installCertHash(connection, handle)
         // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
@@ -1030,7 +1037,13 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         discard(acceptLoopsActive.incrementAndGet())
         val driver = pool.next()
-        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
+        val handle =
+            PosixHandle.socket(
+                listener.serverFd,
+                kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                connectTarget = Absent,
+                createdAt = listener.createdAt
+            )
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
         // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
@@ -1158,12 +1171,17 @@ final private[net] class PosixTransport private[posix] (
         if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
         else
             val driver = pool.next()
-            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
-            handle.peerCloseGrace = config.peerCloseGrace
+            val handle = PosixHandle.socket(
+                clientFd,
+                kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                connectTarget = Absent,
+                createdAt = listener.createdAt
+            )
+            handle.peerCloseGrace = config.peerCloseGrace.duration
             handle.driver = driver
             tls match
                 case Absent =>
-                    spawnHandler(openWith(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity)
+                    spawnHandler(openWith(handle, driver, config.channelCapacity.value), driver, handler, config.channelCapacity.value)
                 case Present(cfg) =>
                     val engine =
                         try buildEngine(cfg, "", isServer = true)
@@ -1229,7 +1247,7 @@ final private[net] class PosixTransport private[posix] (
                     val handshakeTokenRef = new java.util.concurrent.atomic.AtomicLong(0L)
                     val armed             = armHandshakeDeadline(
                         clientFd,
-                        cfg.handshakeTimeout,
+                        cfg.handshakeTimeout.duration,
                         () =>
                             unregisterHandshake(handshakeTokenRef.get()); handle.driver.submitEngineOp(() => teardown())
                     )
@@ -1251,7 +1269,12 @@ final private[net] class PosixTransport private[posix] (
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
                                 handle.tls = Present(engine)
-                                spawnHandler(openWith(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity),
+                                spawnHandler(
+                                    openWith(handle, driver, config.channelCapacity.value),
+                                    driver,
+                                    handler,
+                                    config.channelCapacity.value
+                                ),
                         onFailed = cause =>
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
@@ -1340,7 +1363,7 @@ final private[net] class PosixTransport private[posix] (
         connection.isServerOrigin = true
         connection.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(connection, cfg, channelCapacity)
+            upgradeConnection(connection, cfg, channelCapacity)
         }
         installCertHash(connection, connection.handle)
         // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
@@ -1401,8 +1424,8 @@ final private[net] class PosixTransport private[posix] (
       * (see setsockopt(7) SO_RCVBUF). Both options are best-effort: a failure does not abort the connection. Absent leaves the kernel default.
       */
     private def applySocketBuffers(fd: Int, config: kyo.net.NetConfig)(using AllowUnsafe): Unit =
-        config.soRcvBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF, sz))
-        config.soSndBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF, sz))
+        config.soRcvBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF, kyo.net.NetConfig.bytesAtUse(sz)))
+        config.soSndBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF, kyo.net.NetConfig.bytesAtUse(sz)))
 
     /** Set `SO_REUSEADDR` on a listen socket so repeated binds do not trip `TIME_WAIT`. */
     private def setReuseAddr(fd: Int)(using AllowUnsafe): Unit =
@@ -1577,6 +1600,13 @@ final private[net] class PosixTransport private[posix] (
     def upgradeToTls(
         conn: Connection,
         tls: NetTlsConfig,
+        channelCapacity: kyo.net.NetConfig.Size
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        upgradeConnection(conn, tls, channelCapacity.value)
+
+    private def upgradeConnection(
+        conn: Connection,
+        tls: NetTlsConfig,
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         // The TLS role follows the connection's TCP origin: an accepted connection upgrades as the TLS server, a connected one as the client.
@@ -1586,7 +1616,7 @@ final private[net] class PosixTransport private[posix] (
             case ic: InternalConnection[?] @unchecked => ic.isServerOrigin
             case _                                    => false
         upgradeRole(conn, tls, channelCapacity, isServer = isServer)
-    end upgradeToTls
+    end upgradeConnection
 
     /** STARTTLS upgrade for the given role. The public `upgradeToTls` is the client (`isServer = false`) STARTTLS path; the server-accept role
       * shares every step (detach, feed staged ciphertext, drive the handshake, rebuild over the same fd) and differs only in the engine the
@@ -1756,8 +1786,8 @@ final private[net] class PosixTransport private[posix] (
                             // The teardown rides submitEngineOp for the same UAF reason the registered obligation above does. There is no fresh
                             // connect port for an upgrade, so the leaf carries -1, matching the convention the handshake-failure leaf uses here.
                             // `Duration.Infinity` arms no timer.
-                            if tls.handshakeTimeout.isFinite then
-                                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+                            if tls.handshakeTimeout.duration.isFinite then
+                                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout.duration)
                                 deadline.onComplete { _ =>
                                     if handshakeDisarm() then
                                         unregisterHandshake(handshakeToken)
@@ -1765,7 +1795,11 @@ final private[net] class PosixTransport private[posix] (
                                             reaped.set(true)
                                             releaseFailedUpgrade(handle, engine)
                                             out.completeDiscard(Result.fail(
-                                                NetTlsHandshakeTimeoutException(upgradeHost(tls, isServer), -1, tls.handshakeTimeout)
+                                                NetTlsHandshakeTimeoutException(
+                                                    upgradeHost(tls, isServer),
+                                                    -1,
+                                                    tls.handshakeTimeout.duration
+                                                )
                                             ))
                                         }
                                 }
@@ -1966,7 +2000,7 @@ final private[net] class PosixTransport private[posix] (
         upgraded.isServerOrigin = isServer
         upgraded.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(upgraded, cfg, channelCapacity)
+            upgradeConnection(upgraded, cfg, channelCapacity)
         }
         installCertHash(upgraded, upgraded.handle)
     end wireUpgraded

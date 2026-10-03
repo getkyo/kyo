@@ -36,7 +36,7 @@ class TransportStartTlsTest extends Test:
                     Abort.run[Closed] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
-                                transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                transport.upgradeToTls(serverConn, serverTls, NetConfig.Size(16)).safe.get.flatMap { tlsConn =>
                                     Loop.foreach {
                                         tlsConn.inbound.safe.take.flatMap { data =>
                                             tlsConn.outbound.safe.put(data).andThen(Loop.continue)
@@ -65,7 +65,7 @@ class TransportStartTlsTest extends Test:
                 _        <- Scope.ensure(Sync.defer(conn.close()))
                 _        <- conn.outbound.safe.put(upgradeRequest)
                 _        <- conn.inbound.safe.take
-                tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                tlsConn  <- transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe.get
                 _        <- Scope.ensure(Sync.defer(tlsConn.close()))
                 _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
                 received <- tlsConn.inbound.safe.take
@@ -184,7 +184,7 @@ class TransportStartTlsTest extends Test:
                             conn    <- transport.connect("127.0.0.1", listener.port).safe.get
                             _       <- Scope.ensure(Sync.defer(conn.close()))
                             _       <- conn.outbound.safe.put(upgradeRequest)
-                            tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                            tlsConn <- transport.upgradeToTls(conn, cli, NetConfig.Size(16)).safe.get
                             _       <- Scope.ensure(Sync.defer(tlsConn.close()))
                             _       <- tlsConn.outbound.safe.put(Span.from("x".getBytes))
                             r       <- tlsConn.inbound.safe.take
@@ -229,9 +229,13 @@ class TransportStartTlsTest extends Test:
                     _ <- Scope.ensure(Sync.defer(conn.close()))
                     _ <- conn.outbound.safe.put(upgradeRequest)
                     _ <- conn.inbound.safe.take
-                    first = transport.upgradeToTls(conn, cli, 16).safe
+                    first = transport.upgradeToTls(conn, cli, NetConfig.Size(16)).safe
                     second <-
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(conn, cli, 16).safe.get))
+                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(
+                            conn,
+                            cli,
+                            NetConfig.Size(16)
+                        ).safe.get))
                     _ = conn.close()
                     firstOutcome <- Abort.run[NetException | Closed | Timeout](Async.timeout(10.seconds)(first.get))
                 yield
@@ -261,7 +265,7 @@ class TransportStartTlsTest extends Test:
                     _       <- Scope.ensure(Sync.defer(conn.close()))
                     _       <- conn.outbound.safe.put(upgradeRequest)
                     _       <- conn.inbound.safe.take
-                    tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                    tlsConn <- transport.upgradeToTls(conn, cli, NetConfig.Size(16)).safe.get
                     _       <- Scope.ensure(Sync.defer(tlsConn.close()))
                     plainOpen = conn.isOpen
                     tlsOpen   = tlsConn.isOpen
@@ -351,7 +355,7 @@ class TransportStartTlsTest extends Test:
                 _       <- Scope.ensure(Sync.defer(conn.close()))
                 _       <- conn.outbound.safe.put(upgradeRequest)
                 _       <- conn.inbound.safe.take
-                tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                tlsConn <- transport.upgradeToTls(conn, cli, NetConfig.Size(16)).safe.get
                 _       <- Scope.ensure(Sync.defer(tlsConn.close()))
                 _       <- tlsConn.outbound.safe.put(Span.from("hash-check".getBytes("UTF-8")))
                 _       <- tlsConn.inbound.safe.take
@@ -383,9 +387,13 @@ class TransportStartTlsTest extends Test:
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         Scope.ensure(Sync.defer(conn.close())).andThen {
                             val clientTls =
-                                NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
+                                NetTlsConfig(
+                                    trustAll = true,
+                                    sniHostname = Present("localhost"),
+                                    handshakeTimeout = 150.millis.handshakeTimeout
+                                )
                             Abort.run[NetException | Closed | Timeout](
-                                Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
+                                Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe.get)
                             ).map { outcome =>
                                 silentListener.close()
                                 outcome match
@@ -424,7 +432,7 @@ class TransportStartTlsTest extends Test:
                                 // The detach must find the ClientHello already staged: an empty plaintext channel would exercise the ordinary
                                 // upgrade path instead of the replay path this leaf covers.
                                 assertEventually(Sync.Unsafe.defer(serverConn.inbound.size().getOrElse(-1) >= 1)).andThen {
-                                    transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                    transport.upgradeToTls(serverConn, serverTls, NetConfig.Size(16)).safe.get.flatMap { tlsConn =>
                                         Loop.foreach {
                                             tlsConn.inbound.safe.take.flatMap { data =>
                                                 tlsConn.outbound.safe.put(data).andThen(Loop.continue)
@@ -442,7 +450,7 @@ class TransportStartTlsTest extends Test:
     "a STARTTLS server upgrading after the peer's first flight is already staged still round-trips (afterDetach replay-drop regression)" -
         eachBackendTls {
             (transport, serverTls, clientTls) =>
-                val fastFail = 5.seconds
+                val fastFail = 5.seconds.handshakeTimeout
                 val srvCfg   = serverTls.copy(handshakeTimeout = fastFail)
                 val cli      = clientTls.copy(sniHostname = Present("localhost"), handshakeTimeout = fastFail)
                 startTlsEchoServerAfterStaged(transport, srvCfg).map { listener =>

@@ -117,17 +117,17 @@ private[kyo] object OpenApiMacro:
                     opContext
                 )
 
-                // Build ResponseDef — find the first 2xx response using HttpStatus hierarchy
-                val (successStatus, successResponse) = operation.responses.toList
+                // Build ResponseDef from the first 2xx response
+                val (successCode, successResponse) = operation.responses.toList
                     .flatMap { case (key, resp) =>
-                        key.toIntOption.map(code => (kyo.HttpStatus(code), resp))
+                        key.toIntOption.map(code => (code, resp))
                     }
-                    .sortBy(_._1.code)
-                    .find(_._1.isSuccess)
+                    .sortBy(_._1)
+                    .find((code, _) => code >= 200 && code < 300)
                     .getOrElse(
                         operation.responses.get("default")
-                            .map(resp => (kyo.HttpStatus.Success.OK: kyo.HttpStatus, resp))
-                            .getOrElse((kyo.HttpStatus.Success.OK: kyo.HttpStatus, HttpOpenApi.Response("", None)))
+                            .map(resp => (kyo.HttpStatus.OK.code, resp))
+                            .getOrElse((kyo.HttpStatus.OK.code, HttpOpenApi.Response("", None)))
                     )
                 val jsonResponseJson =
                     for
@@ -135,7 +135,7 @@ private[kyo] object OpenApiMacro:
                         media   <- content.get("application/json")
                     yield media.json
 
-                val respTerm = buildResponseDef(jsonResponseJson, successStatus, opContext)
+                val respTerm = buildResponseDef(jsonResponseJson, successCode, opContext)
 
                 // Assemble HttpRoute
                 innerType(reqTerm) match
@@ -248,12 +248,12 @@ private[kyo] object OpenApiMacro:
     end buildRequestDef
 
     /** Builds a ResponseDef, optionally with a JSON body field. */
-    private def buildResponseDef(jsonJson: Option[HttpOpenApi.SchemaObject], status: kyo.HttpStatus, context: String = "")(using
+    private def buildResponseDef(jsonJson: Option[HttpOpenApi.SchemaObject], code: Int, context: String = "")(using
         Quotes
     ): quotes.reflect.Term =
         import quotes.reflect.*
 
-        val statusCode = Expr(status.code)
+        val statusCode = Expr(code)
         jsonJson match
             case None =>
                 '{ kyo.HttpRoute.ResponseDef[Any](kyo.HttpStatus($statusCode)) }.asTerm

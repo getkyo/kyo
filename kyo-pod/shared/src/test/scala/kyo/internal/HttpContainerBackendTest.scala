@@ -6,26 +6,27 @@ import kyo.crypto.*
 class HttpContainerBackendTest extends BasePodTest:
 
     "daemon deadline" - {
-        val floor = HttpContainerBackend.defaultDaemonTimeout
+        val floor          = HttpContainerBackend.defaultDaemonTimeout
+        val defaultTimeout = HttpClientConfig.TimeLimit.defaultTimeout
 
         "raises the client's default to the configured floor" in {
-            val deadline = HttpContainerBackend.daemonDeadline(floor, 5.seconds, Duration.Zero)
+            val deadline = HttpContainerBackend.daemonDeadline(floor, defaultTimeout, Duration.Zero).duration
             assert(deadline == floor, s"expected the floor $floor, got $deadline")
         }
 
         "keeps a caller's longer timeout" in {
             val longer   = floor + 1.minute
-            val deadline = HttpContainerBackend.daemonDeadline(floor, longer, Duration.Zero)
+            val deadline = HttpContainerBackend.daemonDeadline(floor, defaultTimeout.max(longer), Duration.Zero).duration
             assert(deadline == longer, s"expected the caller's $longer, got $deadline")
         }
 
         "adds a stop's grace window on top of the floor" in {
-            val deadline = HttpContainerBackend.daemonDeadline(floor, 5.seconds, 10.seconds)
+            val deadline = HttpContainerBackend.daemonDeadline(floor, defaultTimeout, 10.seconds).duration
             assert(deadline == floor + 10.seconds, s"expected ${floor + 10.seconds}, got $deadline")
         }
 
         "a backend config carries its own floor" in {
-            val deadline = HttpContainerBackend.daemonDeadline(2.minutes, 5.seconds, Duration.Zero)
+            val deadline = HttpContainerBackend.daemonDeadline(2.minutes, defaultTimeout, Duration.Zero).duration
             assert(deadline == 2.minutes, s"expected the configured 2 minutes, got $deadline")
         }
     }
@@ -298,15 +299,17 @@ class HttpContainerBackendTest extends BasePodTest:
             status: Int,
             body: String,
             auth: Maybe[ContainerImage.RegistryAuth] = Absent
-        )(using Frame): Result[ContainerException, Unit] < Sync =
+        )(using Frame): Result[ContainerException, Unit] < (Sync & Abort[HttpInvalidStatusException]) =
             val backend = new HttpContainerBackend("/unused.sock")
-            Abort.run[ContainerException](
-                backend.normalizePullError(
-                    HttpStatusException(HttpStatus(status), "POST", "http+unix://unused/images/create", body),
-                    pullImage,
-                    auth
+            Abort.get(HttpStatus.init(status)).map { httpStatus =>
+                Abort.run[ContainerException](
+                    backend.normalizePullError(
+                        HttpStatusException(httpStatus, "POST", "http+unix://unused/images/create", body),
+                        pullImage,
+                        auth
+                    )
                 )
-            )
+            }
         end classify
 
         // A real daemon response body, quoting the registry's own status.
@@ -375,6 +378,20 @@ class HttpContainerBackendTest extends BasePodTest:
                 assert(
                     result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
                     s"an explicit absence claim must still read as missing, got $result"
+                )
+            }
+        }
+
+        // Whatever status the daemon chose, a body reporting that its connection to the registry failed says nothing about the image,
+        // and must read as the registry fault the shell backend reports for the same failure.
+        "a failed connection to the registry quoted under a 4xx is a registry fault" in {
+            classify(
+                404,
+                """{"message":"Get \"https://auth.docker.io/token\": read tcp 172.17.0.2:41234->3.94.224.37:443: read: connection reset by peer"}"""
+            ).map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerRegistryUnavailableException]),
+                    s"a failed registry connection must not be classified as a missing image, got $result"
                 )
             }
         }

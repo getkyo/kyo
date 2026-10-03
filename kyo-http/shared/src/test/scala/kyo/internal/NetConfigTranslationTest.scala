@@ -81,14 +81,13 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
         }
 
         "default input differs from NetTlsConfig.default in the handshake deadline alone" in {
-            // The translator no longer decides the handshake deadline: the caller passes it, and kyo-http deliberately passes Infinity while
-            // kyo-net's own default is 30s. So the result cannot equal NetTlsConfig.default, and asserting it did would be asserting that the
-            // server's Infinity gets discarded. Full equality is still asserted, against the value the caller actually supplied, so any drift
-            // in the other ten fields still fails here.
+            // kyo-http passes Infinity where kyo-net's own default is 30s, so the result cannot equal NetTlsConfig.default; asserting it
+            // did would assert that the server's Infinity gets discarded. Full equality against the value passed still catches drift in
+            // the other ten fields.
             val handshakeTimeout = HttpTransportConfig.default.handshakeTimeout
             val result           = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, handshakeTimeout)
-            assert(handshakeTimeout == Duration.Infinity)
-            assert(result == NetTlsConfig.default.copy(handshakeTimeout = Duration.Infinity))
+            assert(handshakeTimeout == NetTlsConfig.HandshakeTimeout.unlimited)
+            assert(result == NetTlsConfig.default.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited))
         }
 
         "passing kyo-net's own default deadline reproduces NetTlsConfig.default exactly" in {
@@ -118,11 +117,11 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
         "copies the two connection-shape fields by name" in {
             val http = HttpTransportConfig.default
-                .channelCapacity(7)
-                .readChunkSize(2048)
+                .channelCapacity(NetConfig.Size(7))
+                .readChunkSize(2.kib)
             val result = NetConfigTranslation.toNetConfig(http)
-            assert(result.channelCapacity == 7)
-            assert(result.readChunkSize == 2048)
+            assert(result.channelCapacity == NetConfig.Size(7))
+            assert(result.readChunkSize == 2.kib)
         }
 
         "maps no deadline: NetConfig carries none, so neither can be dropped here" in {
@@ -136,7 +135,7 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
         "does not map maxHeaderSize: kyo.net.NetConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {
             // A custom maxHeaderSize must not leak into the net config, and must not perturb the mapped fields.
-            val http   = HttpTransportConfig.default.maxHeaderSize(4096)
+            val http   = HttpTransportConfig.default.maxHeaderSize(4.kib)
             val result = NetConfigTranslation.toNetConfig(http)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
             assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
@@ -148,14 +147,20 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
         }
 
+        "a read chunk size is a byte size, carried as given and narrowed where the transport uses it" in {
+            assert(NetConfigTranslation.toNetConfig(HttpTransportConfig.default.readChunkSize(ByteSize.Zero)).readChunkSize ==
+                ByteSize.Zero)
+        }
+
         "the server handshake deadline reaches the TLS config, including Infinity" in {
             // The regression this guards: kyo-http servers default handshakeTimeout to Infinity while NetTlsConfig.default is 30s, so a
             // translation that dropped the value would silently arm a 30s slowloris reap on every kyo-http server.
-            assert(HttpTransportConfig.default.handshakeTimeout == Duration.Infinity)
+            assert(HttpTransportConfig.default.handshakeTimeout.duration == Duration.Infinity)
             val carried = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, HttpTransportConfig.default.handshakeTimeout)
-            assert(carried.handshakeTimeout == Duration.Infinity)
-            val finite = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, 250.millis)
-            assert(finite.handshakeTimeout == 250.millis)
+            assert(carried.handshakeTimeout.duration == Duration.Infinity)
+            val finite =
+                NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, NetTlsConfig.HandshakeTimeout.init(250.millis).getOrThrow)
+            assert(finite.handshakeTimeout.duration == 250.millis)
         }
 
     }

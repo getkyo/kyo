@@ -10,7 +10,8 @@ import scala.annotation.tailrec
   * reusable flat buffer, and produces ParsedRequest values.
   *
   * Flow: start() -> needMoreBytes() -> TakePromise.onComplete() -> parse() -> onRequestParsed callback. On keep-alive: reset() then start()
-  * again, optionally with injectLeftover() for pipelined bytes.
+  * again, optionally with injectLeftover() for pipelined bytes. One drive runs at a time: a start() or a read that arrives while one runs
+  * is taken up by it, so the callback never has a parse nested inside the parse that called it.
   *
   * TakePromise extends IOPromise and is registered directly as a channel taker via reuseTake. becomeAvailable() resets the promise in-place
   * so it can be reused for the next read without allocation. The reset happens BEFORE the parse() call so that if parse() immediately calls
@@ -22,24 +23,51 @@ import scala.annotation.tailrec
 final private[kyo] class Http1Parser(
     inbound: Channel.Unsafe[Span[Byte]],
     builder: ParsedRequestBuilder,
-    // Configurable via HttpTransportConfig.maxHeaderSize.
-    maxHeaderSize: Int = 65536,
+    maxHeaderSize: Int = readBufferCapacity(HttpTransportConfig.default.maxHeaderSize),
     onRequestParsed: (ParsedRequest, Span[Byte]) => Unit = (_, _) => (),
     onClosed: () => Unit = () => (),
-    // Distinct from onClosed: the peer is still there and is owed an answer. RFC 9112 section 6.3 requires a 400 for a
-    // message whose framing cannot be determined, and closing without one leaves the peer waiting out its own timeout
-    // for a verdict already reached here. Defaults to onClosed so a caller that only reads keeps the old behavior.
-    onInvalidRequest: () => Unit = () => ()
+    // Distinct from onClosed: the peer is still there and is owed an answer before the connection goes. RFC 9112 section 6.3
+    // requires a 400 for a message whose framing cannot be determined, RFC 6585 section 5 defines 431 for a head over the
+    // limit and RFC 9110 section 15.5.15 414 for a request line alone over it; closing without an answer leaves the peer
+    // waiting out its own timeout for a verdict already reached here.
+    onRefused: HttpStatus => Unit = (_: HttpStatus) => (),
+    // Asked as the parser becomes idle, before it waits on the channel; true means the connection ended and nothing waits. It is the
+    // second half of the drain handshake: the idle flag is published first, so a drain either sees it or is seen here.
+    onIdle: () => Boolean = () => false
 )(using allow: AllowUnsafe, frame: Frame):
 
-    private val buf                  = new Array[Byte](maxHeaderSize)
-    private var pos                  = 0
+    private val buf = new Array[Byte](maxHeaderSize)
+    private var pos = 0
+    // Where the search for the head terminator resumes: every byte before it was searched by an earlier parse of the same head, and
+    // the terminator is four bytes, so the resume point trails the searched end by three. A search from the start on every read of a
+    // head that arrives a few bytes at a time is quadratic in the limit (CWE-407).
+    private var scanFrom = 0
+    // The tail of a read that did not fit in buf, or bytes a body reader handed back: the start of the next request, consumed
+    // before the channel is polled again. Callers hand over at most one read's worth at a time, which bounds memory per connection
+    // at the limit plus one read; the join in injectLeftover keeps that method total when a caller does not.
+    private var leftover: Span[Byte] = Span.empty[Byte]
+    private var leftoverPos          = 0
     private var hostCount            = 0
     private var hasUpgradeWebSocket  = false
     private var hasConnectionUpgrade = false
     private var invalid              = false
     private var hasContentLength     = false
     private var hasTransferEncoding  = false
+    private var isHttp10             = false
+
+    // Who drives the parser. 0: nobody. 1: a drive is running. 2: a drive is running and a restart or a read arrived meanwhile, for
+    // the running drive to take up before it settles. A restart is requested from inside the parsed-request callback by every
+    // synchronous answer, so without the handoff each pipelined request in hand would nest a parse inside the parse still on the
+    // stack. It is also requested from a handler's completion on another carrier, and a read completes on the channel's carrier, so
+    // the handoff is a compare-and-set rather than a flag.
+    private val driver                         = AtomicInt.Unsafe.init(0)
+    private var pendingRead: Maybe[Span[Byte]] = Absent
+
+    // Written on the parser's carrier as it suspends on the channel and as a read reaches it; read by a graceful shutdown on its own.
+    @volatile private var _idle = false
+
+    /** Whether the parser is suspended on the channel holding none of a head: the connection is between requests. */
+    def idle: Boolean = _idle
 
     /** Reusable take promise that extends IOPromise to be directly registered as a channel taker. The onComplete override fires
       * synchronously when the channel delivers data. The resetForReuse method exposes the protected becomeAvailable for the parser to call.
@@ -49,22 +77,15 @@ final private[kyo] class Http1Parser(
       */
     private class TakePromise extends IOPromise[Closed, Span[Byte]]:
         override protected def onComplete(): Unit =
+            _idle = false
             val result = poll()
             // Reset the promise back to Pending BEFORE calling parse(), so that if
             // parse() -> needMoreBytes() -> reuseTake() is called, the promise is
             // already in Pending state and ready to receive the next value.
             discard(becomeAvailable())
             result match
-                case Present(Result.Success(span)) =>
-                    val len = span.size
-                    if pos + len <= maxHeaderSize then
-                        discard(span.copyToArray(buf, pos))
-                        pos += len
-                        parse()
-                    else
-                        onClosed()
-                    end if
-                case Present(Result.Failure(_)) =>
+                case Present(Result.Success(span)) => drive(Present(span))
+                case Present(Result.Failure(_))    =>
                     // Expected on normal connection close (keep-alive termination, client disconnect)
                     onClosed()
                 case Present(Result.Panic(_)) =>
@@ -82,22 +103,72 @@ final private[kyo] class Http1Parser(
     private val takePromiseUnsafe: Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]] =
         takePromise.asInstanceOf[Fiber.Promise.Unsafe[Span[Byte], Abort[Closed]]]
 
-    /** Starts the parser by initiating the first read from the inbound channel. If there are already bytes in the buffer (e.g., from HTTP
-      * pipelining), attempts to parse them first.
+    /** Drives the parser: parses the bytes in hand or reads more, until a request is handed out or the channel has nothing yet. Called
+      * again to continue after a request. From inside the parsed-request callback it returns at once and the drive already running
+      * continues once the callback returns, so pipelined requests answered synchronously cost one frame each, not one nesting each.
       */
-    def start(): Unit =
-        if pos > 0 then
-            parse()
-        else
-            needMoreBytes()
+    def start(): Unit = drive(Absent)
+
+    private def drive(read: Maybe[Span[Byte]]): Unit =
+        read.foreach(span => pendingRead = Present(span))
+        if claim() then
+            step()
+            settle()
+    end drive
+
+    @tailrec private def claim(): Boolean =
+        val state = driver.get()
+        if state == 0 then
+            if driver.compareAndSet(0, 1) then true else claim()
+        else if state == 2 || driver.compareAndSet(1, 2) then false
+        else claim()
+        end if
+    end claim
+
+    @tailrec private def settle(): Unit =
+        if driver.compareAndSet(1, 0) then ()
+        else if driver.compareAndSet(2, 1) then
+            step()
+            settle()
+        else settle()
+    end settle
+
+    private def step(): Unit =
+        pendingRead match
+            case Present(span) =>
+                pendingRead = Absent
+                onRead(span)
+            case Absent =>
+                if pos > 0 then parse() else needMoreBytes()
+
+    /** Takes one read from the channel. The limit bounds the head, not the read: only what still fits in `buf` is copied, and the rest of
+      * the read waits as leftover, which is body or the next request once the head is found, and goes with the connection when the head
+      * turns out too large.
+      */
+    private def onRead(span: Span[Byte]): Unit =
+        val copied = math.min(span.size, maxHeaderSize - pos)
+        java.lang.System.arraycopy(span.toArrayUnsafe, 0, buf, pos, copied)
+        pos += copied
+        if copied < span.size then
+            leftover = span
+            leftoverPos = copied
+        parse()
+    end onRead
 
     private def parse(): Unit =
-        val headerEnd = indexOf(buf, pos, Http1Parser.CRLF_CRLF)
+        val headerEnd = indexOf(buf, scanFrom, pos, Http1Parser.CRLF_CRLF)
         if headerEnd == -1 then
-            needMoreBytes()
+            scanFrom = math.max(0, pos - 3)
+            // A head that fits ends within the first maxHeaderSize bytes, so a full buffer without a terminator is a larger head
+            // (RFC 6585 section 5). One without a line end at all is a request line alone longer than the limit (RFC 9110
+            // section 15.5.15).
+            if pos < maxHeaderSize then needMoreBytes()
+            else if indexOf(buf, 0, pos, Http1Parser.CRLF_SINGLE) == -1 then refuse(HttpStatus.URITooLong)
+            else refuse(HttpStatus.RequestHeaderFieldsTooLarge)
         else
+            scanFrom = 0
             val request = packRequest(buf, headerEnd)
-            // Compact: move remaining bytes (body) to start
+            // Compact: move the bytes after the head to the start
             val remaining = pos - (headerEnd + 4)
             if remaining > 0 then
                 java.lang.System.arraycopy(buf, headerEnd + 4, buf, 0, remaining)
@@ -106,63 +177,80 @@ final private[kyo] class Http1Parser(
             // framing is undeterminable, so nothing further can be read from this connection, but a 400 tells the peer
             // that now instead of leaving it to infer a verdict from silence.
             if invalid then
-                onInvalidRequest()
-                onClosed()
+                refuse(HttpStatus.BadRequest)
             else
-                // Extract body bytes available in the parser buffer.
-                // For Content-Length requests: extract up to contentLength bytes.
-                // For chunked requests: extract all remaining bytes (chunk framing data)
-                //   so the ChunkedBodyDecoder can use them as initial data.
-                val cl       = request.contentLength
-                val bodySpan =
-                    if cl > 0 && pos > 0 then
-                        val bodyLen = math.min(pos, cl)
-                        val bodyArr = new Array[Byte](bodyLen)
-                        java.lang.System.arraycopy(buf, 0, bodyArr, 0, bodyLen)
-                        // Advance past consumed body bytes
-                        val bodyRemaining = pos - bodyLen
-                        if bodyRemaining > 0 then
-                            java.lang.System.arraycopy(buf, bodyLen, buf, 0, bodyRemaining)
-                        pos = bodyRemaining
-                        Span.fromUnsafe(bodyArr)
-                    else if request.isChunked && pos > 0 then
-                        // Pass remaining bytes to the chunked body decoder
-                        val bodyArr = new Array[Byte](pos)
-                        java.lang.System.arraycopy(buf, 0, bodyArr, 0, pos)
-                        pos = 0
-                        Span.fromUnsafe(bodyArr)
-                    else
-                        Span.empty[Byte]
+                // The body bytes in hand, from buf and the leftover: up to contentLength of them for a Content-Length request, all of
+                // them for a chunked one, whose decoder finds the end of the framing.
+                val cl        = request.contentLength
+                val available = pos + leftoverRemaining
+                val bodySpan  =
+                    if cl > 0 && available > 0 then takeBytes(math.min(available, cl))
+                    else if request.isChunked && available > 0 then takeBytes(available)
+                    else Span.empty[Byte]
                 onRequestParsed(request, bodySpan)
             end if
         end if
     end parse
 
+    private def leftoverRemaining: Int = leftover.size - leftoverPos
+
+    /** Removes the first `n` bytes after the head, from `buf` and then from the leftover, into one array. */
+    private def takeBytes(n: Int): Span[Byte] =
+        val arr     = new Array[Byte](n)
+        val fromBuf = math.min(pos, n)
+        java.lang.System.arraycopy(buf, 0, arr, 0, fromBuf)
+        val bufRemaining = pos - fromBuf
+        if bufRemaining > 0 then
+            java.lang.System.arraycopy(buf, fromBuf, buf, 0, bufRemaining)
+        pos = bufRemaining
+        val fromLeftover = n - fromBuf
+        if fromLeftover > 0 then
+            java.lang.System.arraycopy(leftover.toArrayUnsafe, leftoverPos, arr, fromBuf, fromLeftover)
+            advanceLeftover(fromLeftover)
+        Span.fromUnsafe(arr)
+    end takeBytes
+
+    private def advanceLeftover(n: Int): Unit =
+        leftoverPos += n
+        if leftoverPos >= leftover.size then
+            leftover = Span.empty[Byte]
+            leftoverPos = 0
+    end advanceLeftover
+
+    /** Answers a head the parser refuses with `status` and ends the connection. Nothing after that head is read again. */
+    private def refuse(status: HttpStatus): Unit =
+        pos = 0
+        scanFrom = 0
+        leftover = Span.empty[Byte]
+        leftoverPos = 0
+        onRefused(status)
+        onClosed()
+    end refuse
+
     private def needMoreBytes(): Unit =
-        // Try non-blocking poll first (0 alloc)
-        inbound.poll() match
-            case Result.Success(maybe) =>
-                maybe match
-                    case Present(span) =>
-                        val len = span.size
-                        if pos + len <= maxHeaderSize then
-                            discard(span.copyToArray(buf, pos))
-                            pos += len
-                            parse()
-                        else
-                            onClosed()
-                        end if
-                    case Absent =>
-                        // No data available — register take promise directly.
-                        // The promise is in Pending state either because it's fresh (first call)
-                        // or because onComplete reset it before calling parse().
-                        inbound.reuseTake(takePromiseUnsafe)
-                end match
-            case Result.Failure(_: Closed) =>
-                onClosed()
-            case Result.Panic(t) =>
-                Log.live.unsafe.error("Http1Parser poll panic", t)
-                onClosed()
+        if leftoverRemaining > 0 then
+            // The next read is already in hand.
+            val n = math.min(leftoverRemaining, maxHeaderSize - pos)
+            java.lang.System.arraycopy(leftover.toArrayUnsafe, leftoverPos, buf, pos, n)
+            pos += n
+            advanceLeftover(n)
+            parse()
+        else
+            // Try non-blocking poll first (0 alloc)
+            inbound.poll() match
+                case Result.Success(Present(span)) => onRead(span)
+                case Result.Success(Absent)        =>
+                    // No data available: register the take promise directly. It is pending either because it is fresh
+                    // (first call) or because onComplete reset it before calling parse().
+                    _idle = pos == 0
+                    if !(_idle && onIdle()) then inbound.reuseTake(takePromiseUnsafe)
+                case Result.Failure(_: Closed) =>
+                    onClosed()
+                case Result.Panic(t) =>
+                    Log.live.unsafe.error("Http1Parser poll panic", t)
+                    onClosed()
+            end match
+        end if
     end needMoreBytes
 
     /** Resets the parser for the next request on the same connection. */
@@ -174,31 +262,47 @@ final private[kyo] class Http1Parser(
         invalid = false
         hasContentLength = false
         hasTransferEncoding = false
+        isHttp10 = false
         // Note: buf and pos are managed by parse/compact, not reset here.
         // The pos may have leftover bytes from pipelining, which is correct.
     end reset
 
-    /** Injects leftover bytes (from body reading beyond Content-Length boundary) into the parser's buffer so they are available for the
-      * next request parse. Must be called between reset() and start() on keep-alive connections.
+    /** Hands the parser bytes a body reader took past the body's end: the start of the next request, whatever its size, parsed before the
+      * channel is polled again. Called between reset() and start() on a keep-alive connection.
       */
     def injectLeftover(data: Span[Byte]): Unit =
         if !data.isEmpty then
-            val len = data.size
-            if pos + len <= maxHeaderSize then
-                discard(data.copyToArray(buf, pos))
-                pos += len
+            if leftoverRemaining == 0 then
+                leftover = data
+                leftoverPos = 0
+            else
+                // Only one of the two holds bytes past the body, since the parser hands a body reader at most the body. The join keeps
+                // the method total instead of resting on that.
+                val joined = new Array[Byte](leftoverRemaining + data.size)
+                java.lang.System.arraycopy(leftover.toArrayUnsafe, leftoverPos, joined, 0, leftoverRemaining)
+                java.lang.System.arraycopy(data.toArrayUnsafe, 0, joined, leftoverRemaining, data.size)
+                leftover = Span.fromUnsafe(joined)
+                leftoverPos = 0
+            end if
     end injectLeftover
 
-    /** Extracts any remaining bytes in the parser buffer and resets pos to 0. Used during HttpWebSocket upgrade to forward leftover bytes
-      * (after HTTP headers) to the WS codec. After this call, the parser buffer is empty.
+    /** Extracts every byte after the head still in hand, from the buffer and the leftover, and empties both. Used during HttpWebSocket
+      * upgrade to forward the bytes after the HTTP headers to the WS codec.
       */
     def takeRemainingBytes(): Span[Byte] =
-        if pos <= 0 then Span.empty[Byte]
+        val total = pos + leftoverRemaining
+        if total <= 0 then Span.empty[Byte]
         else
-            val arr = new Array[Byte](pos)
+            val arr = new Array[Byte](total)
             java.lang.System.arraycopy(buf, 0, arr, 0, pos)
+            if leftoverRemaining > 0 then
+                java.lang.System.arraycopy(leftover.toArrayUnsafe, leftoverPos, arr, pos, leftoverRemaining)
             pos = 0
+            scanFrom = 0
+            leftover = Span.empty[Byte]
+            leftoverPos = 0
             Span.fromUnsafe(arr)
+        end if
     end takeRemainingBytes
 
     /** Parses the request line and headers from raw bytes into a ParsedRequest via the builder. */
@@ -210,37 +314,34 @@ final private[kyo] class Http1Parser(
         invalid = false
         hasContentLength = false
         hasTransferEncoding = false
+        isHttp10 = false
 
-        // Find the end of the request line (first CRLF)
-        val requestLineEnd = indexOf(rawBuf, headerEnd, Http1Parser.CRLF_SINGLE)
+        // The request line ends at the first CRLF, which for a message with no header fields is the CRLF that starts the head's
+        // terminator, so the search runs through it.
+        val requestLineEnd = indexOf(rawBuf, 0, headerEnd + 2, Http1Parser.CRLF_SINGLE)
 
-        if requestLineEnd == -1 then
-            // Malformed: no request line found — return minimal request
-            if builder.offsetsOverflowed then invalid = true
-            builder.build()
-        else
-            // Scan for bare CR (CR not followed by LF) in entire header region
-            if containsBareCr(rawBuf, 0, headerEnd) then
-                invalid = true
-            // Scan for bare LF (LF not preceded by CR) in the same region. Every legitimate LF here is the second
-            // byte of a CRLF, so any other is a peer smuggling a line break past the CRLF framing: RFC 9112
-            // section 2.2 lets a downstream recognize it as a line terminator, which turns one header this parser
-            // stores into two headers that recipient reads. RFC 9110 section 5.5 makes rejecting it a MUST.
-            if containsBareLf(rawBuf, 0, headerEnd) then
-                invalid = true
-            parseRequestLine(rawBuf, 0, requestLineEnd)
+        // Scan for bare CR (CR not followed by LF) in entire header region
+        if containsBareCr(rawBuf, 0, headerEnd) then
+            invalid = true
+        // Scan for bare LF (LF not preceded by CR) in the same region. Every legitimate LF here is the second
+        // byte of a CRLF, so any other is a peer smuggling a line break past the CRLF framing: RFC 9112
+        // section 2.2 lets a downstream recognize it as a line terminator, which turns one header this parser
+        // stores into two headers that recipient reads. RFC 9110 section 5.5 makes rejecting it a MUST.
+        if containsBareLf(rawBuf, 0, headerEnd) then
+            invalid = true
+        parseRequestLine(rawBuf, 0, requestLineEnd)
+        if requestLineEnd < headerEnd then
             parseHeaders(rawBuf, requestLineEnd + 2, headerEnd)
-            // Set Host header flags based on count observed during parsing
-            if hostCount >= 1 then
-                builder.setHasHost(true)
-            if hostCount > 1 then
-                builder.setMultipleHost(true)
-            // Set HttpWebSocket upgrade flag when both Upgrade: websocket and Connection: upgrade are present
-            if hasUpgradeWebSocket && hasConnectionUpgrade then
-                builder.setUpgrade(true)
-            if builder.offsetsOverflowed then invalid = true
-            builder.build()
-        end if
+        // Set Host header flags based on count observed during parsing
+        if hostCount >= 1 then
+            builder.setHasHost(true)
+        if hostCount > 1 then
+            builder.setMultipleHost(true)
+        // Set HttpWebSocket upgrade flag when both Upgrade: websocket and Connection: upgrade are present
+        if hasUpgradeWebSocket && hasConnectionUpgrade then
+            builder.setUpgrade(true)
+        if builder.offsetsOverflowed then invalid = true
+        builder.build()
     end packRequest
 
     /** Parses "METHOD /path?query HTTP/1.1" from rawBuf[start..end). Structured as nested if/else to avoid `return` keywords.
@@ -278,6 +379,10 @@ final private[kyo] class Http1Parser(
                     // An empty target is not a request-target (RFC 9112 section 3.2). Two adjacent spaces produce it.
                     if uriEnd <= uriStart then
                         invalid = true
+                    // A request-target is made of visible characters (RFC 9112 section 3, RFC 3986); a control character or DEL in it
+                    // is routed by whichever bytes each recipient keeps, so it is refused rather than routed here.
+                    if containsControl(rawBuf, uriStart, uriEnd) then
+                        invalid = true
 
                     // The version token must be HTTP/1.0 or HTTP/1.1. Anything else is not a request line this server
                     // parses, and accepting it silently (as "default to 1.1") is how an HTTP/0.9 line or a bogus
@@ -292,7 +397,9 @@ final private[kyo] class Http1Parser(
                     then
                         invalid = true
                     else
-                        builder.setKeepAlive(rawBuf(versionStart + 7) == '1')
+                        isHttp10 = rawBuf(versionStart + 7) == '0'
+                        builder.setHttp10(isHttp10)
+                        builder.setKeepAlive(!isHttp10)
                     end if
 
                     // Split a path range into path and query and store them. Segments first, then the path stored ONCE:
@@ -551,6 +658,10 @@ final private[kyo] class Http1Parser(
             hasTransferEncoding = true
             if hasContentLength then
                 invalid = true
+            // RFC 9112 section 6.1: an HTTP/1.0 message carrying Transfer-Encoding has faulty framing, whatever else it carries, and the
+            // connection is closed after it. Refusing it is the answer that never disagrees with a recipient that frames it otherwise.
+            if isHttp10 then
+                invalid = true
             // RFC 9112 section 6.3 item 6: a request whose final transfer coding is not chunked has no determinable
             // body length and must be rejected. Treating it as bodyless instead leaves the body in the buffer, where
             // the next parse reads attacker-controlled bytes as a request line.
@@ -641,16 +752,24 @@ final private[kyo] class Http1Parser(
         else if buf(off) == 0 then true
         else containsNull(buf, off + 1, remaining - 1)
 
-    /** Finds the index of a byte pattern in buf[0..limit). Returns -1 if not found. */
-    private def indexOf(buf: Array[Byte], limit: Int, pattern: Array[Byte]): Int =
+    /** Whether buf[start..end) holds a control character (0x00 to 0x1F) or DEL (0x7F). */
+    @tailrec private def containsControl(buf: Array[Byte], start: Int, end: Int): Boolean =
+        if start >= end then false
+        else
+            val b = buf(start) & 0xff
+            if b < 0x20 || b == 0x7f then true
+            else containsControl(buf, start + 1, end)
+
+    /** Finds the index of a byte pattern in buf[start..limit). Returns -1 if not found. */
+    private def indexOf(buf: Array[Byte], start: Int, limit: Int, pattern: Array[Byte]): Int =
         val patLen = pattern.length
-        if limit < patLen then -1
+        if limit - start < patLen then -1
         else
             @tailrec def outer(i: Int): Int =
                 if i > limit - patLen then -1
                 else if patternMatchesAt(buf, i, pattern, patLen) then i
                 else outer(i + 1)
-            outer(0)
+            outer(start)
         end if
     end indexOf
 

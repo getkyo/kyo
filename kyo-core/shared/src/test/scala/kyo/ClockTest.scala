@@ -715,6 +715,12 @@ class ClockTest extends kyo.test.Test[Any]:
         }
     }
 
+    /** Records each run's start, and holds the run starting at `at` in its body until `gate` opens. */
+    def holdingAt(queue: Queue.Unbounded[Instant], at: Instant, entered: Latch, gate: Latch)(using Frame): Unit < (Async & Abort[Closed]) =
+        Clock.now.map { now =>
+            queue.add(now).andThen(if now == at then entered.release.andThen(gate.await) else Kyo.unit)
+        }
+
     def intervals(instants: Seq[Instant]): Seq[Duration] =
         instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1).minusOrZero(seq(0))).toSeq
 
@@ -736,6 +742,65 @@ class ClockTest extends kyo.test.Test[Any]:
                     assert(instants.size == ticks + 1)
                     assert(instants.toSeq == expected)
                 end for
+            }
+        }
+        "a run that takes time leaves the next start on the interval".notJs in {
+            Clock.withTimeControl { control =>
+                for
+                    queue   <- Queue.Unbounded.init[Instant]()
+                    entered <- Latch.init(1)
+                    gate    <- Latch.init(1)
+                    task    <- Clock.repeatAtInterval(10.millis)(holdingAt(queue, Instant.Epoch + 10.millis, entered, gate))
+                    _       <- control.awaitPendingSleepers(1)
+                    _       <- control.advance(10.millis)
+                    _       <- entered.await
+                    // The run at 10ms is still in its body, so its next sleep is not armed yet.
+                    _        <- control.advance(5.millis)
+                    _        <- gate.release
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- Loop.repeat(3)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield assert(instants.toSeq == Seq(0, 10, 20, 30).map(i => Instant.Epoch + i.millis), instants.toSeq.mkString(", "))
+            }
+        }
+        "a run longer than the interval is followed at once, and the next start returns to the interval".notJs in {
+            Clock.withTimeControl { control =>
+                for
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    entered  <- Latch.init(1)
+                    gate     <- Latch.init(1)
+                    task     <- Clock.repeatAtInterval(10.millis)(holdingAt(queue, Instant.Epoch + 10.millis, entered, gate))
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- control.advance(10.millis)
+                    _        <- entered.await
+                    _        <- control.advance(15.millis)
+                    _        <- gate.release
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- control.advance(5.millis)
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield assert(instants.toSeq == Seq(0, 10, 25, 30).map(i => Instant.Epoch + i.millis), instants.toSeq.mkString(", "))
+            }
+        }
+        "a schedule that measures from now is slept as it answers".notJs in {
+            Clock.withTimeControl { control =>
+                for
+                    queue   <- Queue.Unbounded.init[Instant]()
+                    entered <- Latch.init(1)
+                    gate    <- Latch.init(1)
+                    task <- Clock.repeatAtInterval(Schedule.anchored(10.millis))(holdingAt(queue, Instant.Epoch + 10.millis, entered, gate))
+                    _    <- control.awaitPendingSleepers(1)
+                    _    <- control.advance(10.millis)
+                    _    <- entered.await
+                    _    <- control.advance(5.millis)
+                    _    <- gate.release
+                    _    <- control.awaitPendingSleepers(1)
+                    _    <- Loop.repeat(3)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
+                    _    <- task.interrupt
+                    instants <- queue.drain
+                yield assert(instants.toSeq == Seq(10, 20, 30).map(i => Instant.Epoch + i.millis), instants.toSeq.mkString(", "))
             }
         }
         "respects interrupt" in {

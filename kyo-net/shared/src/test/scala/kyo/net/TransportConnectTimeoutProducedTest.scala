@@ -38,7 +38,7 @@ class TransportConnectTimeoutProducedTest extends Test:
         Abort.run[NetException | Closed | Timeout](
             // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
             // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.
-            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort, timeout).safe.get)
+            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort, timeout.connectTimeout).safe.get)
         ).map { outcome =>
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>
@@ -72,7 +72,7 @@ class TransportConnectTimeoutProducedTest extends Test:
         val transport = NetPlatform.transport
         val tls       = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         Abort.run[NetException | Closed | Timeout](
-            Async.timeout(5.seconds)(transport.connectTls(blackHoleHost, blackHolePort, tls, timeout).safe.get)
+            Async.timeout(5.seconds)(transport.connectTls(blackHoleHost, blackHolePort, tls, timeout.connectTimeout).safe.get)
         ).map { outcome =>
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>

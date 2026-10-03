@@ -210,7 +210,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                     e
             )
             discard(driver.start())
-            val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
+            val unbounded = serverTls.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited)
             // Closes the driver on any path that ends before the explicit driver.close() below (a failed assertEventually, a timeout).
             // Registered first, so it runs after the listener and client fd guards. Idempotent.
             Scope.ensure(Sync.defer(driver.close())).andThen(

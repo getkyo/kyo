@@ -58,7 +58,7 @@ class BrowserSnapshotConfigLocalTest extends kyo.BrowserTest:
     // exhausts its schedule, leaving window.__probes equal to the retries the schedule permitted.
     private def readyStateStuckServer[A, S](f: (String, Int) => A < (Browser & S))(using
         Frame
-    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException] & Async & S) =
+    ): A < (Browser & Scope & Abort[BrowserConnectionException] & Abort[HttpBindException | HttpRouteException] & Async & S) =
         val pageBytes = Span.fromUnsafe(
             """<html><head><script>
               |  window.__probes = 0;

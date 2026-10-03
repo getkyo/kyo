@@ -159,7 +159,7 @@ import kyo.net.*
 
 def startTls(conn: Connection): Connection < (Async & Abort[NetException]) =
     val tls = NetTlsConfig(sniHostname = Present("example.com"))
-    NetPlatform.transport.upgradeToTls(conn, tls, channelCapacity = 1024).safe.get
+    NetPlatform.transport.upgradeToTls(conn, tls, channelCapacity = NetConfig.Size(1024)).safe.get
 end startTls
 ```
 
@@ -167,7 +167,9 @@ end startTls
 
 There is one transport for the whole process, and it takes no configuration. Settings belong to the connection or the operation, so they travel with the call: a caller wanting bigger buffers or a tighter deadline passes them to `connect` or `listen` and still shares the one I/O fabric rather than building a second one.
 
-Each setting sits where it can act. `NetConfig` shapes the connection and socket an operation produces (including `peerCloseGrace`, the window an idle backpressured connection is given before it is reclaimed once its peer has closed, `30.seconds` by default and `Duration.Infinity` to opt out), `connectTimeout` is a parameter of the connect operations, and the TLS handshake deadline is a field of `NetTlsConfig`, so it reaches every operation that handshakes and none that do not.
+Each setting sits where it can act. `NetConfig` shapes the connection and socket an operation produces (including `peerCloseGrace`, the window an idle backpressured connection is given before it is reclaimed once its peer has closed, `30.seconds` by default and `NetConfig.Grace.unlimited` to opt out), `connectTimeout` is a parameter of the connect operations, and the TLS handshake deadline is a field of `NetTlsConfig`, so it reaches every operation that handshakes and none that do not.
+
+No config can hold a value the transport could not use. A byte size (`readChunkSize`, `soRcvBuf`, `soSndBuf`) is a `ByteSize`, written `64.kib`, and is narrowed where it is used the way kyo-core's stream reads narrow theirs: zero becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`. The channel capacity is a `NetConfig.Size`, a count of one or more, and `NetConfig.Size(4096)` checks a literal at compile time. A window or deadline (`NetConfig.Grace`, `NetTlsConfig.HandshakeTimeout`, `Transport.ConnectTimeout`) is positive or `Duration.Infinity`. A value known only at runtime goes through the type's `init`, which returns a `Result` failing with `NetConfigException`.
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -175,24 +177,28 @@ import kyo.*
 import kyo.net.*
 
 // Bigger channels and read buffers for a bulk-transfer connection.
-val bulk = NetConfig(channelCapacity = 4096, readChunkSize = 65536)
+val bulk = NetConfig(channelCapacity = NetConfig.Size(4096), readChunkSize = 64.kib)
 
 def fetch(host: String, port: Int): Connection < (Async & Abort[NetException]) =
-    NetPlatform.transport.connect(host, port, connectTimeout = 5.seconds, config = bulk).safe.get
+    Abort.get(Transport.ConnectTimeout.init(5.seconds)).map { deadline =>
+        NetPlatform.transport.connect(host, port, connectTimeout = deadline, config = bulk).safe.get
+    }
 
 def serve(tls: NetTlsConfig)(handler: Connection => Unit): Listener < (Async & Abort[NetException]) =
-    NetPlatform.transport.listenTls(
-        "0.0.0.0",
-        8443,
-        backlog = 128,
-        tls.copy(handshakeTimeout = 10.seconds),
-        bulk
-    )(handler).safe.get
+    Abort.get(NetTlsConfig.HandshakeTimeout.init(10.seconds)).map { deadline =>
+        NetPlatform.transport.listenTls(
+            "0.0.0.0",
+            8443,
+            backlog = 128,
+            tls.copy(handshakeTimeout = deadline),
+            bulk
+        )(handler).safe.get
+    }
 ```
 
 `NetPlatform.transport` is the transport. It is process-lifetime and has no `close()`: one instance serves every client and server, and the things a component owns are its listeners and its connections, which is what closing actually reclaims. Differing settings are not a reason to want a second one, since every `NetConfig` field applies to a single connection or operation and travels with the call.
 
-`connectTimeout` (default `30.seconds`) bounds a connect: if the OS delivers no outcome, connected or refused, within the deadline, the connect fails with `NetConnectTimeoutException`. `NetTlsConfig.handshakeTimeout` (default `30.seconds`) bounds a TLS handshake and reaps a connection that stalls mid-handshake, a slowloris guard (CWE-400). Both accept a positive `Duration` or `Duration.Infinity`, and on a `connectTls` they bound successive phases, so the worst case before it fails is their sum. The one process-wide setting is the driver count, the `kyo.net.ioPoolSize` flag.
+`connectTimeout` (default `30.seconds`) bounds a connect: if the OS delivers no outcome, connected or refused, within the deadline, the connect fails with `NetConnectTimeoutException`. `NetTlsConfig.handshakeTimeout` (default `30.seconds`) bounds a TLS handshake and reaps a connection that stalls mid-handshake, a slowloris guard (CWE-400). Both are positive or `Duration.Infinity` (each type's `unlimited`), and on a `connectTls` they bound successive phases, so the worst case before it fails is their sum. The one process-wide setting is the driver count, the `kyo.net.ioPoolSize` flag.
 
 ## Errors
 
@@ -203,6 +209,7 @@ Every transport operation aborts a `NetException`, the sealed error type for the
 - `NetBindException`: the listener could not bind.
 - `NetTlsHandshakeException`: the TLS handshake failed.
 - `NetConnectionClosedException`: the transport closed while a read, send, TLS handshake, or STARTTLS upgrade was in flight (`.operation` names which).
+- `NetConfigException`: a setting's `init` refused a value (`.setting`, `.value` and `.rule` say which, what and why).
 
 ```scala
 import AllowUnsafe.embrace.danger

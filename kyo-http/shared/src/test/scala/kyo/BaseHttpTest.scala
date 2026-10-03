@@ -2,27 +2,30 @@ package kyo
 
 abstract class BaseHttpTest extends kyo.test.Test[Any]:
 
-    // Linux Native CI HTTP server bring-up + per-request latency can exceed the production 5-second HttpClient
-    // default, so every test request would fail with HttpTimeoutException. Wrap every leaf so test requests get a
-    // 60s client request timeout (production users still see the 5s default until they set their own via withConfig).
+    // No test request carries a deadline of its own: any finite one is a pass condition on wall-clock time, and a loaded
+    // machine fails a correct leaf with HttpTimeoutException. The leaf cap alone bounds a request that is never answered.
+    // A leaf that tests the timeout sets its own through withConfig.
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
-        HttpClient.withConfig(_.timeout(60.seconds))(body)
+        HttpClient.withConfig(_.timeout(HttpClientConfig.TimeLimit.unlimited))(body)
 
     /** Creates a scoped client that trusts all TLS certificates. For testing only. */
     def initTrustAllClient(
-        maxConnectionsPerHost: Int = 100,
-        idleConnectionTimeout: Duration = 60.seconds
+        maxConnectionsPerHost: HttpClient.PoolSize = HttpClient.PoolSize.default,
+        idleConnectionTimeout: HttpClientConfig.TimeLimit = HttpClientConfig.TimeLimit.defaultIdleConnectionTimeout
     )(using Frame): HttpClient < (Async & Scope) =
         HttpClient.init(maxConnectionsPerHost, idleConnectionTimeout, HttpTlsConfig(trustAll = true))
 
-    /** Polls until `condition` holds, giving up after a bound that only exists so a broken subject fails instead of spinning forever. The
-      * interval sleeps on the live clock (not `Async.sleep`), so it works inside `Clock.withTimeControl`; a slower machine just polls more.
+    /** Polls until `condition` holds, giving up after `maxPolls`, a bound that only exists so a broken subject fails instead of spinning
+      * forever. Between checks it yields to the scheduler, by awaiting a fiber it starts, rather than sleeping: no poll reads a clock, so the
+      * pass condition is the observed state alone, never elapsed time, and the poll works the same inside `Clock.withTimeControl`, where a
+      * sleep would wait on virtual time. Each yield lets the fibers under test take a step, so the bound counts their steps, and it is
+      * large because a yield costs microseconds.
       */
-    def pollUntil(condition: => Boolean, maxPolls: Int = 10000)(using Frame): Boolean < Async =
+    def pollUntil(condition: => Boolean, maxPolls: Int = 1000000)(using Frame): Boolean < Async =
         Loop.indexed { i =>
             if condition then Loop.done(true)
             else if i >= maxPolls then Loop.done(false)
-            else Clock.live.sleep(1.milli).map(_.get).andThen(Loop.continue)
+            else Fiber.initUnscoped(Kyo.unit).map(_.get).andThen(Loop.continue)
         }
 
 end BaseHttpTest

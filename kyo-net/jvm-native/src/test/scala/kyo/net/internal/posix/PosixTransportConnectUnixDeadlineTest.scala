@@ -45,7 +45,7 @@ class PosixTransportConnectUnixDeadlineTest extends Test:
                 // From here the driver takes the connect submission and does nothing with it: the promise stays pending with no outcome
                 // coming, which is the shape every real stall class produces.
                 driver.stallConnect = true
-                Abort.run[kyo.net.NetException | Closed](transport.connectUnix(path, timeout).safe.get).map { outcome =>
+                Abort.run[kyo.net.NetException | Closed](transport.connectUnix(path, timeout.connectTimeout).safe.get).map { outcome =>
                     listener.close()
                     driver.close()
                     // Any connection that somehow completed must not leak.

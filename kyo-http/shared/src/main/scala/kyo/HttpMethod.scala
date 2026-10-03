@@ -25,4 +25,14 @@ object HttpMethod:
 
     extension (m: HttpMethod)
         def name: String = m
+
+        /** Whether the method is safe (RFC 9110 section 9.2.1): GET, HEAD, OPTIONS and TRACE, which ask for no change on the server. */
+        def isSafe: Boolean = m == GET || m == HEAD || m == OPTIONS || m == TRACE
+
+        /** Whether the method is idempotent (RFC 9110 section 9.2.2): the safe methods, PUT and DELETE, so a request may be sent again
+          * after a failure that left its outcome unknown. PUT and DELETE are idempotent by contract, which an application may not honour;
+          * the client takes the contract.
+          */
+        def isIdempotent: Boolean = isSafe || m == PUT || m == DELETE
+    end extension
 end HttpMethod

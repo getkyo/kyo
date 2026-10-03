@@ -22,6 +22,14 @@ abstract class Test extends kyo.test.Test[Any]:
     // deadlock still fails loudly rather than hanging.
     override def timeout = Duration.fromJava(java.time.Duration.ofSeconds(60))
 
+    // A deadline cannot be checked at compile time the way a `NetConfig.Size` literal is, so a test's literal goes through `init`, and a zero
+    // literal fails the leaf that wrote it.
+    extension (d: Duration)
+        def connectTimeout(using Frame): Transport.ConnectTimeout        = Transport.ConnectTimeout.init(d).getOrThrow
+        def handshakeTimeout(using Frame): NetTlsConfig.HandshakeTimeout = NetTlsConfig.HandshakeTimeout.init(d).getOrThrow
+        def grace(using Frame): NetConfig.Grace                          = NetConfig.Grace.init(d).getOrThrow
+    end extension
+
     /** Register one leaf test per registered I/O backend, each running `scenario` against a freshly built [[Transport]] over that backend.
       *
       * Use as the body of a FreeSpec `-` branch, exactly as kyo-pod's `runBackends` is used:

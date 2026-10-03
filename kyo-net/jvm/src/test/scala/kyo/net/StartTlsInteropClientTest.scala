@@ -145,7 +145,7 @@ class StartTlsInteropClientTest extends Test:
                                                     for
                                                         conn    <- transport.connect("127.0.0.1", port).safe.get
                                                         _       <- Scope.ensure(Sync.defer(conn.close()))
-                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe.get
                                                         _       <- Scope.ensure(Sync.defer(tlsConn.close()))
                                                         payload = "ping\n".getBytes
                                                         _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))

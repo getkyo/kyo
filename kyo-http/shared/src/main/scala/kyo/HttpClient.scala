@@ -13,7 +13,8 @@ import kyo.internal.transport.NetConfigTranslation
   * The active client and its configuration live in fiber-local storage via `Local`. All companion-object methods (`getJson`, `postJson`,
   * etc.) use a shared default client. To scope a custom client or configuration to a block of code:
   *   - `HttpClient.let(client) { ... }`: install a specific client instance for the duration
-  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`: transform the config (stacks with the current config)
+  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`: transform the config (stacks with the current config); a refused limit
+  *     aborts with an [[kyo.HttpConfigException]]
   *   - `HttpClient.withConfig(config) { ... }`: replace the config entirely (discards current config)
   *   - `HttpClient.withFilter(filter) { ... }`: add a scoped client filter for outgoing requests
   *   - `HttpClient.withoutFilters { ... }`: clear configured client filters for a nested scope
@@ -133,10 +134,20 @@ object HttpClient:
     def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((f(client), config))(v) }
 
-    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config,      * `withConfig(_.timeout(5.seconds)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both timeout and retry set.
+    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config, so
+      * `withConfig(_.followRedirects(false)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both set.
       */
     def withConfig[A, S](f: HttpClientConfig => HttpClientConfig)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((client, f(config)))(v) }
+
+    /** Like the function overload, for a transform through a setter that checks its value, such as `_.timeout(10.seconds)`. A refused value
+      * fails the computation with the [[kyo.HttpConfigException]] naming it, before `v` runs.
+      */
+    @scala.annotation.targetName("withCheckedConfig")
+    def withConfig[A, S](f: HttpClientConfig => Result[HttpConfigException, HttpClientConfig])(v: A < S)(using
+        Frame
+    ): A < (S & Abort[HttpConfigException]) =
+        local.use { (client, config) => Abort.get(f(config)).map(checked => local.let((client, checked))(v)) }
 
     /** Replaces the config entirely for all `HttpClient` calls within the given computation. Unlike the function overload, this does not
       * stack, it discards the current config.
@@ -169,10 +180,13 @@ object HttpClient:
       * It is a construction-time setting because the connection pool is built once and shared across all requests; a per-request override could not
       * rebuild a pooled transport. The transport itself is process-shared across every client and server using the same settings, so closing a
       * client closes its pool and connections but never the transport.
+      *
+      * `maxConnectionsPerHost` and `idleConnectionTimeout` are checked values, so a client built from them cannot fail: a raw value goes
+      * through `PoolSize.init` or `HttpClientConfig.TimeLimit.init`, which refuse it at the caller's `Frame`.
       */
     def init(
-        maxConnectionsPerHost: Int = 100,
-        idleConnectionTimeout: Duration = 60.seconds,
+        maxConnectionsPerHost: PoolSize = PoolSize.default,
+        idleConnectionTimeout: HttpClientConfig.TimeLimit = HttpClientConfig.TimeLimit.defaultIdleConnectionTimeout,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using Frame): HttpClient < (Async & Scope) =
@@ -184,21 +198,42 @@ object HttpClient:
         ))(HttpClient.closeNow(_))
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
-      * unless you need manual control. See [[init]] for the meaning of `transportConfig`.
+      * unless you need manual control. See [[init]] for the meaning of its parameters.
       */
     def initUnscoped(
-        maxConnectionsPerHost: Int = 100,
-        idleConnectionTimeout: Duration = 60.seconds,
+        maxConnectionsPerHost: PoolSize = PoolSize.default,
+        idleConnectionTimeout: HttpClientConfig.TimeLimit = HttpClientConfig.TimeLimit.defaultIdleConnectionTimeout,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using frame: Frame): HttpClient < Sync =
-        require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
-        require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
             val transport = kyo.net.NetPlatform.transport
-            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
+            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout.duration, defaultTlsConfig, transportConfig)
         }
     end initUnscoped
+
+    /** How many connections a client pools per host: two or more, the least the pool's ring holds. */
+    opaque type PoolSize = Int
+
+    object PoolSize:
+        val default: PoolSize = 100
+
+        /** The size for a literal `n`, checked at compile time: a literal below two, or an argument that is not a constant, does not
+          * compile. A value known only at runtime goes through [[init]].
+          */
+        inline def apply(inline n: Int): PoolSize =
+            inline if n < 2 then compiletime.error("HttpClient.PoolSize must be two or more")
+            else n
+
+        /** `n` as a pool size, or the [[kyo.HttpConfigException]] refusing a value below two. */
+        def init(n: Int)(using Frame): Result[HttpConfigException, PoolSize] =
+            if n >= 2 then Result.succeed(n)
+            else Result.fail(HttpConfigException("maxConnectionsPerHost", n.toString, "two or more"))
+
+        given CanEqual[PoolSize, PoolSize] = CanEqual.derived
+
+        extension (self: PoolSize) def value: Int = self
+    end PoolSize
 
     // ==================== JSON methods ====================
 

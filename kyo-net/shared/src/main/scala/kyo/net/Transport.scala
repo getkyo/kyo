@@ -32,13 +32,12 @@ abstract class Transport:
       *
       * @param connectTimeout
       *   Deadline for the OS to deliver a connect outcome (connected or refused). When finite the transport arms a `Clock`-driven deadline as
-      *   the connect is issued and fails with [[NetConnectTimeoutException]] on expiry; `Duration.Infinity` arms none. Must be positive or
-      *   `Duration.Infinity`.
+      *   the connect is issued and fails with [[NetConnectTimeoutException]] on expiry; [[Transport.ConnectTimeout.unlimited]] arms none.
       */
     def connect(
         host: String,
         port: Int,
-        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        connectTimeout: Transport.ConnectTimeout = Transport.DefaultConnectTimeout,
         config: NetConfig = NetConfig.default
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
@@ -51,14 +50,14 @@ abstract class Transport:
         host: String,
         port: Int,
         tls: NetTlsConfig,
-        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        connectTimeout: Transport.ConnectTimeout = Transport.DefaultConnectTimeout,
         config: NetConfig = NetConfig.default
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** Connect to a Unix domain socket. */
     def connectUnix(
         path: String,
-        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        connectTimeout: Transport.ConnectTimeout = Transport.DefaultConnectTimeout,
         config: NetConfig = NetConfig.default
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
@@ -74,8 +73,8 @@ abstract class Transport:
       * [[NetStdioUnsupportedException]] remains the contract for a transport with no byte stream to fd 0/1 (e.g. an in-memory transport).
       */
     def stdio(
-        channelCapacity: Int = NetConfig.DefaultChannelCapacity,
-        readChunkSize: Int = NetConfig.DefaultReadChunkSize
+        channelCapacity: NetConfig.Size = NetConfig.DefaultChannelCapacity,
+        readChunkSize: ByteSize = NetConfig.DefaultReadChunkSize
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** Listen for incoming TCP connections.
@@ -120,7 +119,7 @@ abstract class Transport:
     def upgradeToTls(
         conn: Connection,
         tls: NetTlsConfig,
-        channelCapacity: Int
+        channelCapacity: NetConfig.Size
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** What this transport can do beyond the operations above: the TLS providers it drives and whether it binds AF_UNIX paths. The one
@@ -157,18 +156,26 @@ end Transport
 
 object Transport:
     /** Default deadline for a connect to complete, applied by the connect operations when the caller passes none. */
-    val DefaultConnectTimeout: Duration = 30.seconds
+    val DefaultConnectTimeout: ConnectTimeout = ConnectTimeout.default
 
-    /** Enforce the `connectTimeout` contract at an operation's entry.
-      *
-      * The connect deadline is a loose parameter rather than a [[NetConfig]] field, so no case-class `require` guards it; each implementation
-      * calls this on entry instead, keeping one message and one rule across the three transports.
+    /** A connect deadline: positive, or `Duration.Infinity` for none. Zero would fail every connect before it is issued, so it is refused
+      * rather than held.
       */
-    private[net] def checkConnectTimeout(connectTimeout: Duration): Unit =
-        require(
-            connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
-            s"connectTimeout must be positive or Infinity: $connectTimeout"
-        )
+    opaque type ConnectTimeout = Duration
+
+    object ConnectTimeout:
+        val default: ConnectTimeout   = 30.seconds
+        val unlimited: ConnectTimeout = Duration.Infinity
+
+        /** `d` as a connect deadline, or the [[NetConfigException]] refusing a zero duration. */
+        def init(d: Duration)(using Frame): Result[NetConfigException, ConnectTimeout] =
+            if d > Duration.Zero then Result.succeed(d)
+            else Result.fail(NetConfigException("connectTimeout", d.show, "positive, or Duration.Infinity for no deadline"))
+
+        given CanEqual[ConnectTimeout, ConnectTimeout] = CanEqual.derived
+
+        extension (self: ConnectTimeout) def duration: Duration = self
+    end ConnectTimeout
 end Transport
 
 /** A bound server socket returned by [[Transport.listen]] / [[Transport.listenUnix]], accepting connections and dispatching each to the handler

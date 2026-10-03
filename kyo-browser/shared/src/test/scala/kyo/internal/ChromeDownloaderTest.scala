@@ -336,9 +336,9 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     // (no buffered cap) and sinks each chunk to disk, so the download succeeds and the full body lands on the file even
     // though it far exceeds the cap.
     "downloadZip streams a body larger than maxResponseLength to disk instead of rejecting it" in {
-        val bodySize                              = 256 * 1024
-        val body                                  = Span.fromUnsafe(new Array[Byte](bodySize))
-        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+        val bodySize                                                     = 256 * 1024
+        val body                                                         = Span.fromUnsafe(new Array[Byte](bodySize))
+        val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream[Span[Byte], Async] {
             Emit.valueWith(Chunk(body))(())
         }
         val handler = HttpRoute.getRaw("/chrome.zip").response(_.bodyStream).handler { _ =>
@@ -350,7 +350,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                 dest   <- Path.run(Path.temp("kyo-cd-stream-", ".zip"))
                 url = s"http://${server.host}:${server.port}/chrome.zip"
                 // Force the buffered ceiling below the body size: getBinary would reject, the streamed path must not.
-                result <- HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                result <- HttpClient.withConfig(_.maxResponseLength(64.kib)) {
                     Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 1.minute))
                 }
                 size <- Path.runReadOnly(dest.size)

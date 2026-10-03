@@ -1,7 +1,9 @@
 import java.io.File
 import kyo.doctest.sbt.KyoDoctestPlugin
+import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctest
 import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctestExtraClasspath
 import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctestSources
+import kyo.ffi.sbt.KyoFfiPlugin.autoImport.ffiLibraries
 import sbt.*
 import sbt.Keys.*
 import sbt.internal.BuildDependencies
@@ -10,6 +12,7 @@ import sbt.internal.util.LinePosition
 import sbt.internal.util.LineRange
 import sbt.internal.util.RangePosition
 import sbt.internal.util.SourcePosition
+import sbtcrossproject.CrossPlugin.autoImport.crossProjectPlatform
 import scala.sys.process.*
 
 /** Unified test command for CI and local use.
@@ -215,7 +218,7 @@ object TestKyo {
         val eligible: Seq[String] = a.phase match {
             case "doctest" =>
                 structure.allProjects.filter { p =>
-                    p.autoPlugins.contains(KyoDoctestPlugin) && !Set("native", "js", "wasm").contains(p.base.getName)
+                    p.autoPlugins.contains(KyoDoctestPlugin) && !KyoDoctestPlugin.isNonJvmCrossDir(p.base)
                 }.map(_.id)
             case _ =>
                 structure.allProjects.find(_.id == s"kyo$platform").toSeq.flatMap(_.aggregate.map(_.project))
@@ -262,7 +265,7 @@ object TestKyo {
                                 sorted.map(m => s"$m/doctest").mkString("all ", " ", "")
                             )
                         case "scaladoc" => Seq(sorted.map(m => s"$m/doc").mkString("all ", " ", ""))
-                        case _          => sorted.map(m => s"+$m/publishLocal")
+                        case _          => publishPasses(extracted, sorted)
                     }
                     val parts = tasks :+ doneCommandName
                     log(s"${a.phase} ${sorted.size} modules: ${sorted.mkString(", ")}")
@@ -270,6 +273,27 @@ object TestKyo {
                     if (a.isDryRun) state else Command.process(parts.mkString("; "), state, msg => state.log.error(msg))
                 }
         }
+    }
+
+    /** `+publishLocal` restricted to `modules`: one pass per Scala version any of them cross-builds for, each
+      * publishing in parallel the modules built at that version, then back to the primary version. `++v`
+      * moves only the projects that list v, as root `+publishLocal` does. One `+m/publishLocal` per module
+      * is the same work done serially, with two version switches per module: measured on a 16-module plan
+      * it took 19.7 minutes, longer than root `+publishLocal` over every module (16.4).
+      */
+    private def publishPasses(extracted: Extracted, modules: Seq[String]): Seq[String] = {
+        val structure                             = extracted.structure
+        val primary                               = extracted.get(scalaVersion)
+        def versionsOf(name: String): Seq[String] =
+            structure.allProjectRefs.find(_.project == name).toSeq.flatMap(ref =>
+                (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+            )
+        val versions = modules.flatMap(versionsOf).distinct.sortBy(v => if (v == primary) 0 else 1)
+        val passes   = versions.flatMap { v =>
+            val at = modules.filter(m => versionsOf(m).contains(v))
+            if (at.isEmpty) Nil else Seq(s"++$v", at.map(m => s"$m/publishLocal").mkString("all ", " ", ""))
+        }
+        passes :+ s"++$primary"
     }
 
     private def runTestPhase(state: State, a: Args): State = {
@@ -423,7 +447,13 @@ object TestKyo {
                 case None        => return None
             }
 
-        val directlyChanged = changedNodes(changedFiles, extracted, allRefs) ++ buildSbtProjects.map(Node(_, Kind.Main))
+        val attributed = changedNodes(changedFiles, extracted, allRefs) match {
+            case Right(nodes)       => nodes
+            case Left(unattributed) =>
+                log(s"no project claims ${unattributed.mkString(", ")}, running all modules")
+                return None
+        }
+        val directlyChanged = attributed ++ buildSbtProjects.map(Node(_, Kind.Main))
         if (directlyChanged.isEmpty) {
             log("no affected projects found, skipping tests")
             return Some(Set.empty)
@@ -473,17 +503,39 @@ object TestKyo {
       */
     final private case class Edge(dependent: String, into: Kind, fromTest: Boolean)
 
-    /** The configurations each changed file belongs to.
-      *
-      * A file is owned by every project whose unmanaged source or resource directory, or declared
-      * `mainInputs`/`testInputs`, contains it: that is what sbt compiles from and what the tests read,
-      * so a directory several projects share attributes to all of them. A file that is one of a
-      * project's `doctestSources` reaches only its doctests. A file no project claims (generator data,
-      * scripted fixtures, a README nothing validates) falls back to the module-directory heuristic, as
-      * a test change under `src/test` and a main change otherwise. Independently, a file a doctest
-      * source links to reaches that project's doctests, since the run checks every relative link.
+    /** Files that feed no build step, test, doctest or artifact: a change to one runs nothing on its own. Listed
+      * rather than inferred, because a file no project claims can still feed every module (`scripts/`, `.jvmopts`,
+      * `.scalafmt.conf`), so anything unclaimed and not listed here runs everything.
       */
-    private def changedNodes(files: Seq[String], extracted: Extracted, allRefs: Seq[ProjectRef]): Set[Node] = {
+    private val inertFiles = Set(
+        ".git-blame-ignore-revs",
+        ".gitignore",
+        ".readthedocs.yaml",
+        "CODE_OF_CONDUCT.md",
+        "LICENSE.txt",
+        "MANIFESTO.md",
+        "kyo-logo.pdf"
+    )
+    private val inertDirectories = Seq(".claude/")
+    // Contributor guides, in the root and in modules. A doctest that links to one still sees its change.
+    private val inertNames = Set("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md")
+
+    private def isInert(file: String): Boolean =
+        inertFiles.contains(file) || inertDirectories.exists(file.startsWith) || inertNames.contains(file.split('/').last)
+
+    /** The configurations each changed file belongs to, or the files no project claims, which must run everything.
+      *
+      * A file is owned by every project whose unmanaged source or resource directory, declared
+      * `mainInputs`/`testInputs`, or FFI C sources, headers and include directories contain it: that is
+      * what sbt compiles from and what the tests read, so a directory several projects share attributes
+      * to all of them. A file that is one of a project's `doctestSources` reaches only its doctests. A
+      * file none of those claim belongs to the project whose base directory most closely contains it,
+      * then to the module-directory heuristic, as a test change under `src/test` and a main change
+      * otherwise. A file still unclaimed, and not inert, is returned: nothing can say what it affects.
+      * Independently, a file a doctest source links to reaches that project's doctests, since the run
+      * checks every relative link.
+      */
+    private def changedNodes(files: Seq[String], extracted: Extracted, allRefs: Seq[ProjectRef]): Either[Seq[String], Set[Node]] = {
         val structure = extracted.structure
         val root      = new File(extracted.currentRef.build).getCanonicalFile
         val allNames  = allRefs.map(_.project).toSet
@@ -495,15 +547,24 @@ object TestKyo {
         def dirs(ref: ProjectRef, config: Configuration): Seq[File] =
             setting(ref, unmanagedSourceDirectories, Some(config)) ++ setting(ref, unmanagedResourceDirectories, Some(config))
 
+        // C a project's FFI libraries compile, which can sit in another module's tree: kyo-sql-doltlite compiles
+        // kyo-sql-sqlite's shim against its own engine.
+        def ffiInputs(ref: ProjectRef): Seq[File] = (ref / ffiLibraries).get(structure.data).getOrElse(Nil).flatMap(lib =>
+            lib.cSources ++ lib.cHeaders ++ lib.includeDirs
+        )
+
         val owners: Seq[(java.nio.file.Path, Node)] =
             refs.flatMap { ref =>
-                val main = dirs(ref, Compile) ++ setting(ref, mainInputs)
+                val main = dirs(ref, Compile) ++ setting(ref, mainInputs) ++ ffiInputs(ref)
                 val test = dirs(ref, Test) ++ setting(ref, testInputs)
                 val docs = setting(ref, doctestSources)
-                main.map(canonical(_) -> Node(ref.project, Kind.Main)) ++
-                    test.map(canonical(_) -> Node(ref.project, Kind.Test)) ++
-                    docs.map(canonical(_) -> Node(ref.project, Kind.Doc))
+                (main.map(_ -> Node(ref.project, Kind.Main)) ++
+                    test.map(_ -> Node(ref.project, Kind.Test)) ++
+                    docs.map(_ -> Node(ref.project, Kind.Doc))).flatMap { case (file, node) => safeCanonical(file).map(_ -> node) }
             }
+
+        val bases: Seq[(java.nio.file.Path, String)] =
+            refs.flatMap(ref => (ref / baseDirectory).get(structure.data).flatMap(safeCanonical).map(_ -> ref.project))
 
         // Every relative link target of every doctest source, with the projects validating it.
         val linkTargets: Seq[(java.nio.file.Path, String)] =
@@ -511,18 +572,28 @@ object TestKyo {
                 setting(ref, doctestSources).filter(_.isFile).flatMap(source => linkTargetsOf(source).map(_ -> ref.project))
             }
 
-        files.flatMap { f =>
+        val perFile = files.map { f =>
             val path    = canonical(new File(root, f))
+            val kind    = if (f.split("/").sliding(2).exists(_.sameElements(Array("src", "test")))) Kind.Test else Kind.Main
             val owned   = owners.collect { case (dir, node) if path.startsWith(dir) => node }
             val claimed =
-                if (owned.nonEmpty) owned
+                if (owned.nonEmpty || isInert(f)) owned
                 else {
-                    val kind = if (f.split("/").sliding(2).exists(_.sameElements(Array("src", "test")))) Kind.Test else Kind.Main
-                    fileToProjects(f, allNames).map(Node(_, kind))
+                    val containing = bases.filter { case (base, _) => path.startsWith(base) }
+                    if (containing.nonEmpty) {
+                        val deepest = containing.map(_._1.getNameCount).max
+                        containing.collect { case (base, project) if base.getNameCount == deepest => Node(project, kind) }
+                    } else fileToProjects(f, allNames).map(Node(_, kind)).toSeq
                 }
-            claimed ++ linkTargets.collect { case (target, project) if path.startsWith(target) => Node(project, Kind.Doc) }
-        }.toSet
+            val links = linkTargets.collect { case (target, project) if path.startsWith(target) => Node(project, Kind.Doc) }
+            (f, claimed.isEmpty && !isInert(f), claimed ++ links)
+        }
+
+        val unattributed = perFile.collect { case (f, true, _) => f }
+        if (unattributed.nonEmpty) Left(unattributed) else Right(perFile.flatMap(_._3).toSet)
     }
+
+    private def safeCanonical(file: File): Option[java.nio.file.Path] = scala.util.Try(canonical(file)).toOption
 
     private def canonical(file: File): java.nio.file.Path = file.getCanonicalFile.toPath
 
@@ -547,7 +618,7 @@ object TestKyo {
                 markdownLink.findAllMatchIn(line).map(_.group(1)).toList.flatMap { target =>
                     val path = target.takeWhile(c => c != '#' && c != '?')
                     if (path.isEmpty || urlScheme.findFirstIn(path).isDefined) Nil
-                    else scala.util.Try(canonical(new File(parent, path))).toOption.toList
+                    else safeCanonical(new File(parent, path)).toList
                 }
         }
     }
@@ -569,16 +640,26 @@ object TestKyo {
             } yield (f == "test", t == "test" || t == "*")
         }
 
-    /** Every classpath edge of the build, keyed by the project the classes come from.
+    /** Every edge of the build, keyed by the project a change travels from.
       *
-      * Two sources. `buildDependencies` holds the `dependsOn` graph. It misses entries a task appends,
-      * and two of those reach nearly every module: `.withKyoTest` appends kyo-test-runner's test
-      * classpath to `Test / unmanagedClasspath`, and `kyo-settings` appends kyo-doctest's classpath to
-      * `Test / unmanagedJars` and `doctestExtraClasspath`. Those come from the settings graph: a
-      * classpath key defined in terms of another project's key is an edge from that project.
+      * Two sources. `buildDependencies` holds the `dependsOn` graph. The settings graph holds everything a
+      * setting or task takes from another project, which `dependsOn` never shows: `.withKyoTest` appends
+      * kyo-test-runner's test classpath to `Test / unmanagedClasspath`; `kyo-settings` appends kyo-doctest
+      * to `Test / unmanagedJars` and `doctestExtraClasspath`; FFI modules run kyo-ffi-codegen through
+      * `ffiCodegenClasspath` to generate their bindings; scripted suites publish other modules locally
+      * (`scriptedDependencies`); kyo-website's tests serve kyo-website-bundle's linked JS. Each such
+      * dependency is an edge, so no list of keys can fall behind the build.
+      *
+      * The part an edge reaches follows the key that takes it: a doctest key reaches doctests, a test
+      * configuration or a test or scripted task reaches tests, anything else (generators, compile
+      * classpaths) reaches main. One edge kind is dropped: a JVM-only project's classes on a JS, Native or
+      * Wasm classpath, as `kyo-settings` puts kyo-doctest on every platform. Those linkers cannot load JVM
+      * classes, so no green build of a non-JVM module uses them, and a change to them reaches nothing
+      * there. A task that runs a JVM project (codegen, publishing) is kept on every platform.
       */
     private def edgesOf(extracted: Extracted): Map[String, Seq[Edge]] = {
-        val declared =
+        val structure = extracted.structure
+        val declared  =
             extracted.get(buildDependencies).classpath.toSeq.flatMap { case (project, deps) =>
                 deps.flatMap { dep =>
                     configPairs(dep.configuration).map { case (fromTest, toTest) =>
@@ -587,22 +668,40 @@ object TestKyo {
                 }
             }
 
-        val classpathKeys = Set(unmanagedClasspath.key.label, unmanagedJars.key.label, doctestExtraClasspath.key.label)
+        val docKeys       = Set(doctestExtraClasspath.key.label, doctest.key.label)
+        val testTasks     = Set(test.key.label, testOnly.key.label, testQuick.key.label, "scripted", "scriptedDependencies")
+        val classpathKeys = Set(
+            unmanagedClasspath.key.label,
+            unmanagedJars.key.label,
+            managedClasspath.key.label,
+            internalDependencyClasspath.key.label,
+            dependencyClasspath.key.label,
+            fullClasspath.key.label,
+            doctestExtraClasspath.key.label
+        )
         def isTestConfig(scope: Scope): Boolean = scope.config match {
             case Select(c) => c.name == Test.name
             case _         => false
         }
+        val platformOf: Map[String, String] =
+            structure.allProjectRefs.map(ref => ref.project -> extracted.getOpt(ref / crossProjectPlatform).fold("jvm")(_.identifier)).toMap
+        def jvmOnlyIntoNonJvm(from: String, owner: String): Boolean =
+            platformOf.getOrElse(from, "jvm") == "jvm" && platformOf.getOrElse(owner, "jvm") != "jvm"
+
         val appended =
-            extracted.structure.settings.flatMap { s =>
-                (s.key.scope.project, classpathKeys.contains(s.key.key.label)) match {
-                    case (Select(owner: ProjectRef), true) =>
-                        val into =
-                            if (s.key.key.label == doctestExtraClasspath.key.label) Kind.Doc
-                            else if (isTestConfig(s.key.scope)) Kind.Test
+            structure.settings.flatMap { s =>
+                s.key.scope.project match {
+                    case Select(owner: ProjectRef) if !aggregateProjects.contains(owner.project) =>
+                        val label = s.key.key.label
+                        val into  =
+                            if (docKeys.contains(label)) Kind.Doc
+                            else if (isTestConfig(s.key.scope) || testTasks.contains(label)) Kind.Test
                             else Kind.Main
                         s.dependencies.flatMap { dep =>
                             dep.scope.project match {
-                                case Select(from: ProjectRef) if from.project != owner.project =>
+                                case Select(from: ProjectRef)
+                                    if from.project != owner.project && !aggregateProjects.contains(from.project) &&
+                                        !(classpathKeys.contains(label) && jvmOnlyIntoNonJvm(from.project, owner.project)) =>
                                     Some(from.project -> Edge(owner.project, into, isTestConfig(dep.scope)))
                                 case _ => None
                             }
@@ -729,12 +828,16 @@ object TestKyo {
 
     /** The files changed vs baseRef, or None when git cannot say, which must run everything rather than nothing.
       *
-      * `-z` separates paths with NUL and never quotes them. Splitting the default output on "\n" left a
-      * trailing "\r" on every path on Windows, where `!!` joins output lines with the platform separator,
-      * and a "\r" is not a legal file name character there.
+      * `-z` separates paths with NUL and never quotes them: split on "\n", every path would keep a "\r" on
+      * Windows, where `!!` joins output lines with the platform separator, and "\r" is not a legal file name
+      * character there. `--no-renames` lists both sides of a rename or move; without it git reports only the
+      * new path, and whatever depended on the old one (a module, a README linking to it) is never selected.
       */
     private def diffFiles(baseRef: String): Option[Seq[String]] =
-        try Some(Seq("git", "diff", "--name-only", "-z", baseRef).!!.split('\u0000').map(_.trim).filter(_.nonEmpty).toSeq)
+        try
+            Some(
+                Seq("git", "diff", "--name-only", "--no-renames", "-z", baseRef).!!.split('\u0000').map(_.trim).filter(_.nonEmpty).toSeq
+            )
         catch {
             case e: Exception =>
                 log(s"Failed to run git diff: ${e.getMessage}")

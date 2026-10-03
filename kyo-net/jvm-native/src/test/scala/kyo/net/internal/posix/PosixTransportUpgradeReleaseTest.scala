@@ -161,7 +161,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity.value)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The ReadPump's first recv is now armed (or arming); wait for the SQE to be genuinely kernel-owned.
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
@@ -182,7 +182,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                             // unmatchable identity and reject at handshake instead, and only the JDK floor throws at build time.)
                             val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
                             driver.submitEngineOp { () =>
-                                upgradeFiber.set(transport.upgradeToTls(plaintext, unavailableProvider, 16))
+                                upgradeFiber.set(transport.upgradeToTls(plaintext, unavailableProvider, kyo.net.NetConfig.Size(16)))
                                 driver.submitEngineOp { () =>
                                     probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
                                 }
@@ -231,11 +231,12 @@ class PosixTransportUpgradeReleaseTest extends Test:
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                             val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                            val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                            val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity.value)
                             assert(plaintext.start(), "the plaintext connection must start")
                             awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                                 assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
-                                val upgrade = transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
+                                val upgrade =
+                                    transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), kyo.net.NetConfig.Size(16)).safe
                                 awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
                                     assert(stepped, "the upgrade handshake never reached its first step")
                                     val reapLatch = recording.awaitReap()
@@ -299,13 +300,13 @@ class PosixTransportUpgradeReleaseTest extends Test:
             // close takes registerDeferredClose's immediate closeNow branch, whose freeResources is the single, at-most-once consumer
             // of the fdCloseSink credit. If the release enables that consumer before installing the credit, the one consuming run reads
             // the sink Absent, the credit installed afterwards strands forever, and the fd is never closed: a permanent descriptor leak.
-            val cfg = transportConfig.copy(channelCapacity = 1)
+            val cfg = transportConfig.copy(channelCapacity = kyo.net.NetConfig.Size(1))
             val spy = RecordingSocketBindings(Ffi.load[SocketBindings])
             withRecordingTransport(cfg, spy) { (transport, driver, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val plaintext = transport.openWith(handle, driver, cfg.channelCapacity)
+                        val plaintext = transport.openWith(handle, driver, cfg.channelCapacity.value)
                         assert(plaintext.start(), "the plaintext connection must start")
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                             assert(armed, "the pump's first recv never became kernel-owned")
@@ -343,7 +344,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     // in-flight SQEs for the handle. (A verifying no-SNI client is not a reliable buildEngine throw: the
                                     // BoringSSL and OpenSSL providers bind an unmatchable identity and reject at handshake instead.)
                                     val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
-                                    Abort.run[NetException](transport.upgradeToTls(plaintext, unavailableProvider, 16).safe.get).map {
+                                    Abort.run[NetException](transport.upgradeToTls(
+                                        plaintext,
+                                        unavailableProvider,
+                                        kyo.net.NetConfig.Size(16)
+                                    ).safe.get).map {
                                         outcome =>
                                             // Defensive: the upgrade is expected to fail closed (unavailable provider); if a
                                             // regression ever let it succeed, close the unexpected upgraded connection rather than leak it.
@@ -405,12 +410,16 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity.value)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The post-detach body runs inside a completion callback, and completion callbacks are run under a catch-all that
                         // logs rather than propagates. An unhandled throw there settles nothing, so this get is what fails when the
                         // containment is missing: it parks forever on a promise no path can complete, and the leaf's own cap reports it.
-                        Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                        Abort.run[NetException](transport.upgradeToTls(
+                            plaintext,
+                            NetTlsConfig(trustAll = true),
+                            kyo.net.NetConfig.Size(16)
+                        ).safe.get).map {
                             outcome =>
                                 // Defensive, as in the leaves above: a regression that let this upgrade succeed must not leak its connection.
                                 outcome.foreach(_.close())
@@ -453,7 +462,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity.value)
                         assert(plaintext.start(), "the plaintext connection must start")
                         val payload = "staged-ciphertext".getBytes("UTF-8")
                         assert(
@@ -476,7 +485,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     staged,
                                     "the peer's bytes never reached the inbound channel, so nothing would be staged for the engine"
                                 )
-                                Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                                Abort.run[NetException](transport.upgradeToTls(
+                                    plaintext,
+                                    NetTlsConfig(trustAll = true),
+                                    kyo.net.NetConfig.Size(16)
+                                ).safe.get).map {
                                     outcome =>
                                         outcome.foreach(_.close())
                                         outcome match
@@ -527,7 +540,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity.value)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The engine completes its handshake immediately, and its certSha256 (called by onFinished's wireUpgraded, after
                         // the outcome gate is won and before the success completion) closes the plaintext connection: the close routes to
@@ -536,7 +549,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // place left that can see the settled promise and close the orphan.
                         val engine = new FinishWithCertHookEngine(onCertSha = () => plaintext.close())
                         engineSlot.set(engine)
-                        Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
+                        Abort.run[NetException](transport.upgradeToTls(
+                            plaintext,
+                            NetTlsConfig(trustAll = true),
+                            kyo.net.NetConfig.Size(16)
+                        ).safe.get).map {
                             outcome =>
                                 // Defensive: the upgrade is expected to settle as NetConnectionClosedException; if a regression ever
                                 // let it succeed, close the unexpected orphaned connection rather than leak it.

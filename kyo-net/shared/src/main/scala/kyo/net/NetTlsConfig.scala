@@ -59,15 +59,11 @@ case class NetTlsConfig(
       * ClientHello, and never finishes) would otherwise pin the fd, the TLS engine, and the per-connection buffers indefinitely (a slowloris
       * handshake-stall denial of service, CWE-400), and on the process-shared transport nothing later reclaims them. When finite, the
       * transport arms a `Clock`-driven deadline as the handshake begins and reaps the connection on expiry, running the same fd and engine
-      * teardown a failed handshake runs. `Duration.Infinity` arms no deadline. The default `30.seconds` arms the guard for both roles.
+      * teardown a failed handshake runs. `HandshakeTimeout.unlimited` arms no deadline. The default, 30 seconds, arms the guard for both
+      * roles.
       */
-    handshakeTimeout: Duration = 30.seconds
-) derives CanEqual:
-    require(
-        handshakeTimeout > Duration.Zero || handshakeTimeout == Duration.Infinity,
-        s"handshakeTimeout must be positive or Infinity: $handshakeTimeout"
-    )
-end NetTlsConfig
+    handshakeTimeout: NetTlsConfig.HandshakeTimeout = NetTlsConfig.HandshakeTimeout.default
+) derives CanEqual
 
 object NetTlsConfig:
     enum ClientAuth derives CanEqual:
@@ -77,4 +73,23 @@ object NetTlsConfig:
         case TLS12, TLS13
 
     val default: NetTlsConfig = NetTlsConfig()
+
+    /** A TLS handshake deadline: positive, or `Duration.Infinity` for none. Zero would reap every handshake before it starts, so it is
+      * refused rather than held.
+      */
+    opaque type HandshakeTimeout = Duration
+
+    object HandshakeTimeout:
+        val default: HandshakeTimeout   = 30.seconds
+        val unlimited: HandshakeTimeout = Duration.Infinity
+
+        /** `d` as a handshake deadline, or the [[NetConfigException]] refusing a zero duration. */
+        def init(d: Duration)(using Frame): Result[NetConfigException, HandshakeTimeout] =
+            if d > Duration.Zero then Result.succeed(d)
+            else Result.fail(NetConfigException("handshakeTimeout", d.show, "positive, or Duration.Infinity for no deadline"))
+
+        given CanEqual[HandshakeTimeout, HandshakeTimeout] = CanEqual.derived
+
+        extension (self: HandshakeTimeout) def duration: Duration = self
+    end HandshakeTimeout
 end NetTlsConfig

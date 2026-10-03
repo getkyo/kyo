@@ -36,15 +36,16 @@ class ConnectDeadlineStrandTest extends Test:
                 if i >= total then Loop.done(i)
                 else
                     val t0 = java.lang.System.nanoTime()
-                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds).safe.get).map { outcome =>
-                        val latNs = java.lang.System.nanoTime() - t0
-                        maxLatNs.updateAndGet(p => math.max(p, latNs))
-                        outcome match
-                            case Result.Success(conn)                          => conn.close()
-                            case Result.Failure(_: NetConnectTimeoutException) => discard(timeouts.incrementAndGet())
-                            case _                                             => ()
-                        end match
-                        Loop.continue(i + 1)
+                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds.connectTimeout).safe.get).map {
+                        outcome =>
+                            val latNs = java.lang.System.nanoTime() - t0
+                            maxLatNs.updateAndGet(p => math.max(p, latNs))
+                            outcome match
+                                case Result.Success(conn)                          => conn.close()
+                                case Result.Failure(_: NetConnectTimeoutException) => discard(timeouts.incrementAndGet())
+                                case _                                             => ()
+                            end match
+                            Loop.continue(i + 1)
                     }
             }.map { _ =>
                 listener.close()
@@ -71,7 +72,7 @@ class ConnectDeadlineStrandTest extends Test:
         val concurrency = 128
         transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
             Async.foreach(0 until concurrency, concurrency) { _ =>
-                Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds).safe.get).map {
+                Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 30.seconds.connectTimeout).safe.get).map {
                     case Result.Success(conn) =>
                         conn.close()
                         Absent

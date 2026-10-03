@@ -29,31 +29,81 @@ import kyo.*
   *   - `peerCloseGrace`: the window a connection whose peer has closed (FIN) is given to make read progress before it is reclaimed, when its
   *     inbound side is backpressured (no read is armed, so the peer FIN is otherwise unobservable). Any drained span resets the window; only a full
   *     window with zero progress reclaims the descriptor. `Duration.Infinity` disables reclamation (the pre-guard behavior).
+  *
+  * The byte sizes are each a [[kyo.ByteSize]] and are narrowed where the transport uses them, as kyo-core's stream reads narrow theirs: zero
+  * becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`, so no byte size is refused. `channelCapacity` is a
+  * [[NetConfig.Size]], a count of one or more, and the grace is a [[NetConfig.Grace]] (positive or `Duration.Infinity`), so neither the
+  * constructor nor `copy` can hold either value no connection could use. `Size(4)` checks a literal at compile time; a value known only at
+  * runtime goes through `Size.init` or `Grace.init`, which fail with a [[NetConfigException]].
   */
 case class NetConfig(
-    channelCapacity: Int = NetConfig.DefaultChannelCapacity,
-    readChunkSize: Int = NetConfig.DefaultReadChunkSize,
-    soRcvBuf: Maybe[Int] = Absent,
-    soSndBuf: Maybe[Int] = Absent,
-    peerCloseGrace: Duration = NetConfig.DefaultPeerCloseGrace
-) derives CanEqual:
-    require(channelCapacity > 0, s"channelCapacity must be positive: $channelCapacity")
-    require(readChunkSize > 0, s"readChunkSize must be positive: $readChunkSize")
-    soRcvBuf.foreach(n => require(n > 0, s"soRcvBuf must be positive: $n"))
-    soSndBuf.foreach(n => require(n > 0, s"soSndBuf must be positive: $n"))
-    require(peerCloseGrace > Duration.Zero, s"peerCloseGrace must be positive (or Duration.Infinity to disable): $peerCloseGrace")
-end NetConfig
+    channelCapacity: NetConfig.Size = NetConfig.DefaultChannelCapacity,
+    readChunkSize: ByteSize = NetConfig.DefaultReadChunkSize,
+    soRcvBuf: Maybe[ByteSize] = Absent,
+    soSndBuf: Maybe[ByteSize] = Absent,
+    peerCloseGrace: NetConfig.Grace = NetConfig.DefaultPeerCloseGrace
+) derives CanEqual
 
 object NetConfig:
     /** Default inbound/outbound pump channel depth. */
-    val DefaultChannelCapacity: Int = 4
+    val DefaultChannelCapacity: Size = Size(4)
 
-    /** Default initial per-connection read buffer size, in bytes. */
-    val DefaultReadChunkSize: Int = 8192
+    /** Default initial per-connection read buffer size. */
+    val DefaultReadChunkSize: ByteSize = 8.kib
+
+    /** `size` as the `Int` byte count a buffer or socket option takes: zero becomes one byte, and a size beyond `Int.MaxValue` becomes
+      * `Int.MaxValue`, the rule kyo-core's stream reads apply to their own `ByteSize` buffers.
+      */
+    private[net] def bytesAtUse(size: ByteSize): Int = readBufferCapacity(size)
 
     /** Default peer-close grace window (see [[NetConfig.peerCloseGrace]]). */
-    val DefaultPeerCloseGrace: Duration = 30.seconds
+    val DefaultPeerCloseGrace: Grace = 30.seconds
 
     /** The settings every operation applies when its caller passes none. */
     val default: NetConfig = NetConfig()
+
+    /** A count of chunks a connection's pump channels hold: one or more. Zero would make every channel a rendezvous with nothing for the
+      * pumps to stage into, so it is refused rather than held.
+      */
+    opaque type Size = Int
+
+    object Size:
+        /** The size for a literal `n`, checked at compile time: a literal below one, or an argument that is not a constant, does not
+          * compile. A value known only at runtime goes through [[init]].
+          */
+        inline def apply(inline n: Int): Size =
+            inline if n < 1 then compiletime.error("NetConfig.Size must be one or more")
+            else n
+
+        /** `n` as a size, or the [[NetConfigException]] refusing a value below one. */
+        def init(n: Int)(using Frame): Result[NetConfigException, Size] = check("size", n)
+
+        private[kyo] def check(setting: String, n: Int)(using Frame): Result[NetConfigException, Size] =
+            if n >= 1 then Result.succeed(n)
+            else Result.fail(NetConfigException(setting, n.toString, "one or more"))
+
+        given CanEqual[Size, Size] = CanEqual.derived
+
+        extension (self: Size) def value: Int = self
+    end Size
+
+    /** How long a connection may go without progress before it is released: positive, or `Duration.Infinity` for no limit. Zero would
+      * release every such connection on the first check, so it is refused rather than held.
+      */
+    opaque type Grace = Duration
+
+    object Grace:
+        val unlimited: Grace = Duration.Infinity
+
+        /** `d` as a grace window, or the [[NetConfigException]] refusing a zero duration. */
+        def init(d: Duration)(using Frame): Result[NetConfigException, Grace] = check("grace", d)
+
+        private[kyo] def check(setting: String, d: Duration)(using Frame): Result[NetConfigException, Grace] =
+            if d > Duration.Zero then Result.succeed(d)
+            else Result.fail(NetConfigException(setting, d.show, "positive, or Duration.Infinity for no limit"))
+
+        given CanEqual[Grace, Grace] = CanEqual.derived
+
+        extension (self: Grace) def duration: Duration = self
+    end Grace
 end NetConfig

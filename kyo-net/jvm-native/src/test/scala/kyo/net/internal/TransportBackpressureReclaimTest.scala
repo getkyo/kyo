@@ -28,7 +28,8 @@ class TransportBackpressureReclaimTest extends kyo.net.Test:
         val transport = NetPlatform.transport
         // Cap-1 channel + 64-byte read chunk so 128 bytes become two reads, the second overflowing the channel and parking the accepted-side
         // ReadPump. Short grace so the reclaim lands well within the fork's leak-check drain budget.
-        val config    = NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = 200.millis)
+        val config =
+            NetConfig(channelCapacity = NetConfig.Size(1), readChunkSize = 64.bytes, peerCloseGrace = 200.millis.grace)
         val acceptedP = new IOPromise[Closed, Connection]
         for
             // Capture the accepted (server) connection; the handler abandons it (never drains inbound, never closes), so its ReadPump fills the cap-1

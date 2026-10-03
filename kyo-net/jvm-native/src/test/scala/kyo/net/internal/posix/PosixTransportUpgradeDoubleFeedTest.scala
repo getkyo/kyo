@@ -120,7 +120,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                             Abort.run[Closed](transport.upgradeToTls(
                                 plaintext,
                                 NetTlsConfig(trustAll = true),
-                                1
+                                kyo.net.NetConfig.Size(1)
                             ).safe.get).map { upgraded =>
                                 // The handshake completes after exactly two feeds (the signal, then the flight), which is what lets
                                 // .safe.get above return; give the salvage's (possibly asynchronous) delivery a moment to land in case the
@@ -189,7 +189,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                                 Abort.run[Closed](transport.upgradeToTls(
                                     plaintext,
                                     NetTlsConfig(trustAll = true),
-                                    1
+                                    kyo.net.NetConfig.Size(1)
                                 ).safe.get).map { upgraded =>
                                     awaitCondition(2.seconds)(countFlightFeeds(engine) >= 1).andThen {
                                         assert(

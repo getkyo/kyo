@@ -9,8 +9,9 @@ import scala.annotation.tailrec
   * `Redirect` (3xx), `ClientError` (4xx), and `ServerError` (5xx) — plus a `Custom` case for non-standard codes. All standard cases are
   * exported to the companion object so they can be referenced directly as `HttpStatus.OK`, `HttpStatus.NotFound`, etc.
   *
-  * Use `HttpStatus(code)` to resolve an integer to its known enum case, or wrap it in `Custom` when no standard case matches. Use
-  * `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
+  * Use `HttpStatus(code)` with a literal to resolve it to its known enum case, or a `Custom` when no standard case matches; the literal is
+  * checked at compile time. A code known only at runtime goes through `HttpStatus.init(code)`, which refuses one outside 100 to 599 with an
+  * [[kyo.HttpInvalidStatusException]]. Use `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
   *
   * The classification predicates (`isSuccess`, `isClientError`, etc.) are useful for writing retry policies and filter conditions without
   * matching on concrete cases.
@@ -24,11 +25,26 @@ import scala.annotation.tailrec
   */
 sealed abstract class HttpStatus(val code: Int) derives CanEqual:
     def isInformational: Boolean = code >= 100 && code < 200
-    def isSuccess: Boolean       = code >= 200 && code < 300
+    def isSuccess: Boolean       = HttpStatus.isSuccess(code)
     def isRedirect: Boolean      = code >= 300 && code < 400
     def isClientError: Boolean   = code >= 400 && code < 500
     def isServerError: Boolean   = code >= 500 && code < 600
-    def isError: Boolean         = code >= 400
+    def isError: Boolean         = HttpStatus.isError(code)
+
+    /** Whether a response with this status cannot contain content (RFC 9110 sections 6.4.1, 15.3.5 and 15.4.5): every 1xx, 204 and 304.
+      * Such a response ends at its head, whatever Content-Length or Transfer-Encoding it declares.
+      */
+    def forbidsContent: Boolean = HttpStatus.forbidsContent(code)
+
+    /** Whether this status is an interim response (RFC 9110 section 15.2): a 1xx other than 101, which precedes the final response to
+      * the same request. A 101 is final, since the connection switches protocol after it.
+      */
+    def isInterim: Boolean = HttpStatus.isInterim(code)
+
+    /** Whether this status accepts a request to leave HTTP on its connection: 101 answers an Upgrade (RFC 9110 section 7.8), and any 2xx
+      * answers a CONNECT by switching to tunnel mode (section 9.3.6).
+      */
+    def acceptsUpgrade: Boolean = HttpStatus.acceptsUpgrade(code)
 
     /** Human-readable name (e.g. "Not Found", "Internal Server Error"). */
     def name: String = this match
@@ -115,19 +131,50 @@ object HttpStatus:
         case _   => Absent
     end standard
 
-    /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
-    def apply(code: Int): HttpStatus =
-        require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
-        standard(code) match
-            case Present(s) => s
-            case Absent     => Custom(code)
-    end apply
+    // The rules on a bare code, for a parser that holds the code before any HttpStatus exists: building one allocates a Custom for a
+    // non-standard code. The predicates of the same names on HttpStatus delegate here, so each rule has one definition.
+
+    private[kyo] def isValid(code: Int): Boolean = code >= 100 && code <= 599
+
+    private[kyo] def isSuccess(code: Int): Boolean = code >= 200 && code < 300
+
+    private[kyo] def isError(code: Int): Boolean = code >= 400
+
+    private[kyo] def forbidsContent(code: Int): Boolean =
+        (code >= 100 && code < 200) || code == Success.NoContent.code || code == Redirect.NotModified.code
+
+    private[kyo] def isInterim(code: Int): Boolean =
+        code >= 100 && code < 200 && code != Informational.SwitchingProtocols.code
+
+    private[kyo] def acceptsUpgrade(code: Int): Boolean =
+        code == Informational.SwitchingProtocols.code || (code >= 200 && code < 300)
+
+    /** The status for a literal `code`: the standard case if one exists, otherwise a `Custom`.
+      *
+      * The code is checked at compile time, so a literal outside 100 to 599 does not compile. An argument that is not a constant does not
+      * compile either ("Cannot reduce `inline if`"): a code known only at runtime goes through [[init]].
+      */
+    inline def apply(inline code: Int): HttpStatus =
+        inline if code < 100 || code > 599 then compiletime.error("HttpStatus code must be between 100 and 599")
+        else fromValidCode(code)
+
+    /** The status for `code`, or the [[kyo.HttpInvalidStatusException]] refusing a code outside 100 to 599. */
+    def init(code: Int)(using Frame): Result[HttpInvalidStatusException, HttpStatus] =
+        if !isValid(code) then Result.fail(HttpInvalidStatusException(code))
+        else Result.succeed(fromValidCode(code))
 
     def resolve(code: Int): Maybe[HttpStatus] =
         standard(code)
 
-    /** Status code not covered by the standard enums. */
-    final case class Custom(override val code: Int) extends HttpStatus(code)
+    private def fromValidCode(code: Int): HttpStatus =
+        standard(code) match
+            case Present(s) => s
+            case Absent     => Custom(code)
+
+    /** Status code not covered by the standard enums. Built only through `apply` and `init`, so it never holds a code outside 100 to 599
+      * or one a standard case covers.
+      */
+    final case class Custom private[HttpStatus] (override val code: Int) extends HttpStatus(code)
 
     // Exported by name. A wildcard emits one forwarder per member in an order the compiler does not
     // fix, so two clean builds of identical sources produce different artifacts. The enums are large

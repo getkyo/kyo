@@ -345,7 +345,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     resultDescription(tools),
                     StrictSchema.requireAll(resultSchema)
                 ))
-            server <- Abort.run[HttpBindException] {
+            server <- Abort.run[HttpBindException | HttpRouteException] {
                 HttpServer.init(0, "127.0.0.1")(
                     HttpHandler.webSocket("mcp", mcpWebSocketConfig) { (_, ws) =>
                         Scope.run {
@@ -362,7 +362,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 case Result.Failure(bindEx) =>
                     Abort.fail(AIProviderUnavailableException(
                         "Claude Code",
-                        s"failed to bind the MCP bridge server: ${bindEx.getMessage}"
+                        s"failed to start the MCP bridge server: ${bindEx.getMessage}"
                     ))
                 case Result.Panic(ex) => Abort.panic(ex)
             }
@@ -408,7 +408,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 resultDescription(resultTool),
                 StrictSchema.requireAll(resultSchema)
             ))
-            server <- Abort.run[HttpBindException] {
+            server <- Abort.run[HttpBindException | HttpRouteException] {
                 HttpServer.init(0, "127.0.0.1")(
                     HttpHandler.webSocket("mcp", mcpWebSocketConfig) { (_, ws) =>
                         Scope.run {
@@ -425,7 +425,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 case Result.Failure(bindEx) =>
                     Abort.fail(AIProviderUnavailableException(
                         "Claude Code",
-                        s"failed to bind the MCP bridge server: ${bindEx.getMessage}"
+                        s"failed to start the MCP bridge server: ${bindEx.getMessage}"
                     ))
                 case Result.Panic(ex) => Abort.panic(ex)
             }

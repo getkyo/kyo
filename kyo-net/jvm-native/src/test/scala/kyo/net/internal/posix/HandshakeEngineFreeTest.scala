@@ -224,7 +224,7 @@ class HandshakeEngineFreeTest extends Test:
                     closeRaw(shim, peerFd)
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val plaintext =
-                        transport.openWith(handle, transportDriver(transport), transportConfig.channelCapacity)
+                        transport.openWith(handle, transportDriver(transport), transportConfig.channelCapacity.value)
                     plaintext.start()
                     Abort.run[NetException | Closed](transport.upgradeToTls(
                         plaintext,
@@ -259,7 +259,7 @@ class HandshakeEngineFreeTest extends Test:
                                 closeRaw(shim, pFd)
                                 val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                                 val pc =
-                                    transport.openWith(h, transportDriver(transport), transportConfig.channelCapacity)
+                                    transport.openWith(h, transportDriver(transport), transportConfig.channelCapacity.value)
                                 pc.start()
                                 Abort.run[NetException | Closed](transport.upgradeToTls(
                                     pc,

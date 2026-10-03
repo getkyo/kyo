@@ -46,7 +46,7 @@ class PosixTransportHandshakeRegistryTest extends Test:
             val serverTls = NetTlsConfig(
                 certChainPath = Present(TlsTestCert.certPath),
                 privateKeyPath = Present(TlsTestCert.keyPath),
-                handshakeTimeout = 1.milli
+                handshakeTimeout = 1.milli.handshakeTimeout
             )
             transport.listenTls("127.0.0.1", 0, 64, serverTls)(_ => ()).safe.get.map { listener =>
                 // Each client completes the TCP accept and then sends nothing, so every server handshake parks and is reaped by the deadline.

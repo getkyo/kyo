@@ -103,13 +103,13 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                         // numbers, misrouting an event.
                         Sync.ensure(Sync.defer { driver.close(); discard(real.close(clientFd)) }) {
                             val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                            val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                            val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity.value)
                             serverPlain.start()
 
                             // Kick the SERVER upgrade. detachForUpgrade runs synchronously inside upgradeRole, the engine is built, and the
                             // first handshakeStep is submitted, all before this returns: the re-handshake is now in flight.
                             val serverUpgrade =
-                                transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity, isServer = true).safe
+                                transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity.value, isServer = true).safe
 
                             // On the in-flight latch (server-handshake recvNow returned EAGAIN), fire the concurrent close on the SAME fd.
                             // Anti-flakiness: recvSignal.safe.get latches on the real EAGAIN (absence-of-data gate). No sleep.

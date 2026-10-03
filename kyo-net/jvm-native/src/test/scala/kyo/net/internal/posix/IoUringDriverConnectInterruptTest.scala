@@ -71,7 +71,7 @@ class IoUringDriverConnectInterruptTest extends Test:
 
         Fiber.initUnscoped(
             Abort.run[kyo.net.NetException | Closed](
-                transport.connect("127.0.0.1", 9, 1.minute, kyo.net.NetConfig.default).safe.get
+                transport.connect("127.0.0.1", 9, 1.minute.connectTimeout, kyo.net.NetConfig.default).safe.get
             )
         ).flatMap { fiber =>
             stub.connectBarrierP.safe.get.andThen {
@@ -119,7 +119,7 @@ class IoUringDriverConnectInterruptTest extends Test:
         val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
 
         Abort.run[kyo.net.NetException | Closed](
-            transport.connect("127.0.0.1", 9, 1.minute, kyo.net.NetConfig.default).safe.get
+            transport.connect("127.0.0.1", 9, 1.minute.connectTimeout, kyo.net.NetConfig.default).safe.get
         ).map { result =>
             driver.close()
             assert(

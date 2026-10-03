@@ -60,10 +60,12 @@ class HttpServerResilienceTest extends BaseHttpTest:
       */
     private def startServer(transport: Transport, handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Abort[NetException]) =
-        Sync.Unsafe.defer {
-            val config = HttpServerConfig.default.port(0).host("localhost")
-            HttpServer.Unsafe.init(transport, config, handlers).safe.get.map(_.safe)
+    ): HttpServer < (Async & Abort[NetException | HttpRouteException]) =
+        Clock.use { clock =>
+            Sync.Unsafe.defer {
+                val config = HttpServerConfig.default.port(0).host("localhost")
+                Abort.get(HttpServer.Unsafe.init(transport, config, handlers, clock)).map(_.safe.get.map(_.safe))
+            }
         }
 
     /** HTTP-level `eachBackend`: registers one leaf per registered backend, binds a per-backend client over that

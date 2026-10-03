@@ -51,8 +51,8 @@ class StartTlsUpgradeTest extends Test:
                 loopbackPair().map { case (clientFd, serverFd) =>
                     val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
-                    val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                    val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity.value)
+                    val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity.value)
                     clientPlain.start()
                     serverPlain.start()
                     Scope.ensure(Sync.defer(clientPlain.close())).andThen {
@@ -71,9 +71,19 @@ class StartTlsUpgradeTest extends Test:
                             signal.andThen {
                                 // Drive both upgrades concurrently (the handshake is a two-party exchange over the fds).
                                 val serverUpgrade =
-                                    transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity, isServer = true).safe
+                                    transport.upgradeRole(
+                                        serverPlain,
+                                        serverTls,
+                                        transportConfig.channelCapacity.value,
+                                        isServer = true
+                                    ).safe
                                 val clientUpgrade =
-                                    transport.upgradeRole(clientPlain, clientTls, transportConfig.channelCapacity, isServer = false).safe
+                                    transport.upgradeRole(
+                                        clientPlain,
+                                        clientTls,
+                                        transportConfig.channelCapacity.value,
+                                        isServer = false
+                                    ).safe
                                 Async.zip(clientUpgrade.get, serverUpgrade.get)
                             }.map { case (clientTlsConn, serverTlsConn) =>
                                 Scope.ensure(Sync.defer(clientTlsConn.close())).andThen {
