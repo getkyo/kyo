@@ -197,6 +197,13 @@ final private[kyo] class JsIoDriver private (
         end if
     end write
 
+    // Node's sockets are objects, never fd numbers this driver keys anything by, so a recycled number cannot reach a closed handle's state.
+    def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
+
+    def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        try cancel(handle)
+        finally releaseFd(handle, closeFd)
+
     def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
         discard(handle.socket.pause())
         val closed = Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled")

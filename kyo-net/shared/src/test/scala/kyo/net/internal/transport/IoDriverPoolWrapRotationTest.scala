@@ -28,9 +28,13 @@ class IoDriverPoolWrapRotationTest extends Test:
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
-        def close()(using AllowUnsafe, Frame): Unit                                            = ()
-        def label: String                                                                      = "TagDriver"
-        def handleLabel(handle: Unit): String                                                  = "tag"
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
+        def close()(using AllowUnsafe, Frame): Unit = ()
+        def label: String                           = "TagDriver"
+        def handleLabel(handle: Unit): String       = "tag"
     end TagDriver
 
     private def mkDrivers(n: Int): Array[IoDriver[Unit]] =

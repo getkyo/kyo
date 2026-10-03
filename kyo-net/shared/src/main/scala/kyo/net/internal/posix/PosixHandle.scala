@@ -192,6 +192,15 @@ final private[net] class PosixHandle private (
       */
     private[posix] def fdCloseIsClaimed(using AllowUnsafe): Boolean = fdCloseClaimed.get()
 
+    /** Whether this handle may still arm an fd-keyed operation (a registration, an accept, a connect): the one gate every driver arm checks.
+      * False once the close was requested, the fd close claimed, or a poller's closing withdrawal of the fd begun. Every path that closes a
+      * handle's fd claims it first, the claim lands before `close(fd)`, and an arm applied after the claim is rejected, so no arm can run
+      * against a number the kernel has handed to another socket. Each condition is needed: a close is requested before any closer wins the
+      * claim, a listener's fd is closed by a claim with no request, and a poller withdrawal begins before either, in the submit that its
+      * close waits on (see [[PosixHandle.FdWithdrawal]]).
+      */
+    private[posix] def ownsFd()(using AllowUnsafe): Boolean = !guard.isClosing() && !fdCloseClaimed.get() && !fdWithdrawalBegun
+
     /** Record that a [[claimFdClose]] win was spent guarding [[IoUringDriver.registerDeferredClose]]'s deferred `shutdown(SHUT_RD)`, not the
       * real `close(fd)` syscall: that call still owes the actual close once the in-flight recv drains, but its own `claimFdClose()` attempt
       * would lose (the claim is already spent). Set by the winner right after winning; consumed exactly once via [[consumeDeferredFdClose]].
@@ -899,6 +908,8 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   = unbound
     def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
     def label: String                                                                             = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
