@@ -648,23 +648,27 @@ object Flow:
       */
     def runServer(flows: Flow[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*))
 
     def runServer[S](flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+    )(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*)(runner))
 
     /** Start an HTTP server backed by a specific store. */
     def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
         runHandlers(store, flows*).map(h => HttpServer.init(h.toSeq*))
 
     def runServer[S](store: FlowStore, flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+    )(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
         runHandlers(store, flows*)(runner).map(h => HttpServer.init(h.toSeq*))
 
     /** Get HTTP handlers without starting a server. Compose with your own endpoints. */

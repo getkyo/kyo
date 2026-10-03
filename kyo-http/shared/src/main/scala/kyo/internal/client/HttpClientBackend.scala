@@ -85,7 +85,7 @@ final private[kyo] class HttpClientBackend private (
                         val http1 = Http1ClientConnection.init(
                             transportConn.inbound,
                             transportConn.outbound,
-                            transportConfig.maxHeaderSize
+                            transportConfig.maxHeaderSize.value
                         )
                         val host            = url.host
                         val port            = url.port
@@ -185,7 +185,7 @@ final private[kyo] class HttpClientBackend private (
                                     // the connection checked out for ever. The buffered body is handed back as the response's
                                     // one-element stream and as its rawBody (decodeAndComplete), so the caller keeps the status,
                                     // headers and body.
-                                    if !HttpStatus(parsed.statusCode).isSuccess then
+                                    if !HttpStatus.isSuccess(parsed.statusCode) then
                                         // The buffered fallback consumes the whole error body before completing
                                         // resultPromise, so the reuse decision mirrors the buffered contract.
                                         bodyOutcome.foreach(p =>
@@ -196,14 +196,18 @@ final private[kyo] class HttpClientBackend private (
                                         val lastBodySpan = conn.http1.lastBodySpan
                                         val bodyStream   =
                                             buildBodyStream(conn, parsed, request.method, lastBodySpan, maxResponseLength, bodyOutcome)
-                                        RouteUtil.decodeStreamingResponse(
-                                            route,
-                                            HttpStatus(parsed.statusCode),
-                                            parsed.headers,
-                                            bodyStream,
-                                            route.method.name,
-                                            request.url
-                                        ) match
+                                        val decoded: Result[HttpException, HttpResponse[Out]] =
+                                            HttpStatus.init(parsed.statusCode).flatMap(status =>
+                                                RouteUtil.decodeStreamingResponse(
+                                                    route,
+                                                    status,
+                                                    parsed.headers,
+                                                    bodyStream,
+                                                    route.method.name,
+                                                    request.url
+                                                )
+                                            )
+                                        decoded match
                                             case Result.Success(response) =>
                                                 resultPromise.completeDiscard(Result.succeed(response))
                                             case Result.Failure(e: HttpException) =>
@@ -399,6 +403,8 @@ final private[kyo] class HttpClientBackend private (
                         // Launch streaming body writer as a background fiber
                         streamRequestBody(conn, bodyStream, onBodyFailure)
                         f(promise, path)
+            ,
+            onInvalid = refused => onInvalid(refused)
         )
     end encodeAndSendDirectWith
 
@@ -618,15 +624,16 @@ final private[kyo] class HttpClientBackend private (
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using AllowUnsafe, Frame): Unit =
-        val status = HttpStatus(parsed.statusCode)
         try
             val decoded =
-                if !status.isSuccess && RouteUtil.isStreamingResponse(route) then
-                    val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
-                    RouteUtil.decodeStreamingResponse(route, status, parsed.headers, body, route.method.name, request.url)
-                        .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))
-                else
-                    RouteUtil.decodeBufferedResponse(route, status, parsed.headers, bodyBytes, route.method.name, request.url)
+                HttpStatus.init(parsed.statusCode).flatMap { status =>
+                    if !status.isSuccess && RouteUtil.isStreamingResponse(route) then
+                        val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
+                        RouteUtil.decodeStreamingResponse(route, status, parsed.headers, body, route.method.name, request.url)
+                            .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))
+                    else
+                        RouteUtil.decodeBufferedResponse(route, status, parsed.headers, bodyBytes, route.method.name, request.url)
+                }
             decoded match
                 case Result.Success(response) =>
                     if !parsed.isKeepAlive then conn.transport.close()
@@ -948,7 +955,7 @@ final private[kyo] class HttpClientBackend private (
             http1 = Http1ClientConnection.init(
                 connection.inbound,
                 connection.outbound,
-                transportConfig.maxHeaderSize
+                transportConfig.maxHeaderSize.value
             )
             // Send the HTTP request. connectRaw validated the path, the derived Host and the header block before the
             // socket opened, so sendDirect writes only fields that cannot re-frame the request.
@@ -978,12 +985,7 @@ final private[kyo] class HttpClientBackend private (
                         else
                             val bytes = lastBody.take(4096).toArray
                             new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
-                    Abort.fail(HttpStatusException(
-                        HttpStatus(status),
-                        method.name,
-                        url.baseUrl,
-                        bodyText
-                    ))
+                    Abort.get(HttpStatus.init(status)).map(s => Abort.fail(HttpStatusException(s, method.name, url.baseUrl, bodyText)))
                 }
             else
                 Sync.Unsafe.defer {
@@ -1256,7 +1258,7 @@ final private[kyo] class HttpClientBackend private (
             def loop(req: HttpRequest[In], count: Int, chain: Chunk[String]): A < (Async & Abort[HttpException]) =
                 val inner = poolWith(route, req, config) { res =>
                     if !res.status.isRedirect then f(res)
-                    else if count >= config.maxRedirects then
+                    else if count >= config.maxRedirects.count then
                         Abort.fail(HttpRedirectLoopException(count, req.method.name, req.url.baseUrl, chain))
                     else
                         res.headers.get("Location") match
@@ -1299,22 +1301,22 @@ final private[kyo] class HttpClientBackend private (
                                         Abort.fail(err)
                             case Absent => f(res)
                 }
-                if config.timeout == Duration.Infinity then inner
+                if config.timeout.duration == Duration.Infinity then inner
                 else
                     Async.timeoutWithError(
-                        config.timeout,
-                        Result.Failure(HttpTimeoutException(config.timeout, req.method.name, req.url.baseUrl))
+                        config.timeout.duration,
+                        Result.Failure(HttpTimeoutException(config.timeout.duration, req.method.name, req.url.baseUrl))
                     )(inner)
                 end if
             end loop
             loop(request, 0, Chunk.empty)
         else
             val inner = poolWith(route, request, config)(f)
-            if config.timeout == Duration.Infinity then inner
+            if config.timeout.duration == Duration.Infinity then inner
             else
                 Async.timeoutWithError(
-                    config.timeout,
-                    Result.Failure(HttpTimeoutException(config.timeout, request.method.name, request.url.baseUrl))
+                    config.timeout.duration,
+                    Result.Failure(HttpTimeoutException(config.timeout.duration, request.method.name, request.url.baseUrl))
                 )(inner)
             end if
 
@@ -1336,20 +1338,23 @@ final private[kyo] class HttpClientBackend private (
         val key = request.url.address
         RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
             def send(conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                val (responseFiber, bodyOutcome) =
+                    sendViaBackend(conn, route, request, config.maxResponseLength.bytes, multipartBoundary)
                 releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
+            end send
 
             def sendFresh(using AllowUnsafe): A < (Async & Abort[HttpException]) =
                 if pool.tryReserve(key) then
                     Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
-                        connect(url, config.connectTimeout, config.tls).safe.use(conn => Sync.Unsafe.defer(send(conn)))
+                        connect(url, config.connectTimeout.duration, config.tls).safe.use(conn => Sync.Unsafe.defer(send(conn)))
                     }
                 else
                     val (h, p) = hostPort(url)
                     Abort.fail(HttpPoolExhaustedException(h, p, maxConnectionsPerHost, clientFrame))
 
             def sendReused(conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                val (responseFiber, bodyOutcome) =
+                    sendViaBackend(conn, route, request, config.maxResponseLength.bytes, multipartBoundary)
                 // Set only when the reused connection closed before any response byte; the failure then leaves releasingConn, which
                 // discards the connection, and is answered by the retry.
                 var stale = false

@@ -333,14 +333,14 @@ class HttpServerTest extends BaseHttpTest:
         "rest capture must be last segment" in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
-            Abort.run[Throwable] {
-                withServer(ep) { _ => () }
-            }.map { result =>
-                result match
-                    case Result.Error(ex: IllegalArgumentException) =>
-                        assert(ex.getMessage.contains("Rest capture must be the last segment"))
-                    case other =>
-                        fail(s"Expected IllegalArgumentException, got $other")
+            val here  = summon[Frame]
+            Abort.run[HttpRouteException](HttpServer.init(0, "127.0.0.1")(ep)).map {
+                case Result.Failure(ex) =>
+                    assert(ex.route == "GET /api/:mid*/suffix")
+                    assert(ex.getMessage.contains("Rest capture must be the last segment"))
+                    assert(ex.frame.position.fileName == here.position.fileName)
+                case other =>
+                    fail(s"Expected HttpRouteException, got $other")
             }
         }
 
@@ -875,6 +875,18 @@ class HttpServerTest extends BaseHttpTest:
                 send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/login"))).map { resp =>
                     assert(resp.status == HttpStatus.OK)
                     assert(resp.fields.session.value == "tok123")
+                }
+            }
+        }
+
+        "a response cookie the grammar refuses becomes a bare 500, not a Set-Cookie" - {
+            val route = HttpRoute.getRaw("login")
+                .response(_.cookie[String]("session"))
+            val ep = route.handler(_ => HttpResponse.ok.addField("session", HttpCookie("tok; Domain=evil.example")))
+            runServer(ep) { url =>
+                sendRaw(url, HttpMethod.GET, "/login").map { resp =>
+                    assert(resp.status == HttpStatus.InternalServerError)
+                    assert(resp.headers.getAll("Set-Cookie").isEmpty)
                 }
             }
         }
@@ -4056,7 +4068,10 @@ class HttpServerTest extends BaseHttpTest:
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
             def bind(port: Int): Boolean < Async =
-                Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit)).map(_.isSuccess)
+                Abort.run[HttpBindException | HttpRouteException](Scope.run(HttpServer.init(
+                    port,
+                    "127.0.0.1"
+                )(handler).unit)).map(_.isSuccess)
             for
                 bound <- Promise.init[Int, Any]
                 fiber <- Fiber.initUnscoped(Scope.run(
@@ -4165,7 +4180,7 @@ class HttpServerTest extends BaseHttpTest:
                             port = server.port
                             url  = s"http://127.0.0.1:$port/test"
                             stopped <- Abort.run[Throwable](Scope.run {
-                                HttpClient.init(maxConnectionsPerHost = 2).map { client =>
+                                HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { client =>
                                     Fiber.initUnscoped(HttpClient.let(client)(Abort.run[HttpException](HttpClient.getText(url)))).map {
                                         fiber => entered.await.andThen(fiber.interrupt).andThen(fiber.getResult.map(_.isPanic))
                                     }
@@ -4239,7 +4254,7 @@ class HttpServerTest extends BaseHttpTest:
 
     "the request head limit (RFC 6585 section 5, RFC 9110 section 15.5.15)" - {
 
-        val smallHead = loopback.transportConfig(HttpTransportConfig.default.maxHeaderSize(256))
+        val smallHead = loopback.transportConfig(HttpTransportConfig.default.maxHeaderSize(HttpTransportConfig.Size(256)))
         val hello     = HttpHandler.getText("hello")(_ => "world")
         val sizeRoute = HttpRoute.postRaw("u").request(_.bodyBinary).response(_.bodyText)
         val size      = sizeRoute.handler(req => HttpResponse.ok(req.fields.body.size.toString))

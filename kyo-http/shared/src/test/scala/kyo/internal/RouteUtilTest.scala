@@ -84,10 +84,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val request = HttpRequest.postRaw(HttpUrl.parse("http://localhost/upload").getOrThrow)
                 .addField("body", parts)
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                      = false
+            var headers                                              = HttpHeaders.empty
+            var body                                                 = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpCookieException]) =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -124,7 +124,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpCookieException])   =
                 RouteUtil.encodeRequest(route, request)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -601,10 +601,10 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Seq(HttpRequest.Part("field", Absent, Absent, Span.fromUnsafe("value".getBytes("UTF-8"))))
             )
 
-            var callbackInvoked       = false
-            var headers               = HttpHeaders.empty
-            var body                  = Span.empty[Byte]
-            val encoding: Unit < Sync =
+            var callbackInvoked                                      = false
+            var headers                                              = HttpHeaders.empty
+            var body                                                 = Span.empty[Byte]
+            val encoding: Unit < (Sync & Abort[HttpCookieException]) =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected buffered"),
                     onBuffered = (_, actualHeaders, actualBody) =>
@@ -650,7 +650,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             var callbackInvoked                                        = false
             var headers                                                = HttpHeaders.empty
             var body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.empty
-            val encoding: Unit < Sync                                  =
+            val encoding: Unit < (Sync & Abort[HttpCookieException])   =
                 RouteUtil.encodeResponse(route, response)(
                     onEmpty = (_, _) => fail("expected streaming"),
                     onBuffered = (_, _, _) => fail("expected streaming"),
@@ -892,6 +892,25 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             assert(cookieStr.contains("session=abc"))
             assert(cookieStr.contains("theme=dark"))
             assert(cookieStr.contains("; "))
+        }
+
+        "a cookie value carrying a pair delimiter is refused, not appended" in {
+            val route   = HttpRoute.getRaw("data").request(_.cookie[String]("session"))
+            val request = HttpRequest(
+                HttpMethod.GET,
+                HttpUrl.parse("http://localhost/data").getOrThrow,
+                HttpHeaders.empty,
+                Record.empty
+            ).addField("session", "abc; admin=true")
+            Abort.run[HttpCookieException](
+                RouteUtil.encodeRequest(route, request)(
+                    onEmpty = (_, _) => fail("expected the cookie to be refused"),
+                    onBuffered = (_, _, _) => fail("expected the cookie to be refused"),
+                    onStreaming = (_, _, _) => fail("expected the cookie to be refused")
+                )
+            ).map { result =>
+                assert(result.failure.map(_.part) == Present("the value of cookie 'session'"))
+            }
         }
 
         "URL-encoded special characters in query" in {

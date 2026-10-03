@@ -24,7 +24,8 @@ import kyo.net.NetException
   *
   * A bind failure (for example the address is already in use) is an expected, recoverable condition: `init`, `initUnscoped`, and their
   * `initWith` variants surface it as `Abort.fail(HttpBindException)`, so a caller can recover it with `Abort.run[HttpBindException]` rather
-  * than handling it as a defect.
+  * than handling it as a defect. A route the server cannot serve, such as one whose `Capture.Rest` is not its last segment, fails the same
+  * calls with `HttpRouteException` before anything is bound.
   *
   * The default host is `127.0.0.1`, so a server is reachable only from the local machine unless configured otherwise. WARNING: binding to
   * `0.0.0.0` exposes the server on all network interfaces.
@@ -75,17 +76,17 @@ object HttpServer:
 
     // --- Scoped init methods ---
 
-    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         init(HttpServerConfig.default)(handlers*)
 
     def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         init(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
+    ): HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         // The listener is owned by a scope finalizer registered before the bind's join, reading the bound server from a
         // cell the bind fills: a plain `Scope.acquireRelease` over the join leaves a window (the JVM bind completes
         // synchronously) where an abandoned caller strands the listener.
@@ -100,37 +101,37 @@ object HttpServer:
 
     def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         init(handlers*).map(f)
 
     def initWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         init(port, host)(handlers*).map(f)
 
     def initWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope & Abort[HttpBindException]) =
+    ): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         init(config)(handlers*).map(f)
 
     // --- Unscoped init methods ---
 
-    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Abort[HttpBindException]) =
+    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
         initUnscoped(HttpServerConfig.default)(handlers*)
 
     def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Abort[HttpBindException]) =
+    ): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
         initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
     def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Abort[HttpBindException]) =
+    ): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
         Sync.Unsafe.defer(AtomicRef.Unsafe.init(Maybe.empty[HttpServer])).map(serverCell => initInto(config, serverCell)(handlers*))
 
     private def initInto(config: HttpServerConfig, serverCell: AtomicRef.Unsafe[Maybe[HttpServer]])(handlers: HttpHandler[?, ?, ?]*)(using
         Frame
-    ): HttpServer < (Async & Abort[HttpBindException]) =
+    ): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -150,20 +151,22 @@ object HttpServer:
         val filteredHandlers =
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
-        Clock.use { clock =>
-            initListening(config, serverCell, filteredHandlers, clock)
+        Abort.get(HttpRouter.init(filteredHandlers, config.cors)).map { router =>
+            Clock.use { clock =>
+                initRouted(config, serverCell, router, clock)
+            }
         }
     end initInto
 
-    private def initListening(
+    private def initRouted(
         config: HttpServerConfig,
         serverCell: AtomicRef.Unsafe[Maybe[HttpServer]],
-        filteredHandlers: Seq[HttpHandler[?, ?, ?]],
+        router: HttpRouter,
         clock: Clock
-    )(using Frame): HttpServer < (Async & Abort[HttpBindException]) =
+    )(using Frame): HttpServer < (Async & Abort[HttpBindException | HttpRouteException]) =
         Sync.Unsafe.defer {
             val transport   = kyo.net.NetPlatform.transport
-            val listenFiber = Unsafe.init(transport, config, filteredHandlers, clock)
+            val listenFiber = Unsafe.listen(transport, config, router, clock)
             // The bound server reaches the caller through a promise, with the bind failure already translated, so no
             // step separates the join from what the caller registers on the value. A caller stopped at the join settles
             // the promise first; a bind completing afterwards finds nobody to hand the server to and closes it.
@@ -193,21 +196,21 @@ object HttpServer:
             }
             bound.safe.get
         }
-    end initListening
+    end initRouted
 
     def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Abort[HttpBindException]) =
+    ): A < (S & Async & Abort[HttpBindException | HttpRouteException]) =
         initUnscoped(handlers*).map(f)
 
     def initUnscopedWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Abort[HttpBindException]) =
+    ): A < (S & Async & Abort[HttpBindException | HttpRouteException]) =
         initUnscoped(port, host)(handlers*).map(f)
 
     def initUnscopedWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Abort[HttpBindException]) =
+    ): A < (S & Async & Abort[HttpBindException | HttpRouteException]) =
         initUnscoped(config)(handlers*).map(f)
 
     // --- Unsafe API ---
@@ -247,15 +250,23 @@ object HttpServer:
           *   The clock every connection's idle and lingering timers and the close grace period run on; the safe `init` passes the ambient
           *   one, so a server started under `Clock.withTimeControl` times its connections on that clock
           * @return
-          *   A fiber that completes with the unsafe server once bound
+          *   A fiber that completes with the unsafe server once bound, or the [[kyo.HttpRouteException]] naming a route the server cannot
+          *   serve
           */
         def init(
             transport: kyo.net.Transport,
             config: HttpServerConfig,
             handlers: Seq[HttpHandler[?, ?, ?]],
             clock: Clock
+        )(using AllowUnsafe, Frame): Result[HttpRouteException, Fiber.Unsafe[Unsafe, Abort[NetException]]] =
+            HttpRouter.init(handlers, config.cors).map(listen(transport, config, _, clock))
+
+        private[kyo] def listen(
+            transport: kyo.net.Transport,
+            config: HttpServerConfig,
+            router: HttpRouter,
+            clock: Clock
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[NetException]] =
-            val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
             // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
@@ -305,7 +316,7 @@ object HttpServer:
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
             listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, clock))
-        end init
+        end listen
     end Unsafe
 
     // --- Private implementations ---

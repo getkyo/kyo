@@ -22,15 +22,15 @@ object UptimeMonitor extends KyoApp:
 
     def checkOne(url: String): HealthCheck < Async =
         Clock.stopwatch.map { sw =>
-            HttpClient.withConfig(_.timeout(10.seconds).followRedirects(true)) {
-                Abort.run[HttpException](HttpClient.getText(url)).map { result =>
-                    sw.elapsed.map { dur =>
-                        result match
-                            case kyo.Result.Success(_) =>
-                                HealthCheck(url, 200, true, dur.toMillis)
-                            case _ =>
-                                HealthCheck(url, 0, false, dur.toMillis)
-                    }
+            Abort.run[HttpException](
+                HttpClient.withConfig(_.followRedirects(true).timeout(10.seconds))(HttpClient.getText(url))
+            ).map { result =>
+                sw.elapsed.map { dur =>
+                    result match
+                        case kyo.Result.Success(_) =>
+                            HealthCheck(url, 200, true, dur.toMillis)
+                        case _ =>
+                            HealthCheck(url, 0, false, dur.toMillis)
                 }
             }
         }

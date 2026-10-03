@@ -781,26 +781,27 @@ class HttpSecurityServerTest extends BaseHttpTest:
         val serverTls = internal.HttpTestPlatformBackend.serverTlsConfig
 
         "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)" in {
-            val tc           = HttpTransportConfig.default.handshakeTimeout(150.millis)
-            val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
-                .tls(serverTls)
-                .transportConfig(tc)
-            HttpServer.init(serverConfig)(echoHandler).map { server =>
-                // Raw plaintext client: completes the TCP accept but never sends a ClientHello, so the server-side TLS
-                // handshake parks. The bug this guards (handshakeTimeout not honored by the server's transport) would leave
-                // the connection pinned and the bounded await below would expire (Timeout, the regression symptom); the
-                // deadline reaps the accepted fd, which the client observes as its inbound terminating (Closed, or an empty
-                // EOF span).
-                Sync.Unsafe.defer {
-                    val transport = kyo.net.NetPlatform.transport
-                    transport.connect("127.0.0.1", server.port).safe.get.map { conn =>
-                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](conn.inbound.safe.take))).map { outcome =>
-                            conn.close()
-                            val reaped = outcome match
-                                case Result.Success(Result.Success(span)) => span.isEmpty
-                                case Result.Success(Result.Failure(_))    => true
-                                case _                                    => false
-                            assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
+            Abort.get(HttpTransportConfig.default.handshakeTimeout(150.millis)).map { tc =>
+                val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
+                    .tls(serverTls)
+                    .transportConfig(tc)
+                HttpServer.init(serverConfig)(echoHandler).map { server =>
+                    // Raw plaintext client: completes the TCP accept but never sends a ClientHello, so the server-side TLS
+                    // handshake parks. The bug this guards (handshakeTimeout not honored by the server's transport) would leave
+                    // the connection pinned and the bounded await below would expire (Timeout, the regression symptom); the
+                    // deadline reaps the accepted fd, which the client observes as its inbound terminating (Closed, or an empty
+                    // EOF span).
+                    Sync.Unsafe.defer {
+                        val transport = kyo.net.NetPlatform.transport
+                        transport.connect("127.0.0.1", server.port).safe.get.map { conn =>
+                            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](conn.inbound.safe.take))).map { outcome =>
+                                conn.close()
+                                val reaped = outcome match
+                                    case Result.Success(Result.Success(span)) => span.isEmpty
+                                    case Result.Success(Result.Failure(_))    => true
+                                    case _                                    => false
+                                assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
+                            }
                         }
                     }
                 }
@@ -813,15 +814,16 @@ class HttpSecurityServerTest extends BaseHttpTest:
             // A generous finite deadline: the loopback handshake completes well under it, so the timer disarms and the
             // request round-trips. This proves the finite deadline does not reap completed handshakes and that the owned
             // per-config transport serves real TLS traffic.
-            val tc           = HttpTransportConfig.default.handshakeTimeout(30.seconds)
-            val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
-                .tls(serverTls)
-                .transportConfig(tc)
-            initTrustAllClient().map { httpClient =>
-                HttpServer.init(serverConfig)(okHandler).map { server =>
-                    HttpClient.let(httpClient) {
-                        HttpClient.getText(s"https://127.0.0.1:${server.port}/ok").map { body =>
-                            assert(body == "served")
+            Abort.get(HttpTransportConfig.default.handshakeTimeout(30.seconds)).map { tc =>
+                val serverConfig = HttpServerConfig.default.port(0).host("127.0.0.1")
+                    .tls(serverTls)
+                    .transportConfig(tc)
+                initTrustAllClient().map { httpClient =>
+                    HttpServer.init(serverConfig)(okHandler).map { server =>
+                        HttpClient.let(httpClient) {
+                            HttpClient.getText(s"https://127.0.0.1:${server.port}/ok").map { body =>
+                                assert(body == "served")
+                            }
                         }
                     }
                 }

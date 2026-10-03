@@ -30,7 +30,7 @@ object LinkChecker extends KyoApp:
 
     /** Check a single link by sending a HEAD request. */
     def checkLink(url: String): LinkResult < (Async & Abort[HttpException]) =
-        HttpClient.withConfig(_.timeout(10.seconds).followRedirects(true)) {
+        HttpClient.withConfig(_.followRedirects(true).timeout(10.seconds)) {
             HttpClient.getText(url).map { _ =>
                 LinkResult(url, 200, true)
             }
