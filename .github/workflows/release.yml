@@ -42,19 +42,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # No ci leg runs on macOS, so this producer is the only writer of its pole; it saves after the
+      # compile below.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-macos-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-macos-arm64-
+          os: macos-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -76,6 +70,7 @@ jobs:
       # at the 10 GB budget where eviction is continuous. Re-running a producer is cheap: the staging
       # scripts skip what is already staged.
       - name: Compile every module's darwin natives (darwin-aarch64 + darwin-x86_64)
+        id: compile
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
@@ -97,6 +92,15 @@ jobs:
             # ffiCFlags is a build-wide setting, so one ThisBuild append covers every project this leg
             # cross-builds. Same form the plugin's own generated workflow uses.
             sbt -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
+      # Saves only on a push to main (the action's guard), and only once the compile has resolved: a key is
+      # immutable once written, so a tree from a failed setup would own the generation.
+      - if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
+        continue-on-error: true
+        uses: ./.github/actions/caches
+        with:
+          os: macos-arm64
+          mode: save
+          browser: false
       - name: Collect darwin natives
         shell: bash
         run: |
@@ -138,19 +142,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write. A producer resolves a JVM-only tree, and a key is
+      # immutable once written, so saving here would lock out ci's fuller tree for the hash.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-x64-
+          os: linux-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -225,17 +223,18 @@ jobs:
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
             '
-      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+      # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-net/build/boringssl/staged
           key: ${{ steps.natives-musl.outputs.boringssl-key }}
-      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.aeron-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-aeron/build/aeron/staged
           key: ${{ steps.natives-musl.outputs.aeron-key }}
-      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.doltlite-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-sql-doltlite/build/doltlite/staged
@@ -274,19 +273,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-arm64-
+          os: linux-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -355,17 +347,18 @@ jobs:
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
             '
-      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+      # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-net/build/boringssl/staged
           key: ${{ steps.natives-musl.outputs.boringssl-key }}
-      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.aeron-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-aeron/build/aeron/staged
           key: ${{ steps.natives-musl.outputs.aeron-key }}
-      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.doltlite-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-sql-doltlite/build/doltlite/staged
@@ -413,19 +406,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-windows-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-windows-x64-
+          os: windows-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -471,19 +457,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-windows-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-windows-arm64-
+          os: windows-arm64
+          mode: restore
+          browser: false
       # setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so setup-action 404s
       # trying to install itself here. sbt is preinstalled on this image; only the JDK needs replacing,
       # since the one it ships is 21. Microsoft's build because Amazon ships no Corretto for Windows on
