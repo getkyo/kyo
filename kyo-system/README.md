@@ -55,6 +55,7 @@ class S3FileSystemWriteTest extends FileSystemWriteConformanceTest[Async]:
         use: (FileSystem.Write[Async], Path) => A < (Async & Scope & Abort[FileSystemException])
     )(using Frame): A < (Async & Scope & Abort[FileSystemException]) =
         S3FileSystem.init(testBucket).map(files => use(files, Path("conformance")))
+end S3FileSystemWriteTest
 ```
 
 Portable matching uses a compiled `Glob`, never a platform-specific string matcher:
@@ -296,7 +297,7 @@ val w: Unit < (Sync & Abort[FileSystemException]) =
     Path.run(out.write("1.0.0"))
 val a: Unit < (Sync & Abort[FileSystemException]) =
     Path.run(out.append("\nbuilt by CI\n"))
-val data: Span[Byte] = Span.from(Array[Byte](0x50.toByte, 0x4b.toByte))
+val data: Span[Byte]                               = Span.from(Array[Byte](0x50.toByte, 0x4b.toByte))
 val wb: Unit < (Sync & Abort[FileSystemException]) =
     Path.run(out.writeBytes(data))
 ```

@@ -598,7 +598,7 @@ For YAML-specific tooling, `Yaml.Events` exposes parser and writer events withou
 Events can be collected, transformed, rendered, or produced from schema values. This example uppercases every scalar from a YAML parser stream and renders the transformed events back to YAML:
 
 ```scala
-val renderer = Yaml.Events.Renderer()
+val renderer  = Yaml.Events.Renderer()
 val uppercase =
     Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
         Result.succeed((value.toUpperCase, meta))
@@ -724,14 +724,14 @@ val cfgSource =
       |""".stripMargin
 
 // Decode straight from a CST document
-val cfgDoc = Yaml.cst(cfgSource).getOrThrow
+val cfgDoc     = Yaml.cst(cfgSource).getOrThrow
 val cfgDecoded =
     Yaml.decode[Map[String, Map[String, Map[String, String]]]](cfgDoc)
 assert(cfgDecoded.isSuccess)
 
 // Edit via throughCst (comments preserved), then render the result
 val imageV2 = Yaml.Cst.from("app:v2").getOrThrow.root.get
-val bumped =
+val bumped  =
     Yaml.pipeline
         .throughCst(
             _.replace(
@@ -937,7 +937,7 @@ opaque type Username = String
 
 object Username:
     def apply(s: String): Username = s.toLowerCase
-    given Schema[Username] =
+    given Schema[Username]         =
         Schema[String].transform[Username](Username(_))(identity)
 end Username
 ```
@@ -1414,9 +1414,8 @@ case class Config(host: String, port: Int, ssl: Boolean)
 val config = Config("localhost", 8080, false)
 
 val summary = Schema[Config].fold(config)(List.empty[String]) {
-    [N <: String, V] =>
-        (acc, field, value) =>
-            s"${field.name}=$value" :: acc
+    [N <: String, V] => (acc, field, value) =>
+        s"${field.name}=$value" :: acc
 }.reverse.mkString(", ")
 // "host=localhost, port=8080, ssl=false"
 ```
