@@ -68,6 +68,10 @@ abstract class Regulator(
     private val adjustments     = new LongAdder
     private val updates         = new LongAdder
 
+    // Set by `stop`. The scheduler stops its regulators before its timer executor is shut down, and that shutdown interrupts a probe
+    // still sleeping: an interrupt seen once this is set is the shutdown, not a failure.
+    @volatile private var stopped = false
+
     /** Collect a performance measurement.
       *
       * This method should implement the specific probing mechanism for the regulator. Implementations must call `measure()` with the
@@ -106,6 +110,7 @@ abstract class Regulator(
       */
     def stop(): Unit = {
         def discard(v: Any) = {}
+        stopped = true
         discard(collectTask.cancel())
         discard(regulateTask.cancel())
     }
@@ -142,6 +147,8 @@ abstract class Regulator(
             probesSent.increment()
             probe()
         } catch {
+            case _: InterruptedException if stopped =>
+                Thread.currentThread().interrupt()
             // Any Throwable, fatal ones included: this runs as a periodic task, and the executor suppresses every later run once
             // one throws. A probe schedules a task, so it reaches the scheduler's drains.
             case ex: Throwable =>
@@ -184,6 +191,8 @@ abstract class Regulator(
             stats.jitter.observe(jitter)
             stats.loadavg.observe(load)
         } catch {
+            case _: InterruptedException if stopped =>
+                Thread.currentThread().interrupt()
             // Any Throwable, for the same reason as `collect`: one escaping failure would end the adjustments for good.
             case ex: Throwable =>
                 kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
