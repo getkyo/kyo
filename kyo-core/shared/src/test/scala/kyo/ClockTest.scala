@@ -713,6 +713,30 @@ class ClockTest extends kyo.test.Test[Any]:
                 yield assert(wasExecuted)
             }
         }
+
+        "a fence on a sleeper's duration waits for that sleeper while an unrelated timer is pending" in {
+            Clock.withTimeControl { control =>
+                // A retry armed on another fiber after its trigger, the way a client arms its backoff after a failed call. The advance
+                // carries no wall-clock grace, so it fires the retry only if the fence held until the retry's sleeper was registered.
+                // Repeated because each round's arm races the fence.
+                def round: Unit < Async =
+                    for
+                        trigger <- Latch.init(1)
+                        retry   <- Fiber.initUnscoped(trigger.await.andThen(Async.sleep(5.seconds)))
+                        _       <- trigger.release
+                        _       <- control.awaitPendingSleeper(5.seconds)
+                        _       <- control.advance(5.seconds, Duration.Zero)
+                        _       <- retry.get
+                    yield ()
+                for
+                    unrelated <- Fiber.initUnscoped(Async.sleep(365.days))
+                    _         <- control.awaitPendingSleepers(1)
+                    _         <- Loop.repeat(50)(round)
+                    _         <- unrelated.interrupt
+                yield succeed
+                end for
+            }
+        }
     }
 
     def intervals(instants: Seq[Instant]): Seq[Duration] =
