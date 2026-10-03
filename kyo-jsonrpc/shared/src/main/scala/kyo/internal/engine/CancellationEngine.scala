@@ -155,8 +155,11 @@ private[kyo] object CancellationEngine:
         // the inbound handler then blocks on ctx.cancelled and the caller on the reply until timeout.
         info.requestEnqueued.get.andThen {
             policy.encodeParams(id, reason).map { params =>
-                val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), info.extras)
-                writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
+                // Unsafe: read the extras the encode callback published before requestEnqueued completed
+                Sync.Unsafe.defer(info.extras.get()(using AllowUnsafe.embrace.danger)).map { extras =>
+                    val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), extras)
+                    writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
+                }
             }
         }
 
