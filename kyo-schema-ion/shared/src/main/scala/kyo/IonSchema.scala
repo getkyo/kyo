@@ -78,12 +78,12 @@ object IonSchema:
     end Constraint
 
     /** Derives an Ion Schema document for type `A`. */
-    inline def from[A](using schema: Schema[A]): IonSchema =
+    inline def from[A](using schema: Schema[A], frame: Frame): IonSchema =
         fromSchema(schema)
     end from
 
     /** Derives an Ion Schema document from a runtime [[Schema]]. */
-    def fromSchema[A](schema: Schema[A], config: Config = Config.Default): IonSchema =
+    def fromSchema[A](schema: Schema[A], config: Config = Config.Default)(using Frame): IonSchema =
         val constraints = constraintsByPath(schema.constraints)
         val root        = fromStructure(schema.structure, constraints, Seq.empty, schema, config, Set.empty)
         val name        = rootName(schema.structure)
@@ -137,7 +137,7 @@ object IonSchema:
     end render
 
     /** Derives and encodes an Ion Schema document for type `A` as ISL text. */
-    inline def encode[A](config: Config = Config.Default)(using schema: Schema[A]): String =
+    inline def encode[A](config: Config = Config.Default)(using schema: Schema[A], frame: Frame): String =
         IonSchema.encode(fromSchema(schema, config))
     end encode
 
@@ -151,7 +151,11 @@ object IonSchema:
       * Requires `AllowUnsafe`: this writes directly to a caller-supplied `OutputStream` outside
       * the effect system, so the caller opts into the side effect.
       */
-    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using schema: Schema[A], allow: AllowUnsafe): Unit =
+    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using
+        schema: Schema[A],
+        frame: Frame,
+        allow: AllowUnsafe
+    ): Unit =
         // Unsafe: the write is a synchronous, unsuspended side effect on the caller's OutputStream.
         // AllowUnsafe is the caller's proof that they own the stream and opt into the write.
         IonSchema.encodeTo(fromSchema(schema, config), out)
@@ -177,7 +181,7 @@ object IonSchema:
         schema: Schema[A],
         config: Config,
         seen: Set[String]
-    ): TypeExpr =
+    )(using Frame): TypeExpr =
         val base =
             structure match
                 case p: Structure.Type.Primitive =>
@@ -270,7 +274,7 @@ object IonSchema:
                                     case unsupported =>
                                         throw SchemaNotSerializableException(
                                             s"Ion Schema generation cannot describe union representation $unsupported"
-                                        )(using Frame.internal)
+                                        )
                                 end match
                             end if
                         }

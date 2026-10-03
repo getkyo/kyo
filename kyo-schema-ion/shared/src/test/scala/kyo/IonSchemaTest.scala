@@ -288,6 +288,17 @@ class IonSchemaTest extends kyo.test.Test[Any]:
             assert(!encoded.contains("Go: {"), encoded)
         }
 
+        "a representation ISL cannot describe fails with the describe call's Frame" in {
+            given Schema[MTShape] = Schema[MTShape].tupleTagged
+            val describeSite      = summon[Frame]
+            val ex                = intercept[SchemaNotSerializableException] {
+                given Frame = describeSite
+                Ion.ionSchemaString[MTShape]()
+            }
+            assert(ex.detail.contains("cannot describe union representation Tuple"), ex.detail)
+            assert(ex.frame == describeSite, s"raised at ${ex.frame}, described at $describeSite")
+        }
+
         "emits sealed traits as ISL one_of alternatives for discriminator wrappers" in {
             given Schema[MTShape] = Schema[MTShape].discriminator("type")
 

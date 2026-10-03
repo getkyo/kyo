@@ -175,6 +175,16 @@ class IonBinaryTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "a value the binary format cannot hold fails with the encode call's Frame" in {
+            val encodeSite = summon[Frame]
+            val instant    = java.time.Instant.parse("-0001-01-01T00:00:00Z")
+            val ex         = intercept[SchemaNotSerializableException](
+                IonBinary.encode(instant)(using summon[Schema[java.time.Instant]], summon[IonBinary], encodeSite)
+            )
+            assert(ex.detail.contains("proleptic year -1 is negative"), ex.detail)
+            assert(ex.frame == encodeSite, s"raised at ${ex.frame}, encoded at $encodeSite")
+        }
+
         "encodeBytes and decodeBytes are direct aliases of encode and decode" in {
             val value   = MTPerson("Alice", 30)
             val encoded = IonBinary.encodeBytes(value)

@@ -295,7 +295,7 @@ final class IonBinaryWriter private (private val config: Ion.Config)(using site:
         value.getClass.getName.stripSuffix("$")
 
     private def invalid(message: String): Nothing =
-        throw SchemaNotSerializableException(message)(using kyo.Frame.internal)
+        throw SchemaNotSerializableException(message)(using site)
     end invalid
 
 end IonBinaryWriter

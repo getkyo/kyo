@@ -88,12 +88,12 @@ object Ion:
     given Ion = Ion()
 
     /** Generates an Ion Schema Language document for type `A`. */
-    inline def ionSchema[A](config: IonSchema.Config = IonSchema.Config.Default)(using schema: Schema[A]): IonSchema =
+    inline def ionSchema[A](config: IonSchema.Config = IonSchema.Config.Default)(using schema: Schema[A], frame: Frame): IonSchema =
         IonSchema.fromSchema(schema, config)
     end ionSchema
 
     /** Generates an Ion Schema Language document for type `A` and encodes it as ISL text. */
-    inline def ionSchemaString[A](config: IonSchema.Config = IonSchema.Config.Default)(using schema: Schema[A]): String =
+    inline def ionSchemaString[A](config: IonSchema.Config = IonSchema.Config.Default)(using schema: Schema[A], frame: Frame): String =
         IonSchema.encode(IonSchema.fromSchema(schema, config))
     end ionSchemaString
 

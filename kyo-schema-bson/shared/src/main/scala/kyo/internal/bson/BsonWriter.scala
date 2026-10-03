@@ -264,7 +264,7 @@ final class BsonWriter(config: kyo.Bson.Config)(using site: Frame) extends Codec
     end writeLE64
 
     private def invalid(message: String): Nothing =
-        throw SchemaNotSerializableException(message)(using kyo.Frame.internal)
+        throw SchemaNotSerializableException(message)(using site)
     end invalid
 
 end BsonWriter
