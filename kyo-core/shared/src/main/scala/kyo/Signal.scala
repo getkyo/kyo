@@ -88,6 +88,17 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       */
     def nextWith[B, S](f: A => B < S)(using Frame): B < (S & Async)
 
+    // A change count read together with the value, so `observe`'s wakeup can tell a change made since that read without
+    // comparing values: a derived signal may build an unequal value on every read (kyo-ui's UI trees), and a comparison
+    // would then never let the hold park. -1 is a signal that keeps no count.
+    private[kyo] def currentCountedWith[B, S](f: (A, Long) => B < S)(using Frame): B < (S & Sync) =
+        currentWith(f(_, -1L))
+
+    // Completes on the first change after the read that returned `count`. Without a count it can only wait for the next
+    // change, missing one made before it registers.
+    private[kyo] def nextSince(count: Long)(using Frame): Unit < Async =
+        nextWith(_ => ())
+
     /** Runs `f` for the current value and for every subsequent change, each inside a fresh [[Scope]] that closes when the next value arrives.
       *
       * This is a live subscription: `f` runs once for the current value, then again on every change, and the computation runs forever (fork it
@@ -100,9 +111,12 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       *
       * It is designed never to permanently miss the latest value, even under a write that races the observation, and never to tear a
       * still-current value's `Scope` down on an idle timer. Every signal uses the same repairing loop: it reads `current`, runs `f`, then
-      * re-arms a `nextWith`/`Async.sleep(repairInterval)` race that holds the value's `Scope` open until the next change. A write that lands
-      * in the narrow window between reading `current` and registering `nextWith` is missed by the immediate wakeup and reconciled when the
-      * repair timer next fires and re-reads `current` (the hold re-waits on a still-current value, so a repair timer never closes its `Scope`).
+      * re-arms a `nextWith`/`Async.sleep(repairInterval)` race that holds the value's `Scope` open until the next change. A `SignalRef`, and
+      * a `map` over one, counts its changes: the loop reads the count with the value, and the race's wakeup ends the hold at once when the
+      * count has moved since, so a write made by `f` or by a writer that ran while the race was being armed is never left to the timer. Any
+      * other signal's wakeup is its `nextWith`: a write that lands in the window between reading `current` and registering `nextWith` is
+      * missed by the immediate wakeup and reconciled when the repair timer next fires and re-reads `current` (the hold re-waits on a
+      * still-current value, so a repair timer never closes its `Scope`).
       * So the final value is always delivered: immediately in the common case, and within `repairInterval` in the worst case when a write
       * races that window. Correctness never depends on `repairInterval` ; only the worst-case reconciliation latency does. This variant uses
       * [[Signal.defaultRepairInterval]].
@@ -132,16 +146,20 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
         // Repairing default. Each value runs inside a fresh `Scope.run`; the inner `holdUntilChanged` loops until `current`
         // differs from the value `f` set up, so an idle repair timer NEVER closes a still-current value's scope. The scope
         // closes (releasing what `f` forked) only when the value actually changes; then the outer loop re-reads `current`.
-        def holdUntilChanged(cur: A): Unit < (S & Async) =
-            Async.race(Seq(nextWith(_ => ()), Async.sleep(repairInterval))).andThen {
-                currentWith(c => if c == cur then holdUntilChanged(cur) else (): Unit < (S & Async))
+        //
+        // The wakeup waits for a change since the count read with the value, not for the next change: the race's arms start
+        // only once its fibers are scheduled, and a writer that runs in that gap (on a contended scheduler, nearly every time)
+        // would otherwise leave every change to the repair timer.
+        def holdUntilChanged(cur: A, count: Long): Unit < (S & Async) =
+            Async.race(Seq(nextSince(count), Async.sleep(repairInterval))).andThen {
+                currentCountedWith((c, n) => if c == cur then holdUntilChanged(cur, n) else (): Unit < (S & Async))
             }
         def loop(last: Maybe[A]): Unit < (S & Async) =
-            currentWith { cur =>
+            currentCountedWith { (cur, count) =>
                 if last.exists(_ == cur) then
-                    Async.race(Seq(nextWith(_ => ()), Async.sleep(repairInterval))).andThen(loop(last))
+                    Async.race(Seq(nextSince(count), Async.sleep(repairInterval))).andThen(loop(last))
                 else
-                    Scope.run(f(cur).andThen(holdUntilChanged(cur))).andThen(loop(Present(cur)))
+                    Scope.run(f(cur).andThen(holdUntilChanged(cur, count))).andThen(loop(Present(cur)))
             }
         loop(Absent)
     end observe
@@ -547,6 +565,22 @@ object Signal:
 
         def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
 
+        // The count is read before the value: a change whose value the read missed has not been counted yet, so `nextSince`
+        // sees the count move.
+        override private[kyo] def currentCountedWith[B, S](f: (A, Long) => B < S)(using Frame) =
+            Sync.Unsafe.defer {
+                val count = unsafe.changes()
+                f(unsafe.get(), count)
+            }
+
+        // The promise is taken before the count is read: a change counted after that read completes this promise, since
+        // `onUpdate` counts before it swaps.
+        override private[kyo] def nextSince(count: Long)(using Frame) =
+            Sync.Unsafe.defer {
+                val next = unsafe.next()
+                if unsafe.changes() != count then (): Unit < Async else next.safe.use(_ => ())
+            }
+
         // `observe` is intentionally NOT overridden here: `SignalRef` uses the trait's repairing `observe`.
         //
         // An earlier exact, register-before-read override captured the next-change promise before reading `current` and
@@ -554,9 +588,9 @@ object Signal:
         // 0.5.10: although it runs correctly in isolation (kyo-core's own native suite passes), its mere presence in a
         // downstream native binary perturbs whole-program codegen and corrupts the heap, surfacing as an unrecoverable
         // SIGSEGV/SIGABRT under concurrent load (reproduced in the kyo-browser native suite). The repairing loop never
-        // holds a promise across the suspension, emits no such pattern, and is lossless: a write that races the
-        // read/register window is reconciled within `repairInterval`, never dropped. Do not reintroduce an exact
-        // override without re-validating the full kyo-browser native suite.
+        // holds a promise across the suspension, emits no such pattern, and carries the change count across it instead,
+        // which closes the read/register window: `nextSince` holds its promise only across its own wait, as `nextWith`
+        // does. Do not reintroduce an exact override without re-validating the full kyo-browser native suite.
 
         /** Retrieves the current value of the reference.
           *
@@ -640,22 +674,24 @@ object Signal:
 
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details.
           *
-          * The implementation uses two atomic references to manage state:
+          * The implementation uses three atomics to manage state:
           *
           *   - An `AtomicRef[A]` storing the current value
           *   - An `AtomicRef[Promise]` managing change notifications
+          *   - An `AtomicLong` counting changes
           *
           * Methods like `set`, `getAndSet`, and `compareAndSet` update the current value atomically and check if it has actually changed
-          * using `CanEqual`. When values differ, `onUpdate` is triggered: the current promise is atomically replaced with a new
-          * uninterruptible promise, then completed with the new value. This ensures the next promise is always ready before notifying of
-          * changes.
+          * using `CanEqual`. When values differ, `onUpdate` is triggered: the change is counted, then the current promise is atomically
+          * replaced with a new uninterruptible promise and completed with the new value. This ensures the next promise is always ready
+          * before notifying of changes, and that a change is counted before its promise completes.
           *
           * Promises are uninterruptible to prevent interrupt propagation between observers: if one observer is interrupted, the
           * interruption won't affect other observers waiting on the same signal.
           */
         final class Unsafe[A] private (
             currentRef: AtomicRef.Unsafe[A],
-            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[A, Any]]
+            nextPromise: AtomicRef.Unsafe[Promise.Unsafe[A, Any]],
+            changeCount: AtomicLong.Unsafe
         )(using CanEqual[A, A]):
 
             def get()(using AllowUnsafe): A = currentRef.get()
@@ -712,9 +748,13 @@ object Signal:
             def next()(using AllowUnsafe): Fiber.Unsafe[A, Any] =
                 nextPromise.get()
 
+            def changes()(using AllowUnsafe): Long = changeCount.get()
+
             private def onUpdate(value: A)(using AllowUnsafe): Unit =
+                discard(changeCount.incrementAndGet())
                 nextPromise.getAndSet(Promise.Unsafe.initUninterruptible())
                     .completeDiscard(Result.succeed(value))
+            end onUpdate
 
             def waiters()(using AllowUnsafe): Int = nextPromise.get().waiters()
 
@@ -729,7 +769,8 @@ object Signal:
             def init[A](initial: A)(using AllowUnsafe, CanEqual[A, A]): Unsafe[A] =
                 Unsafe(
                     AtomicRef.Unsafe.init(initial),
-                    AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible())
+                    AtomicRef.Unsafe.init(Promise.Unsafe.initUninterruptible()),
+                    AtomicLong.Unsafe.init(0)
                 )
         end Unsafe
 

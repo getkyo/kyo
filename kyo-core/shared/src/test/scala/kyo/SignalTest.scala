@@ -989,6 +989,25 @@ class SignalTest extends kyo.test.Test[Any]:
             _ <- seen.close
         yield misses.foldLeft(0)(_ + _)
 
+    // `f` writes the next value before the hold arms, which places that write in the read/register window on every run
+    // rather than by timing. The repair interval is a virtual hour nothing advances, so the second value can only arrive
+    // through the hold's own wakeup; a hold that leaves it to the repair timer hangs the leaf.
+    private def observeWriteFromF(useMap: Boolean)(using Frame): (String, String) < (Async & Abort[Closed]) =
+        Clock.withTimeControl { _ =>
+            for
+                ref <- Signal.initRef("a")
+                sig = if useMap then ref.map(v => v) else ref
+                seen  <- Channel.initUnscoped[String](4)
+                fiber <- Fiber.initUnscoped(sig.observe(1.hour) { v =>
+                    (if v == "a" then ref.set("b") else Kyo.unit).andThen(Abort.run[Closed](seen.put(v)).unit)
+                })
+                first  <- seen.take
+                second <- seen.take
+                _      <- fiber.interrupt
+                _      <- seen.close
+            yield (first, second)
+        }
+
     "observe" - {
         "emits the current value on subscription" in {
             for
@@ -1053,6 +1072,36 @@ class SignalTest extends kyo.test.Test[Any]:
 
         "never loses the final value under back-to-back writes (map delegates to leaf)" in {
             observeNeverLosesFinalValue(useMap = true, iterations = 5000).map(lost => assert(lost == 0, s"map lost $lost / 5000"))
+        }
+
+        "delivers a write made before the hold arms without waiting for the repair interval (SignalRef leaf)" in {
+            observeWriteFromF(useMap = false).map(seen => assert(seen == ("a", "b")))
+        }
+
+        "delivers a write made before the hold arms without waiting for the repair interval (map delegates to leaf)" in {
+            observeWriteFromF(useMap = true).map(seen => assert(seen == ("a", "b")))
+        }
+
+        "parks on a signal whose every read builds an unequal value" in {
+            // A derived signal can rebuild its value on every read (kyo-ui's UI trees compare by reference). With no change, the
+            // hold must reach `nextWith`, whose registration releases the latch; a hold that compared values would find every
+            // read changed and re-run `f` without ever registering.
+            Clock.withTimeControl { _ =>
+                for
+                    reads      <- AtomicInt.init
+                    runs       <- AtomicInt.init
+                    registered <- Latch.init(1)
+                    sig = Signal.initRaw[Int](
+                        currentWith = [B, S] => f => reads.incrementAndGet.map(f),
+                        nextWith = [B, S] => (_: Int => B < S) => registered.release.andThen(Async.never[B])
+                    )
+                    fiber <- Fiber.initUnscoped(sig.observe(1.hour)(_ => runs.incrementAndGet.unit))
+                    _     <- registered.await
+                    r     <- runs.get
+                    n     <- reads.get
+                    _     <- fiber.interrupt
+                yield assert(r == 1 && n == 1, s"f ran $r times over $n reads with no change")
+            }
         }
 
         "reconciles a missed wakeup within repairInterval on a non-exact signal" in {
