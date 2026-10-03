@@ -2523,6 +2523,12 @@ def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): 
         base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
     }
 
+// The linking half of `stripSystemOpensslForStagedBoringSsl`, for a module that inherits kyo-net's TLS shims: their
+// staged BoringSSL include already leads through `native-settings`, so only the system-OpenSSL link flags go.
+def stripSystemOpensslLinkingForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): NativeConfig =
+    if (!boringSslStaged(kyoNetBase)) base
+    else base.withLinkingOptions(removeSubsequence(base.linkingOptions, systemOpensslNativeLinkOpts))
+
 // kyo-net's staged-BoringSSL force-load link flags (whole-archive on Linux, -force_load on darwin) plus the
 // dynamic C++ runtime. Reconstructed here (not reused) because downstream kyo-http lacks the
 // `ffiNativeLinkingOptions` task yet also needs them. `kyoNetBase` is kyo-net's own dir; no-op if unstaged.
@@ -3214,12 +3220,13 @@ lazy val `kyo-http` =
             `native-settings`,
             `openssl-native-settings`,
             // kyo-http does not own the FFI libraries (only kyo-net enables KyoFfiPlugin); it inherits the bundled TLS
-            // shim C transitively. When BoringSSL is staged, apply the same COMPILE strip/prepend as kyo-net
-            // (stripSystemOpensslForStagedBoringSsl) and re-append kyo-net's force-load LINK window. Linux only, since
-            // darwin force-loads by path (re-appending would duplicate symbols). Unstaged: both are no-ops.
+            // shim C transitively, and its headers lead through `native-settings` as in every other dependent module.
+            // When BoringSSL is staged, drop the system-OpenSSL link flags and re-append kyo-net's force-load LINK
+            // window. Linux only, since darwin force-loads by path (re-appending would duplicate symbols). Unstaged:
+            // both are no-ops.
             nativeConfig := {
                 val kyoNetBase   = baseDirectory.value / ".." / ".." / "kyo-net"
-                val stripped     = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                val stripped     = stripSystemOpensslLinkingForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
                 val isMac        = System.getProperty("os.name", "").toLowerCase.contains("mac")
                 val bsslReappend = if (isMac) Nil else stagedBoringSslForceLoadLinkOpts(kyoNetBase)
                 if (bsslReappend.isEmpty) stripped
@@ -3957,10 +3964,11 @@ lazy val `kyo-website` =
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
-            // The suites render the live root and module READMEs and read build.sbt as text.
+            // The suites render the live root and module READMEs, copy the root logos, and read build.sbt as text.
             TestKyo.testInputs := {
                 val root = (ThisBuild / baseDirectory).value
-                Seq(root / "README.md", root / "build.sbt") ++ (root * DirectoryFilter * "README.md").get
+                Seq(root / "README.md", root / "build.sbt", root / "kyo.png", root / "kyo.svg") ++
+                    (root * DirectoryFilter * "README.md").get
             },
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.
@@ -4252,7 +4260,11 @@ lazy val `native-settings-base` = Seq(
             KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir
         )
         val withLink = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
-        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+        // The manifest's flags go first: bundled C was written against the headers it names, and Scala Native's default
+        // includes (/opt/homebrew/include, which links openssl@3's headers) would otherwise shadow them. Behind them,
+        // kyo-net's BoringSSL shim compiles against OpenSSL 3's prototypes and passes BIO_new_mem_buf a length BoringSSL
+        // reads as 0xFFFFFFFF.
+        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(compileExtra ++ withLink.compileOptions)
     }
 )
 

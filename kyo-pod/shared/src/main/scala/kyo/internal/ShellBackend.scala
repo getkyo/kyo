@@ -263,13 +263,26 @@ final private[kyo] class ShellBackend(
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit(ResourceContext.Container(id), "container", "checkpoint", id.value, "--export", s"/tmp/$name.tar")
+            runUnit(
+                ResourceContext.Container(id),
+                "container",
+                "checkpoint",
+                id.value,
+                "--export",
+                ContainerBackend.checkpointArchive(name).toString
+            )
         else
             runUnit(ResourceContext.Container(id), "checkpoint", "create", id.value, name)
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit(ResourceContext.Container(id), "container", "restore", "--import", s"/tmp/$checkpoint.tar")
+            runUnit(
+                ResourceContext.Container(id),
+                "container",
+                "restore",
+                "--import",
+                ContainerBackend.checkpointArchive(checkpoint).toString
+            )
         else
             runUnit(ResourceContext.Container(id), "start", "--checkpoint", checkpoint, id.value)
 
