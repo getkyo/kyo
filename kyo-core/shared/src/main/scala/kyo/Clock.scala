@@ -698,8 +698,9 @@ object Clock:
 
     /** Repeatedly executes a task at fixed time intervals.
       *
-      * Unlike repeatWithDelay, this ensures consistent execution intervals regardless of task duration. If a task takes longer than the
-      * interval, the next execution will start immediately after completion.
+      * Unlike repeatWithDelay, the interval is measured between scheduled starts, so the time a task takes does not shift the runs after
+      * it. If a task takes longer than the interval, the next execution starts immediately after it completes and the one after that
+      * returns to the interval; starts missed meanwhile are not replayed.
       *
       * @param interval
       *   The fixed time interval between task starts
@@ -774,9 +775,13 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
+        repeatAtInterval(Schedule.internal.FixedRate(startAfter, interval, Absent), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
+      *
+      * Before each run this sleeps exactly the delay the schedule answers, asked with the time the previous run ended. A schedule that
+      * measures from that time, such as `Schedule.anchored`, keeps a fixed rate; one that does not, such as `Schedule.fixed`, measures from
+      * the end of the previous run, as repeatWithDelay does.
       *
       * @param intervalSchedule
       *   A schedule that determines the timing between executions
@@ -823,24 +828,7 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        Fiber.initUnscoped {
-            Clock.use { clock =>
-                clock.now.map { now =>
-                    Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
-                        clock.now.map { now =>
-                            period.next(now) match
-                                case Absent                            => Loop.done(state)
-                                case Present((duration, nextSchedule)) =>
-                                    // Measured from the scheduled start, not from now: the body and the re-arm take time.
-                                    val nextExecution = lastExecution + duration
-                                    clock.sleep(nextExecution.minusOrZero(now)).map(
-                                        _.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule)))
-                                    )
-                        }
-                    }
-                }
-            }
-        }
+        repeatWithDelay(intervalSchedule, state)(f)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
