@@ -147,10 +147,23 @@ jobs:
         run: ./scripts/native-relink-selftest.sh
 
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
+        id: test
         shell: bash
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
+
+      # Saves only on a push to main (the action's own guard). Gated on the test step having run to a
+      # conclusion: a failed test leaves dependencies worth keeping, while a failed setup or relink guard
+      # leaves a partial tree, and a key is immutable once written, so that tree would own the whole
+      # generation. continue-on-error because a cache problem must never turn a main leg red.
+      - name: save caches (${{ inputs.os }})
+        if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        continue-on-error: true
+        uses: ./.github/actions/caches
+        with:
+          os: ${{ inputs.os }}
+          mode: save
 
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test

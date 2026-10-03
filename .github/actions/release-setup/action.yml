@@ -32,18 +32,11 @@ runs:
     # restore, not the full cache action: a key is immutable once written, so whichever job saves first
     # owns it for that hash. Releases are infrequent and the ci legs on these poles are not, so ci writes
     # and both callers here restore.
-    - uses: actions/cache/restore@v6
-      env:
-        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    - uses: ./.github/actions/caches
       with:
-        path: |
-          ~/.cache/coursier
-          ~/Library/Caches/Coursier
-          ~/AppData/Local/Coursier/Cache
-          ~/.sbt
-          ~/.ivy2/cache
-        key: deps-${{ steps.pole.outputs.value }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-        restore-keys: deps-${{ steps.pole.outputs.value }}-
+        os: ${{ steps.pole.outputs.value }}
+        mode: restore
+        browser: false
 
     # The staged trees below are per-architecture, and the two callers do not share one: publish
     # runs on x64, the probe on arm64. Resolve it from the runner rather than pinning a value that
