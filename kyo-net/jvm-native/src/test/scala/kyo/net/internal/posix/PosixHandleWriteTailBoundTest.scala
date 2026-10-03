@@ -31,9 +31,12 @@ import kyo.net.internal.transport.WriteResult
   * unbounded driver returns Done for every write and the loop runs the fixed `writes` count to completion, exposing the grown peak. The tail size is
   * sampled after a `fifoBarrier` so every enqueued append has landed before it is read.
   *
+  * The barrier hides the case where the engine FIFO lags the writer, which is the normal case on single-threaded JS and Wasm: the WritePump issues
+  * many writes before the FIFO runs any of their appends, so a bound that counts only appended bytes never trips. The "queued" leaves pin that case
+  * on a driver that is never started, whose FIFO therefore never runs.
+  *
   * Gates: [[PosixTestSockets.assumePoller]] / [[PosixTestSockets.assumeUring]] (real loopback pair for real EAGAIN) and
-  * [[TlsRealEngines.assumeTlsReady]] (a real BoringSSL/OpenSSL engine for the TLS leaves). JS uses the synchronous `sendNow` binding rather than the
-  * async-tail paths these leaves target, so every leaf gates on isJS.
+  * [[TlsRealEngines.assumeTlsReady]] (a real BoringSSL/OpenSSL engine for the TLS leaves).
   */
 class PosixHandleWriteTailBoundTest extends Test:
 
@@ -125,6 +128,109 @@ class PosixHandleWriteTailBoundTest extends Test:
                 s"(high-water ${PosixHandle.WriteTailHighWater} + one in-flight write). An unbounded tail is the CWE-400 slow-read DoS."
         )
     end assertBounded
+
+    /** Issue writes back-to-back on a driver whose engine FIFO never runs, and return how many were accepted with Done before the first other
+      * result, together with that result. Every accepted write's bytes are still queued, so only bytes counted at `write` time can trip the bound.
+      */
+    private def acceptedWhileQueued(driver: IoDriver[PosixHandle], handle: PosixHandle): (Int, Maybe[WriteResult]) =
+        @scala.annotation.tailrec
+        def loop(k: Int): (Int, Maybe[WriteResult]) =
+            if k >= writes then (k, Absent)
+            else
+                driver.write(handle, Span.fromUnsafe(Array.fill[Byte](perWrite)(7.toByte)), 0) match
+                    case WriteResult.Done => loop(k + 1)
+                    case other            => (k, Present(other))
+        loop(0)
+    end acceptedWhileQueued
+
+    private def assertBoundedWhileQueued(accepted: Int, result: Maybe[WriteResult])(using kyo.test.AssertScope, Frame): Unit =
+        assert(
+            result.exists(_.isInstanceOf[WriteResult.TailPartial]),
+            s"the driver accepted $accepted writes of $perWrite bytes with Done while none of them had reached the tail, then returned $result. " +
+                "Bytes waiting on the engine FIFO must count toward the high-water mark."
+        )
+        assert(accepted == PosixHandle.WriteTailHighWater / perWrite, s"accepted $accepted writes before the bound tripped")
+    end assertBoundedWhileQueued
+
+    "write tail bound counts writes the engine FIFO has not run yet" - {
+
+        "poller TLS path" in {
+            TlsRealEngines.assumeTlsReady()
+            PosixTestSockets.assumePoller()
+            val clientEngine = TlsRealEngines.singleEngine(isServer = false)
+            val serverEngine = TlsRealEngines.singleEngine(isServer = true)
+            PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
+                val real     = PollerBackend.default()
+                val pollerFd = real.create()
+                val driver   = TestDrivers.forBackend(real, pollerFd, sock)
+                val handle   = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                handle.tls = Present(clientEngine)
+                // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
+                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
+                val (accepted, result) = acceptedWhileQueued(driver, handle)
+                driver.closeHandle(handle)
+                driver.close()
+                serverEngine.free()
+                PosixTestSockets.closePeerForEof(sock, peerFd)
+                assertBoundedWhileQueued(accepted, result)
+            }
+        }
+
+        "io_uring raw path" in {
+            PosixTestSockets.assumeUring()
+            PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
+                val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
+                val realUring = Ffi.load[IoUringBindings]
+                val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
+                val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
+                if rc != 0 then
+                    realRing.close()
+                    discard(sock.close(writeFd))
+                    discard(sock.close(peerFd))
+                    throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
+                end if
+                val driver             = TestDrivers.forBindings(realUring, realRing)
+                val handle             = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val (accepted, result) = acceptedWhileQueued(driver, handle)
+                driver.closeHandle(handle)
+                driver.close()
+                PosixTestSockets.closePeerForEof(sock, peerFd)
+                assertBoundedWhileQueued(accepted, result)
+            }
+        }
+
+        "io_uring TLS path" in {
+            TlsRealEngines.assumeTlsReady()
+            PosixTestSockets.assumeUring()
+            val clientEngine = TlsRealEngines.singleEngine(isServer = false)
+            val serverEngine = TlsRealEngines.singleEngine(isServer = true)
+            PosixTestSockets.smallBufferedPair(sndBuf = 4096, rcvBuf = 4096).map { case (writeFd, peerFd) =>
+                val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
+                val realUring = Ffi.load[IoUringBindings]
+                val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
+                val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
+                if rc != 0 then
+                    realRing.close()
+                    discard(sock.close(writeFd))
+                    discard(sock.close(peerFd))
+                    clientEngine.free()
+                    serverEngine.free()
+                    throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
+                end if
+                val driver = TestDrivers.forBindings(realUring, realRing)
+                val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                handle.tls = Present(clientEngine)
+                // The driver is never started, so the handshake runs here: this carrier is the engines' only owner.
+                assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "the in-memory handshake must complete before the writes")
+                val (accepted, result) = acceptedWhileQueued(driver, handle)
+                driver.closeHandle(handle)
+                driver.close()
+                serverEngine.free()
+                PosixTestSockets.closePeerForEof(sock, peerFd)
+                assertBoundedWhileQueued(accepted, result)
+            }
+        }
+    }
 
     "write tail stays bounded against a peer that never reads" - {
 

@@ -29,19 +29,25 @@ import kyo.*
   *   - `peerCloseGrace`: the window a connection whose peer has closed (FIN) is given to make read progress before it is reclaimed, when its
   *     inbound side is backpressured (no read is armed, so the peer FIN is otherwise unobservable). Any drained span resets the window; only a full
   *     window with zero progress reclaims the descriptor. `Duration.Infinity` disables reclamation (the pre-guard behavior).
+  *   - `closeFlushGrace`: the window a closing connection gives its peer to accept the writes still queued when the close began. The
+  *     descriptor is held until they are written, so a peer that has stopped reading would hold it forever; a full window in which not one
+  *     byte reaches the socket releases it and drops the unwritten bytes. Any write resets the window, so a slow peer that keeps reading
+  *     receives everything. `Duration.Infinity` waits for the peer indefinitely.
   */
 case class NetConfig(
     channelCapacity: Int = NetConfig.DefaultChannelCapacity,
     readChunkSize: Int = NetConfig.DefaultReadChunkSize,
     soRcvBuf: Maybe[Int] = Absent,
     soSndBuf: Maybe[Int] = Absent,
-    peerCloseGrace: Duration = NetConfig.DefaultPeerCloseGrace
+    peerCloseGrace: Duration = NetConfig.DefaultPeerCloseGrace,
+    closeFlushGrace: Duration = NetConfig.DefaultCloseFlushGrace
 ) derives CanEqual:
     require(channelCapacity > 0, s"channelCapacity must be positive: $channelCapacity")
     require(readChunkSize > 0, s"readChunkSize must be positive: $readChunkSize")
     soRcvBuf.foreach(n => require(n > 0, s"soRcvBuf must be positive: $n"))
     soSndBuf.foreach(n => require(n > 0, s"soSndBuf must be positive: $n"))
     require(peerCloseGrace > Duration.Zero, s"peerCloseGrace must be positive (or Duration.Infinity to disable): $peerCloseGrace")
+    require(closeFlushGrace > Duration.Zero, s"closeFlushGrace must be positive (or Duration.Infinity to disable): $closeFlushGrace")
 end NetConfig
 
 object NetConfig:
@@ -53,6 +59,9 @@ object NetConfig:
 
     /** Default peer-close grace window (see [[NetConfig.peerCloseGrace]]). */
     val DefaultPeerCloseGrace: Duration = 30.seconds
+
+    /** Default close-flush grace window (see [[NetConfig.closeFlushGrace]]). */
+    val DefaultCloseFlushGrace: Duration = 30.seconds
 
     /** The settings every operation applies when its caller passes none. */
     val default: NetConfig = NetConfig()

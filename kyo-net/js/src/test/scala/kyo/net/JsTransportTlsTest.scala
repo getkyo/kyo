@@ -315,7 +315,7 @@ class JsTransportTlsTest extends Test:
         }
     }
 
-    /** Runs `f` over a transport whose clock is controlled and never advanced, so no connection's `peerCloseGrace` can end during it: a
+    /** Runs `f` over a transport whose clock is controlled and never advanced, so no connection's `closeFlushGrace` can end during it: a
       * graceful close that completes did so because Node reported the output flushed, never because the grace destroyed the socket.
       */
     private def onFrozenClock[A](f: JsTransport => A < (Async & Abort[NetException]))(using Frame): A < (Async & Abort[NetException]) =

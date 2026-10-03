@@ -243,7 +243,7 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): InternalConnection[PosixHandle] =
         handle.driver = driver
-        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace)
+        InternalConnection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
     end openWith
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -459,6 +459,7 @@ final private[net] class PosixTransport private[posix] (
                     // this connection uses it without the config having to be reachable from the handle.
                     val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)), createdAt = frame)
                     handle.peerCloseGrace = config.peerCloseGrace
+                    handle.closeFlushGrace = config.closeFlushGrace
                     handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
                     // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
@@ -1174,6 +1175,7 @@ final private[net] class PosixTransport private[posix] (
             val driver = pool.next()
             val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
             handle.peerCloseGrace = config.peerCloseGrace
+            handle.closeFlushGrace = config.closeFlushGrace
             handle.driver = driver
             tls match
                 case Absent =>
@@ -1828,7 +1830,13 @@ final private[net] class PosixTransport private[posix] (
                                         // Volatile-write ordering: a reaper that sees upgrading=false also sees tls=Present, so it takes the TLS branch.
                                         handle.upgrading = false
                                         val upgraded =
-                                            InternalConnection.init(handle, handle.driver, channelCapacity, handle.peerCloseGrace)
+                                            InternalConnection.init(
+                                                handle,
+                                                handle.driver,
+                                                channelCapacity,
+                                                handle.peerCloseGrace,
+                                                handle.closeFlushGrace
+                                            )
                                         // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                         // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
                                         // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
