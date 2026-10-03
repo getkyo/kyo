@@ -10,7 +10,7 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
     "toNetTlsConfig" - {
 
-        "copies all 8 shared fields by name" in {
+        "copies every field by name" in {
             val http = HttpTlsConfig(
                 trustAll = true,
                 sniHostname = Present("sni.example"),
@@ -19,7 +19,10 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
                 clientAuth = HttpTlsConfig.ClientAuth.Required,
                 trustStorePath = Present("trust.pem"),
                 minVersion = HttpTlsConfig.Version.TLS12,
-                maxVersion = HttpTlsConfig.Version.TLS13
+                maxVersion = HttpTlsConfig.Version.TLS13,
+                caCertPath = Present("ca.pem"),
+                hostnameVerification = false,
+                tlsProvider = Present("openssl")
             )
             val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
             assert(result.trustAll == true)
@@ -30,22 +33,15 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             assert(result.minVersion == NetTlsConfig.Version.TLS12)
             assert(result.maxVersion == NetTlsConfig.Version.TLS13)
             assert(result.clientAuth == NetTlsConfig.ClientAuth.Required)
+            assert(result.caCertPath == Present("ca.pem"))
+            assert(result.hostnameVerification == false)
+            assert(result.tlsProvider == Present("openssl"))
         }
 
-        "defaults the 2 kyo-net-only fields to Absent and true" in {
-            val http = HttpTlsConfig(
-                trustAll = true,
-                sniHostname = Present("sni.example"),
-                certChainPath = Present("cert.pem"),
-                privateKeyPath = Present("key.pem"),
-                clientAuth = HttpTlsConfig.ClientAuth.Required,
-                trustStorePath = Present("trust.pem"),
-                minVersion = HttpTlsConfig.Version.TLS12,
-                maxVersion = HttpTlsConfig.Version.TLS13
-            )
-            val result = NetConfigTranslation.toNetTlsConfig(http, HttpTransportConfig.default.handshakeTimeout)
-            assert(result.caCertPath == Absent)
-            assert(result.hostnameVerification == true)
+        "covers every NetTlsConfig field but the handshake deadline, which the transport config carries" in {
+            val http = HttpTlsConfig.default.productElementNames.toSet
+            val net  = NetTlsConfig.default.productElementNames.toSet
+            assert(net -- http == Set("handshakeTimeout"))
         }
 
         "maps ClientAuth case None" in {
@@ -84,7 +80,7 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             // The translator no longer decides the handshake deadline: the caller passes it, and kyo-http deliberately passes Infinity while
             // kyo-net's own default is 30s. So the result cannot equal NetTlsConfig.default, and asserting it did would be asserting that the
             // server's Infinity gets discarded. Full equality is still asserted, against the value the caller actually supplied, so any drift
-            // in the other ten fields still fails here.
+            // in the other fields still fails here.
             val handshakeTimeout = HttpTransportConfig.default.handshakeTimeout
             val result           = NetConfigTranslation.toNetTlsConfig(HttpTlsConfig.default, handshakeTimeout)
             assert(handshakeTimeout == Duration.Infinity)

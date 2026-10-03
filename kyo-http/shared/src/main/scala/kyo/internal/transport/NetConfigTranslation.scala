@@ -9,10 +9,9 @@ import kyo.net.NetTlsConfig
 /** Translation seam between kyo-http's public config/address vocabulary and kyo-net's internal transport types.
   *
   * Both translators are pure total functions. They are the only place a `kyo.net.*` config/address type appears in kyo-http; the
-  * `kyo.net.NetTlsConfig` / `kyo.net.NetAddress` types never escape into a `kyo.Http*` public signature. `toNetTlsConfig` copies the 8
-  * fields shared with `HttpTlsConfig` by name and leaves the 2 kyo-net-only fields (`caCertPath`, `hostnameVerification`) at their
-  * defaults, since `HttpTlsConfig` has no field for them. `toHttpAddress` maps the structurally
-  * identical address enum case-for-case so `HttpServer.address` keeps returning `HttpAddress`.
+  * `kyo.net.NetTlsConfig` / `kyo.net.NetAddress` types never escape into a `kyo.Http*` public signature. `toNetTlsConfig` is
+  * `HttpTlsConfig` field for field as a `NetTlsConfig`, with the handshake deadline the transport config carries. `toHttpAddress` maps the
+  * structurally identical address enum case-for-case so `HttpServer.address` keeps returning `HttpAddress`.
   */
 private[kyo] object NetConfigTranslation:
 
@@ -26,9 +25,10 @@ private[kyo] object NetConfigTranslation:
             trustStorePath = tls.trustStorePath,
             minVersion = toNetVersion(tls.minVersion),
             maxVersion = toNetVersion(tls.maxVersion),
+            caCertPath = tls.caCertPath,
+            hostnameVerification = tls.hostnameVerification,
+            tlsProvider = tls.tlsProvider,
             handshakeTimeout = handshakeTimeout
-            // caCertPath and hostnameVerification take their NetTlsConfig defaults
-            // (Absent / true): HttpTlsConfig has no field for them.
         )
 
     def toHttpAddress(addr: NetAddress): HttpAddress =

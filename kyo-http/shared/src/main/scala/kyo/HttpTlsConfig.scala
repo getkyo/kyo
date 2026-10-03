@@ -4,7 +4,9 @@ package kyo
   *
   * The same type is used on both sides of a connection, but with different fields in play:
   *   - **Client**: `trustAll` skips certificate validation (development only). `sniHostname` overrides the SNI extension sent during the
-  *     handshake when connecting through a proxy or when the TCP host differs from the certificate's CN/SAN.
+  *     handshake when connecting through a proxy or when the TCP host differs from the certificate's CN/SAN. `caCertPath` names the CA the
+  *     server's chain is validated against, for a server whose CA is not in the platform trust store. `hostnameVerification = false` keeps
+  *     chain validation and skips the name check.
   *   - **Server**: `certChainPath` and `privateKeyPath` point to PEM files for TLS termination. `clientAuth` controls whether clients must
   *     present a certificate (mutual TLS). `trustStorePath` provides the CA bundle for verifying client certificates.
   *
@@ -34,7 +36,20 @@ case class HttpTlsConfig(
     /** Minimum TLS version to accept. */
     minVersion: HttpTlsConfig.Version = HttpTlsConfig.Version.TLS12,
     /** Maximum TLS version to accept. */
-    maxVersion: HttpTlsConfig.Version = HttpTlsConfig.Version.TLS13
+    maxVersion: HttpTlsConfig.Version = HttpTlsConfig.Version.TLS13,
+    /** PEM-encoded CA certificate file path the client validates the server's certificate chain against, in place of the platform's
+      * default trust store.
+      */
+    caCertPath: Maybe[String] = Absent,
+    /** Whether the client checks the server's certificate names against the host it asked for. `false` keeps chain validation and skips the
+      * name check.
+      */
+    hostnameVerification: Boolean = true,
+    /** Pins the TLS implementation by provider id ("boringssl", "openssl", "jdk", "node"). `Absent` uses the platform's selection. A
+      * pinned provider the transport cannot drive, or that is not available on the host, fails the connection rather than being replaced
+      * by another implementation.
+      */
+    tlsProvider: Maybe[String] = Absent
 ) derives CanEqual
 
 object HttpTlsConfig:
