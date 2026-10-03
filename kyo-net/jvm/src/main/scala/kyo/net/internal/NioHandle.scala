@@ -110,6 +110,11 @@ final private[kyo] class NioHandle private (
     // getAndSet(Chunk.empty) at each read entry. Bounded by NioIoDriver.GraceProbeStagingCap so a live chatty peer cannot turn the fd leak into a
     // heap leak. Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val graceStaging: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
+
+    // TLS plaintext the selector carrier decrypted for a read that lost the slot before the plaintext reached it. The engine cannot
+    // decrypt it again, so it is the next read's, ahead of any byte decrypted after it. Unsafe: AtomicRef.Unsafe initialized at
+    // object-construction time inside the class body.
+    val carriedPlaintext: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */

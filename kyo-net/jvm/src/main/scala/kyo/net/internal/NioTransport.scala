@@ -713,8 +713,12 @@ final private[kyo] class NioTransport private (
                     s"pinned TLS provider '${tls.tlsProvider.get}' is not supported by the NIO transport (only 'jdk')"
                 )
             end if
+            // The JDK checks the certificate against the SNI name and, when that fails, retries against the engine's peer host. Building the
+            // engine with the connect host would let a certificate for the connect host pass a client that asked for a different sniHostname,
+            // so the client's peer host is the sniHostname itself, as on the posix and Node clients.
+            val identity   = if isServer then host else tls.sniHostname.getOrElse(host)
             val sslContext = NioTransport.createSslContext(tls, isServer)
-            val engine     = sslContext.createSSLEngine(host, port)
+            val engine     = sslContext.createSSLEngine(identity, port)
             engine.setUseClientMode(!isServer)
             // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
             // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
@@ -726,13 +730,13 @@ final private[kyo] class NioTransport private (
                 // acceptable silent outcome (RFC 9525 §6.1; CWE-295). This mirrors SslEngineProvider.createEngine exactly so the inline NIO
                 // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
                 // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
-                if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
+                if tls.hostnameVerification && !tls.trustAll && identity.isEmpty then
                     throw NetTlsConfigException(
                         "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
                             "or hostnameVerification = false to opt out of name verification)"
                     )
                 end if
-                if host.nonEmpty then
+                if identity.nonEmpty then
                     // Only set endpoint identification when we have a real hostname to verify against.
                     // trustAll disables all verification (chain + hostname). hostnameVerification = false
                     // disables only hostname verification (e.g. sslmode=verify-ca).

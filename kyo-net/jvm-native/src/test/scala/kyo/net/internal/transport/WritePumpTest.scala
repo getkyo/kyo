@@ -519,13 +519,16 @@ class WritePumpTest extends Test:
         }
 
         // The socket is filled to EAGAIN first, so the pump parks on its first span; the second span is offered only after the park is
-        // observed, so it is offered while the pump is AwaitingWritable and must stay queued until the parked write finishes. drainPeer
+        // observed, so it is offered while the pump is AwaitingWritable and must stay queued until the parked write finishes. The spy holds
+        // that writable wait until the queue is sampled: registered for real, it can resolve as soon as the loopback peer's buffer takes the
+        // send buffer's bytes, and a pump resumed that early writes the whole payload and takes the second span before the sample. drainPeer
         // latches on real read events.
         "channel buffering during awaitingWritable: second span queued, not consumed until writable" in {
             assumePoller()
             val real   = PollerIoDriver.init()
             val spy    = new RecordingIoDriver(real)
             val parked = Promise.Unsafe.init[Unit, Any]()
+            spy.holdNextWritable = true
             spy.onAwaitWritable = _ => parked.completeDiscard(Result.succeed(()))
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
@@ -550,6 +553,7 @@ class WritePumpTest extends Test:
                 parked.safe.get.andThen {
                     discard(channel.offer(extra))
                     val queuedWhileParked = channel.size().getOrElse(-1)
+                    spy.releaseHeldWritable()
                     PosixTestSockets.drainPeer(
                         spy,
                         PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
