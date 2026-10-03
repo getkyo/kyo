@@ -325,6 +325,8 @@ Global / excludeLintKeys += doctestExtraClasspath
 Global / excludeLintKeys += coverageExcludedFiles
 // checkClassNames reads it per project through a dynamic ScopeFilter, which the lint cannot see.
 Global / excludeLintKeys += ClassNameCheck.classNameGroup
+// Read only by the testKyo command's diff selection, which the lint cannot see.
+Global / excludeLintKeys += TestKyo.testInputs
 
 Global / onLoad := {
 
@@ -3955,6 +3957,11 @@ lazy val `kyo-website` =
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
+            // The suites render the live root and module READMEs and read build.sbt as text.
+            TestKyo.testInputs := {
+                val root = (ThisBuild / baseDirectory).value
+                Seq(root / "README.md", root / "build.sbt") ++ (root * DirectoryFilter * "README.md").get
+            },
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.
             // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
@@ -4115,7 +4122,9 @@ lazy val `kyo-doctest` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version,
+            // CorpusTest validates this module's own README.
+            TestKyo.testInputs := Seq(baseDirectory.value / ".." / "README.md")
         )
 
 // Validates the root README.md (repo-level, outside any module directory).
