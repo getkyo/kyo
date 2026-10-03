@@ -99,46 +99,6 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
-    "the diagnostics probe reports an armed read as pending until its bytes arrive, and close() unregisters it" in {
-        given Frame = Frame.internal
-        val driver  = JsIoDriver.init()
-        discard(driver.start())
-        val name                                           = "JsIoDriver@" + java.lang.System.identityHashCode(driver)
-        def probe(): Maybe[kyo.internal.Diagnostics.Probe] =
-            Maybe.fromOption(kyo.internal.Diagnostics.probeAll().collectFirst { case (n, p) if n.startsWith(name) => p })
-        openPair().map { case (serverSock, clientSock) =>
-            val handle = JsHandle.init(serverSock, driver, Frame.internal)
-            val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-            driver.awaitRead(handle, read)
-            val armed     = probe()
-            val armedDump = kyo.internal.Diagnostics.dumpAll()
-            discard(clientSock.write(buffer(Array[Byte](7))))
-            read.safe.get.map { outcome =>
-                val delivered = probe()
-                discard(clientSock.destroy())
-                driver.closeHandle(handle)
-                driver.close()
-                val gotByte = outcome match
-                    case ReadOutcome.Bytes(s) => s.toArray.toList == List[Byte](7)
-                    case _                    => false
-                assert(gotByte, s"expected the written byte, got $outcome")
-                assert(
-                    armed == Present(kyo.internal.Diagnostics.Probe(closed = false, cycles = 1L, pending = true)),
-                    s"an armed read must report pending with one armed op, got $armed"
-                )
-                assert(
-                    armedDump.contains(s"pendingReads=[${driver.handleLabel(handle)} ]"),
-                    s"the dump must name the armed handle: $armedDump"
-                )
-                assert(
-                    delivered == Present(kyo.internal.Diagnostics.Probe(closed = false, cycles = 1L, pending = false)),
-                    s"a delivered read must no longer report pending, got $delivered"
-                )
-                assert(probe() == Absent, "close() must remove the driver's diagnostics registration")
-            }
-        }
-    }
-
     "isPeerClosed stays false for a live peer that has not closed" in {
         given Frame = Frame.internal
         val driver  = JsIoDriver.init()

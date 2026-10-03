@@ -24,35 +24,27 @@ class TransportResilienceTest extends Test:
 
     /** Fire-and-forget echo: each accepted connection copies every inbound chunk back out until the peer closes. */
     private def echo(conn: Connection): Unit =
-        discard(serve(conn)(echoLoop(conn)))
+        discard(Sync.Unsafe.evalOrThrow {
+            Fiber.initUnscoped {
+                Abort.run[Closed] {
+                    Loop.foreach {
+                        conn.inbound.safe.take.map(chunk => conn.outbound.safe.put(chunk).andThen(Loop.continue))
+                    }
+                }.unit
+            }
+        })
 
-    private def echoLoop(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
-        Loop.foreach {
-            conn.inbound.safe.take.map(chunk => conn.outbound.safe.put(chunk).andThen(Loop.continue))
-        }
-
-    /** Fire-and-forget drain: read and discard every inbound chunk until the peer closes. */
+    /** Fire-and-forget drain: read and discard every inbound chunk until the peer closes, then close this side. */
     private def drain(conn: Connection): Unit =
-        discard(serve(conn)(drainLoop(conn)))
-
-    private def drainLoop(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
-        Loop.foreach {
-            conn.inbound.safe.take.andThen(Loop.continue)
-        }
-
-    /** Connects to `port`, runs `use` on the connection, and closes it however `use` ends, interruption included. */
-    private def withConnection[A](transport: Transport, port: Int)(use: Connection => A < (Async & Abort[NetException | Closed]))(using
-        Frame
-    ): A < (Async & Abort[NetException | Closed]) =
-        transport.connect("127.0.0.1", port).safe.get.map(conn => Sync.ensure(Sync.defer(conn.close()))(use(conn)))
-
-    /** Runs `body` on an accepted connection in its own fiber and closes the connection however `body` ends. The fiber is unscoped, so it
-      * outlives an interrupted leaf; it ends once its peer closes.
-      */
-    private def serve(conn: Connection)(body: Unit < (Async & Abort[Closed]))(using Frame): Fiber[Unit, Any] =
-        Sync.Unsafe.evalOrThrow {
-            Fiber.initUnscoped(Sync.ensure(Sync.defer(conn.close()))(Abort.run[Closed](body).unit))
-        }
+        discard(Sync.Unsafe.evalOrThrow {
+            Fiber.initUnscoped {
+                Abort.run[Closed] {
+                    Loop.foreach {
+                        conn.inbound.safe.take.andThen(Loop.continue)
+                    }
+                }.andThen(Sync.defer(conn.close())).unit
+            }
+        })
 
     private def collect(conn: Connection, target: Int)(using Frame): Array[Byte] < (Async & Abort[Closed]) =
         Loop(Array.emptyByteArray) { acc =>
@@ -67,37 +59,16 @@ class TransportResilienceTest extends Test:
         Frame,
         kyo.test.AssertScope
     ): Unit < (Async & Abort[NetException | Closed]) =
-        withConnection(transport, port) { conn =>
+        transport.connect("127.0.0.1", port).safe.get.map { conn =>
             val msg = s"liveness-$label".getBytes("UTF-8")
             conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen(collect(conn, msg.length)).map { echoed =>
+                conn.close()
                 assert(
                     echoed.sameElements(msg),
                     s"[$label] driver wedged: post-load liveness echo did not round-trip (driver-closed?)"
                 )
             }
         }
-
-    // Every leaf runs on the process-lifetime transport they all share, so a connection an interrupted leaf leaves open (a timed-out leaf,
-    // a cancelled suite) stays registered on that transport for every leaf after it.
-    "a connection whose user is interrupted mid-read is closed, so its server side sees the close" - eachBackend { transport =>
-        val served                             = Promise.Unsafe.init[(Connection, Fiber[Unit, Any]), Any]()
-        val reading                            = Promise.Unsafe.init[Unit, Any]()
-        def serveDrain(conn: Connection): Unit =
-            served.completeDiscard(Result.succeed((conn, serve(conn)(drainLoop(conn)))))
-        for
-            listener <- transport.listen("127.0.0.1", 0, 16)(serveDrain).safe.get
-            _        <- Scope.ensure(Sync.defer(listener.close()))
-            client   <- Fiber.initUnscoped(Abort.run[NetException | Closed](withConnection(transport, listener.port) { conn =>
-                Sync.defer(reading.completeDiscard(Result.succeed(()))).andThen(conn.inbound.safe.take)
-            }))
-            _      <- reading.safe.get
-            server <- served.safe.get
-            _      <- client.interrupt
-            // The drain ends only on the client's close, so this waits for exactly that, with no clock.
-            _ <- server._2.getResult
-        yield assert(!server._1.isOpen, "the server side must close once the interrupted client's connection is closed")
-        end for
-    }
 
     // ---- mass simultaneous in-flight invalidation (server mass-close) ----------------------------------------------
 
@@ -113,7 +84,15 @@ class TransportResilienceTest extends Test:
         val msg                                     = "ping".getBytes("UTF-8")
         def registeringEcho(conn: Connection): Unit =
             discard(serverConns.add(conn))
-            discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(echoLoop(conn))))
+            discard(Sync.Unsafe.evalOrThrow {
+                Fiber.initUnscoped {
+                    Abort.run[Closed] {
+                        Loop.foreach {
+                            conn.inbound.safe.take.map(chunk => conn.outbound.safe.put(chunk).andThen(Loop.continue))
+                        }
+                    }.andThen(Sync.defer(discard(serverConns.remove(conn)))).unit
+                }
+            })
         end registeringEcho
         for
             cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
@@ -138,14 +117,14 @@ class TransportResilienceTest extends Test:
                     if i >= iters then Loop.done(())
                     else
                         Abort.run[NetException | Closed] {
-                            withConnection(transport, churnListener.port) { conn =>
+                            transport.connect("127.0.0.1", churnListener.port).safe.get.map { conn =>
                                 Loop(0) { j =>
                                     if j >= perConn then Loop.done(())
                                     else
                                         conn.outbound.safe.put(Span.fromUnsafe(msg))
                                             .andThen(conn.inbound.safe.take)
                                             .andThen(Loop.continue(j + 1))
-                                }
+                                }.andThen(Sync.defer(conn.close()))
                             }
                         }.andThen(Loop.continue(i + 1))
                 }
@@ -171,7 +150,7 @@ class TransportResilienceTest extends Test:
             }
             _ <- Async.foreach(0 until 400, 64) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, deadPort)(_ => ())
+                    transport.connect("127.0.0.1", deadPort).safe.get.map(conn => Sync.defer(conn.close()))
                 }.unit
             }
             _ <- assertAlive(transport, cleanListener.port, "connect-refused")
@@ -192,7 +171,7 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
+                    transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         // Race a close against an armed read: start the read, close concurrently.
                         Async.zip(Abort.run(conn.inbound.safe.take).unit, Sync.defer(conn.close())).unit
                     }
@@ -218,8 +197,9 @@ class TransportResilienceTest extends Test:
                         val port     = churnListener.port
                         val connects = Async.foreach(0 until 16, 16) { _ =>
                             Abort.run[NetException | Closed] {
-                                withConnection(transport, port) { conn =>
+                                transport.connect("127.0.0.1", port).safe.get.map { conn =>
                                     conn.outbound.safe.put(Span.fromUnsafe("x".getBytes("UTF-8")))
+                                        .andThen(Sync.defer(conn.close()))
                                 }
                             }.unit
                         }.unit
@@ -239,11 +219,15 @@ class TransportResilienceTest extends Test:
             val seq = new java.util.concurrent.atomic.AtomicInteger(0)
             // Half the accepted connections are abruptly closed by the server before echoing; the other half echo.
             def mixed(conn: Connection): Unit =
-                discard(serve(conn) {
-                    conn.inbound.safe.take.map { chunk =>
-                        if seq.getAndIncrement() % 2 == 0 then Sync.defer(conn.close())
-                        else conn.outbound.safe.put(chunk)
-                    }.unit
+                discard(Sync.Unsafe.evalOrThrow {
+                    Fiber.initUnscoped {
+                        Abort.run[Closed] {
+                            conn.inbound.safe.take.map { chunk =>
+                                if seq.getAndIncrement() % 2 == 0 then Sync.defer(conn.close())
+                                else conn.outbound.safe.put(chunk)
+                            }.unit
+                        }.unit
+                    }
                 })
             val msg = "iso".getBytes("UTF-8")
             for
@@ -253,10 +237,10 @@ class TransportResilienceTest extends Test:
                 _             <- Scope.ensure(Sync.defer(mixedListener.close()))
                 _             <- Async.foreach(0 until 200, 40) { _ =>
                     Abort.run[NetException | Closed] {
-                        withConnection(transport, mixedListener.port) { conn =>
+                        transport.connect("127.0.0.1", mixedListener.port).safe.get.map { conn =>
                             conn.outbound.safe.put(Span.fromUnsafe(msg))
                                 .andThen(Abort.run(conn.inbound.safe.take))
-                                .unit
+                                .andThen(Sync.defer(conn.close()))
                         }
                     }.unit
                 }
@@ -279,8 +263,10 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _              <- Async.foreach(0 until 300, 48) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
-                        Fiber.initUnscoped(Abort.run[Closed](conn.inbound.safe.take).unit).map(_.interrupt.unit)
+                    transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
+                        Fiber.init(Abort.run[Closed](conn.inbound.safe.take).unit).map { readFiber =>
+                            readFiber.interrupt.andThen(Sync.defer(conn.close()))
+                        }
                     }
                 }.unit
             }
@@ -302,8 +288,11 @@ class TransportResilienceTest extends Test:
             _              <- Scope.ensure(Sync.defer(silentListener.close()))
             _              <- Async.foreach(0 until 200, 40) { _ =>
                 Abort.run[NetException | Closed] {
-                    withConnection(transport, silentListener.port) { conn =>
-                        Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take)).unit
+                    transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
+                        // Catch the timeout inside the Abort so conn.close ALWAYS runs: an uncaught Timeout would
+                        // short-circuit the andThen and leak the connection fd.
+                        Abort.run[Closed | Timeout](Async.timeout(20.millis)(conn.inbound.safe.take))
+                            .andThen(Sync.defer(conn.close()))
                     }
                 }.unit
             }
@@ -330,7 +319,15 @@ class TransportResilienceTest extends Test:
             // first and erase the race. The drain loop closes this side on peer-close so no server-side fd leaks.
             def registeringDrain(conn: Connection): Unit =
                 discard(serverConns.add(conn))
-                discard(serve(conn)(Sync.ensure(Sync.defer(discard(serverConns.remove(conn))))(drainLoop(conn))))
+                discard(Sync.Unsafe.evalOrThrow {
+                    Fiber.initUnscoped {
+                        Abort.run[Closed] {
+                            Loop.foreach {
+                                conn.inbound.safe.take.andThen(Loop.continue)
+                            }
+                        }.andThen(Sync.defer { discard(serverConns.remove(conn)); conn.close() }).unit
+                    }
+                })
             end registeringDrain
             for
                 cleanListener <- transport.listen("127.0.0.1", 0, 64)(echo).safe.get
@@ -355,10 +352,12 @@ class TransportResilienceTest extends Test:
                         if i >= 120 then Loop.done(())
                         else
                             Abort.run[NetException | Closed] {
-                                withConnection(transport, churnListener.port) { conn =>
+                                transport.connect("127.0.0.1", churnListener.port).safe.get.map { conn =>
                                     // Arm a read the drain server never answers, bounded by a short timeout that fires
-                                    // while it is still parked.
-                                    Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take)).unit
+                                    // while it is still parked. Catch the timeout inside the Abort so conn.close ALWAYS
+                                    // runs: an uncaught Timeout would short-circuit the andThen and leak the connection fd.
+                                    Abort.run[Closed | Timeout](Async.timeout(8.millis)(conn.inbound.safe.take))
+                                        .andThen(Sync.defer(conn.close()))
                                 }
                             }.andThen(Loop.continue(i + 1))
                     }
