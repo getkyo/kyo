@@ -229,12 +229,27 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         real.read(fd, buf, count)
 
+    // fd -> the promise a held close waits on, standing in for a close(2) that has not returned yet.
+    private val closeHolds = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+
+    /** Holds the next close of `fd`: it is recorded at once, but the real close runs, and its fiber completes, only when the returned promise
+      * completes.
+      */
+    def holdClose(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        closeHolds.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
     def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =
         // Record before delegating so the count is visible even if the caller does not await the returned fiber.
         discard(closeCounts.merge(fd, 1, (a, b) => a + b))
         discard(callOrder.add(s"close($fd)"))
         closedOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]()).completeDiscard(Result.succeed(()))
-        real.close(fd)
+        Maybe(closeHolds.remove(fd)) match
+            case Absent        => real.close(fd)
+            case Present(hold) =>
+                val out = Promise.Unsafe.init[Int, Any]()
+                hold.onComplete(_ => real.close(fd).onComplete(r => out.completeDiscard(r)))
+                out
+        end match
     end close
 
 end RecordingSocketBindings
@@ -544,6 +559,9 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // change worker inside the first change (the single-owner proof). null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onRegisterRead: Int => Unit = null
 
+    // Called on the poll carrier with the changelist each poll submits, before it reaches the kernel. null means none set.
+    @volatile var onPoll: (kyo.ffi.Buffer[Byte], Int) => Unit = null
+
     // Per-fd latch that completes the first time registerRead(fd) runs on the change worker.
     private val registeredReadOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
 
@@ -617,6 +635,8 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     ): Fiber.Unsafe[Int, Any] =
         if throwOnPoll.compareAndSet(true, false) then
             throw new RuntimeException("injected poll failure (crash-containment guard)")
+        val pollHook = onPoll
+        if pollHook != null then pollHook(changelist, nChanges)
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
