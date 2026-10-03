@@ -5,10 +5,10 @@ import scala.annotation.tailrec
 
 /** Immutable HTTP header collection with zero-copy parsing and case-insensitive name lookups.
   *
-  * Two internal representations share the same public API:
-  *   - **Packed** (`Array[Byte]`): an offset index followed by raw header bytes, produced by the parser. Zero `String` allocations during
-  *     parsing; header values are decoded lazily only when `get` or `getAll` is called.
-  *   - **Built** (`Chunk[String]`): flat interleaved `[name, value, name, value, ...]`, constructed by application code via `add` / `set`.
+  * Any `Seq[(String, String)]` of name-value pairs is an `HttpHeaders`, so a `List`, `Vector` or `Chunk` of pairs can be passed wherever
+  * headers are expected and is read in place, without conversion. Headers parsed from the wire stay in the bytes they were received as and
+  * decode a value only when `get` or `getAll` asks for it. `add`, `set`, `remove` and `concat` return new headers and never change the
+  * receiver.
   *
   * All name lookups are case-insensitive per RFC 9110. Header names preserve their original case for wire serialization. `add` appends
   * without deduplication (multi-value semantics, as required for `Set-Cookie`). `set` removes all existing headers with the same name
@@ -17,8 +17,8 @@ import scala.annotation.tailrec
   * Cookie methods vary by message direction: `cookie` and `cookies` parse the request `Cookie` header; `responseCookie` and `addCookie`
   * operate on `Set-Cookie` headers for responses. The `strict` parameter enables RFC 6265 validation of cookie names and values.
   *
-  * Note: Any modification method (`add`, `set`, `remove`) converts a packed representation to a `Chunk[String]`. Avoid modifying headers
-  * parsed from a request if you only need to read them — use the read-only lookup methods directly on the packed form.
+  * Headers have no structural equality: two values holding the same fields may be held in different forms, and comparing them means
+  * comparing what `foldLeft` yields.
   *
   * @see
   *   [[kyo.HttpRequest]] Carries request headers
@@ -27,11 +27,9 @@ import scala.annotation.tailrec
   * @see
   *   [[kyo.HttpCookie]] Typed cookie values with serialization attributes
   */
-opaque type HttpHeaders = Chunk[String] | Array[Byte]
+opaque type HttpHeaders >: Seq[(String, String)] = Chunk[String] | Array[Byte] | Seq[(String, String)]
 
 object HttpHeaders:
-
-    given CanEqual[HttpHeaders, HttpHeaders] = CanEqual.derived
 
     private val ColonSpace = ": ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val CrLf       = "\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
@@ -43,24 +41,45 @@ object HttpHeaders:
     val empty: HttpHeaders = Chunk.empty[String]
 
     /** Constructs HttpHeaders from name-value tuple pairs. */
-    def init(headers: Seq[(String, String)]): HttpHeaders =
-        headers.foldLeft(empty)((h, kv) => h.add(kv._1, kv._2))
+    def init(headers: Seq[(String, String)]): HttpHeaders = headers
 
-    /** Constructs HttpHeaders from a flat interleaved Chunk of [name, value, name, value, ...]. */
-    private[kyo] def fromChunk(chunk: Chunk[String]): HttpHeaders = chunk
+    /** Headers parsed from the wire: `count` fields whose names and values are slices of `raw`.
+      *
+      * Field `i` is described by `fields(4 * i)` to `fields(4 * i + 3)`: name offset, name length, value offset and value length, each
+      * offset counted from `rawStart`. The `rawLength` bytes from `rawStart` are copied, so the caller may reuse both arrays. Every offset
+      * and length must fit in 16 bits, the width the packed index stores them in.
+      */
+    private[kyo] def parsed(raw: Array[Byte], rawStart: Int, rawLength: Int, fields: Array[Int], count: Int): HttpHeaders =
+        val indexSize = 2 + count * 8
+        val packed    = new Array[Byte](indexSize + rawLength)
+        packedWriteShort(packed, 0, count)
+        @tailrec def loop(i: Int): Unit =
+            if i < count * 4 then
+                packedWriteShort(packed, 2 + i * 2, fields(i))
+                loop(i + 1)
+        loop(0)
+        java.lang.System.arraycopy(raw, rawStart, packed, indexSize, rawLength)
+        packed
+    end parsed
 
-    /** Constructs HttpHeaders from a packed byte array (produced by parser). */
-    private[kyo] def fromPacked(packed: Array[Byte]): HttpHeaders = packed
-
-    // --- Dispatch helpers ---
-
-    private inline def isPacked(h: HttpHeaders): Boolean = h.isInstanceOf[Array[?]]
-
-    private def asPacked(h: HttpHeaders): Array[Byte] = (h: @unchecked) match
-        case arr: Array[Byte] @unchecked => arr
-
-    private def asChunk(h: HttpHeaders): Chunk[String] = (h: @unchecked) match
-        case c: Chunk[String] @unchecked => c
+    /** Runs the branch for the form `h` is held in.
+      *
+      * Three forms share the type: packed `Array[Byte]` from [[parsed]], built `Chunk[String]` holding names and values interleaved, and
+      * any `Seq[(String, String)]` of pairs, which is an `HttpHeaders` by subtyping. Erasure leaves a type test unable to tell a built
+      * `Chunk` from a `Chunk` of pairs, so the first element decides, which holds because built headers store only `String`s and a pair is
+      * a `Tuple2`. An empty `Chunk` or `Seq` holds no headers under either reading. This is the only place the representation is tested;
+      * every operation goes through it.
+      */
+    private inline def dispatch[A](h: HttpHeaders)(
+        inline packed: Array[Byte] => A,
+        inline built: Chunk[String] => A,
+        inline pairs: Seq[(String, String)] => A
+    ): A =
+        h match
+            case p: Array[?]                                           => packed(p.asInstanceOf[Array[Byte]])
+            case c: Chunk[?] if c.isEmpty || c(0).isInstanceOf[String] => built(c.asInstanceOf[Chunk[String]])
+            case s                                                     => pairs(s.asInstanceOf[Seq[(String, String)]])
+    end dispatch
 
     // --- Packed array helpers ---
 
@@ -70,6 +89,10 @@ object HttpHeaders:
         2 + packedHeaderCount(packed) * 8
 
     private def packedReadShort(packed: Array[Byte], pos: Int): Int = ((packed(pos) & 0xff) << 8) | (packed(pos + 1) & 0xff)
+
+    private def packedWriteShort(packed: Array[Byte], pos: Int, value: Int): Unit =
+        packed(pos) = ((value >> 8) & 0xff).toByte
+        packed(pos + 1) = (value & 0xff).toByte
 
     private def packedHeaderNameOff(packed: Array[Byte], i: Int): Int = packedReadShort(packed, 2 + i * 8)
     private def packedHeaderNameLen(packed: Array[Byte], i: Int): Int = packedReadShort(packed, 2 + i * 8 + 2)
@@ -93,122 +116,159 @@ object HttpHeaders:
     private def decodeString(packed: Array[Byte], off: Int, len: Int): String =
         new String(packed, off, len, java.nio.charset.StandardCharsets.UTF_8)
 
-    /** Converts any HttpHeaders to Chunk[String] representation. */
+    /** The built form of `h`, the form every modification produces. */
     private def toChunk(h: HttpHeaders): Chunk[String] =
-        if isPacked(h) then
-            val packed                      = asPacked(h)
-            val count                       = packedHeaderCount(packed)
-            val rawOff                      = packedRawOffset(packed)
-            val builder                     = ChunkBuilder.init[String]
-            @tailrec def loop(i: Int): Unit =
-                if i < count then
-                    val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                    val nameLen = packedHeaderNameLen(packed, i)
-                    val valOff  = packedHeaderValOff(packed, i) + rawOff
-                    val valLen  = packedHeaderValLen(packed, i)
-                    discard(builder += decodeString(packed, nameOff, nameLen))
-                    discard(builder += decodeString(packed, valOff, valLen))
-                    loop(i + 1)
-            loop(0)
-            builder.result()
-        else
-            asChunk(h)
+        dispatch(h)(
+            packed =>
+                val count                       = packedHeaderCount(packed)
+                val rawOff                      = packedRawOffset(packed)
+                val builder                     = ChunkBuilder.init[String]
+                @tailrec def loop(i: Int): Unit =
+                    if i < count then
+                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                        val nameLen = packedHeaderNameLen(packed, i)
+                        val valOff  = packedHeaderValOff(packed, i) + rawOff
+                        val valLen  = packedHeaderValLen(packed, i)
+                        discard(builder += decodeString(packed, nameOff, nameLen))
+                        discard(builder += decodeString(packed, valOff, valLen))
+                        loop(i + 1)
+                loop(0)
+                builder.result()
+            ,
+            built => built,
+            pairs =>
+                val builder = ChunkBuilder.init[String]
+                pairs.foreach { kv =>
+                    discard(builder += kv._1)
+                    discard(builder += kv._2)
+                }
+                builder.result()
+        )
+
+    /** Writes one built or pairs field as `name: value\r\n`: the name char by char, since a token is ASCII, and the value as UTF-8 octets. */
+    private def writeField(buf: kyo.net.internal.util.GrowableByteBuffer, name: String, value: String): Unit =
+        buf.writeAscii(name)
+        buf.writeBytes(ColonSpace, 0, ColonSpace.length)
+        val bytes = value.getBytes(Utf8)
+        buf.writeBytes(bytes, 0, bytes.length)
+        buf.writeBytes(CrLf, 0, CrLf.length)
+    end writeField
+
+    /** Describes why the field at `index` is not writable, testing the name first so the description quotes only a token. */
+    private def fieldDefect(index: Int, name: String, value: String): Maybe[String] =
+        if !isToken(name) then Present(s"the name of the header at index $index")
+        else if !isControlFree(value) then Present(s"the value of header '$name'")
+        else Absent
 
     extension (self: HttpHeaders)
 
         def size: Int =
-            if isPacked(self) then packedHeaderCount(asPacked(self))
-            else asChunk(self).length / 2
+            dispatch(self)(packedHeaderCount, _.length / 2, _.size)
 
         def isEmpty: Boolean =
-            if isPacked(self) then packedHeaderCount(asPacked(self)) == 0
-            else asChunk(self).length == 0
+            dispatch(self)(packedHeaderCount(_) == 0, _.isEmpty, _.isEmpty)
 
-        def nonEmpty: Boolean =
-            if isPacked(self) then packedHeaderCount(asPacked(self)) != 0
-            else asChunk(self).length != 0
+        def nonEmpty: Boolean = !isEmpty
 
         // --- Lookup ---
 
         /** Returns the value of the first header matching `name` (case-insensitive). */
         def get(name: String): Maybe[String] =
-            if isPacked(self) then
-                val packed                               = asPacked(self)
-                val count                                = packedHeaderCount(packed)
-                val rawOff                               = packedRawOffset(packed)
-                @tailrec def loop(i: Int): Maybe[String] =
-                    if i >= count then Absent
-                    else
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then
-                            val valOff = packedHeaderValOff(packed, i) + rawOff
-                            val valLen = packedHeaderValLen(packed, i)
-                            Present(decodeString(packed, valOff, valLen))
-                        else loop(i + 1)
-                        end if
-                loop(0)
-            else
-                val chunk                                = asChunk(self)
-                @tailrec def loop(i: Int): Maybe[String] =
-                    if i >= chunk.length then Absent
-                    else if chunk(i).equalsIgnoreCase(name) then Present(chunk(i + 1))
-                    else loop(i + 2)
-                loop(0)
+            dispatch(self)(
+                packed =>
+                    val count                                = packedHeaderCount(packed)
+                    val rawOff                               = packedRawOffset(packed)
+                    @tailrec def loop(i: Int): Maybe[String] =
+                        if i >= count then Absent
+                        else
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then
+                                val valOff = packedHeaderValOff(packed, i) + rawOff
+                                val valLen = packedHeaderValLen(packed, i)
+                                Present(decodeString(packed, valOff, valLen))
+                            else loop(i + 1)
+                            end if
+                    loop(0)
+                ,
+                built =>
+                    @tailrec def loop(i: Int): Maybe[String] =
+                        if i >= built.length then Absent
+                        else if built(i).equalsIgnoreCase(name) then Present(built(i + 1))
+                        else loop(i + 2)
+                    loop(0)
+                ,
+                pairs =>
+                    @tailrec def loop(it: Iterator[(String, String)]): Maybe[String] =
+                        if !it.hasNext then Absent
+                        else
+                            val kv = it.next()
+                            if kv._1.equalsIgnoreCase(name) then Present(kv._2)
+                            else loop(it)
+                    loop(pairs.iterator)
+            )
         end get
 
         /** Returns all values for headers matching `name` (case-insensitive). */
         def getAll(name: String): Seq[String] =
-            if isPacked(self) then
-                val packed                             = asPacked(self)
-                val count                              = packedHeaderCount(packed)
-                val rawOff                             = packedRawOffset(packed)
-                val builder                            = Chunk.newBuilder[String]
-                @tailrec def loop(i: Int): Seq[String] =
-                    if i >= count then builder.result()
-                    else
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then
-                            val valOff = packedHeaderValOff(packed, i) + rawOff
-                            val valLen = packedHeaderValLen(packed, i)
-                            builder += decodeString(packed, valOff, valLen)
-                        end if
-                        loop(i + 1)
-                loop(0)
-            else
-                val chunk                              = asChunk(self)
-                val builder                            = Chunk.newBuilder[String]
-                @tailrec def loop(i: Int): Seq[String] =
-                    if i >= chunk.length then builder.result()
-                    else
-                        if chunk(i).equalsIgnoreCase(name) then
-                            builder += chunk(i + 1)
-                        loop(i + 2)
-                loop(0)
+            val builder = Chunk.newBuilder[String]
+            dispatch(self)(
+                packed =>
+                    val count                       = packedHeaderCount(packed)
+                    val rawOff                      = packedRawOffset(packed)
+                    @tailrec def loop(i: Int): Unit =
+                        if i < count then
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then
+                                val valOff = packedHeaderValOff(packed, i) + rawOff
+                                val valLen = packedHeaderValLen(packed, i)
+                                discard(builder += decodeString(packed, valOff, valLen))
+                            end if
+                            loop(i + 1)
+                    loop(0)
+                ,
+                built =>
+                    @tailrec def loop(i: Int): Unit =
+                        if i < built.length then
+                            if built(i).equalsIgnoreCase(name) then
+                                discard(builder += built(i + 1))
+                            loop(i + 2)
+                    loop(0)
+                ,
+                pairs =>
+                    pairs.foreach { kv =>
+                        if kv._1.equalsIgnoreCase(name) then
+                            discard(builder += kv._2)
+                    }
+            )
+            builder.result()
         end getAll
 
         /** Whether a header with the given name exists (case-insensitive). */
         def contains(name: String): Boolean =
-            if isPacked(self) then
-                val packed                         = asPacked(self)
-                val count                          = packedHeaderCount(packed)
-                val rawOff                         = packedRawOffset(packed)
-                @tailrec def loop(i: Int): Boolean =
-                    if i >= count then false
-                    else
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then true
-                        else loop(i + 1)
-                loop(0)
-            else
-                val chunk                          = asChunk(self)
-                @tailrec def loop(i: Int): Boolean =
-                    if i >= chunk.length then false
-                    else if chunk(i).equalsIgnoreCase(name) then true
-                    else loop(i + 2)
-                loop(0)
+            dispatch(self)(
+                packed =>
+                    val count                          = packedHeaderCount(packed)
+                    val rawOff                         = packedRawOffset(packed)
+                    @tailrec def loop(i: Int): Boolean =
+                        if i >= count then false
+                        else
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            if bytesEqualIgnoreCase(packed, nameOff, nameLen, name) then true
+                            else loop(i + 1)
+                    loop(0)
+                ,
+                built =>
+                    @tailrec def loop(i: Int): Boolean =
+                        if i >= built.length then false
+                        else if built(i).equalsIgnoreCase(name) then true
+                        else loop(i + 2)
+                    loop(0)
+                ,
+                pairs => pairs.exists(_._1.equalsIgnoreCase(name))
+            )
         end contains
 
         // --- Modification (always produces Chunk[String]) ---
@@ -262,63 +322,65 @@ object HttpHeaders:
 
         /** Iterates over all headers as name-value pairs. */
         def foreach(f: (String, String) => Unit): Unit =
-            if isPacked(self) then
-                val packed                      = asPacked(self)
-                val count                       = packedHeaderCount(packed)
-                val rawOff                      = packedRawOffset(packed)
-                @tailrec def loop(i: Int): Unit =
-                    if i < count then
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        val valOff  = packedHeaderValOff(packed, i) + rawOff
-                        val valLen  = packedHeaderValLen(packed, i)
-                        f(decodeString(packed, nameOff, nameLen), decodeString(packed, valOff, valLen))
-                        loop(i + 1)
-                loop(0)
-            else
-                val chunk                       = asChunk(self)
-                @tailrec def loop(i: Int): Unit =
-                    if i < chunk.length then
-                        f(chunk(i), chunk(i + 1))
-                        loop(i + 2)
-                loop(0)
+            dispatch(self)(
+                packed =>
+                    val count                       = packedHeaderCount(packed)
+                    val rawOff                      = packedRawOffset(packed)
+                    @tailrec def loop(i: Int): Unit =
+                        if i < count then
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            val valOff  = packedHeaderValOff(packed, i) + rawOff
+                            val valLen  = packedHeaderValLen(packed, i)
+                            f(decodeString(packed, nameOff, nameLen), decodeString(packed, valOff, valLen))
+                            loop(i + 1)
+                    loop(0)
+                ,
+                built =>
+                    @tailrec def loop(i: Int): Unit =
+                        if i < built.length then
+                            f(built(i), built(i + 1))
+                            loop(i + 2)
+                    loop(0)
+                ,
+                pairs => pairs.foreach(kv => f(kv._1, kv._2))
+            )
         end foreach
 
-        /** Writes all headers to a GrowableByteBuffer in HTTP/1.1 wire format (name: value\r\n per header). Zero allocation for packed
-          * headers, which go out as the raw octets they were parsed from. A chunk-backed header has its name written char-by-char (a name is
-          * a token, so it is ASCII) and its value written as UTF-8 octets, since a field value may carry obs-text (RFC 9110 section 5.5).
+        /** Writes all headers to a GrowableByteBuffer in HTTP/1.1 wire format (name: value\r\n per header). Zero allocation for parsed
+          * headers, which go out as the raw octets they were received as. Any other header has its name written char-by-char (a name is a
+          * token, so it is ASCII) and its value written as UTF-8 octets, since a field value may carry obs-text (RFC 9110 section 5.5).
           *
           * The caller tests [[invalidField]] first: a name that is not a token breaches `writeAscii`'s precondition, and a value carrying a
           * control character would put a header line on the wire that a recipient could re-frame.
           */
         def writeToBuffer(buf: kyo.net.internal.util.GrowableByteBuffer): Unit =
-            if isPacked(self) then
-                val packed                      = asPacked(self)
-                val count                       = packedHeaderCount(packed)
-                val rawOff                      = packedRawOffset(packed)
-                @tailrec def loop(i: Int): Unit =
-                    if i < count then
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        val valOff  = packedHeaderValOff(packed, i) + rawOff
-                        val valLen  = packedHeaderValLen(packed, i)
-                        buf.writeBytes(packed, nameOff, nameLen)
-                        buf.writeBytes(ColonSpace, 0, ColonSpace.length)
-                        buf.writeBytes(packed, valOff, valLen)
-                        buf.writeBytes(CrLf, 0, CrLf.length)
-                        loop(i + 1)
-                loop(0)
-            else
-                val chunk                       = asChunk(self)
-                @tailrec def loop(i: Int): Unit =
-                    if i < chunk.length then
-                        buf.writeAscii(chunk(i))
-                        buf.writeBytes(ColonSpace, 0, ColonSpace.length)
-                        val value = chunk(i + 1).getBytes(Utf8)
-                        buf.writeBytes(value, 0, value.length)
-                        buf.writeBytes(CrLf, 0, CrLf.length)
-                        loop(i + 2)
-                loop(0)
+            dispatch(self)(
+                packed =>
+                    val count                       = packedHeaderCount(packed)
+                    val rawOff                      = packedRawOffset(packed)
+                    @tailrec def loop(i: Int): Unit =
+                        if i < count then
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            val valOff  = packedHeaderValOff(packed, i) + rawOff
+                            val valLen  = packedHeaderValLen(packed, i)
+                            buf.writeBytes(packed, nameOff, nameLen)
+                            buf.writeBytes(ColonSpace, 0, ColonSpace.length)
+                            buf.writeBytes(packed, valOff, valLen)
+                            buf.writeBytes(CrLf, 0, CrLf.length)
+                            loop(i + 1)
+                    loop(0)
+                ,
+                built =>
+                    @tailrec def loop(i: Int): Unit =
+                        if i < built.length then
+                            writeField(buf, built(i), built(i + 1))
+                            loop(i + 2)
+                    loop(0)
+                ,
+                pairs => pairs.foreach(kv => writeField(buf, kv._1, kv._2))
+            )
         end writeToBuffer
 
         /** Names the first header `writeToBuffer` must refuse to write, or `Absent` when it can write them all.
@@ -327,45 +389,58 @@ object HttpHeaders:
           * writes can be read as two. A value above 0x7F is legal obs-text (RFC 9110 section 5.5) and is never reported: it goes on the wire
           * as its UTF-8 octets.
           *
-          * Packed headers are not walked. They are written as the raw octets they were parsed from, and both parsers reject CR, LF and NUL
-          * and require a token name, so a packed header is writable by construction and its write path stays allocation-free.
+          * Parsed headers are not walked. They are written as the raw octets they were received as, and both parsers reject CR, LF and NUL
+          * and require a token name, so a parsed header is writable by construction and its write path stays allocation-free.
           *
           * The returned description names the offending header but never its value, which can hold a credential. It quotes a name only after
           * that name is known to be a token, so the description can carry no line break of its own into a log.
           */
         private[kyo] def invalidField: Maybe[String] =
-            if isPacked(self) then Absent
-            else
-                val chunk                                = asChunk(self)
-                @tailrec def loop(i: Int): Maybe[String] =
-                    if i >= chunk.length then Absent
-                    else if !HttpHeaders.isToken(chunk(i)) then Present(s"the name of the header at index ${i / 2}")
-                    else if !HttpHeaders.isControlFree(chunk(i + 1)) then Present(s"the value of header '${chunk(i)}'")
-                    else loop(i + 2)
-                loop(0)
+            dispatch(self)(
+                _ => Absent,
+                built =>
+                    @tailrec def loop(i: Int): Maybe[String] =
+                        if i >= built.length then Absent
+                        else
+                            val defect = fieldDefect(i / 2, built(i), built(i + 1))
+                            if defect.isDefined then defect else loop(i + 2)
+                    loop(0)
+                ,
+                pairs =>
+                    @tailrec def loop(it: Iterator[(String, String)], i: Int): Maybe[String] =
+                        if !it.hasNext then Absent
+                        else
+                            val kv     = it.next()
+                            val defect = fieldDefect(i, kv._1, kv._2)
+                            if defect.isDefined then defect else loop(it, i + 1)
+                    loop(pairs.iterator, 0)
+            )
         end invalidField
 
         /** Folds over all headers as name-value pairs. */
         def foldLeft[A](init: A)(f: (A, String, String) => A): A =
-            if isPacked(self) then
-                val packed                           = asPacked(self)
-                val count                            = packedHeaderCount(packed)
-                val rawOff                           = packedRawOffset(packed)
-                @tailrec def loop(i: Int, acc: A): A =
-                    if i >= count then acc
-                    else
-                        val nameOff = packedHeaderNameOff(packed, i) + rawOff
-                        val nameLen = packedHeaderNameLen(packed, i)
-                        val valOff  = packedHeaderValOff(packed, i) + rawOff
-                        val valLen  = packedHeaderValLen(packed, i)
-                        loop(i + 1, f(acc, decodeString(packed, nameOff, nameLen), decodeString(packed, valOff, valLen)))
-                loop(0, init)
-            else
-                val chunk                            = asChunk(self)
-                @tailrec def loop(i: Int, acc: A): A =
-                    if i >= chunk.length then acc
-                    else loop(i + 2, f(acc, chunk(i), chunk(i + 1)))
-                loop(0, init)
+            dispatch(self)(
+                packed =>
+                    val count                            = packedHeaderCount(packed)
+                    val rawOff                           = packedRawOffset(packed)
+                    @tailrec def loop(i: Int, acc: A): A =
+                        if i >= count then acc
+                        else
+                            val nameOff = packedHeaderNameOff(packed, i) + rawOff
+                            val nameLen = packedHeaderNameLen(packed, i)
+                            val valOff  = packedHeaderValOff(packed, i) + rawOff
+                            val valLen  = packedHeaderValLen(packed, i)
+                            loop(i + 1, f(acc, decodeString(packed, nameOff, nameLen), decodeString(packed, valOff, valLen)))
+                    loop(0, init)
+                ,
+                built =>
+                    @tailrec def loop(i: Int, acc: A): A =
+                        if i >= built.length then acc
+                        else loop(i + 2, f(acc, built(i), built(i + 1)))
+                    loop(0, init)
+                ,
+                pairs => pairs.foldLeft(init)((acc, kv) => f(acc, kv._1, kv._2))
+            )
         end foldLeft
 
         // --- Cookies ---

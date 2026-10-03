@@ -523,7 +523,7 @@ private[kyo] object UnsafeServerDispatch:
         request: ParsedRequest,
         parser: Http1Parser
     )(using AllowUnsafe, Frame): Unit =
-        val headers = HttpHeaders.fromPacked(request.headersAsPacked)
+        val headers = request.headers
         // Carry the query string into the handler's request url: a WebSocket upgrade target
         // may put data in the query (e.g. the Slack Socket Mode connection ticket), so a
         // handler must be able to read it via req.query, exactly as a non-upgrade request can.
@@ -657,7 +657,7 @@ private[kyo] object UnsafeServerDispatch:
       * serveBuffered/serveStreaming method (which handles RouteUtil decoding internally). Finally encodes the response and writes it via
       * the StreamContext.
       *
-      * Note: `request.method`, `request.pathAsString`, `request.headersAsPacked` are pure reads from the immutable packed byte array.
+      * Note: `request.method`, `request.pathAsString`, `request.headers` are pure reads from the immutable packed byte array.
       * `streamCtx.readBody` accesses the mutable `_bodySpan` field which is safe because the callback runs synchronously -- the body is set
       * before this method is invoked and not modified until the next request.
       */
@@ -670,12 +670,9 @@ private[kyo] object UnsafeServerDispatch:
         config: HttpServerConfig,
         clock: Clock
     )(using Frame): Unit < Async =
-        val method = request.method
-        val path   = request.pathAsString
-        // Use packed headers directly -- avoids N String decodes per request.
-        // The ParsedRequest's header section is extracted as a standalone packed array
-        // compatible with HttpHeaders.fromPacked format.
-        val headers = HttpHeaders.fromPacked(request.headersAsPacked)
+        val method  = request.method
+        val path    = request.pathAsString
+        val headers = request.headers
         val isHead  = method == HttpMethod.HEAD
 
         // Build path captures from lookup indices + ParsedRequest segment strings

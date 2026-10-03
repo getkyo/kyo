@@ -14,10 +14,8 @@ import scala.util.control.NoStackTrace
   *
   * Follows the same TakePromise + reuseTake pattern as Http1Parser. The key structural difference is that the first line is a status line
   * ("HTTP/1.1 200 OK") instead of a request line ("GET /path HTTP/1.1"), and headers are stored in a GrowableByteBuffer + offset array
-  * rather than delegating to ParsedRequestBuilder.
-  *
-  * buildPackedHeaders() converts the accumulated offsets into the HttpHeaders.fromPacked format so the ParsedResponse can wrap headers as
-  * HttpHeaders without any re-parsing.
+  * rather than delegating to ParsedRequestBuilder. HttpHeaders.parsed turns the accumulated offsets into the response's headers without
+  * any re-parsing.
   */
 final private[kyo] class Http1ResponseParser(
     inbound: Channel.Unsafe[Span[Byte]],
@@ -153,7 +151,7 @@ final private[kyo] class Http1ResponseParser(
                 // They are dropped with the connection, which carries nothing trustworthy after them.
                 val delivered =
                     if remaining > bodyLen && response.isKeepAlive then
-                        new ParsedResponse(response.statusCode, response.packedHeaders, response.contentLength, response.isChunked, false)
+                        new ParsedResponse(response.statusCode, response.headers, response.contentLength, response.isChunked, false)
                     else response
                 onResponseParsed(delivered, bodySpan)
             end if
@@ -311,10 +309,9 @@ final private[kyo] class Http1ResponseParser(
             if isKeepAliveHdr && !isChunked && contentLengthVal < 0 && !HttpStatus.forbidsContent(statusCode) then false
             else isKeepAliveHdr
 
-        // Build packed header array compatible with HttpHeaders.fromPacked
-        val packedHeaders = buildPackedHeaders()
+        val headers = HttpHeaders.parsed(rawBytes.array, 0, rawBytes.size, hdrOffsets, headerCount)
 
-        new ParsedResponse(statusCode, packedHeaders, contentLengthVal, isChunked, isKeepAlive)
+        new ParsedResponse(statusCode, headers, contentLengthVal, isChunked, isKeepAlive)
     end packResponse
 
     /** The status code of a status line whose version and first SP are at bytes 0 to 8 of rawBuf[0..end), or -1 when the field after
@@ -389,47 +386,6 @@ final private[kyo] class Http1ResponseParser(
         end loop
         loop(start)
     end parseHeaders
-
-    /** Builds a packed header array compatible with HttpHeaders.fromPacked format.
-      *
-      * Layout: [headerCount: 2 bytes] [nameOff:2 nameLen:2 valOff:2 valLen:2]* [raw bytes]
-      *
-      * Offsets in the packed array are relative to the raw bytes section start.
-      */
-    private def buildPackedHeaders(): Array[Byte] =
-        val indexSize = 2 + headerCount * 8
-        val rawSize   = rawBytes.size
-        val totalSize = indexSize + rawSize
-        val result    = new Array[Byte](totalSize)
-
-        // Header count (big-endian)
-        result(0) = ((headerCount >> 8) & 0xff).toByte
-        result(1) = (headerCount & 0xff).toByte
-
-        // Header offsets — already relative to rawBytes start, which matches
-        // the packed format's expectation (relative to raw section at index `2 + headerCount * 8`)
-        @tailrec def writeHeaders(i: Int, p: Int): Unit =
-            if i < hdrOffsetCount then
-                val nameOff = hdrOffsets(i)
-                val nameLen = hdrOffsets(i + 1)
-                val valOff  = hdrOffsets(i + 2)
-                val valLen  = hdrOffsets(i + 3)
-                result(p) = ((nameOff >> 8) & 0xff).toByte
-                result(p + 1) = (nameOff & 0xff).toByte
-                result(p + 2) = ((nameLen >> 8) & 0xff).toByte
-                result(p + 3) = (nameLen & 0xff).toByte
-                result(p + 4) = ((valOff >> 8) & 0xff).toByte
-                result(p + 5) = (valOff & 0xff).toByte
-                result(p + 6) = ((valLen >> 8) & 0xff).toByte
-                result(p + 7) = (valLen & 0xff).toByte
-                writeHeaders(i + 4, p + 8)
-        writeHeaders(0, 2)
-
-        // Raw bytes
-        rawBytes.copyTo(result, indexSize)
-
-        result
-    end buildPackedHeaders
 
     private def ensureHdrOffsets(need: Int): Unit =
         if hdrOffsetCount + need >= hdrOffsets.length then

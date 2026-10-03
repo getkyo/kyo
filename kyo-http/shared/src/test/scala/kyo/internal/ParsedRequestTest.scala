@@ -255,6 +255,34 @@ class ParsedRequestTest extends kyo.BaseHttpTest:
             assert(req.headerValue(1) == "localhost")
         }
 
+        // The header bytes follow the path, query and segment bytes in the request's raw section, so the headers
+        // must be read from an offset past them and must not pick up the path.
+        "headers as HttpHeaders, after a path and query" in {
+            val builder = new ParsedRequestBuilder()
+            builder.setMethod(ParsedRequest.ordinalFromName("GET"))
+            val pathBytes = "/a/b".getBytes(StandardCharsets.UTF_8)
+            builder.setPath(pathBytes, 0, pathBytes.length)
+            val queryBytes = "x=1".getBytes(StandardCharsets.UTF_8)
+            builder.setQuery(queryBytes, 0, queryBytes.length)
+            val name1 = "Content-Type".getBytes(StandardCharsets.UTF_8)
+            val val1  = "application/json".getBytes(StandardCharsets.UTF_8)
+            val name2 = "Host".getBytes(StandardCharsets.UTF_8)
+            val val2  = "localhost".getBytes(StandardCharsets.UTF_8)
+            builder.addHeader(name1, 0, name1.length, val1, 0, val1.length)
+            builder.addHeader(name2, 0, name2.length, val2, 0, val2.length)
+            val headers = builder.build().headers
+            assert(headers.foldLeft(Chunk.empty[(String, String)])((acc, n, v) => acc.append((n, v))) ==
+                Chunk("Content-Type" -> "application/json", "Host" -> "localhost"))
+        }
+
+        "headers of a request without any are empty" in {
+            val builder = new ParsedRequestBuilder()
+            builder.setMethod(ParsedRequest.ordinalFromName("GET"))
+            val pathBytes = "/".getBytes(StandardCharsets.UTF_8)
+            builder.setPath(pathBytes, 0, pathBytes.length)
+            assert(builder.build().headers.isEmpty)
+        }
+
         "queryParam" in {
             val builder = new ParsedRequestBuilder()
             builder.setMethod(ParsedRequest.ordinalFromName("GET"))

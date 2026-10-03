@@ -22,8 +22,7 @@ import scala.annotation.tailrec
   *   - [+2..+headerCount*8-1] per-header (nameOff:2 + nameLen:2 + valOff:2 + valLen:2)
   *   - [rest] raw bytes — path, query, segment text, header names and values
   *
-  * Constructed by ParsedRequestBuilder.build(). Consumed by Http1Parser callbacks and UnsafeServerDispatch. headersAsPacked extracts the
-  * header section as a standalone array compatible with HttpHeaders.fromPacked.
+  * Constructed by ParsedRequestBuilder.build(). Consumed by Http1Parser callbacks and UnsafeServerDispatch.
   */
 private[kyo] opaque type ParsedRequest = Span[Byte]
 
@@ -401,45 +400,24 @@ private[kyo] object ParsedRequest:
             end if
         end headerValue
 
-        /** Extracts the header section of the packed array as a standalone packed array compatible with the HttpHeaders.fromPacked format.
-          *
-          * The header section in ParsedRequest starts at `headerCountOffset` and runs to the end. The offsets within this section reference
-          * raw bytes that are part of the same region, but they're relative to the full ParsedRequest's rawBytesOffset. We need to adjust
-          * the offsets to be relative to the new array's raw bytes section.
-          */
-        def headersAsPacked: Array[Byte] =
+        /** The request's headers, independent of this request's bytes. */
+        def headers: HttpHeaders =
             val segCount          = readShort(self, 14)
             val headerCountOffset = 16 + segCount * 4
             val hdrCount          = readShort(self, headerCountOffset)
-            if hdrCount == 0 then
-                // Return a minimal packed array: [count=0 (2 bytes)]
-                val result = new Array[Byte](2)
-                result(0) = 0
-                result(1) = 0
-                result
+            if hdrCount == 0 then HttpHeaders.empty
             else
-                val fullRawBytesOffset = headerCountOffset + 2 + hdrCount * 8
-                // The new packed array's raw bytes offset will be: 2 + hdrCount * 8
-                val newRawBytesOffset = 2 + hdrCount * 8
-                // We need to copy header index + raw bytes that headers reference
-                // First, find the extent of raw bytes referenced by headers
-                val headerSectionSize = self.size - headerCountOffset
-                val result            = new Array[Byte](headerSectionSize)
-                // Copy the whole header section (count + index + raw bytes)
-                @tailrec def copyBytes(j: Int): Unit =
-                    if j < headerSectionSize then
-                        result(j) = self(headerCountOffset + j)
-                        copyBytes(j + 1)
-                copyBytes(0)
-                // Now adjust offsets: each header has 4 shorts (nameOff, nameLen, valOff, valLen)
-                // nameOff and valOff are relative to fullRawBytesOffset in the original ParsedRequest.
-                // In the new array, raw bytes start at newRawBytesOffset, but the raw bytes
-                // in the new array start at the same relative position (fullRawBytesOffset - headerCountOffset)
-                // which equals newRawBytesOffset. So offsets don't need adjustment!
-                // This is because offsets are already relative to the raw bytes section start,
-                // and we copied the raw bytes section at the same relative position.
-                result
+                val indexOffset                       = headerCountOffset + 2
+                val rawStart                          = indexOffset + hdrCount * 8
+                val fields                            = new Array[Int](hdrCount * 4)
+                @tailrec def readFields(i: Int): Unit =
+                    if i < fields.length then
+                        fields(i) = readShort(self, indexOffset + i * 2)
+                        readFields(i + 1)
+                readFields(0)
+                // Unsafe: read-only view of this request's bytes; parsed copies the slice it keeps.
+                HttpHeaders.parsed(self.toArrayUnsafe, rawStart, self.size - rawStart, fields, hdrCount)
             end if
-        end headersAsPacked
+        end headers
     end extension
 end ParsedRequest

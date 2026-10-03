@@ -147,12 +147,14 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: smallBufferedPair with small buffers guarantees real EAGAIN -> WriteResult.Partial.
-        // drainPeer unblocks the retry (Promise latch on real awaitRead). No sleep.
+        // The socket is filled to EAGAIN before the pump starts (fillUntilFull), so the pump's first write is Partial however much the kernel
+        // buffers; the leaf latches on the park, and only then does the peer drain, which is what lets the parked write resume.
         "a partial write awaits writable and retries the remainder (real backpressure)" in {
             assumePoller()
-            val real = PollerIoDriver.init()
-            val spy  = new RecordingIoDriver(real)
+            val real   = PollerIoDriver.init()
+            val spy    = new RecordingIoDriver(real)
+            val parked = Promise.Unsafe.init[Unit, Any]()
+            spy.onAwaitWritable = _ => parked.completeDiscard(Result.succeed(()))
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -166,22 +168,21 @@ class WritePumpTest extends Test:
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
-                // 128 KB payload guarantees EAGAIN on a 4KB buffer pair.
                 val payload = Array.fill[Byte](128 * 1024)(42)
-                val span    = Span.fromUnsafe(payload)
-                discard(channel.offer(span))
+                val total   = PosixTestSockets.fillUntilFull(clientFd).toInt + payload.length
+                discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
-                // drainPeer drains until all bytes arrive; its internal Promise latches on awaitRead completions.
-                // The WritePump's awaitWritable fires when the peer drains space (real kernel event).
-                PosixTestSockets.drainPeer(
-                    spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
-                    peerFd,
-                    payload.length
-                ).map { received =>
+                parked.safe.get.andThen {
+                    PosixTestSockets.drainPeer(
+                        spy,
+                        PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                        peerFd,
+                        total
+                    )
+                }.map { received =>
                     assert(spy.writeCalls.get() >= 2, s"at least 2 write calls expected (partial + retry), got ${spy.writeCalls.get()}")
-                    assert(received >= payload.length, s"all bytes must reach peer, got $received")
+                    assert(received >= total, s"all bytes must reach peer, got $received of $total")
                     assert(closed.isEmpty, "pump must not have torn down on retry-success path")
                     spy.close()
                     discard(sock.close(peerFd))
@@ -191,8 +192,7 @@ class WritePumpTest extends Test:
             }
         }
 
-        // A 1 MB payload on smallBufferedPair(2048, 2048) far exceeds the kernel send+recv buffers, so the first write hits EAGAIN and returns
-        // Partial and the pump parks in awaitWritable. The onAwaitWritable hook fires on the pump's carrier right after the writable promise is
+        // The socket is filled to EAGAIN before the pump starts, so its first write returns Partial and the pump parks in awaitWritable. The onAwaitWritable hook fires on the pump's carrier right after the writable promise is
         // registered and tears the handle down via closeHandle (the production teardown path: Connection.teardownHandle runs cancel + closeHandle).
         // closeHandle BOTH fails the pending writable promise with Closed (driving WritablePromise.onComplete's Failure arm into onWritableError ->
         // teardown) AND closes the fd, so the teardown is deterministic even when the poll loop delivers a writable Success that races the failure:
@@ -225,8 +225,9 @@ class WritePumpTest extends Test:
                 // Closed and closes the fd, so the pump's writable-wait failure path runs to teardown regardless of a racing writable event.
                 spy.onAwaitWritable = h => spy.closeHandle(h)
 
-                // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
-                val payload = Array.fill[Byte](1024 * 1024)(42)
+                // The socket is full before the pump starts, so its first write is Partial and it parks in awaitWritable.
+                discard(PosixTestSockets.fillUntilFull(clientFd))
+                val payload = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
@@ -401,14 +402,16 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: smallBufferedPair guarantees a real Partial on the first write; drainPeer unblocks the retry. After the retry,
-        // resetPeer delivers a real RST and the leaf feeds the pump until a write surfaces it as WriteResult.Error (floodUntilClosed).
-        // closedLatch is the real-event latch on teardown.
+        // The socket is filled to EAGAIN first, so the pump's first write is Partial; the leaf latches on the park, then drainPeer unblocks
+        // the retry. After the retry, resetPeer delivers a real RST and the leaf feeds the pump until a write surfaces it as
+        // WriteResult.Error (floodUntilClosed). closedLatch is the real-event latch on teardown.
         "write error after retry also triggers teardown" in {
             assumePoller()
             val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
+            val parked      = Promise.Unsafe.init[Unit, Any]()
+            spy.onAwaitWritable = _ => parked.completeDiscard(Result.succeed(()))
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -425,18 +428,19 @@ class WritePumpTest extends Test:
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
-                // 128 KB: guarantees EAGAIN on 4KB pair.
-                val payload = Array.fill[Byte](128 * 1024)(42)
+                val prefilled = PosixTestSockets.fillUntilFull(clientFd).toInt
+                val payload   = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
-                // drainPeer unblocks the retry by draining the peer buffer.
-                PosixTestSockets.drainPeer(
-                    spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
-                    peerFd,
-                    payload.length
-                ).map { _ =>
+                parked.safe.get.andThen {
+                    PosixTestSockets.drainPeer(
+                        spy,
+                        PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                        peerFd,
+                        prefilled + payload.length
+                    )
+                }.map { _ =>
                     // Retry is done. Now reset the peer; the first write that observes the RST tears the pump down.
                     PosixTestSockets.resetPeer(sock, peerFd)
 
@@ -450,13 +454,15 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: smallBufferedPair guarantees a real Partial on the first write; the pump parks on awaitWritable and drainPeer
-        // unblocks the retry (Promise latch on real awaitRead). The recorded (span, offset) pairs are read after all bytes reach the peer.
-        // No sleep. The same Span reference must be re-presented at an advancing offset (no Span.drop allocation).
+        // The socket is filled to EAGAIN first, so the span's first write is Partial; the leaf latches on the pump's park before the peer
+        // drains. The recorded (span, offset) pairs are read after all bytes reach the peer. The same Span reference must be re-presented at
+        // an advancing offset (no Span.drop allocation).
         "a partial write re-presents the same span at an advancing offset, byte-conserving (real backpressure)" in {
             assumePoller()
-            val real = PollerIoDriver.init()
-            val spy  = new RecordingIoDriver(real)
+            val real   = PollerIoDriver.init()
+            val spy    = new RecordingIoDriver(real)
+            val parked = Promise.Unsafe.init[Unit, Any]()
+            spy.onAwaitWritable = _ => parked.completeDiscard(Result.succeed(()))
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -470,17 +476,19 @@ class WritePumpTest extends Test:
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
-                // 128 KB on a 4 KB pair guarantees EAGAIN, so the driver returns Partial and the pump re-presents the remainder.
-                val payload = Array.fill[Byte](128 * 1024)(0x42.toByte)
+                val prefilled = PosixTestSockets.fillUntilFull(clientFd).toInt
+                val payload   = Array.fill[Byte](128 * 1024)(0x42.toByte)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
-                PosixTestSockets.drainPeer(
-                    spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
-                    peerFd,
-                    payload.length
-                ).map { received =>
+                parked.safe.get.andThen {
+                    PosixTestSockets.drainPeer(
+                        spy,
+                        PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                        peerFd,
+                        prefilled + payload.length
+                    )
+                }.map { received =>
                     spy.close()
                     discard(sock.close(peerFd))
                     discard(sock.close(clientFd))
@@ -488,7 +496,7 @@ class WritePumpTest extends Test:
                     import scala.jdk.CollectionConverters.*
                     val calls = spy.writeRegions.iterator().asScala.toList
                     assert(calls.size >= 2, s"expected at least 2 write calls (partial + retry), got ${calls.size}")
-                    assert(received >= payload.length, s"all bytes must reach peer, got $received")
+                    assert(received >= prefilled + payload.length, s"all bytes must reach peer, got $received")
                     assert(closed.isEmpty, "pump must not tear down on a successful retry")
 
                     // The pump re-presents the SAME Span reference on every retry (Span.drop would allocate a new instance).
@@ -510,13 +518,15 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: the awaitingWritable guard is exercised by the partial path.
-        // When awaitingWritable=true and another channel item is available, the pump does NOT
-        // process it (the guard skips the write). drainPeer latches on real read events.
+        // The socket is filled to EAGAIN first, so the pump parks on its first span; the second span is offered only after the park is
+        // observed, so it is offered while the pump is AwaitingWritable and must stay queued until the parked write finishes. drainPeer
+        // latches on real read events.
         "channel buffering during awaitingWritable: second span queued, not consumed until writable" in {
             assumePoller()
-            val real = PollerIoDriver.init()
-            val spy  = new RecordingIoDriver(real)
+            val real   = PollerIoDriver.init()
+            val spy    = new RecordingIoDriver(real)
+            val parked = Promise.Unsafe.init[Unit, Any]()
+            spy.onAwaitWritable = _ => parked.completeDiscard(Result.succeed(()))
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -530,22 +540,24 @@ class WritePumpTest extends Test:
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
-                val payload = Array.fill[Byte](128 * 1024)(42)
+                val prefilled = PosixTestSockets.fillUntilFull(clientFd).toInt
+                val payload   = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
-                // Offer a second span while pump is in awaitingWritable mode.
-                val extra = Span.fromUnsafe(Array.fill[Byte](8)(99))
-                discard(channel.offer(extra))
-
-                // drainPeer drains: both spans should arrive eventually.
-                val totalBytes = payload.length + extra.size
-                PosixTestSockets.drainPeer(
-                    spy,
-                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
-                    peerFd,
-                    totalBytes
-                ).map { received =>
+                val extra      = Span.fromUnsafe(Array.fill[Byte](8)(99))
+                val totalBytes = prefilled + payload.length + extra.size
+                parked.safe.get.andThen {
+                    discard(channel.offer(extra))
+                    val queuedWhileParked = channel.size().getOrElse(-1)
+                    PosixTestSockets.drainPeer(
+                        spy,
+                        PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
+                        peerFd,
+                        totalBytes
+                    ).map(received => (queuedWhileParked, received))
+                }.map { case (queuedWhileParked, received) =>
+                    assert(queuedWhileParked == 1, s"the span offered while parked must stay queued, channel size was $queuedWhileParked")
                     assert(received >= totalBytes, s"all bytes including extra must reach peer, got $received")
                     assert(closed.isEmpty, "pump must not tear down")
                     spy.close()
@@ -556,7 +568,7 @@ class WritePumpTest extends Test:
             }
         }
 
-        // A 1 MB payload on smallBufferedPair(2048, 2048) guarantees EAGAIN on the first write, so the pump parks in AwaitingWritable. The
+        // The socket is filled to EAGAIN before the pump starts, so its first write parks it in AwaitingWritable. The
         // onAwaitWritable hook fires on the pump's own carrier right after the writable promise is registered (the same one-shot,
         // post-registration hook the writable-wait-failure test above uses) and performs the GRACEFUL local close a Connection's closeFn
         // performs: closeAwaitEmpty marks the outbound channel closing-for-writes without dropping anything already taken off it. The
@@ -575,8 +587,9 @@ class WritePumpTest extends Test:
 
                 spy.onAwaitWritable = _ => discard(channel.closeAwaitEmpty())
 
-                // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
-                val payload = Array.fill[Byte](1024 * 1024)(42)
+                // The socket is full before the pump starts, so its first write is Partial and it parks in awaitWritable.
+                val prefilled = PosixTestSockets.fillUntilFull(clientFd).toInt
+                val payload   = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 
@@ -584,9 +597,12 @@ class WritePumpTest extends Test:
                     spy,
                     PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal),
                     peerFd,
-                    payload.length
+                    prefilled + payload.length
                 ).map { received =>
-                    assert(received >= payload.length, s"every byte of the parked-partial tail must reach the peer, got $received")
+                    assert(
+                        received >= prefilled + payload.length,
+                        s"every byte of the parked-partial tail must reach the peer, got $received"
+                    )
                     spy.close()
                     discard(sock.close(peerFd))
                     discard(sock.close(clientFd))
@@ -595,7 +611,7 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
+        // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048) filled to EAGAIN before the pump writes, the
         // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
         // contract: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
         // another write for the now-undeliverable captured tail. The load-bearing assertions a CAS-retry regression would break: the state
@@ -632,8 +648,9 @@ class WritePumpTest extends Test:
                 // with Closed, driving onWritable's Failure arm into teardown regardless of a racing writable event.
                 spy.onAwaitWritable = h => spy.closeHandle(h)
 
-                // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
-                val payload = Array.fill[Byte](1024 * 1024)(42)
+                // The socket is full before the pump starts, so its first write is Partial and it parks in awaitWritable.
+                discard(PosixTestSockets.fillUntilFull(clientFd))
+                val payload = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
                 pump.start()
 

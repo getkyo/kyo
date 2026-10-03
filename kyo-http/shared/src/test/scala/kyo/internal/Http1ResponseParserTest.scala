@@ -495,7 +495,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         }
 
         // Test 20
-        "pack response headers into format compatible with HttpHeaders.fromPacked" in {
+        "response headers answer lookups by name" in {
             val (resp, _) = parseResponse(
                 "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: application/json\r\n" +
