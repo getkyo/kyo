@@ -93,7 +93,7 @@ final private[kyo] class WireLayout private (
                 case Schema.UnionRepresentation.Internal(_) =>
                     given Frame    = Frame.internal
                     val parentKeys = writtenKeys.toSet
-                    val names      = Schema.variantScalaNames(child.structure)
+                    val names      = SchemaSerializer.variantNamesOf(child)
                     child.variantSchemas.zipWithIndex.foreach { (variantSchema, idx) =>
                         val name    = names.lift(idx).getOrElse(idx.toString)
                         val variant = variantSchema()

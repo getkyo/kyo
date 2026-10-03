@@ -926,7 +926,7 @@ private[kyo] object SchemaSerializer:
       * builder sets and a variant laid out by its own given.
       */
     private[kyo] def checkTagKeys(schema: Schema[?], tagKeys: Chunk[String])(using Frame): Unit =
-        val names = Schema.variantScalaNames(schema.structure)
+        val names = variantNamesOf(schema)
         schema.variantSchemas.zipWithIndex.foreach { (variantSchema, idx) =>
             val name    = names.lift(idx).getOrElse(idx.toString)
             val variant = variantSchema()
@@ -940,6 +940,10 @@ private[kyo] object SchemaSerializer:
             end if
         }
     end checkTagKeys
+
+    /** A sum's variant Scala names in variant order: the names a derived sum passes, else its structure's. */
+    private[kyo] def variantNamesOf(schema: Schema[?]): Chunk[String] =
+        if schema.variantNames.nonEmpty then schema.variantNames else Schema.variantScalaNames(schema.structure)
 
     private def flattenWithDiscriminator(
         value: Structure.Value,
