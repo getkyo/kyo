@@ -948,7 +948,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     transparent inline def default[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
         supplier: => V
-    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+    ): Schema[A] { type Focused = Schema.this.Focused } =
         ${ internal.SchemaTransformMacro.defaultFocusImpl[A, Focused, V]('this, 'focus, 'supplier) }
     end default
 

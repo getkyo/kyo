@@ -3895,6 +3895,7 @@ class SchemaTest extends kyo.test.Test[Any]:
             Seq[SBFShape](SBFCircle(2), SBFSquare(1)).foreach(s => assert(Json.decode[SBFShape](Json.encode(s)) == Result.succeed(s)))
             Seq[SBFPoint](SBFFlat(1), SBFSpace(1, 2)).foreach(p => assert(Json.decode[SBFPoint](Json.encode(p)) == Result.succeed(p)))
             Seq[SBFCoin](SBFHeads(), SBFTails()).foreach(c => assert(Json.decode[SBFCoin](Json.encode(c)) == Result.succeed(c)))
+            assert(Json.decode[SBFPage]("""{"label":"a"}""") == Result.succeed(SBFPage(10, "a")))
         }
 
         "a misconfigured builder fails at the first decode that reaches it, with that call's Frame and the builder that caused it" in {
@@ -3948,7 +3949,61 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a value the schema writes on a codec call's behalf carries that call's Frame" - {
+        val refusing: Schema[String] = Schema.init[String](
+            writeFn = (_, w) => throw TransformFailedException("refused")(using w.frame),
+            readFn = _.string(),
+            structure = Schema.stringSchema.structure
+        )
+
+        "a string map key" in {
+            val mapSchema  = Schema.mapSchema[String, Int](using refusing, Schema[Int])
+            val encodeSite = summon[Frame]
+            val e          = intercept[TransformFailedException](Json.encode(Map("a" -> 1))(using mapSchema, encodeSite, summon[Json]))
+            assert(e.detail == "refused")
+            assert(e.frame == encodeSite, s"raised at ${e.frame}, encoded at $encodeSite")
+        }
+
+        "a string map key whose schema writes no string" in {
+            val numeric: Schema[String] =
+                Schema.init[String](writeFn = (_, w) => w.int(1), readFn = _.string(), structure = Schema.stringSchema.structure)
+            val mapSchema  = Schema.mapSchema[String, Int](using numeric, Schema[Int])
+            val encodeSite = summon[Frame]
+            val e          = intercept[TransformFailedException](Json.encode(Map("a" -> 1))(using mapSchema, encodeSite, summon[Json]))
+            assert(e.detail.contains("a string map key's schema wrote"), e.detail)
+            assert(e.frame == encodeSite, s"raised at ${e.frame}, encoded at $encodeSite")
+        }
+
+        "a default injected for a field the input lacks" in {
+            val schema =
+                given Schema[String] = refusing
+                Schema[SFWPage].default(_.label)("none")
+            val decodeSite = summon[Frame]
+            Json.decode[SFWPage]("""{"size":1}""")(using summon[Json], schema, decodeSite) match
+                case Result.Panic(e: TransformFailedException) =>
+                    assert(e.detail == "refused")
+                    assert(e.frame == decodeSite, s"raised at ${e.frame}, decoded at $decodeSite")
+                case other => fail(s"expected a TransformFailedException, got $other")
+            end match
+        }
+
+        "a field read through its read override" in {
+            val schema =
+                given Schema[String] = refusing
+                Schema[SFWPage].transformFieldRead(_.label)(_.string())
+            val decodeSite = summon[Frame]
+            Json.decode[SFWPage]("""{"size":1,"label":"a"}""")(using summon[Json], schema, decodeSite) match
+                case Result.Panic(e: TransformFailedException) =>
+                    assert(e.detail == "refused")
+                    assert(e.frame == decodeSite, s"raised at ${e.frame}, decoded at $decodeSite")
+                case other => fail(s"expected a TransformFailedException, got $other")
+            end match
+        }
+    }
+
 end SchemaTest
+
+final case class SFWPage(size: Int, label: String) derives CanEqual
 
 object OSHolder:
     opaque type Code = String

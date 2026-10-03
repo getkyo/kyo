@@ -22,6 +22,8 @@ final case class SBFRight(n: Int) extends SBFClash
 
 final case class SBFHolder(clash: SBFClash)
 
+final case class SBFPage(size: Int, label: String) derives CanEqual
+
 final class SBFInvalidSku(val text: String)(using val frame: Frame) extends Exception(s"not a sku: $text")
 
 final case class SBFSku(value: String) derives CanEqual
@@ -70,6 +72,8 @@ object SBFGivens:
             .orElseRepresentation(Schema.UnionRepresentation.External)
 
     given Schema[SBFCoin] = Schema[SBFCoin].discriminator("side").variantNumbers("SBFHeads" -> 1, "SBFTails" -> 2)
+
+    given Schema[SBFPage] = Schema[SBFPage].default(_.size)(10)
 
     /** Its variant names collide: the given builds, and the first codec call that reaches it raises the collision. */
     given Schema[SBFClash] = Schema[SBFClash].discriminator("type").variantNames("SBFLeft" -> "side", "SBFRight" -> "side")
