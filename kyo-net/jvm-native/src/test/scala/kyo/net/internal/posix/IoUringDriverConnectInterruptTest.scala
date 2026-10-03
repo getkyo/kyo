@@ -13,33 +13,36 @@ import kyo.net.Test
   * `onComplete` reaches `closeUnwiredHandle`, and nothing exercised that forwarding, so it could stop reclaiming and no test would notice
   * until a workload that interrupts connects ran out of descriptors.
   *
-  * The reclamation is deliberately SYNCHRONOUS on the caller's carrier, and that asymmetry against its non-connect sibling is what this pins.
-  * The driver's deferred close discharges only once the handle's in-flight count drains, and it forces an in-flight RECV to reap by shutting
-  * the read half; there is no equivalent forcing for an in-flight CONNECT, a gap the driver's own teardown comment states outright. Route the
-  * connect-phase close through the deferred path and the count never reaches zero, the credit never discharges, and every interrupted connect
-  * leaks rather than a rare few.
+  * The connect-phase release runs on the reap carrier behind `closeHandle`, so with the connect SQE in flight it is the driver's deferred
+  * close that owns the fd: it claims the close, submits a cancel for the connect, and closes once the connect's completion drains the
+  * handle's in-flight count. The transport's own release then loses the claim, which is what keeps the close single. A shutdown cannot
+  * force an unestablished connect to reap, so the cancel is the only thing that ever returns this descriptor; without it every interrupted
+  * connect leaks until the ring tears down.
   *
   * THE DRIVER IS A REAL [[IoUringDriver]], which is the only reason this leaf can see that. The deferral lives in the driver's own
   * `submitEngineOp` and the reap-carrier FIFO behind it. A backend without a submission ring runs engine ops inline, so the same scenario over
-  * one cannot distinguish a close deferred forever from a close that ran, and a leaf built that way passes against the regression it was
-  * written to catch. What makes the real driver usable here is the ringless stub: it supplies no completion for the connect, so the SQE is
-  * prepped and can never reap, which is the substrate's equivalent of a black-holed handshake with no kernel required. The socket bindings are
-  * REAL, so the fd is a real non-stdio descriptor and its close is a real close; the driver leaves fds 0 and 1 alone as process-owned stdio,
-  * so a stubbed socket layer handing out 0 would report a leak that is an artifact of the fixture.
+  * one cannot distinguish a close deferred forever from a close that ran. What makes the real driver usable here is the ringless stub: it
+  * reaps nothing on its own, so the connect SQE stays in flight like a black-holed handshake, and the leaf stands in for the kernel by
+  * completing the connect with -ECANCELED only once the driver has prepped a cancel naming it. A driver that never cancels leaves the
+  * connect in flight and the fd unclosed. The socket bindings are REAL, so the fd is a real non-stdio descriptor and its close is a real
+  * close; the driver leaves fds 0 and 1 alone as process-owned stdio, so a stubbed socket layer handing out 0 would report a leak that is an
+  * artifact of the fixture.
   *
   * The connect is armed for real rather than stalled at the decorator. A stalled arm registers nothing, so the handle's in-flight count is
   * zero, `registerDeferredClose` takes its immediate branch, and the deferred path under test never runs at all.
   *
-  * Two barriers, both events. `onAwaitConnect` fires before the arm is enqueued, which is what makes it safe to install the stub's prep
-  * barrier there, and `connectBarrierP` then reports that the SQE is genuinely prepped and in flight before the interrupt is issued. The
-  * second barrier is the close itself: the reclamation runs after the caller's own promise has already completed, so the interrupted fiber's
-  * result is NOT a barrier on it, and asserting there reads the close count before the close can have run and reports a leak that is not
-  * there. `closed(fd)` completes on the real `close(fd)`, so a descriptor that is never returned leaves this leaf pending and the harness
-  * budget reports it. Nothing measures elapsed time.
+  * Three barriers, all events. `onAwaitConnect` fires before the arm is enqueued, which is what makes it safe to install the stub's prep
+  * barrier there, and `connectBarrierP` then reports that the SQE is genuinely prepped and in flight before the interrupt is issued.
+  * `cancelBarrierP` reports the cancel's target key. The last is the close itself: the reclamation runs after the caller's own promise has
+  * already completed, so the interrupted fiber's result is NOT a barrier on it. `closed(fd)` completes on the real `close(fd)`, so a
+  * descriptor that is never returned leaves this leaf pending and the harness budget reports it. Nothing measures elapsed time.
   */
 class IoUringDriverConnectInterruptTest extends Test:
 
     import AllowUnsafe.embrace.danger
+
+    // Linux's errno for an op retired by IORING_OP_ASYNC_CANCEL; io_uring exists only there.
+    private val ECANCELED = 125
 
     /** The RING is stubbed here, but the SOCKETS are real, and that is what bounds the platforms this can run on:
       * `SocketBindingsImpl` has no Windows implementation, so on Windows the leaf dies in class initialization inside the very first
@@ -79,7 +82,9 @@ class IoUringDriverConnectInterruptTest extends Test:
                 // Registered before the interrupt so the close cannot land ahead of the barrier that waits for it.
                 val reclaimed = spy.closed(fd)
                 fiber.interrupt.andThen {
-                    reclaimed.safe.get.andThen {
+                    stub.cancelBarrierP.safe.get.map(connectKey => stub.injectRawCqe(connectKey, -ECANCELED)).andThen {
+                        reclaimed.safe.get
+                    }.andThen {
                         val closes = Maybe(spy.closeCounts.get(fd)).getOrElse(0)
                         driver.close()
                         assert(

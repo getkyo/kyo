@@ -118,6 +118,39 @@ class PosixTransportListenerCloseTest extends Test:
                 }
             }
         }
+
+        "a close between two accepts of the listener's drain is followed by no accept on the closed fd" in {
+            assumePollerReady()
+            withUnstartedDriver { (transport, driver, start, sockets, _) =>
+                start()
+                transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
+                    val fd      = listener.asInstanceOf[PosixListener].serverFd
+                    val drained = Promise.Unsafe.init[Unit, Any]()
+                    // The close lands inside the drain, after its first accept and before its next one. A close(2) released there lets the
+                    // drain's next accept run on a number the kernel hands to the next socket opened, taking that socket's connection.
+                    sockets.onAccepted = _ =>
+                        listener.close()
+                        driver.submitEngineOp(() => drained.completeDiscard(Result.succeed(())))
+                    val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                    assert(client >= 0)
+                    val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", listener.port).getOrElse(???)
+                    Sync.ensure(Sync.defer { ca.close(); discard(sockets.close(client)) }) {
+                        sockets.connect(client, ca, cl).safe.get
+                            .andThen(drained.safe.get)
+                            .andThen(listener.released.safe.get)
+                            .andThen {
+                                val order    = sockets.order
+                                val closedAt = order.indexOf(s"close($fd)")
+                                assert(closedAt >= 0, s"the listen fd was never closed; order=$order")
+                                assert(
+                                    !order.drop(closedAt + 1).contains(s"accept($fd)"),
+                                    s"the drain accepted on the listen fd after closing it; order=$order"
+                                )
+                            }
+                    }
+                }
+            }
+        }
     }
 
     "connection close" - {

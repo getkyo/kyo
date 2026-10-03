@@ -1044,7 +1044,9 @@ final private[net] class PosixTransport private[posix] (
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
         // for the driver's model. On the readiness drivers `closeListener` fails the parked accept, queues the fd's deregistration as closing
         // (the close itself removes the kernel interest, so no EV_DELETE runs alongside it; the poll carrier's removal is id-guarded against a
-        // recycled number) and closes the fd. On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
+        // recycled number) and releases the fd through the handle's claim, so an accept re-arm racing this close is rejected rather than
+        // claiming a recycled fd number; the poller runs the close once its poll carrier has applied that withdrawal.
+        // On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
         // this carrier first would let the fd number recycle (typically to the very next listener) before the queued arm preps its SQE, and
         // that ghost arm would then accept on the NEW socket with THIS listener's promise and handler, stealing one connection per close.
         // The shutdown wakes a blocked/armed accept so it observes the close deterministically on every platform (close() alone does not
@@ -1484,8 +1486,9 @@ final private[net] class PosixTransport private[posix] (
       * this process's lifetime for `PosixHandle.freeResources` to ever run -- closing the raw fd immediately here, the same as every other
       * fd close before the deferred-credit path existed, is correct rather than merely expedient.
       *
-      * Ordering is per phase and load-bearing. The connect-phase arm closes the raw fd itself, so `driver.closeHandle` runs FIRST: the
-      * deregistration must precede the close or a recycled fd number could collide with the driver's stale bookkeeping. The handshake arm
+      * Ordering is per phase and load-bearing. The connect-phase arm closes the raw fd through `driver.releaseFd`, on the carrier that arms
+      * the handle's operations, and `driver.closeHandle` runs FIRST: the deregistration must precede the close or a recycled fd number could
+      * collide with the driver's stale bookkeeping. The handshake arm
       * instead installs the deferred `fdCloseSink` credit, and `driver.closeHandle` is what enables that credit's single consumer (on
       * io_uring it enqueues the close op whose `closeNow` -> `PosixHandle.close` -> `freeResources` reads the sink exactly once, possibly
       * concurrently with a caller on another carrier; on the poller `closeHandle` runs the same consumer inline), so the claim, the
@@ -1501,9 +1504,12 @@ final private[net] class PosixTransport private[posix] (
     ): Unit =
         if connectPhase then
             driver.closeHandle(handle)
-            if handle.claimFdClose() then
-                discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
-                closeRawFd(handle.writeFd)
+            driver.releaseFd(
+                handle,
+                () =>
+                    discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
+                    closeRawFd(handle.writeFd)
+            )
         else
             // Hold the handle's guard across the claim + shutdown + credit install AND driver.closeHandle, mirroring
             // IoUringDriver.registerDeferredClose. On the poller, driver.closeHandle's own shutdown wakes the poll carrier into a reentrant

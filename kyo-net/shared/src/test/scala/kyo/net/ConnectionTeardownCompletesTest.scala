@@ -29,9 +29,13 @@ class ConnectionTeardownCompletesTest extends Test:
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = discard(closeHandleCount.incrementAndGet())
-        def close()(using AllowUnsafe, Frame): Unit                                            = ()
-        def label: String                                                                      = "SpyDriver"
-        def handleLabel(handle: Unit): String                                                  = "spy"
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
+        def close()(using AllowUnsafe, Frame): Unit = ()
+        def label: String                           = "SpyDriver"
+        def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
     "closing-connection-completes-teardown" in {
