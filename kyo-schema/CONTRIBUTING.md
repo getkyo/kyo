@@ -773,9 +773,9 @@ A test lives in the most specific module whose classpath covers it: core-only su
 
 ### Base trait and equality
 
-Every test suite extends `kyo.test.Test[Any]`, never ScalaTest directly [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:14]. `Test[Any]` is the explicit Scala 3 spelling for the common case where leaves need only the baseline effects; kyo-schema suites never widen `S` [kyo-test/api/shared/src/main/scala/kyo/test/Test.scala:12].
+Every test suite extends `kyo.test.Test[Any]`, never ScalaTest directly [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:6]. `Test[Any]` is the explicit Scala 3 spelling for the common case where leaves need only the baseline effects; kyo-schema suites never widen `S` [kyo-test/api/shared/src/main/scala/kyo/test/Test.scala:12].
 
-Every suite opens with `given CanEqual[Any, Any] = CanEqual.derived` so heterogeneous `==` comparisons inside `assert` compile under strict equality [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:16].
+Every suite opens with `given CanEqual[Any, Any] = CanEqual.derived` so heterogeneous `==` comparisons inside `assert` compile under strict equality [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:8].
 
 Internal-package tests under `shared/src/test/scala/kyo/internal/` follow the same base-class convention [kyo-schema/shared/src/test/scala/kyo/internal/FastFloatTest.scala:26].
 
@@ -817,9 +817,9 @@ assert(
 
 ### Compile-time tests
 
-**Type-resolution-only leaves** use a typed `val _: Schema[X] { type Focused = ... } = m` ascription and discharge with `succeed("type-resolution compile check: ...")`; there is no runtime equality to assert because the compile is the verification [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:24-28].
+**Type-resolution-only leaves** use a typed `val _: Schema[X] { type Focused = ... } = m` ascription and discharge with `succeed("type-resolution compile check: ...")`; there is no runtime equality to assert because the compile is the verification [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:16-20].
 
-**Negative compile checks** (focus on a nonexistent field, defaults access on a field without a default) use `typeCheckFailure(src)(expectedSubstring)` from the kyo-test base, asserting both that the snippet does not compile and that the error mentions the right token [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:137-139]:
+**Negative compile checks** (focus on a nonexistent field, defaults access on a field without a default) use `typeCheckFailure(src)(expectedSubstring)` from the kyo-test base, asserting both that the snippet does not compile and that the error mentions the right token [kyo-schema-tests/shared/src/test/scala/kyo/SchemaTest.scala:129-131]:
 
 ```
 typeCheckFailure("Schema[kyo.MTPerson].focus(_.nonexistent)")("not found")
