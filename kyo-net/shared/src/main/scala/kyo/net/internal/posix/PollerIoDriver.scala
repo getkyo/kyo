@@ -1536,15 +1536,12 @@ final private[net] class PollerIoDriver private[posix] (
                 // gone, so nothing else can touch the poll-fiber-confined maps closeTeardown clears.
                 if teardownComplete.get() && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed)
             else
-                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
-                closeTeardown(closed)
+                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch, and this carrier runs the
+                // terminal exit itself. Its final drain and pending-close sweeps are what discharge work queued before this close: a TLS
+                // closeHandle's fd close and the writes ahead of it sit on the engine FIFO, and no other consumer will ever run them.
+                terminalTeardown()
                 backend.close(pollerFd)
                 freeScratch()
-                // Mark the teardown finished on this path too. No loop ever ran, so drainFifos will never run either, which is exactly
-                // what these flags are read to mean: submitEngineOp's recheck drains a late op here instead of leaving it queued for a
-                // consumer that does not exist, and closeHandle self-closes inline instead of deferring to that same absent consumer.
-                terminal.set(true)
-                teardownComplete.set(true)
             end if
         end if
     end close
