@@ -69,11 +69,14 @@ object LineConnectionFixture:
                         case Absent          => NetPlatform.transport.listen("127.0.0.1", 0, 128)(accept)
                 }
             }.map(_.safe).map(_.get).map { listener =>
-                // Unsafe: closing the listener and the accepted connections is unsafe-tier; close is idempotent.
+                // Unsafe: closing the listener and the accepted connections is unsafe-tier; close is idempotent. A leaf that connects to
+                // the port after the scope expects a refusal, and close returns before the descriptor is released, so the finalizer waits
+                // for `released`; the accepted connections close first, since Node releases the listener only once they have ended.
                 Scope.ensure(Sync.Unsafe.defer {
                     listener.close()
                     accepted.unsafe.get().foreach(conn => conn.close())
-                }).andThen(listener.port)
+                    listener.released.safe
+                }.map(_.get)).andThen(listener.port)
             }
         }
     end listen
