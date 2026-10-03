@@ -624,15 +624,12 @@ class TelegramTest extends kyo.test.Test[Any]:
                             connectTimeout = HttpClientConfig.TimeLimit.init(1.hour).getOrThrow
                         )
                         for
-                            armed  <- Latch.init(1)
-                            waited <- AtomicRef.init(Duration.Zero)
-                            fiber  <- kyo.internal.telegram.BotApi.floodWaitArmed.let(wait => waited.set(wait).andThen(armed.release))(
-                                Fiber.initUnscoped(Telegram.run(config)(Abort.run[TelegramGetMeFailure](Telegram.getMe)))
-                            )
-                            _      <- armed.await
-                            wait   <- waited.get
+                            fiber <- Fiber.initUnscoped(Telegram.run(config)(Abort.run[TelegramGetMeFailure](Telegram.getMe)))
+                            // The request and connect deadlines share the clock, so only a fence on the flood wait's own duration
+                            // knows the wait is armed before time moves.
+                            _      <- control.awaitPendingSleeper(5.seconds)
                             parked <- Clock.now
-                            _      <- control.advance(wait.minusOrZero(1.milli))
+                            _      <- control.advance(5.seconds.minusOrZero(1.milli))
                             early  <- second.arrived.pending
                             _      <- control.advance(1.milli)
                             _      <- second.arrived.await
@@ -641,7 +638,6 @@ class TelegramTest extends kyo.test.Test[Any]:
                             result <- fiber.get
                             bodies <- local.bodies("getMe")
                         yield
-                            assert(wait == 5.seconds)
                             assert(early == 1, "the second attempt was sent before retry_after passed")
                             assert(sent == parked + 5.seconds, s"sent at $sent, parked at $parked")
                             assert(result.isSuccess)

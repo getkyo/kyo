@@ -28,12 +28,6 @@ private[kyo] object BotApi:
 
     // --- Calls ---
 
-    /** Runs with the length of a flood-control wait once its timer is armed and before the call parks on it. A test sets it to
-      * advance a controlled clock by exactly the wait: run before the timer exists, the advance could land first and the wait
-      * would end that much later.
-      */
-    private[kyo] val floodWaitArmed: Local[Duration => Unit < Sync] = Local.init((_: Duration) => Kyo.unit)
-
     /** A call's parameters: a method's body record, written through its schema as JSON, or as multipart with its files
       * when it uploads any; or a JSON body the caller encoded (`custom`).
       */
@@ -134,12 +128,8 @@ private[kyo] object BotApi:
             transport(config, http, method, limit)(request).map { (status, retryAfter, body) =>
                 Clock.now.map { now =>
                     nextAttempt(remaining, config.retryMaxDelay, body, now) match
-                        case Present((wait, next)) =>
-                            val waited =
-                                if wait == Duration.Zero then Kyo.unit
-                                else Clock.sleep(wait).map(timer => floodWaitArmed.use(_(wait)).andThen(timer.get))
-                            waited.andThen(Loop.continue(Present(next)))
-                        case Absent =>
+                        case Present((wait, next)) => Async.sleep(wait).andThen(Loop.continue(Present(next)))
+                        case Absent                =>
                             mapResponse[R, A, F](
                                 secrets,
                                 method,
