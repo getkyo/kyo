@@ -53,8 +53,9 @@ object HttpServer:
         def host: String = self.host
 
         /** Closes the server gracefully: it stops accepting, ends each connection between requests at once and each other one after it
-          * answers the requests it has already received, and completes when every connection has begun closing. A connection still open when `gracePeriod`
-          * ends is closed then, interrupting its handler.
+          * answers the requests it has already received, and completes when every connection has begun closing and the port is released,
+          * so a connect right after it is refused and a rebind of the port succeeds. A connection still open when `gracePeriod` ends is
+          * closed then, interrupting its handler.
           */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
             Sync.Unsafe.defer(self.closeFiber(gracePeriod).safe.get)
@@ -343,12 +344,20 @@ object HttpServer:
             listener.close()       // stop accepting new connections first
             registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
+            // The close completes once the connections are settled AND the listen descriptor is released: the listener's close returns
+            // while the port may still accept, and a caller that rebinds the port or expects a refusal right after close must not see it.
+            // `released` is awaited after the connections, since on Node it completes only once every accepted connection has ended.
+            val connectionsSettled = Promise.Unsafe.init[Unit, Any]()
+            connectionsSettled.onComplete(_ =>
+                listener.released.onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+            )
+
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.connection.close())
                 // The transport is NOT closed here. It is process-shared across every client and server using the same settings, so closing it
                 // would take every co-tenant's connections down with this server. What this server owns is its listener (closed above, which
                 // releases the bound port) and its accepted connections (closed just above), and those are what shutting it down must reclaim.
-                discard(closedPromise.completeDiscard(Result.succeed(())))
+                discard(connectionsSettled.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 
             if gracePeriod <= Duration.Zero then
@@ -363,7 +372,7 @@ object HttpServer:
                 val served          = registry.snapshot
                 val remaining       = AtomicInt.Unsafe.init(served.size + 1)
                 def settled(): Unit =
-                    if remaining.decrementAndGet() == 0 then discard(closedPromise.completeDiscard(Result.succeed(())))
+                    if remaining.decrementAndGet() == 0 then discard(connectionsSettled.completeDiscard(Result.succeed(())))
                 // An infinite grace never forces the close, so no timer is armed for it.
                 if gracePeriod.isFinite then
                     val grace = clock.unsafe.sleep(gracePeriod)
@@ -371,6 +380,7 @@ object HttpServer:
                         case Result.Success(_) => forceCloseAndComplete()
                         case _                 => () // interrupted once every connection closed
                     }
+                    connectionsSettled.onComplete(_ => discard(grace.interrupt()))
                     closedPromise.onComplete(_ => discard(grace.interrupt()))
                 end if
                 served.foreach { s =>
