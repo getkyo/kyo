@@ -56,7 +56,8 @@ while [ $# -gt 0 ]; do
         -R|--repo)  REPO="${2:?-R needs owner/name}"; shift ;;
         --failures) VIEW=failures ;;
         --grep)     VIEW=grep; GREP_RE="${2:?--grep needs a pattern}"; shift ;;
-        --metrics)  VIEW=grep; GREP_RE='\[ci-mon\]'; ALL_JOBS=1 ;;
+        # The samples print as "[ci-mon HH:MM:SS]", the kernel and disk lines as "[ci-mon-kern]" / "[ci-mon-disk]".
+        --metrics)  VIEW=grep; GREP_RE='\[ci-mon[] -]'; ALL_JOBS=1 ;;
         --full|--dump|--raw) VIEW=full ;;
         --tail)     VIEW=tail; TAIL_N="${2:?--tail needs a count}"; shift ;;
         --steps)    VIEW=steps ;;
