@@ -204,7 +204,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             var probe      = null: SleepingProbe
             var terminated = false
             val bugs       = bugsOf("SleepingProbe") {
-                probe = new SleepingProbe(kyo.scheduler.InternalTimer(exec), sleeping)
+                probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
                 assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
                 probe.stop()
                 exec.shutdownNow(): Unit
@@ -221,7 +221,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             try {
                 var probe = null: SleepingProbe
                 val bugs  = bugsOf("SleepingProbe") {
-                    probe = new SleepingProbe(kyo.scheduler.InternalTimer(exec), sleeping)
+                    probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
                     assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
                     probe.thread.interrupt()
                     // The report is logged on the timer thread; a no-op run behind it on the same thread waits for it.
@@ -234,16 +234,39 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    // The regulator schedules its probe from its own constructor, so on a loaded host the first probe can run before a subclass body is
+    // initialized. This timer makes that order certain: scheduling the first task returns only once that task's first run has begun.
+    private def probeFirstTimer(exec: java.util.concurrent.ScheduledExecutorService): kyo.scheduler.InternalTimer = {
+        val timer = kyo.scheduler.InternalTimer(exec)
+        val first = new java.util.concurrent.atomic.AtomicBoolean(true)
+        new kyo.scheduler.InternalTimer {
+            def schedule(interval: Duration)(f: => Unit) =
+                if (!first.compareAndSet(true, false)) timer.schedule(interval)(f)
+                else {
+                    val started = new java.util.concurrent.CountDownLatch(1)
+                    val task    = timer.schedule(interval) { started.countDown(); f }
+                    assert(started.await(30, java.util.concurrent.TimeUnit.SECONDS), "the first scheduled task never ran")
+                    task
+                }
+            def scheduleOnce(delay: Duration)(f: => Unit) = timer.scheduleOnce(delay)(f)
+        }
+    }
+
     // A member class, not a local one: Scala 2 names a local class `SleepingProbe$1`, and the regulator's reports carry the simple name.
-    final private class SleepingProbe(timer: kyo.scheduler.InternalTimer, sleeping: java.util.concurrent.CountDownLatch)
-        extends Regulator(() => 0d, timer, Config(10, 1.millis, 1.hour, 200, 100, 0.8, 1.3)) {
-        @volatile var thread: Thread = null
-        val interrupted              = new java.util.concurrent.atomic.AtomicBoolean(false)
-        private val first            = new java.util.concurrent.atomic.AtomicBoolean(true)
+    // Its state is constructor parameters, which are assigned before the regulator's constructor schedules the first probe; a body field
+    // is still null when that probe runs.
+    final private class SleepingProbe(
+        timer: kyo.scheduler.InternalTimer,
+        sleeping: java.util.concurrent.CountDownLatch,
+        val interrupted: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false),
+        sleeper: java.util.concurrent.atomic.AtomicReference[Thread] = new java.util.concurrent.atomic.AtomicReference[Thread](null),
+        first: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(true)
+    ) extends Regulator(() => 0d, timer, Config(10, 1.millis, 1.hour, 200, 100, 0.8, 1.3)) {
+        def thread: Thread = sleeper.get()
         // Only the first probe sleeps, so the timer thread is free again once it is interrupted.
         def probe(): Unit =
             if (first.compareAndSet(true, false)) {
-                thread = Thread.currentThread()
+                sleeper.set(Thread.currentThread())
                 sleeping.countDown()
                 try Thread.sleep(60000)
                 catch {
