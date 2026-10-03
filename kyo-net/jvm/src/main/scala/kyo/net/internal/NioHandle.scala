@@ -40,6 +40,8 @@ final private[kyo] class NioHandle private (
     // Peer-close reclaim grace for this connection's ReadPump (kyo.net.NetConfig.peerCloseGrace), set from config at adoption. One handle
     // spans a STARTTLS upgrade, so the upgraded connection inherits it.
     val peerCloseGrace: Duration,
+    // The close-flush bound (kyo.net.NetConfig.closeFlushGrace), carried across a STARTTLS upgrade the same way.
+    val closeFlushGrace: Duration,
     val createdAt: Frame
 ):
     import AllowUnsafe.embrace.danger
@@ -129,20 +131,27 @@ private[kyo] object NioHandle:
     end UpgradeHandoff
 
     /** Create a plain-TCP handle with an allocated direct read buffer. */
-    def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration, createdAt: Frame)(using AllowUnsafe): NioHandle =
-        new NioHandle(channel, bufferSize, Absent, peerCloseGrace, createdAt)
+    def init(channel: SocketChannel, bufferSize: Int, peerCloseGrace: Duration, closeFlushGrace: Duration, createdAt: Frame)(using
+        AllowUnsafe
+    ): NioHandle =
+        new NioHandle(channel, bufferSize, Absent, peerCloseGrace, closeFlushGrace, createdAt)
     end init
 
     /** Create a TLS-enabled handle. TLS buffers are sized from the `SSLEngine` session's recommended capacities. */
-    def initTls(channel: SocketChannel, bufferSize: Int, engine: SSLEngine, peerCloseGrace: Duration, createdAt: Frame)(using
-        AllowUnsafe
-    ): NioHandle =
+    def initTls(
+        channel: SocketChannel,
+        bufferSize: Int,
+        engine: SSLEngine,
+        peerCloseGrace: Duration,
+        closeFlushGrace: Duration,
+        createdAt: Frame
+    )(using AllowUnsafe): NioHandle =
         val session   = engine.getSession
         val netInBuf  = ByteBuffer.allocate(session.getPacketBufferSize)
         val netOutBuf = ByteBuffer.allocate(session.getPacketBufferSize)
         val appInBuf  = ByteBuffer.allocate(session.getApplicationBufferSize)
         val tlsState  = NioTlsState(engine, netInBuf, netOutBuf, appInBuf)
-        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace, createdAt)
+        new NioHandle(channel, bufferSize, Present(tlsState), peerCloseGrace, closeFlushGrace, createdAt)
     end initTls
 
     /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */

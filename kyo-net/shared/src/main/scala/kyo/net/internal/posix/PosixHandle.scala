@@ -64,6 +64,10 @@ final private[net] class PosixHandle private (
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
     val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
+    // Bytes of writes already accepted with Done whose append to the tail still waits on the engine FIFO. The write-tail bound must count them:
+    // on single-threaded JS and Wasm the WritePump issues many writes before the FIFO runs any of their appends, so a bound over the appended
+    // tail alone never trips and the tail grows without limit. Incremented by the writing carrier, decremented by the FIFO op, hence atomic.
+    queuedWriteBytes: AtomicInt.Unsafe,
     val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
@@ -92,6 +96,9 @@ final private[net] class PosixHandle private (
       * in-place STARTTLS upgrade (same fd) inherits it without re-threading; left at `Duration.Infinity` (no reclaim) for a handle with no config (stdio).
       */
     @volatile var peerCloseGrace: Duration = Duration.Infinity
+
+    /** Close-flush grace window (see [[kyo.net.NetConfig.closeFlushGrace]]), on the handle for the same reason as [[peerCloseGrace]]. */
+    @volatile var closeFlushGrace: Duration = Duration.Infinity
 
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
@@ -556,8 +563,10 @@ final private[net] class PosixHandle private (
       * backpressure instead of appending), and by `awaitWritable` to decide whether the parked WritePump promise may complete now or must wait for the
       * tail to drain below [[PosixHandle.WriteTailLowWater]]. The fields are mutated only on the engine FIFO worker and read here off `@volatile`s, so
       * this is a coherent snapshot of the tail at the moment of the read (a coarse bound is sufficient: the high-water gate is hysteretic, not exact).
+      * It includes the bytes of accepted writes still queued on the engine FIFO ([[queueWrite]]), which are part of the tail the bound caps even
+      * though no append has run for them yet.
       */
-    private[posix] def unsentTailBytes: Int =
+    private[posix] def unsentTailBytes(using AllowUnsafe): Int =
         val cipher = pendingCipher match
             case Present(b) => b.size - pendingCipherSent
             case Absent     => 0
@@ -566,8 +575,16 @@ final private[net] class PosixHandle private (
             case Absent     => 0
         val cipherUnsent = if cipher > 0 then cipher else 0
         val rawUnsent    = if raw > 0 then raw else 0
-        cipherUnsent + rawUnsent
+        cipherUnsent + rawUnsent + queuedWriteBytes.get()
     end unsentTailBytes
+
+    /** Count `bytes` of a write accepted with Done before its append is submitted to the engine FIFO. The FIFO op MUST call [[landQueuedWrite]]
+      * with the same count exactly once, whether or not it appends, or the bound stays tripped for the handle's lifetime.
+      */
+    private[posix] def queueWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(bytes))
+
+    /** Uncount the bytes of a queued write once its FIFO op has appended them to the tail (or dropped them on a closed handle). */
+    private[posix] def landQueuedWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(-bytes))
 
     /** Complete the parked backpressure promise ([[backpressurePromise]]) if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the
       * WritePump retries the write that the high-water bound previously deferred. A no-op when no promise is parked or the tail is still over the mark.
@@ -677,6 +694,7 @@ private[net] object PosixHandle:
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
     end socket
@@ -697,6 +715,7 @@ private[net] object PosixHandle:
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
 
