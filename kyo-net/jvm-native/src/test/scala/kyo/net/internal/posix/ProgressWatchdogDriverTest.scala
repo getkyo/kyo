@@ -25,12 +25,9 @@ class ProgressWatchdogDriverTest extends Test:
             Fiber.initUnscoped(Abort.run[NetException | Closed | ProgressWatchdog.Stalled](
                 ProgressWatchdog.run(20.seconds, 3)(progress => readPromise.safe.get.map(outcome => progress.tick.andThen(outcome)))
             )).map { fiber =>
-                Loop.foreach {
-                    fiber.done.map { done =>
-                        if done then Loop.done(())
-                        else tc.awaitPendingSleepers(1).andThen(tc.advance(20.seconds)).andThen(Loop.continue)
-                    }
-                }.andThen(fiber.get)
+                // The clock is driven only while the watch runs, and stops the moment it ends: a watch that ends interrupts its own
+                // pending sleeper, so a fence still waiting for one would wait forever.
+                Async.raceFirst(fiber.get, Loop.forever(tc.awaitPendingSleepers(1).andThen(tc.advance(20.seconds))))
             }
         }
 
