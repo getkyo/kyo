@@ -131,12 +131,19 @@ if env_log_lacks "SBT_OPTS="
 then record ok "an inherited SBT_OPTS never reaches the runner"
 else record no "an inherited SBT_OPTS never reaches the runner"; fi
 
-# 2. direct leaves CI unset
+# 2. direct adds no CI: run without one, since a CI runner exports CI=true and direct passes the caller's environment through
 make_citest_stub 0; reset_logs
-run_build --env direct test JVM >/dev/null 2>&1 || true
+(unset CI; run_build --env direct test JVM >/dev/null 2>&1) || true
 if env_log_lacks "CI=true"
-then record ok "direct leaves CI unset"
-else record no "direct leaves CI unset"; fi
+then record ok "direct adds no CI"
+else record no "direct adds no CI"; fi
+
+# 2a. direct keeps a caller's CI, which selects the build's CI-only settings
+make_citest_stub 0; reset_logs
+CI=true run_build --env direct test JVM >/dev/null 2>&1 || true
+if env_log_has "CI=true"
+then record ok "direct keeps a caller's CI"
+else record no "direct keeps a caller's CI"; fi
 
 # 3. podman (non-CI) leaves CI unset and SBT_TASK_LIMIT unset
 make_podman_stub 0; reset_logs
@@ -252,5 +259,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 18 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 19 ]
 exit $?
