@@ -271,7 +271,7 @@ object KyoFfiPlugin extends AutoPlugin {
       * runnable on a pull request: it catches a native filed under a platform it is not for.
       */
     private def ffiPackagingFormatCheckAllCommand: Command = Command.args("ffiPackagingFormatCheckAll", "<project>*") { (state, only) =>
-        val projects = ffiProjects(state, only)
+        val projects             = ffiProjects(state, only)
         val (finalState, failed) =
             projects.foldLeft((state, Seq.empty[String])) { case ((st, bad), ref) =>
                 val ex = Project.extract(st)
