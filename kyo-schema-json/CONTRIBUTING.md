@@ -250,8 +250,8 @@ neither is "so a caller's given propagates by position":
 Given-propagation itself would work identically with `json` first; the position
 is about not breaking existing explicit-argument call sites. Every entry point in
 this module carries `Json` in its `using` clause. Do not reorder it, and do not
-replace it with a `summon[Json]` inside a method body. See `Json.scala:36-47`
-for the full rationale on the source.
+replace it with a `summon[Json]` inside a method body. See the `Json.encode`
+scaladoc in `Json.scala` for the full rationale on the source.
 
 ---
 

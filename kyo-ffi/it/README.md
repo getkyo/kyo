@@ -49,8 +49,8 @@ sbt -Dplatform=NATIVE 'kyo-ffi-itNative/test'
 sbt -Dplatform=JS 'kyo-ffi-itJS/test'
 ```
 
-The `-Dplatform=` flag selects the root aggregate (see `build.sbt`
-~L85-95). Without it sbt defaults to `kyoJVM`.
+The `-Dplatform=` flag selects the root aggregate (see `Global / onLoad` in
+`build.sbt`). Without it sbt defaults to `kyoJVM`.
 
 ## Known platform quirks
 

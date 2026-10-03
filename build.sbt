@@ -4387,7 +4387,8 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
             """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
                 .getOrElse(sys.error("no version in .scalafmt.conf"))
         },
-        scriptedLaunchOpts := Seq(
+        libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.20" % Test,
+        scriptedLaunchOpts                     := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.

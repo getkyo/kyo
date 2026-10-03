@@ -1,0 +1,15 @@
+# The citing variants are .txt so the kyo repository's own citation check does not flag this fixture.
+# A citation in a doctestSources file fails the project's doctest task before any block compiles.
+$ copy-file README-citation.txt README.md
+-> root/doctest
+$ copy-file README-clean.txt README.md
+> root/doctest
+# The repository-wide pass covers git-tracked Markdown that no project's doctestSources names.
+$ copy-file GUIDE-citation.txt GUIDE.md
+$ exec git init -q
+$ exec git add README.md GUIDE.md
+-> doctestLineCitations
+-> doctest
+$ copy-file GUIDE-clean.txt GUIDE.md
+> doctestLineCitations
+> doctest

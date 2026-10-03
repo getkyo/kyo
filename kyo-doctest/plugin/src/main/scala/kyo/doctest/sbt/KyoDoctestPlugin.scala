@@ -172,11 +172,30 @@ object KyoDoctestPlugin extends AutoPlugin {
                 // rather than interleaving with doctest forks. Phase 2: run
                 // doctest tasks; Test/fullClasspath is already up-to-date so
                 // the only work is the forks themselves, subject to
-                // Tags.limit(DoctestTag, 1) in globalSettings.
+                // Tags.limit(DoctestTag, 1) in globalSettings. The repository-wide
+                // citation check runs before both: it reaches Markdown no project
+                // validates, and it compiles nothing, so it fails before any fork.
                 val compileCmds = refs.map(r => s"${r.project}/Test/compile").mkString(" ")
                 val doctestCmds = refs.map(r => s"${r.project}/$name").mkString(" ")
-                s"all $compileCmds" :: s"all $doctestCmds" :: state
+                LineCitationsCommand :: s"all $compileCmds" :: s"all $doctestCmds" :: state
             }
+        }
+
+    private val LineCitationsCommand = "doctestLineCitations"
+
+    // Every git-tracked Markdown file, not only doctestSources: contributor guides and agent instructions cite code too, and no
+    // project compiles them. Outside a git work tree the per-project doctest tasks still check their own sources.
+    private val lineCitationsCommand: Command =
+        Command.command(LineCitationsCommand) { state =>
+            val root = Project.extract(state).get(ThisBuild / baseDirectory)
+            LineCitations.trackedMarkdown(root) match {
+                case Some(files) =>
+                    LineCitations.enforce(files, root, state.log)
+                    state.log.info(s"$LineCitationsCommand: no source line-number citations in ${files.size} Markdown files")
+                case None =>
+                    state.log.warn(s"$LineCitationsCommand: $root is not a git work tree; only doctestSources are checked")
+            }
+            state
         }
 
     override lazy val globalSettings: Seq[Setting[?]] = Seq(
@@ -184,7 +203,8 @@ object KyoDoctestPlugin extends AutoPlugin {
             aggregateCommand("doctest"),
             aggregateCommand("doctestFresh"),
             aggregateCommand("doctestClean"),
-            aggregateCommand("doctestFormat")
+            aggregateCommand("doctestFormat"),
+            lineCitationsCommand
         ),
         // Cap concurrent doctest task instances across the whole build to 1.
         // Each task forks a JVM that runs a dotty driver; serialising at the
@@ -260,6 +280,7 @@ object KyoDoctestPlugin extends AutoPlugin {
             val forkOpts    = doctestForkJavaOptions.value
             // Formats the blocks in place before validating, so doc examples stay in the codebase's scalafmt style.
             val _ = doctestFormat.value
+            LineCitations.enforce(sources, (ThisBuild / baseDirectory).value, log)
             Runner.run(
                 sources = sources,
                 classpath = classpath,
@@ -285,6 +306,7 @@ object KyoDoctestPlugin extends AutoPlugin {
             val predef      = doctestPredef.value
             val freshDriver = doctestFreshDriver.value
             val forkOpts    = doctestForkJavaOptions.value
+            LineCitations.enforce(sources, (ThisBuild / baseDirectory).value, log)
             Runner.run(
                 sources = sources,
                 classpath = classpath,
