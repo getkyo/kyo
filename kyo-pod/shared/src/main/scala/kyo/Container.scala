@@ -2573,7 +2573,9 @@ object Container:
         // connection is closed on every path and no handle escapes — and a host-side connect is the only proof
         // that the runtime's port forwarder is actually serving the published port.
         Abort.run[kyo.net.NetException] {
-            Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port, portProbeConnectTimeout).safe).map(_.get)
+            Abort.get(kyo.net.Transport.ConnectTimeout.init(portProbeConnectTimeout)).map { deadline =>
+                Sync.Unsafe.defer(kyo.net.NetPlatform.transport.connect(host, port, deadline).safe).map(_.get)
+            }
         }.map {
             case Result.Success(conn) =>
                 // The close runs on every path, including an interrupt during the grace wait. A close that fails

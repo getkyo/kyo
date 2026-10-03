@@ -69,12 +69,16 @@ final private[kyo] class HttpClientBackend private (
         val effectiveTls =
             if tlsConfig == HttpTlsConfig.default then defaultTlsConfig
             else tlsConfig
-        val netConfig    = NetConfigTranslation.toNetConfig(transportConfig)
-        val connectFiber = (url.unixSocket, url.ssl) match
-            case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
-            case (_, true)          =>
-                NetConfigTranslation.connectTls(transport, url.host, url.port, effectiveTls, connectTimeout, transportConfig)
-            case _ => transport.connect(url.host, url.port, connectTimeout, netConfig)
+        val connectFiber = NetConfigTranslation.connect(
+            transport,
+            url.unixSocket,
+            url.host,
+            url.port,
+            url.ssl,
+            effectiveTls,
+            connectTimeout,
+            transportConfig
+        )
         val resultPromise = Promise.Unsafe.init[HttpConnection, Abort[HttpException]]()
         // Cast to IOPromise to get Result[NetException, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
@@ -840,13 +844,8 @@ final private[kyo] class HttpClientBackend private (
         val ssl      = url.ssl
         val (eh, ep) = hostPort(url)
 
-        val netConfig    = NetConfigTranslation.toNetConfig(transportConfig)
         val connectFiber = Sync.Unsafe.defer {
-            (url.unixSocket, ssl) match
-                case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
-                case (_, true)          =>
-                    NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
-                case _ => transport.connect(host, port, connectTimeout, netConfig)
+            NetConfigTranslation.connect(transport, url.unixSocket, host, port, ssl, defaultTlsConfig, connectTimeout, transportConfig)
         }
         // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
         // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer
@@ -893,13 +892,17 @@ final private[kyo] class HttpClientBackend private (
         unsendableField(url.pathWithQuery, hostHeaderValue, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent      =>
-                val netConfig    = NetConfigTranslation.toNetConfig(transportConfig)
                 val connectFiber = Sync.Unsafe.defer {
-                    (url.unixSocket, ssl) match
-                        case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
-                        case (_, true)          =>
-                            NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
-                        case _ => transport.connect(host, port, connectTimeout, netConfig)
+                    NetConfigTranslation.connect(
+                        transport,
+                        url.unixSocket,
+                        host,
+                        port,
+                        ssl,
+                        defaultTlsConfig,
+                        connectTimeout,
+                        transportConfig
+                    )
                 }
                 // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
                 // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer

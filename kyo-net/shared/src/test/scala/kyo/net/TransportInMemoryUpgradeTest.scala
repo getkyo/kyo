@@ -17,7 +17,7 @@ class TransportInMemoryUpgradeTest extends Test:
         val inbound   = Channel.Unsafe.init[Span[Byte]](8)
         val outbound  = Channel.Unsafe.init[Span[Byte]](8)
         val inMem     = InternalConnection.inMemory(inbound, outbound)
-        Abort.run[NetException](transport.upgradeToTls(inMem, clientTls, 16).safe.get).map { result =>
+        Abort.run[NetException](transport.upgradeToTls(inMem, clientTls, NetConfig.Size(16)).safe.get).map { result =>
             assert(result.isFailure, s"upgradeToTls on a non-upgradable in-memory connection must abort a NetException, got $result")
         }
     }

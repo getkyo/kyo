@@ -40,7 +40,7 @@ class TransportStartTlsCrossTailTest extends Test:
                             Abort.run[Closed] {
                                 serverConn.inbound.safe.take.flatMap { _ =>
                                     serverConn.outbound.safe.put(upgradeReady).andThen {
-                                        transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                        transport.upgradeToTls(serverConn, serverTls, NetConfig.Size(16)).safe.get.flatMap { tlsConn =>
                                             Loop.foreach {
                                                 tlsConn.inbound.safe.take.flatMap(data =>
                                                     tlsConn.outbound.safe.put(data).andThen(Loop.continue)
@@ -67,7 +67,7 @@ class TransportStartTlsCrossTailTest extends Test:
                                 _       <- Scope.ensure(Sync.defer(conn.close()))
                                 _       <- conn.outbound.safe.put(upgradeSignal)
                                 _       <- conn.inbound.safe.take
-                                tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                                tlsConn <- transport.upgradeToTls(conn, cli, NetConfig.Size(16)).safe.get
                                 _       <- Scope.ensure(Sync.defer(tlsConn.close()))
                                 // Post-upgrade write immediately: exercises the cross-tail defer/kick when the
                                 // handshake's raw final flight may not yet have reaped its CQE.

@@ -168,20 +168,20 @@ class ConnectionStatusTest extends Test:
                             Abort.run[Closed | NetException] {
                                 serverConn.inbound.safe.take.flatMap { _ =>
                                     serverConn.outbound.safe.put(ready).andThen {
-                                        transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap(serverTlsCh.put)
+                                        transport.upgradeToTls(serverConn, serverTls, NetConfig.Size(16)).safe.get.flatMap(serverTlsCh.put)
                                     }
                                 }
                             }.unit
                         }
                     })
                 }.safe.get
-                _             <- Scope.ensure(Sync.defer(listener.close()))
-                conn          <- transport.connect("127.0.0.1", listener.port).safe.get
-                _             <- Scope.ensure(Sync.defer(conn.close()))
-                _             <- conn.outbound.safe.put(signal)
-                _             <- conn.inbound.safe.take
-                client        <- transport.upgradeToTls(conn, clientTls.copy(sniHostname = Present("localhost")), 16).safe.get
-                _             <- Scope.ensure(Sync.defer(client.close()))
+                _      <- Scope.ensure(Sync.defer(listener.close()))
+                conn   <- transport.connect("127.0.0.1", listener.port).safe.get
+                _      <- Scope.ensure(Sync.defer(conn.close()))
+                _      <- conn.outbound.safe.put(signal)
+                _      <- conn.inbound.safe.take
+                client <- transport.upgradeToTls(conn, clientTls.copy(sniHostname = Present("localhost")), NetConfig.Size(16)).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 serverTlsConn <- serverTlsCh.take
                 _ = serverTlsConn.close() // sends TLS close_notify then TCP FIN
                 _ <- drainInbound(client)

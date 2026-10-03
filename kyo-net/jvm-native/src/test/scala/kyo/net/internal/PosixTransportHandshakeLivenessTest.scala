@@ -68,7 +68,9 @@ class PosixTransportHandshakeLivenessTest extends Test:
                 )
                 // Short deadline: a client that stalls the TLS handshake must be reaped within 150ms.
                 val transport = NetPlatform.transport
-                transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get.map {
+                transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = 150.millis.handshakeTimeout)) { _ =>
+                    ()
+                }.safe.get.map {
                     listener =>
                         // Plain TCP connect (no TLS): the client completes the TCP handshake but never
                         // sends a ClientHello. The server driveHandshake stays in WantRead until teardown.

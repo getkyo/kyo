@@ -59,17 +59,18 @@ class IoUringMutualTlsStressTest extends Test:
                                 Sync.ensure(Sync.defer(serverConn.close())) {
                                     serverConn.inbound.safe.take.flatMap { _ =>
                                         serverConn.outbound.safe.put(upgradeReady).andThen {
-                                            transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
-                                                // Same guarantee for the post-upgrade connection: its echo loop's normal termination IS a
-                                                // Closed abort (the peer disconnects), so a plain trailing close after Loop.foreach would
-                                                // never run; ensure closes it exactly once whichever way the loop ends.
-                                                Sync.ensure(Sync.defer(tlsConn.close())) {
-                                                    Loop.foreach {
-                                                        tlsConn.inbound.safe.take.flatMap(d =>
-                                                            tlsConn.outbound.safe.put(d).andThen(Loop.continue)
-                                                        )
+                                            transport.upgradeToTls(serverConn, serverTls, kyo.net.NetConfig.Size(16)).safe.get.flatMap {
+                                                tlsConn =>
+                                                    // Same guarantee for the post-upgrade connection: its echo loop's normal termination IS a
+                                                    // Closed abort (the peer disconnects), so a plain trailing close after Loop.foreach would
+                                                    // never run; ensure closes it exactly once whichever way the loop ends.
+                                                    Sync.ensure(Sync.defer(tlsConn.close())) {
+                                                        Loop.foreach {
+                                                            tlsConn.inbound.safe.take.flatMap(d =>
+                                                                tlsConn.outbound.safe.put(d).andThen(Loop.continue)
+                                                            )
+                                                        }
                                                     }
-                                                }
                                             }
                                         }
                                     }
@@ -107,7 +108,7 @@ class IoUringMutualTlsStressTest extends Test:
                                 _       <- Sync.defer(stage.set("await-ready"))
                                 _       <- conn.inbound.safe.take
                                 _       <- Sync.defer(stage.set("upgrade"))
-                                tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                tlsConn <- transport.upgradeToTls(conn, clientTls, kyo.net.NetConfig.Size(16)).safe.get
                                 echoed  <- Sync.ensure(Sync.defer(tlsConn.close())) {
                                     for
                                         _      <- Sync.defer(stage.set("put-payload"))

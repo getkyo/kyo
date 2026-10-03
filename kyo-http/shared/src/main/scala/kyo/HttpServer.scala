@@ -289,21 +289,15 @@ object HttpServer:
                 )
                 end if
             end tracked
-            val netConfig   = NetConfigTranslation.toNetConfig(config.transportConfig)
-            val listenFiber = (config.unixSocket, config.tls) match
-                case (Present(path), _) =>
-                    transport.listenUnix(path, config.backlog, netConfig)(tracked)
-                case (Absent, Present(tls)) =>
-                    NetConfigTranslation.listenTls(
-                        transport,
-                        config.host,
-                        config.port,
-                        config.backlog,
-                        tls,
-                        config.transportConfig
-                    )(tracked)
-                case _ =>
-                    transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
+            val listenFiber = NetConfigTranslation.listen(
+                transport,
+                config.unixSocket,
+                config.host,
+                config.port,
+                config.backlog,
+                config.tls,
+                config.transportConfig
+            )(tracked)
             listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry, draining, clock))
         end init
     end Unsafe

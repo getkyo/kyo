@@ -14,7 +14,7 @@ final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean
     /** How many connections `connect` has handed out. */
     def connectCount: Int = next.get()
 
-    def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
+    def connect(host: String, port: Int, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
@@ -30,17 +30,17 @@ final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean
     private def unsupported[A](op: String)(using AllowUnsafe): Fiber.Unsafe[A, Abort[NetException]] =
         Fiber.Unsafe.fromResult(Result.panic(new UnsupportedOperationException(s"TestChannelTransport: $op not supported")))
 
-    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: NetConfig)(using
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectTls")
 
-    def connectUnix(path: String, connectTimeout: Duration, config: NetConfig)(using
+    def connectUnix(path: String, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: NetConfig.Size, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")
@@ -60,7 +60,7 @@ final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean
         Frame
     ): Fiber.Unsafe[Listener, Abort[NetException]] = unsupported("listenUnix")
 
-    def upgradeToTls(conn: Connection, tls: NetTlsConfig, channelCapacity: Int)(using
+    def upgradeToTls(conn: Connection, tls: NetTlsConfig, channelCapacity: NetConfig.Size)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("upgradeToTls")
@@ -126,7 +126,7 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
     /** Let the pending connect succeed with the prepared connection. */
     def release()(using AllowUnsafe, Frame): Unit = discard(gate.complete(Result.succeed(conn)))
 
-    def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
+    def connect(host: String, port: Int, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = gate
@@ -134,17 +134,17 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
     private def unsupported[A](op: String)(using AllowUnsafe): Fiber.Unsafe[A, Abort[NetException]] =
         Fiber.Unsafe.fromResult(Result.panic(new UnsupportedOperationException(s"DeferredConnectTransport: $op not supported")))
 
-    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: NetConfig)(using
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectTls")
 
-    def connectUnix(path: String, connectTimeout: Duration, config: NetConfig)(using
+    def connectUnix(path: String, connectTimeout: Transport.ConnectTimeout, config: NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: NetConfig.Size, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")
@@ -164,7 +164,7 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
         Frame
     ): Fiber.Unsafe[Listener, Abort[NetException]] = unsupported("listenUnix")
 
-    def upgradeToTls(conn: Connection, tls: NetTlsConfig, channelCapacity: Int)(using
+    def upgradeToTls(conn: Connection, tls: NetTlsConfig, channelCapacity: NetConfig.Size)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("upgradeToTls")

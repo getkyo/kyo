@@ -77,7 +77,7 @@ class TransportUnixSocketTest extends Test:
             val path = s"/tmp/kyo-uds-deadline-${TlsTestCertShared.uniquePathTag()}.sock"
             transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>
+                    Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds.connectTimeout).safe.get).map { outcome =>
                         listener.close()
                         outcome match
                             case Result.Success(conn) =>

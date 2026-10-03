@@ -34,23 +34,31 @@ class TransportPerOperationConfigTest extends Test:
             // Guards every acquisition above if a later one fails: e.g. if the second connect aborts, `small` and `listener` would otherwise
             // never reach their trailing close() calls below.
             Scope.ensure(Sync.defer(listener.close())).andThen {
-                transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 4)).safe.get.map { small =>
-                    Scope.ensure(Sync.defer(small.close())).andThen {
-                        transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 64)).safe.get.map { large =>
-                            Scope.ensure(Sync.defer(large.close())).andThen {
-                                // Read both before closing anything: the point is that two live connections on one transport carry different
-                                // capacities at the same time, which a construction-captured value could not produce.
-                                val smallCapacity = small.inbound.capacity
-                                val largeCapacity = large.inbound.capacity
-                                small.close()
-                                large.close()
-                                listener.close()
-                                assert(smallCapacity == 4, s"the connection that asked for 4 got $smallCapacity")
-                                assert(largeCapacity == 64, s"the connection that asked for 64 got $largeCapacity")
-                                assert(NetPlatform.transport eq transport, "both connections must have come from the one shared transport")
+                transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = NetConfig.Size(4))).safe.get.map {
+                    small =>
+                        Scope.ensure(Sync.defer(small.close())).andThen {
+                            transport.connect(
+                                "127.0.0.1",
+                                listener.port,
+                                config = NetConfig(channelCapacity = NetConfig.Size(64))
+                            ).safe.get.map { large =>
+                                Scope.ensure(Sync.defer(large.close())).andThen {
+                                    // Read both before closing anything: the point is that two live connections on one transport carry different
+                                    // capacities at the same time, which a construction-captured value could not produce.
+                                    val smallCapacity = small.inbound.capacity
+                                    val largeCapacity = large.inbound.capacity
+                                    small.close()
+                                    large.close()
+                                    listener.close()
+                                    assert(smallCapacity == 4, s"the connection that asked for 4 got $smallCapacity")
+                                    assert(largeCapacity == 64, s"the connection that asked for 64 got $largeCapacity")
+                                    assert(
+                                        NetPlatform.transport eq transport,
+                                        "both connections must have come from the one shared transport"
+                                    )
+                                }
                             }
                         }
-                    }
                 }
             }
         }
@@ -67,7 +75,7 @@ class TransportPerOperationConfigTest extends Test:
                     conn.close()
                     listener.close()
                     // The no-config path must resolve to the companion constant, not to whatever some other caller last passed.
-                    assert(capacity == NetConfig.DefaultChannelCapacity, s"expected the default capacity, got $capacity")
+                    assert(capacity == NetConfig.DefaultChannelCapacity.value, s"expected the default capacity, got $capacity")
                 }
             }
         }
@@ -81,13 +89,13 @@ class TransportPerOperationConfigTest extends Test:
         // Both connects go to the same black hole on the same transport. The tight one must fail with ITS OWN deadline while the generous one
         // is still parked: a shared or construction-captured deadline would either fail both or neither.
         Fiber.initUnscoped(
-            Abort.run[NetException](transport.connect(blackHoleHost, blackHolePort, generous).safe.get)
+            Abort.run[NetException](transport.connect(blackHoleHost, blackHolePort, generous.connectTimeout).safe.get)
         ).map { generousFiber =>
             // Guarantees the generous fiber is interrupted (releasing its half-open connect) even if an assertion below throws before the
             // explicit `generousFiber.interrupt` call is reached.
             Scope.ensure(generousFiber.interrupt.unit).andThen {
                 Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(10.seconds)(transport.connect(blackHoleHost, blackHolePort, tight).safe.get)
+                    Async.timeout(10.seconds)(transport.connect(blackHoleHost, blackHolePort, tight.connectTimeout).safe.get)
                 ).map { tightOutcome =>
                     // The generous connect must STILL BE PARKED at this moment. Without this check the leaf proves only that the tight connect
                     // timed out, which a single shared deadline would also produce: the assertions below would pass unchanged if both connects
@@ -133,8 +141,8 @@ class TransportPerOperationConfigTest extends Test:
             val material  = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
             // Same transport, same TLS material, two deadlines. A plaintext client completes each TCP accept and never sends a ClientHello, so
             // both server handshakes park; only the listener that asked for a finite deadline may reap its connection.
-            val reaping   = material.copy(handshakeTimeout = 150.millis)
-            val unbounded = material.copy(handshakeTimeout = Duration.Infinity)
+            val reaping   = material.copy(handshakeTimeout = 150.millis.handshakeTimeout)
+            val unbounded = material.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited)
             // Every acquisition below is Scope.ensure-guarded: if a later listen/connect/read fails, an earlier one would otherwise never
             // reach its trailing close() call in the yield.
             for

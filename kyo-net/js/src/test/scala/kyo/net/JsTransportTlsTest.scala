@@ -440,7 +440,9 @@ class JsTransportTlsTest extends Test:
         val transport =
             JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis.handshakeTimeout)) {
+                _ => ()
+            }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
             wasReaped <- reaped.get
@@ -461,12 +463,13 @@ class JsTransportTlsTest extends Test:
             JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds)) { serverConn =>
-                discard(Sync.Unsafe.evalOrThrow {
-                    Fiber.initUnscoped {
-                        Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
-                    }
-                })
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 30.seconds.handshakeTimeout)) {
+                serverConn =>
+                    discard(Sync.Unsafe.evalOrThrow {
+                        Fiber.initUnscoped {
+                            Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
+                        }
+                    })
             }.safe.get
             port = listener.port
             client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
@@ -496,13 +499,19 @@ class JsTransportTlsTest extends Test:
         val transport =
             JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
+            listener <- transport.listenTls(
+                "127.0.0.1",
+                0,
+                128,
+                serverTlsMaterial.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited)
+            ) { _ =>
                 ()
             }.safe.get
             (subjectClosed, destroySubject) = stalledRawClient(listener.port)
-            pacerListener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline)) { _ =>
-                ()
-            }.safe.get
+            pacerListener <-
+                transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = pacerDeadline.handshakeTimeout)) { _ =>
+                    ()
+                }.safe.get
             (pacerClosed, destroyPacer) = stalledRawClient(pacerListener.port)
             pacer <- Abort.run[Timeout](Async.timeout(10.seconds)(pacerClosed.get))
         yield
@@ -529,7 +538,7 @@ class JsTransportTlsTest extends Test:
     // since closing it would end the handshake by itself and the leaf would stop testing the discharge.
     "closing a listener releases accepted sockets whose handshake never settled" in {
         val transport = JsTransport.init(poolSize = 1)
-        val unbounded = serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)
+        val unbounded = serverTlsMaterial.copy(handshakeTimeout = NetTlsConfig.HandshakeTimeout.unlimited)
         for
             listener <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
             client   <- transport.connect("127.0.0.1", listener.port).safe.get

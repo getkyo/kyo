@@ -118,13 +118,12 @@ final private[kyo] class JsTransport private (
         if isDnsCode(code) then NetDnsResolutionException(host, msg) else NetBindException(host, port, msg)
     end listenError
 
-    def connect(host: String, port: Int, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connect(host: String, port: Int, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val socket = NodeNet.asInstanceOf[js.Dynamic].connect(port, host)
-        connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout, config)
+        connectSocket(socket, host, port, tcpNoDelay = true, connectEvent = "connect", connectTimeout.duration, config)
     end connect
 
     def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
@@ -134,11 +133,11 @@ final private[kyo] class JsTransport private (
         listenServer(server, host, port, backlog, tcpNoDelay = true, connectionEvent = "connection", handler, config)
     end listen
 
-    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(
+        using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so it serves only the "node" implementation. A pin to
         // any other provider fails closed rather than silently using Node under a different provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
@@ -195,9 +194,9 @@ final private[kyo] class JsTransport private (
                 port,
                 tcpNoDelay = true,
                 connectEvent = "secureConnect",
-                connectTimeout,
+                connectTimeout.duration,
                 config,
-                tls.handshakeTimeout
+                tls.handshakeTimeout.duration
             )
         end if
     end connectTls
@@ -228,7 +227,7 @@ final private[kyo] class JsTransport private (
         // socket arrives ("connection", which a TLS server emits on TCP accept before the handshake) and destroy the socket if the handshake has
         // not completed by the deadline; "secureConnection" (success) and "tlsClientError" (failed handshake) disarm it. handshakeTimeout =
         // Infinity arms no timer (no handshake deadline).
-        armServerHandshakeDeadlines(server, tls.handshakeTimeout)
+        armServerHandshakeDeadlines(server, tls.handshakeTimeout.duration)
         // TLS servers emit "secureConnection" after handshake (not "connection" which fires on raw TCP)
         val tracking = trackAcceptHandshakes(server)
         listenServer(
@@ -524,9 +523,10 @@ final private[kyo] class JsTransport private (
             { () =>
                 if tcpNoDelay then discard(socket.setNoDelay(true))
                 val handle = JsHandle.init(socket, driver, frame)
-                handle.peerCloseGrace = config.peerCloseGrace
+                handle.peerCloseGrace = config.peerCloseGrace.duration
                 handle.clock = clock
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
+                val connection =
+                    Connection.init(handle, driver, config.channelCapacity.value, config.peerCloseGrace.duration, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -627,9 +627,10 @@ final private[kyo] class JsTransport private (
 
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
-                handle.peerCloseGrace = config.peerCloseGrace
+                handle.peerCloseGrace = config.peerCloseGrace.duration
                 handle.clock = clock
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
+                val connection =
+                    Connection.init(handle, connDriver, config.channelCapacity.value, config.peerCloseGrace.duration, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -687,11 +688,10 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenServer
 
-    def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connectUnix(path: String, connectTimeout: kyo.net.Transport.ConnectTimeout, config: kyo.net.NetConfig)(using
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
 
@@ -710,7 +710,7 @@ final private[kyo] class JsTransport private (
         // accept queue, which is what this comment used to claim. It carries the same
         // deadline a TCP connect does rather than accepting the parameter and ignoring it. -1 is the Unix sentinel, which selects the Unix leaf.
         // A Unix connect has one phase, so its deadline runs to the outcome; the returned disarm is unused (the promise backstop covers it).
-        discard(armConnectDeadline(promise, path, -1, connectTimeout))
+        discard(armConnectDeadline(promise, path, -1, connectTimeout.duration))
 
         // Pause immediately - kyo controls data flow
         discard(socket.pause())
@@ -720,9 +720,10 @@ final private[kyo] class JsTransport private (
             { () =>
                 // Unix sockets do not support TCP_NODELAY: skip setNoDelay
                 val handle = JsHandle.init(socket, driver, frame)
-                handle.peerCloseGrace = config.peerCloseGrace
+                handle.peerCloseGrace = config.peerCloseGrace.duration
                 handle.clock = clock
-                val connection = Connection.init(handle, driver, config.channelCapacity, config.peerCloseGrace, clock = clock)
+                val connection =
+                    Connection.init(handle, driver, config.channelCapacity.value, config.peerCloseGrace.duration, clock = clock)
                 // Wire upgrade function so upgradeToTls dispatches to this transport.
                 connection.upgradeFn = Present { (tls, frame) =>
                     given Frame = frame
@@ -753,7 +754,7 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectUnix
 
-    override def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    override def stdio(channelCapacity: kyo.net.NetConfig.Size, readChunkSize: ByteSize)(using
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
@@ -768,7 +769,7 @@ final private[kyo] class JsTransport private (
             val shim   = stdioShim()
             val handle = JsHandle.init(shim, driver, frame)
             // stdio keeps peerCloseGrace = Infinity: no TCP peer to reclaim against.
-            val connection = Connection.init(handle, driver, channelCapacity)
+            val connection = Connection.init(handle, driver, channelCapacity.value)
             if connection.start() then
                 Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
             else
@@ -857,9 +858,10 @@ final private[kyo] class JsTransport private (
 
                 val connDriver = pool.next()
                 val handle     = JsHandle.init(socket, connDriver, listener.createdAt)
-                handle.peerCloseGrace = config.peerCloseGrace
+                handle.peerCloseGrace = config.peerCloseGrace.duration
                 handle.clock = clock
-                val connection = Connection.init(handle, connDriver, config.channelCapacity, config.peerCloseGrace, clock = clock)
+                val connection =
+                    Connection.init(handle, connDriver, config.channelCapacity.value, config.peerCloseGrace.duration, clock = clock)
                 // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                 // isServerOrigin).
                 connection.isServerOrigin = true
@@ -908,6 +910,13 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
     def upgradeToTls(
+        conn: NetConnection,
+        tls: kyo.net.NetTlsConfig,
+        channelCapacity: kyo.net.NetConfig.Size
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        upgradeConnection(conn, tls, channelCapacity.value)
+
+    private def upgradeConnection(
         conn: NetConnection,
         tls: kyo.net.NetTlsConfig,
         channelCapacity: Int
@@ -1130,11 +1139,11 @@ final private[kyo] class JsTransport private (
             // reclaim it, and the process-shared transport is never closed. Settling `promise` runs the same release a handshake failure takes, so
             // the deadline reuses that path rather than adding a second teardown. There is no fresh connect port for an upgrade, so the leaf carries
             // -1, matching the other backends. `Duration.Infinity` arms no timer.
-            if tls.handshakeTimeout.isFinite then
-                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+            if tls.handshakeTimeout.duration.isFinite then
+                val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout.duration)
                 deadline.onComplete { _ =>
                     val host = tls.sniHostname.getOrElse("")
-                    if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout))) then
+                    if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout.duration))) then
                         discard(tlsSocket.destroy())
                 }
                 promise.onComplete { _ =>
@@ -1159,7 +1168,7 @@ final private[kyo] class JsTransport private (
                     // are routed back through this transport (which will then fail with a TLS-on-TLS error).
                     newConn.upgradeFn = Present { (tls2, frame2) =>
                         given Frame = frame2
-                        upgradeToTls(newConn, tls2, channelCapacity)
+                        upgradeConnection(newConn, tls2, channelCapacity)
                     }
                     // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
                     // tls-server-end-point) can read the peer-cert SHA-256.
@@ -1208,7 +1217,7 @@ final private[kyo] class JsTransport private (
         // Transport.upgradeToTls return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
         // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-    end upgradeToTls
+    end upgradeConnection
 
 end JsTransport
 

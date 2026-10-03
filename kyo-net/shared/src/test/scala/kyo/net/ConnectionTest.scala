@@ -64,7 +64,7 @@ class ConnectionTest extends Test:
                 // This listener is plaintext and never answers a ClientHello, so the upgrade parks on a handshake read nothing will ever complete.
                 // The detach runs synchronously inside upgradeToTls, so `conn` is already Upgrading by the time close() runs below: the
                 // abandonment is forced by construction rather than by timing, on every backend.
-                upgrade <- Sync.defer(transport.upgradeToTls(conn, clientTls, 16).safe)
+                upgrade <- Sync.defer(transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe)
                 _       <- Sync.defer(conn.close())
                 // Completes only once the peer's own read side sees our FIN, which requires the abandoned fd to have actually been shut down.
                 _      <- peer.onClosing.safe.get
@@ -102,7 +102,7 @@ class ConnectionTest extends Test:
                     peer <- accepted.safe.get
                     _    <- Scope.ensure(Sync.defer(peer.close()))
                     // Parks forever exactly as above: a plaintext listener never answers the ClientHello.
-                    upgrade <- Sync.defer(transport.upgradeToTls(conn, clientTls, 16).safe)
+                    upgrade <- Sync.defer(transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe)
                     // The awaiting fiber's body is ONLY the await, so the upgrade's Async.Join is at the head of its computation: that is what
                     // ensureInterrupt needs to find to register the cascade when it is interrupted before parking.
                     awaiting <- Fiber.initUnscoped(upgrade.get)

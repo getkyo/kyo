@@ -27,7 +27,7 @@ class TransportStartTlsConcurrentTest extends Test:
                     Abort.run[Closed] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
-                                transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                transport.upgradeToTls(serverConn, serverTls, NetConfig.Size(16)).safe.get.flatMap { tlsConn =>
                                     Loop.foreach {
                                         tlsConn.inbound.safe.take.flatMap(data =>
                                             tlsConn.outbound.safe.put(data).andThen(Loop.continue)
@@ -63,7 +63,7 @@ class TransportStartTlsConcurrentTest extends Test:
             _        <- Scope.ensure(Sync.defer(conn.close()))
             _        <- conn.outbound.safe.put(upgradeRequest)
             _        <- conn.inbound.safe.take
-            tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+            tlsConn  <- transport.upgradeToTls(conn, clientTls, NetConfig.Size(16)).safe.get
             _        <- Scope.ensure(Sync.defer(tlsConn.close()))
             _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
             received <- collectToLen(tlsConn, msg.length)

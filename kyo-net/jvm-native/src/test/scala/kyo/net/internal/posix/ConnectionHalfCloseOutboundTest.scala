@@ -77,7 +77,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
                 PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (clientFd, peerFd) =>
                     val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                     // Build connection A over the recording driver; capacity is large enough to hold the queued tail behind the parked write.
-                    val conn = InternalConnection.init(handle, spy, transportConfig.channelCapacity)
+                    val conn = InternalConnection.init(handle, spy, transportConfig.channelCapacity.value)
 
                     // Latch fired when the WritePump arms awaitWritable (i.e. the first write went Partial and the pump is parked, not taking).
                     val writePumpParked = Promise.Unsafe.init[Unit, Any]()
