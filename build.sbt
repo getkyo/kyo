@@ -111,7 +111,8 @@ Global / concurrentRestrictions := {
         Tags.limit(DoctestTag, 2),
         // Serialize scaladoc: each run is a forked JVM sized by the module it documents.
         // See DocTag above.
-        Tags.limit(DocTag, 1)
+        Tags.limit(DocTag, 1),
+        FormatOnCompile.restriction
     )
 }
 
@@ -144,11 +145,6 @@ lazy val `kyo-settings` = Seq(
     // module, which CI does not have to spare.
     scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-    // Not in CI: parallel cross-version compilations of one module format the same shared
-    // sources concurrently, and the loser reports a formatting failure on every
-    // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
-    // enforcement; compile-time formatting is a local convenience only.
-    scalafmtOnCompile := !insideCI.value,
     ivyConfigurations += ScaladocTool,
     // The tool ships its own standard library, so it can only read a module whose library it agrees
     // with: each module documents with the scaladoc release of its own Scala version.
@@ -4384,7 +4380,6 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
-        scalafmtOnCompile  := !insideCI.value,
         // The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, so a published plugin
         // formats exactly as scalafmtAll does and never fetches a formatter at run time.
         libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
@@ -4444,7 +4439,6 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
-        scalafmtOnCompile  := !insideCI.value,
         // Plugin code adds rows to a `ProjectMatrix` programmatically, so
         // it compiles against sbt-projectmatrix; it also references the
         // %%% macro from sbt-scalajs-crossproject / sbt-scala-native-crossproject's
@@ -4655,7 +4649,6 @@ lazy val `kyo-test-sbt` =
             sbtPlugin          := true,
             scalaVersion       := "2.12.21",
             crossScalaVersions := Seq("2.12.21"),
-            scalafmtOnCompile  := !insideCI.value,
             // Must never lag project/plugins.sbt: a consumer who takes ScalaJSPlugin through this
             // plugin links kyo's published artifacts with these versions, and Scala.js IR is
             // forward-incompatible. Scala Native NIR has the same directional constraint.
@@ -4676,7 +4669,6 @@ lazy val `kyo-test-sbt-publish` =
             sbtPlugin                              := true,
             scalaVersion                           := "2.12.21",
             crossScalaVersions                     := Seq("2.12.21"),
-            scalafmtOnCompile                      := !insideCI.value,
             buildInfoKeys                          := Seq[BuildInfoKey](BuildInfoKey.map(version) { case (_, v) => ("kyoVersion", v) }),
             buildInfoPackage                       := "kyo.test.sbt",
             buildInfoObject                        := "BuildInfo",
