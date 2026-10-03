@@ -1,0 +1,4 @@
+source https://www.unicode.org/Public/15.1.0/ucd/
+license Unicode License v3 (https://www.unicode.org/license.txt, copied in LICENSE): permission to use, copy, modify, merge, publish and distribute the Data Files provided that the copyright and permission notice appears with all copies; the file is whole and unmodified, and LICENSE beside it is that notice
+file NormalizationTest.txt 871238e37e3be0696ec2bd0891119a041b052da1a84485eda05a5438724b223e NormalizationTest.txt
+file LICENSE e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96 https://www.unicode.org/license.txt

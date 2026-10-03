@@ -2,6 +2,7 @@ package kyo.internal.server
 
 import java.nio.charset.StandardCharsets
 import kyo.*
+import kyo.internal.PercentEncoding
 import kyo.kernel.ArrowEffect
 import scala.annotation.publicInBinary
 import scala.annotation.tailrec
@@ -444,7 +445,7 @@ private[kyo] object RouteUtil:
 
     // ==================== Internal: path building ====================
 
-    private def buildPath(path: HttpPath[?], dict: Dict[String, Any]): String =
+    private[kyo] def buildPath(path: HttpPath[?], dict: Dict[String, Any]): String =
         val sb = new StringBuilder
         discard(sb.append('/'))
         appendPath(path, dict, sb)
@@ -461,7 +462,7 @@ private[kyo] object RouteUtil:
                 val value   = dict(c.fieldName)
                 val encoded = c.codec.asInstanceOf[HttpCodec[Any]].encode(value)
                 if sb.length > 1 then discard(sb.append('/'))
-                discard(sb.append(java.net.URLEncoder.encode(encoded, "UTF-8")))
+                discard(sb.append(PercentEncoding.encode(encoded, PercentEncoding.Mode.Component)))
             case r: HttpPath.Rest[?] =>
                 val value = dict(r.fieldName).asInstanceOf[String]
                 if value.nonEmpty then
@@ -526,9 +527,9 @@ private[kyo] object RouteUtil:
                                 case HttpRoute.Field.Param.Location.Query =>
                                     if queryBuilder.nonEmpty then discard(queryBuilder.append('&'))
                                     discard(queryBuilder
-                                        .append(java.net.URLEncoder.encode(wireName, "UTF-8"))
+                                        .append(PercentEncoding.encode(wireName, PercentEncoding.Mode.Component))
                                         .append('=')
-                                        .append(java.net.URLEncoder.encode(encoded, "UTF-8")))
+                                        .append(PercentEncoding.encode(encoded, PercentEncoding.Mode.Component)))
                                     cookieBuilder
                                 case HttpRoute.Field.Param.Location.Header =>
                                     discard(headerBuilder += (wireName -> encoded))

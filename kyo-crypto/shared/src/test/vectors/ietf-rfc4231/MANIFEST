@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc4231.txt
+source-sha256 72178527ce93500e730bc8eb182b857e583096d652b64ece0879c52ba1df973b
+license The memo's own terms, published December 2005 before TLP 5.0 (TLP 5.0 section 2.c leaves documents published before 2015-03-25 under the policy in effect at their publication): "Distribution of this memo is unlimited" (line 21), under the Internet Society copyright (line 25) and BCP 78 as of publication (lines 455-461, the Full Copyright Statement); the file is whole, unmodified, and keeps its notices
+file rfc4231.txt 72178527ce93500e730bc8eb182b857e583096d652b64ece0879c52ba1df973b rfc4231.txt

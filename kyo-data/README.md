@@ -365,18 +365,43 @@ import kyo.*
 val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
 val encoded: String   = Base64.encode(bytes)
 
-val decoded: Result[IllegalArgumentException, Span[Byte]] =
+val decoded: Result[Base64.Failure, Span[Byte]] =
     Base64.decode(encoded)
+```
 
-val unsafe: Span[Byte] = Base64.decodeOrThrow(encoded)
+A malformed input is a `Base64.Failure` naming what was found and where: `IllegalCharacter(offset)`, `UnexpectedPadding(offset)`,
+`BadLength(length)`, `DanglingCharacter(dataLength)` or `NonCanonicalTail`; its `message` renders it for a caller's own exception.
+
+`encodeUrl` and `decodeUrl` use the URL and filename safe alphabet (`-` and `_` in place of `+` and `/`) without padding, the form JSON Web Tokens and JSON Web Keys carry. `decodeUrl` accepts only the canonical encoding: it rejects padding, the standard alphabet's `+` and `/`, and nonzero bits after the last byte.
+
+```scala
+import kyo.*
+
+val token: String = Base64.encodeUrl(Span.from(IArray[Byte](-5, -1))) // "-_8"
+
+val bytes: Result[Base64.Failure, Span[Byte]] =
+    Base64.decodeUrl(token)
+```
+
+`Hex` renders bytes as two lowercase digits each and reads either case back. A decode failure is a `Hex.Failure`: `OddLength(length)` or `IllegalCharacter(offset)`, each with a `message`. Neither direction is constant time, so hex is for public values such as a received signature header, not for comparing secrets.
+
+```scala
+import kyo.*
+
+val text: String = Hex.encode(Span.from(IArray[Byte](0, 15, -85, -1))) // "000fabff"
+
+val decoded: Result[Hex.Failure, Span[Byte]] =
+    Hex.decode("000FABFF")
+
+val odd: Result[Hex.Failure, Span[Byte]] =
+    Hex.decode("abc") // Result.fail(Hex.Failure.OddLength(3))
 ```
 
 ### Identifiers and UUIDs
 
-`UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering, inspection, and deterministic name-based derivation.
+`UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering and inspection.
 
 ```scala
-import java.nio.charset.StandardCharsets
 import kyo.*
 
 val canonical: Result[UUID.InvalidUUID, UUID] =
@@ -399,17 +424,11 @@ val timestamp: Maybe[Long] = id.unixTimestampMillis
 val empty: UUID = UUID.nil
 val full: UUID  = UUID.max
 val order: Int  = empty.compare(full)
-
-val dns: UUID        = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
-val name: Span[Byte] = Span.from("www.example.com".getBytes(StandardCharsets.UTF_8))
-
-val v5: UUID = UUID.v5(dns, name)
-val v8: UUID = UUID.v8Sha256(dns, name)
 ```
 
 `UUID.parse` is strict about canonical `8-4-4-4-12` text: braces, URNs, missing separators, and other layout deviations fail. Use `UUID.parseUrn` for `urn:uuid:<canonical>` input. `UUID.InvalidUUID` is a `KyoException` returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`, carrying structured `UUID.InvalidProblem` in its `problem` field.
 
-`UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `UUID.v5` is deterministic RFC version 5 derivation; SHA-1 is used internally because the standard requires it for v5. `UUID.v8Sha256` is Kyo's deterministic SHA-256 version 8 profile. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs.
+`UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs. The name-based constructors, `UUID.v5` (RFC version 5 over SHA-1) and `UUID.v8Sha256` (Kyo's SHA-256 version 8 profile), are extension methods in [kyo-crypto](../kyo-crypto/README.md), which holds the digests they need.
 
 ## Time and scheduling
 

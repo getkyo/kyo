@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc8032.txt
+source-sha256 ed63657ff389301282b169b0abde9b5dd2c7e4d524fdfa5da6ff3094fc93c4c3
+license IETF Trust Legal Provisions (TLP 5.0, effective 2015-03-25), section 3.c.i, which covers the IRTF stream through the stream's adoption of the TLP: anyone may copy, publish, display and distribute the document in full and without modification; the file is whole, unmodified, and keeps its copyright notice
+file rfc8032.txt ed63657ff389301282b169b0abde9b5dd2c7e4d524fdfa5da6ff3094fc93c4c3 rfc8032.txt

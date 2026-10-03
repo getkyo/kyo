@@ -901,7 +901,7 @@ final private[kyo] class HttpClientBackend private (
                 else HttpFilter.noop
             val filter = autoFilter.andThen(clientFilter)
             if filter.eq(HttpFilter.noop) then
-                WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.pathWithQuery, headers, config) { wsStream =>
+                WebSocketCodec.requestUpgradeWith(transportStream, url, headers, config) { wsStream =>
                     serveWebSocketWith(transportStream, wsStream, config)(f)
                 }
             else
@@ -911,13 +911,7 @@ final private[kyo] class HttpClientBackend private (
                     filter[Any, "body" ~ A, HttpException, S](
                         request,
                         (filteredReq: HttpRequest[Any]) =>
-                            WebSocketCodec.requestUpgradeWith(
-                                transportStream,
-                                filteredReq.url.host,
-                                filteredReq.url.pathWithQuery,
-                                filteredReq.headers,
-                                config
-                            ) { wsStream =>
+                            WebSocketCodec.requestUpgradeWith(transportStream, filteredReq.url, filteredReq.headers, config) { wsStream =>
                                 serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
                                     HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
                                 }
@@ -1088,7 +1082,11 @@ final private[kyo] class HttpClientBackend private (
     )(using Frame): A < (Async & Abort[HttpException]) =
         val resolved = config.baseUrl match
             case Present(base) if request.url.scheme.isEmpty =>
-                request.copy(url = HttpUrl(base.scheme, base.host, base.port, request.url.path, request.url.rawQuery))
+                // An empty path is the route's to build; building it here puts it under the base's path too.
+                val url =
+                    if request.url.path.nonEmpty then request.url
+                    else request.url.copy(path = RouteUtil.buildPath(route.request.path, request.fields.dict))
+                request.copy(url = HttpUrl.underBase(base.url, url))
             case _ => request
         retryWith(route, resolved, config)(f)
     end sendWithConfig
@@ -1135,12 +1133,8 @@ final private[kyo] class HttpClientBackend private (
                     else
                         res.headers.get("Location") match
                             case Present(location) =>
-                                HttpUrl.parse(location) match
-                                    case Result.Success(newUrl) =>
-                                        // Preserve original host/port/scheme for relative redirects
-                                        val resolved =
-                                            if newUrl.host.nonEmpty then newUrl
-                                            else newUrl.copy(scheme = req.url.scheme, host = req.url.host, port = req.url.port)
+                                HttpUrl.resolve(req.url, location) match
+                                    case Result.Success(resolved) =>
                                         // The Location value is peer-controlled and its host and path both reach the ASCII request
                                         // serializer. Rejecting an unencodable target here, before the redirect is followed, keeps the
                                         // failure typed and spends no name resolution or connection on a target that cannot be sent.

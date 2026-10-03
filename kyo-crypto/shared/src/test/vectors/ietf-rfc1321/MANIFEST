@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc1321.txt
+source-sha256 284a79d148400d9cd2a423211d1103b5cef0fb9256a4cbe6d7ebe5197c3149dd
+license The memo's own terms, published April 1992 before any IETF copyright policy (TLP 5.0 section 2.c leaves documents published before 2015-03-25 under the policy in effect at their publication): "Distribution of this memo is unlimited" (lines 16-19), together with the RSA Data Security notices in the text (lines 429-456, 476-495, 868-877), which must be retained in copies and are, since the file is whole and unmodified
+file rfc1321.txt 284a79d148400d9cd2a423211d1103b5cef0fb9256a4cbe6d7ebe5197c3149dd rfc1321.txt

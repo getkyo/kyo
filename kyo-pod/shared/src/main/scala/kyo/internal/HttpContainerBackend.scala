@@ -71,11 +71,14 @@ final private[kyo] class HttpContainerBackend(
       *   Full URL string like `http+unix://%2Fvar%2Frun%2Fdocker.sock/v1.43/containers/json?all=true`
       */
     private def buildUrl(prefix: String, path: String, params: Seq[(String, String)]): String =
-        val encoded = socketPath.replace("/", "%2F")
-        // Java interop boundary: URL-encoding query parameters for Docker API
-        val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
+        // The authority holds only reg-name characters, so the whole socket path is percent-encoded, not just its slashes: a space or a '%'
+        // left as written makes HttpUrl refuse the URL.
+        val encoded = PercentEncoding.encode(socketPath, PercentEncoding.Mode.Component)
+        val query   = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${encode(v)}").mkString("&")
         s"http+unix://$encoded$prefix$path$query"
     end buildUrl
+
+    private def encode(value: String): String = PercentEncoding.encode(value, PercentEncoding.Mode.Component)
 
     private[internal] def url(path: String, params: (String, String)*): String =
         buildUrl(s"/$apiVersion", path, params)
@@ -574,7 +577,7 @@ final private[kyo] class HttpContainerBackend(
     end awaitRemoved
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
+        postUnit(s"/containers/${id.value}/rename?name=${encode(newName)}", ctxContainer(id))
 
     def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         // `/wait` is a long-poll. Two deadlines cooperate: the HTTP transport gets `timeout + 30s` (so a wait
@@ -632,7 +635,7 @@ final private[kyo] class HttpContainerBackend(
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         withNotSupportedMapping("restore", ctxContainer(id)) {
             HttpClient.postText(
-                url(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}"),
+                url(s"/containers/${id.value}/start", "checkpoint" -> checkpoint),
                 ""
             ).unit
         }

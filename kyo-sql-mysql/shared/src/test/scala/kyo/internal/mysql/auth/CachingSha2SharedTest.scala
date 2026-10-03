@@ -18,12 +18,13 @@ import kyo.internal.mysql.auth.CachingSha2Shared
   * }}}
   *
   * The full-auth path splits into two independently pinned halves: [[CachingSha2Shared.scrambledPlaintext]] is verified byte-exactly here
-  * against Python-computed XOR vectors, and the RSA-OAEP encryption it feeds is pinned to a known ciphertext by `RsaOaepTest`. The composed
-  * path also runs end-to-end against a real MySQL server in `CachingSha2FullAuthIntegrationTest`.
+  * against Python-computed XOR vectors, and the RSA-OAEP encryption it feeds is pinned to a known ciphertext in kyo-crypto and its
+  * mapping to this module's leaves beside [[PasswordEncryption]]. The composed path also runs end-to-end against a real MySQL server in
+  * the integration suite.
   */
 class CachingSha2SharedTest extends kyo.Test:
 
-    /** Pre-generated RSA 2048-bit public key in SubjectPublicKeyInfo PEM format, shared with `RsaOaepTest`. */
+    /** Pre-generated RSA 2048-bit public key in SubjectPublicKeyInfo PEM format. */
     private val testPubPem: String =
         """-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0fjhZ5a4z9ULtk0Xdeq1
