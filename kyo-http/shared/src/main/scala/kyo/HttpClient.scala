@@ -207,11 +207,11 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def getJson[A: Schema](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): A < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, HttpRoute.getJson[A](""), resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, HttpRoute.getJson[A](""), headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -219,14 +219,14 @@ object HttpClient:
       */
     def getJsonResponse[A: Schema](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
             val route = HttpRoute.getJson[A]("")
-            if failOnError then sendUrlBody(u, route, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, route, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, route, headers, query)(identity)
+            else sendUrl(u, route, headers, query)(identity)
         }
 
     // --- POST ---
@@ -237,11 +237,11 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     ): A < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, HttpRoute.postJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, HttpRoute.postJson[A, B](""), body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -252,14 +252,14 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
             val route = HttpRoute.postJson[A, B]("")
-            if failOnError then sendUrlBody(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, route, body, headers, query)(identity)
+            else sendUrl(u, route, body, headers, query)(identity)
         }
 
     // --- PUT ---
@@ -270,11 +270,11 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     ): A < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, HttpRoute.putJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, HttpRoute.putJson[A, B](""), body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -285,14 +285,14 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
             val route = HttpRoute.putJson[A, B]("")
-            if failOnError then sendUrlBody(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, route, body, headers, query)(identity)
+            else sendUrl(u, route, body, headers, query)(identity)
         }
 
     // --- PATCH ---
@@ -303,11 +303,11 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     ): A < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, HttpRoute.patchJson[A, B](""), body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, HttpRoute.patchJson[A, B](""), body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -318,14 +318,14 @@ object HttpClient:
     )[B: Schema](
         url: String | HttpUrl,
         body: B,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     ): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
             val route = HttpRoute.patchJson[A, B]("")
-            if failOnError then sendUrlBody(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, route, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, route, body, headers, query)(identity)
+            else sendUrl(u, route, body, headers, query)(identity)
         }
 
     // --- DELETE ---
@@ -333,11 +333,11 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def deleteJson[A: Schema](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): A < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, HttpRoute.deleteJson[A](""), resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, HttpRoute.deleteJson[A](""), headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -345,14 +345,14 @@ object HttpClient:
       */
     def deleteJsonResponse[A: Schema](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ A] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
             val route = HttpRoute.deleteJson[A]("")
-            if failOnError then sendUrlBody(u, route, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, route, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, route, headers, query)(identity)
+            else sendUrl(u, route, headers, query)(identity)
         }
 
     // ==================== Text methods ====================
@@ -362,23 +362,23 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def getText(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): String < (Async & Abort[HttpException]) =
-        resolveUrl(url).map(u => sendUrlBody(u, routeGetText, resolveHeaders(headers), resolveQuery(query))(_.fields.body))
+        resolveUrl(url).map(u => sendUrlBody(u, routeGetText, headers, query)(_.fields.body))
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
       * handling.
       */
     def getTextResponse(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeGetText, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeGetText, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeGetText, headers, query)(identity)
+            else sendUrl(u, routeGetText, headers, query)(identity)
         }
 
     // --- POST ---
@@ -387,11 +387,11 @@ object HttpClient:
     def postText(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): String < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePostText, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -400,13 +400,13 @@ object HttpClient:
     def postTextResponse(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePostText, body, headers, query)(identity)
+            else sendUrl(u, routePostText, body, headers, query)(identity)
         }
 
     // --- PUT ---
@@ -415,11 +415,11 @@ object HttpClient:
     def putText(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): String < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePutText, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -428,13 +428,13 @@ object HttpClient:
     def putTextResponse(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePutText, body, headers, query)(identity)
+            else sendUrl(u, routePutText, body, headers, query)(identity)
         }
 
     // --- PATCH ---
@@ -443,11 +443,11 @@ object HttpClient:
     def patchText(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): String < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePatchText, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -456,13 +456,13 @@ object HttpClient:
     def patchTextResponse(
         url: String | HttpUrl,
         body: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePatchText, body, headers, query)(identity)
+            else sendUrl(u, routePatchText, body, headers, query)(identity)
         }
 
     // --- DELETE ---
@@ -470,11 +470,11 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def deleteText(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): String < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routeDeleteText, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -482,13 +482,13 @@ object HttpClient:
       */
     def deleteTextResponse(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ String] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeDeleteText, headers, query)(identity)
+            else sendUrl(u, routeDeleteText, headers, query)(identity)
         }
 
     // ==================== Binary methods ====================
@@ -498,11 +498,11 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def getBinary(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routeGetBinary, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routeGetBinary, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -510,13 +510,13 @@ object HttpClient:
       */
     def getBinaryResponse(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeGetBinary, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeGetBinary, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeGetBinary, headers, query)(identity)
+            else sendUrl(u, routeGetBinary, headers, query)(identity)
         }
 
     // --- POST ---
@@ -525,11 +525,11 @@ object HttpClient:
     def postBinary(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePostBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePostBinary, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -538,13 +538,13 @@ object HttpClient:
     def postBinaryResponse(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePostBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePostBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePostBinary, body, headers, query)(identity)
+            else sendUrl(u, routePostBinary, body, headers, query)(identity)
         }
 
     // --- PUT ---
@@ -553,11 +553,11 @@ object HttpClient:
     def putBinary(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePutBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePutBinary, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -566,13 +566,13 @@ object HttpClient:
     def putBinaryResponse(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePutBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePutBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePutBinary, body, headers, query)(identity)
+            else sendUrl(u, routePutBinary, body, headers, query)(identity)
         }
 
     // --- PATCH ---
@@ -581,11 +581,11 @@ object HttpClient:
     def patchBinary(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routePatchBinary, body, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routePatchBinary, body, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -594,13 +594,13 @@ object HttpClient:
     def patchBinaryResponse(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routePatchBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routePatchBinary, body, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routePatchBinary, body, headers, query)(identity)
+            else sendUrl(u, routePatchBinary, body, headers, query)(identity)
         }
 
     // --- DELETE ---
@@ -608,11 +608,11 @@ object HttpClient:
     /** Fails with `HttpStatusException` on non-2xx status codes. */
     def deleteBinary(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Span[Byte] < (Async & Abort[HttpException]) =
         resolveUrl(url).map(u =>
-            sendUrlBody(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(_.fields.body)
+            sendUrlBody(u, routeDeleteBinary, headers, query)(_.fields.body)
         )
 
     /** Fails with `HttpStatusException` on non-2xx by default. Pass `failOnError = false` to receive the response for manual status
@@ -620,13 +620,13 @@ object HttpClient:
       */
     def deleteBinaryResponse(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse["body" ~ Span[Byte]] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeDeleteBinary, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeDeleteBinary, headers, query)(identity)
+            else sendUrl(u, routeDeleteBinary, headers, query)(identity)
         }
 
     // ==================== Unit methods ====================
@@ -635,36 +635,36 @@ object HttpClient:
     def postUnit(
         url: String | HttpUrl,
         body: String = "",
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Unit < (Async & Abort[HttpException]) =
-        resolveUrl(url).map(u => sendUrlBody(u, routePostText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+        resolveUrl(url).map(u => sendUrlBody(u, routePostText, body, headers, query)(_ => ()))
 
     /** Sends a PUT and discards the response body. Fails with HttpStatusException on non-2xx. */
     def putUnit(
         url: String | HttpUrl,
         body: String = "",
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Unit < (Async & Abort[HttpException]) =
-        resolveUrl(url).map(u => sendUrlBody(u, routePutText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+        resolveUrl(url).map(u => sendUrlBody(u, routePutText, body, headers, query)(_ => ()))
 
     /** Sends a PATCH and discards the response body. Fails with HttpStatusException on non-2xx. */
     def patchUnit(
         url: String | HttpUrl,
         body: String = "",
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Unit < (Async & Abort[HttpException]) =
-        resolveUrl(url).map(u => sendUrlBody(u, routePatchText, body, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+        resolveUrl(url).map(u => sendUrlBody(u, routePatchText, body, headers, query)(_ => ()))
 
     /** Sends a DELETE and discards the response body. Fails with HttpStatusException on non-2xx. */
     def deleteUnit(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame): Unit < (Async & Abort[HttpException]) =
-        resolveUrl(url).map(u => sendUrlBody(u, routeDeleteText, resolveHeaders(headers), resolveQuery(query))(_ => ()))
+        resolveUrl(url).map(u => sendUrlBody(u, routeDeleteText, headers, query)(_ => ()))
 
     // ==================== Streaming methods ====================
 
@@ -672,15 +672,15 @@ object HttpClient:
 
     def getSseJson[V: Schema: Tag](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame, Tag[Emit[Chunk[HttpSseEvent[V]]]]): Stream[HttpSseEvent[V], Async & Abort[HttpException]] =
         Stream(resolveUrl(url).map(u =>
             sendUrlBody(
                 u,
                 HttpRoute.getRaw("").response(_.bodySseJson[V]),
-                resolveHeaders(headers),
-                resolveQuery(query)
+                headers,
+                query
             )(_.fields.body).map(_.emit)
         ))
 
@@ -688,15 +688,15 @@ object HttpClient:
 
     def getSseText(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame, Tag[Emit[Chunk[HttpSseEvent[String]]]]): Stream[HttpSseEvent[String], Async & Abort[HttpException]] =
         Stream(resolveUrl(url).map(u =>
             sendUrlBody(
                 u,
                 routeSseText,
-                resolveHeaders(headers),
-                resolveQuery(query)
+                headers,
+                query
             )(_.fields.body).map(_.emit)
         ))
 
@@ -704,15 +704,15 @@ object HttpClient:
 
     def getNdJson[V: Schema: Tag](
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async & Abort[HttpException]] =
         Stream(resolveUrl(url).map(u =>
             sendUrlBody(
                 u,
                 HttpRoute.getRaw("").response(_.bodyNdjson[V]),
-                resolveHeaders(headers),
-                resolveQuery(query)
+                headers,
+                query
             )(_.fields.body).map(_.emit)
         ))
 
@@ -721,15 +721,15 @@ object HttpClient:
     /** Streams the response body as raw byte chunks. Fails with HttpStatusException on non-2xx. */
     def getStreamBytes(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame, Tag[Emit[Chunk[Span[Byte]]]]): Stream[Span[Byte], Async & Abort[HttpException]] =
         Stream(resolveUrl(url).map(u =>
             sendUrlBody(
                 u,
                 routeGetStream,
-                resolveHeaders(headers),
-                resolveQuery(query)
+                headers,
+                query
             )(_.fields.body).map(_.emit)
         ))
 
@@ -737,16 +737,16 @@ object HttpClient:
     def postStreamBytes(
         url: String | HttpUrl,
         body: Span[Byte],
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty
     )(using Frame, Tag[Emit[Chunk[Span[Byte]]]]): Stream[Span[Byte], Async & Abort[HttpException]] =
         Stream(resolveUrl(url).map(u =>
             sendUrlBody(
                 u,
                 routePostStream,
                 body,
-                resolveHeaders(headers),
-                resolveQuery(query)
+                headers,
+                query
             )(_.fields.body).map(_.emit)
         ))
 
@@ -757,13 +757,13 @@ object HttpClient:
       */
     def head(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse[Any] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeHeadRaw, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeHeadRaw, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeHeadRaw, headers, query)(identity)
+            else sendUrl(u, routeHeadRaw, headers, query)(identity)
         }
 
     // ==================== OPTIONS methods ====================
@@ -773,13 +773,13 @@ object HttpClient:
       */
     def options(
         url: String | HttpUrl,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
-        query: HttpQueryParams | Seq[(String, String)] = HttpQueryParams.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
+        query: HttpQueryParams = HttpQueryParams.empty,
         failOnError: Boolean = true
     )(using Frame): HttpResponse[Any] < (Async & Abort[HttpException]) =
         resolveUrl(url).map { u =>
-            if failOnError then sendUrlBody(u, routeOptionsRaw, resolveHeaders(headers), resolveQuery(query))(identity)
-            else sendUrl(u, routeOptionsRaw, resolveHeaders(headers), resolveQuery(query))(identity)
+            if failOnError then sendUrlBody(u, routeOptionsRaw, headers, query)(identity)
+            else sendUrl(u, routeOptionsRaw, headers, query)(identity)
         }
 
     // ==================== HttpWebSocket methods ====================
@@ -787,12 +787,12 @@ object HttpClient:
     /** Connects to a HttpWebSocket endpoint. The connection closes when `f` returns. */
     def webSocket[A, S](
         url: String,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty,
+        headers: HttpHeaders = HttpHeaders.empty,
         config: HttpWebSocket.Config = HttpWebSocket.Config()
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        Abort.get(HttpUrl.parse(url)).map(parsed => webSocket(parsed, resolveHeaders(headers), config)(f))
+        Abort.get(HttpUrl.parse(url)).map(parsed => webSocket(parsed, headers, config)(f))
 
     /** Connects to a HttpWebSocket endpoint from a parsed URL. */
     def webSocket[A, S](url: HttpUrl)(
@@ -825,11 +825,11 @@ object HttpClient:
         url: String | HttpUrl,
         method: HttpMethod = HttpMethod.POST,
         body: Span[Byte] = Span.empty,
-        headers: HttpHeaders | Seq[(String, String)] = HttpHeaders.empty
+        headers: HttpHeaders = HttpHeaders.empty
     )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
         local.use { (client, clientConfig) =>
             resolveUrl(url).map(parsed =>
-                client.connectRaw(parsed, method, body, resolveHeaders(headers), clientConfig.connectTimeout)
+                client.connectRaw(parsed, method, body, headers, clientConfig.connectTimeout)
             )
         }
 
@@ -839,16 +839,6 @@ object HttpClient:
         url match
             case s: String  => Abort.get(HttpUrl.parse(s))
             case u: HttpUrl => u
-
-    private def resolveHeaders(h: HttpHeaders | Seq[(String, String)]): HttpHeaders =
-        h match
-            case h: HttpHeaders @unchecked           => h
-            case s: Seq[(String, String)] @unchecked => HttpHeaders.init(s)
-
-    private def resolveQuery(q: HttpQueryParams | Seq[(String, String)]): HttpQueryParams =
-        q match
-            case q: HttpQueryParams @unchecked       => q
-            case s: Seq[(String, String)] @unchecked => HttpQueryParams.init(s*)
 
     private def applyQuery(url: HttpUrl, query: HttpQueryParams): HttpUrl =
         if query.isEmpty then url

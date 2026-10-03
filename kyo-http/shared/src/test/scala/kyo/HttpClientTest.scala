@@ -3521,6 +3521,73 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
         }
+
+        // Built headers are a Chunk at runtime too, so a Chunk of pairs must not be taken for one.
+        "header pairs given as any Seq, a Chunk included, are sent by every helper shape" - {
+            def echo(req: HttpRequest[?]): String =
+                s"${req.headers.get("X-A").getOrElse("none")},${req.headers.get("X-B").getOrElse("none")}"
+            val getEp    = HttpRoute.getRaw("echo-headers").response(_.bodyText).handler(req => HttpResponse.ok(echo(req)))
+            val postEp   = HttpRoute.postRaw("echo-headers").response(_.bodyText).handler(req => HttpResponse.ok(echo(req)))
+            val deleteEp = HttpRoute.deleteRaw("echo-headers").response(_.bodyText).handler(req => HttpResponse.ok(echo(req)))
+            runServer(getEp, postEp, deleteEp) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val target                               = url.copy(path = "/echo-headers")
+                    val shapes: Chunk[Seq[(String, String)]] = Chunk(
+                        Seq("X-A"    -> "1", "X-B" -> "2"),
+                        Chunk("X-A"  -> "1", "X-B" -> "2"),
+                        List("X-A"   -> "1", "X-B" -> "2"),
+                        Vector("X-A" -> "1", "X-B" -> "2")
+                    )
+                    Kyo.foreach(shapes) { pairs =>
+                        for
+                            got     <- HttpClient.getText(target, headers = pairs)
+                            posted  <- HttpClient.postText(target, "body", headers = pairs)
+                            deleted <- HttpClient.deleteText(target, headers = pairs)
+                            binary  <- HttpClient.getBinary(target, headers = pairs)
+                        yield Chunk(got, posted, deleted, new String(binary.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                    }.map { bodies =>
+                        assert(bodies == Chunk.fill(4)(Chunk.fill(4)("1,2")))
+                    }
+                }
+            }
+        }
+
+        "header pairs combine with built headers before they are sent" - {
+            val ep = HttpRoute.getRaw("echo-headers").response(_.bodyText).handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-A").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val pairs: HttpHeaders = List("X-A" -> "1")
+                    val headers            = pairs.concat(HttpHeaders.empty.add("X-A", "2")).add("X-A", "3")
+                    HttpClient.getText(url.copy(path = "/echo-headers"), headers = headers).map { body =>
+                        assert(body == "1,2,3")
+                    }
+                }
+            }
+        }
+
+        "query pairs given as any Seq, a Chunk included, are sent" - {
+            val route = HttpRoute.getRaw("items")
+                .request(_.query[String]("tag").query[Int]("page"))
+                .response(_.bodyText)
+            val ep = route.handler(req => HttpResponse.ok(s"tag=${req.fields.tag},page=${req.fields.page}"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val target                               = url.copy(path = "/items")
+                    val shapes: Chunk[Seq[(String, String)]] =
+                        Chunk(
+                            Seq("tag"    -> "scala", "page" -> "2"),
+                            Chunk("tag"  -> "scala", "page" -> "2"),
+                            List("tag"   -> "scala", "page" -> "2"),
+                            Vector("tag" -> "scala", "page" -> "2")
+                        )
+                    Kyo.foreach(shapes)(pairs => HttpClient.getText(target, query = pairs)).map { bodies =>
+                        assert(bodies == Chunk.fill(4)("tag=scala,page=2"))
+                    }
+                }
+            }
+        }
     }
 
     "HttpHeaders.init" - {

@@ -15,7 +15,10 @@ private[kyo] case class OutboundReq(
 
 private[kyo] case class CallerInfo(
     method: String,
-    extras: Maybe[Structure.Value],
+    // A cell, not a value: the call is registered before the caller's extras encoder runs, since that encoder is handed the id
+    // and a cancel for it must find the call. Set once the encoder returns, which is before requestEnqueued completes, so a
+    // cancel reads it after waiting on requestEnqueued.
+    extras: AtomicRef.Unsafe[Maybe[Structure.Value]],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
     // AtomicRef.Unsafe aliases java.util.concurrent.atomic.AtomicReference; cross-platform via JS/Native JDK shim
     pendingCancelError: AtomicRef.Unsafe[Maybe[JsonRpcError]],
@@ -313,26 +316,32 @@ object JsonRpcEndpointImpl:
                     // what actually failed instead of encoding to "" and surfacing as a wire decode error.
                     val encodeCallback: (JsonRpcId, OutboundReq) => String < (Sync & Abort[JsonRpcError]) =
                         (id, req) =>
-                            // Resolve extras with the now-known id; frame captured from initEngine
-                            req.extras.resolve(id)(using frame).map { extrasVal =>
-                                // Unsafe: register in callerRegistry and complete idSignal inside Exchange encode callback
-                                Sync.Unsafe.defer {
-                                    // AtomicRef.Unsafe aliases java.util.concurrent.atomic.AtomicReference: per-request pending-cancel cell
-                                    val pendingCancel = AtomicRef.Unsafe.init[Maybe[JsonRpcError]](Absent)(using AllowUnsafe.embrace.danger)
-                                    val requestEnqueued = Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
-                                    callerRegistry.put(
-                                        id,
-                                        CallerInfo(req.method, extrasVal, req.abortSignal, pendingCancel, requestEnqueued.safe)
-                                    )
-                                    req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
-                                }.andThen {
-                                    // Build envelope and encode to JSON. Structure.encode is pure but throws a
-                                    // JsonRpcError for the unencodable cases; Abort.run reifies that so the
-                                    // Success/non-Success branch shape is preserved.
-                                    val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
-                                    Abort.catching[JsonRpcError](
-                                        Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)
-                                    ).map(Json.encode[Structure.Value](_))
+                            // Unsafe: register in callerRegistry and complete idSignal inside Exchange encode callback, before the
+                            // caller's extras encoder sees the id, so a cancel issued from what it learns finds the call
+                            Sync.Unsafe.defer {
+                                // AtomicRef.Unsafe aliases java.util.concurrent.atomic.AtomicReference: per-request pending-cancel cell
+                                val pendingCancel = AtomicRef.Unsafe.init[Maybe[JsonRpcError]](Absent)(using AllowUnsafe.embrace.danger)
+                                val extrasCell    = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
+                                val requestEnqueued = Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
+                                callerRegistry.put(
+                                    id,
+                                    CallerInfo(req.method, extrasCell, req.abortSignal, pendingCancel, requestEnqueued.safe)
+                                )
+                                req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
+                                extrasCell
+                            }.map { extrasCell =>
+                                // Resolve extras with the now-known id; frame captured from initEngine
+                                req.extras.resolve(id)(using frame).map { extrasVal =>
+                                    // Unsafe: publish the resolved extras to the registered call
+                                    Sync.Unsafe.defer(extrasCell.set(extrasVal)(using AllowUnsafe.embrace.danger)).andThen {
+                                        // Build envelope and encode to JSON. Structure.encode is pure but throws a
+                                        // JsonRpcError for the unencodable cases; Abort.run reifies that so the
+                                        // Success/non-Success branch shape is preserved.
+                                        val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
+                                        Abort.catching[JsonRpcError](
+                                            Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)
+                                        ).map(Json.encode[Structure.Value](_))
+                                    }
                                 }
                             }
 
