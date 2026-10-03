@@ -10,12 +10,14 @@ class NetConfigTest extends Test:
         assert(config.readChunkSize == 8192)
         assert(config.soRcvBuf == Absent)
         assert(config.soSndBuf == Absent)
+        assert(config.closeFlushGrace == 30.seconds)
         succeed
     }
 
     "the companion constants are the defaults the operations apply" in {
         assert(NetConfig.DefaultChannelCapacity == NetConfig.default.channelCapacity)
         assert(NetConfig.DefaultReadChunkSize == NetConfig.default.readChunkSize)
+        assert(NetConfig.DefaultCloseFlushGrace == NetConfig.default.closeFlushGrace)
         succeed
     }
 
@@ -60,11 +62,11 @@ class NetConfigTest extends Test:
         // Guards the shape this type was reduced to. A connect deadline is a parameter of the connect operations and a handshake deadline is
         // a NetTlsConfig field, so neither can be handed to an operation it does not apply to. Reads the case class's own field names, so
         // re-adding either field to NetConfig fails here rather than silently reintroducing a setting half the call sites ignore.
-        // peerCloseGrace is connection shape, not a connect/handshake deadline, so it belongs here.
+        // peerCloseGrace and closeFlushGrace are connection shape, not connect/handshake deadlines, so they belong here.
         val fields = NetConfig.default.productElementNames.toList
 
-        "the five fields are the connection shape, socket options, and the peer-close reclaim grace" in {
-            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace"))
+        "the six fields are the connection shape, socket options, and the two close graces" in {
+            assert(fields == List("channelCapacity", "readChunkSize", "soRcvBuf", "soSndBuf", "peerCloseGrace", "closeFlushGrace"))
             succeed
         }
 
@@ -90,6 +92,18 @@ class NetConfigTest extends Test:
         "a present socket buffer size must be positive" in {
             assert(intercept[IllegalArgumentException](NetConfig.default.copy(soRcvBuf = Present(0))).getMessage.contains("soRcvBuf"))
             assert(intercept[IllegalArgumentException](NetConfig.default.copy(soSndBuf = Present(-1))).getMessage.contains("soSndBuf"))
+            succeed
+        }
+
+        "closeFlushGrace must be positive" in {
+            assert(intercept[IllegalArgumentException](NetConfig.default.copy(closeFlushGrace = Duration.Zero)).getMessage.contains(
+                "closeFlushGrace"
+            ))
+            succeed
+        }
+
+        "an infinite closeFlushGrace is accepted" in {
+            assert(NetConfig.default.copy(closeFlushGrace = Duration.Infinity).closeFlushGrace == Duration.Infinity)
             succeed
         }
 

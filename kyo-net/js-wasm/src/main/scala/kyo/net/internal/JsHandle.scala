@@ -22,8 +22,12 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // upgrade (same socket) inherits it without re-threading. Duration.Infinity (no reclaim) for handles created without a config (stdio).
     var peerCloseGrace: Duration = Duration.Infinity
 
-    // The clock that times peerCloseGrace here and in JsIoDriver.closeHandle: the transport's, so a test under Clock.withTimeControl drives
-    // both windows with virtual time.
+    // The close-flush bound (see kyo.net.NetConfig.closeFlushGrace), inherited across an upgrade the same way. It bounds both the connection's
+    // wait for queued writes and JsIoDriver.closeHandle's wait for Node to finish the socket's output.
+    var closeFlushGrace: Duration = Duration.Infinity
+
+    // The clock that times both graces, in the connection and in JsIoDriver.closeHandle: the transport's, so a test under
+    // Clock.withTimeControl drives every window with virtual time.
     var clock: Clock = Clock.live
 
     // Never reset:

@@ -55,6 +55,11 @@ final private[kyo] class WritePump[Handle](
         log.info(s"WritePump starting on ${driver.handleLabel(handle)}")
         requestNextTake()
 
+    /** The pump's state. Every write attempt installs a new instance, and a parked pump attempts a write only once the socket reports room, so
+      * the same parked instance read twice means no byte reached the socket in between.
+      */
+    def current(using AllowUnsafe): WriteState = state.get()
+
     /** Take callback: a span arrived (or the channel closed). Idle -> Flushing CAS, then write. */
     private def onTake(result: Result[Closed, Span[Byte]])(using AllowUnsafe, Frame): Unit =
         result match
