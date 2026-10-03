@@ -3707,8 +3707,9 @@ lazy val `kyo-pod` =
                 // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
                 // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
                 // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
-                // reach the daemon, which is what decides this. A fork pinned to a runtime that is a duplicate of
-                // another registers no leaves at all (see ContainerRuntimeBase.available), so it costs an idle JVM.
+                // reach the daemon, which is what decides this. A fork pinned to a runtime that cannot run here
+                // (absent, or a duplicate of another daemon) registers its container leaves cancelled with the
+                // reason (see ContainerRuntimeBase.assigned), so it costs a short JVM and never runs an empty selection.
                 val daemonGroups =
                     if (daemonTests.isEmpty) Seq.empty
                     else
