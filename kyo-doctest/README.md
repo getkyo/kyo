@@ -401,7 +401,7 @@ A typical reporter pattern: group `report.failures` by `f.file` for per-file sum
 
 ## How it works
 
-Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens.
+Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens. Its output, a failing block's compiler errors included, goes to the doctest task's log, so an `sbt --client` session shows it as a batch run does.
 
 Inside the fork, a single warm Dotty `Driver` is built once and reused across every block. Dotty's `ContextBase` pins a compiler context to the thread that created it, so all compiles are dispatched to one dedicated compiler thread regardless of which fiber invoked them. The cost of parsing scalac options and initialising the compiler is paid once, not once per block.
 

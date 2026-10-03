@@ -1459,30 +1459,36 @@ The password is absent from serialized output because it is absent from the stru
 
 ### drop / rename / add / select / flatten
 
+<!-- doctest:scope=env:person
+```scala
+case class Person(name: String, age: Int) derives Schema
+```
+-->
+
 **drop** removes a field:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].drop(_.age)
 // Serialized: {"name":"Alice"}
 ```
 
 **rename** changes a field's name, preserving its type. The source is a lambda (so the existing field is refactor-safe) and the target is a string literal (because the new name doesn't exist yet to point a lambda at):
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].rename(_.name, "userName")
 // Serialized: {"userName":"Alice","age":30}
 ```
 
 **add** adds a computed field derived from the source value:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].add("adult")(_.age >= 18)
 // Serialized: {"name":"Alice","age":30,"adult":true}
 ```
 
 **select** keeps only the named fields, dropping everything else:
 
-```scala
+```scala doctest:scope=env:person
 Schema[Person].select(_.name)
 // Serialized: {"name":"Alice"}
 ```
@@ -1505,7 +1511,7 @@ These transforms are `transparent inline` and declared to return `Any`; the comp
 
 **Gotcha:** once you derive a new schema via `drop`/`rename`/`add`/`select`/`flatten`, `Json.encode(value)` still uses the *original* `Schema[User]` summoned from implicit scope, not your reshaped one. The transform lives on the schema *instance*; you have to call the serialization methods on that instance:
 
-```scala
+```scala doctest:scope=env:person
 val s = Schema[Person].rename(_.name, "userName")
 
 s.encodeString[Json](Person("Alice", 30))
@@ -1768,7 +1774,7 @@ The ordering always follows the case class field declaration order, regardless o
 
 Schemas carry documentation, examples, and deprecation markers. These flow into JSON Schema generation, making your API spec reflect the annotations you add in code:
 
-```scala
+```scala doctest:scope=env:person
 val schema =
     Schema[Person]
         .doc("A person in the system")
@@ -1785,7 +1791,7 @@ Field layout is also available at runtime for building dynamic UIs, generating d
 
 `Structure.of[A]` derives the type shape at compile time:
 
-```scala
+```scala doctest:scope=env:person
 val tpe: Structure.Type = Structure.of[Person]
 // Structure.Type.Product with fields "name" (Str) and "age" (Integer)
 ```
