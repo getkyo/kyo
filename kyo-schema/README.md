@@ -1111,6 +1111,24 @@ Json.decode[Slug]("""{"value":"hello world"}""")
 // Result.Failure(ConstructorRejectedException(Nil, "Slug", "the constructor returned None"))
 ```
 
+The constructor passed to `derivedVia` or `transformVia` runs with the `Frame` of the decode call in scope. A constructor that takes one, as a Kyo `init` does to build its failure, then names the site that decoded the bad input, not the line that defined the given, and the given stays a plain `given Schema[A]`, built once:
+
+```scala
+final class EmptyCodeException(using val frame: Frame) extends Exception("a code is not empty")
+
+opaque type Code = String
+
+object Code:
+    def init(text: String)(using Frame): Result[EmptyCodeException, Code] =
+        if text.isEmpty then Result.fail(EmptyCodeException()) else Result.succeed(text)
+
+    given Schema[Code] = Schema.stringSchema.transformVia(init(_))(identity)
+end Code
+
+Json.decode[Code]("\"\"")
+// Result.Failure(ConstructorRejectedException(Nil, "Code", EmptyCodeException)), the rejection's frame the decode call's
+```
+
 ## Annotations
 
 Everything the serialization sections configure with builder calls (variant representations, field and variant renaming, decode aliases, conditional omission, custom field codecs) can also be declared inline on the type with annotations from `kyo.schema`. `derives Schema` reads them and desugars each onto the same programmatic configuration, so an annotated type and the equivalent builder chain produce identical schemas. Annotations are opt-in: a type with none derives a byte-identical schema, and when an annotation and a programmatic call configure the same field, the programmatic call wins.

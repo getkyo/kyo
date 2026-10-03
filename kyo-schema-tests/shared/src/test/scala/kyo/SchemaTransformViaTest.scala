@@ -37,6 +37,15 @@ class SchemaTransformViaTest extends kyo.test.Test[Any]:
             val schema = summon[Schema[Int]].transformVia((i: Int) => STVPort.unsafe(i))(_.value)
             assert(schema.decodeString[Json]("-1") == Result.succeed(STVPort.unsafe(-1)))
         }
+
+        "a constructor's rejection carries the decoding caller's Frame, not the given's" in {
+            Json.decode[STVCode]("\"\"") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    e.rejection match
+                        case leaf: STVInvalidCode => assert(leaf.frame == e.frame, s"rejected at ${leaf.frame}, decoded at ${e.frame}")
+                        case other                => fail(s"expected the constructor's own failure, got $other")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+        }
     }
 
     "Transformer.Of reads and writes a field through a schema" - {
@@ -86,7 +95,16 @@ object STVTypes:
         given Schema[STVPort]                      = summon[Schema[Int]].transformVia(parse)(_.value)
     end STVPort
     extension (p: STVPort) def value: Int = p
+
+    opaque type STVCode = String
+    object STVCode:
+        def init(text: String)(using Frame): Result[STVInvalidCode, STVCode] =
+            if text.isEmpty then Result.fail(STVInvalidCode()) else Result.succeed(text)
+        given Schema[STVCode] = Schema.stringSchema.transformVia(init(_))(identity)
+    end STVCode
 end STVTypes
+
+final class STVInvalidCode(using Frame) extends KyoException("a code is not empty")
 
 case class STVServer(port: STVTypes.STVPort) derives CanEqual, Schema
 

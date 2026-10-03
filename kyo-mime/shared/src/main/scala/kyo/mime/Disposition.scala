@@ -101,7 +101,7 @@ object Disposition:
 
     given Schema[Disposition] =
         Schema.derivedVia((kind: String, parameters: Chunk[MediaType.Parameter]) =>
-            checked(kind, parameters.map(p => (p.name, p.value)))(using Frame.internal)
+            checked(kind, parameters.map(p => (p.name, p.value)))
         )
 
     private def checked(kind: String, parameters: Chunk[(String, String)])(using

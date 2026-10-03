@@ -1651,10 +1651,10 @@ import scala.quoted.*
       * types are checked here rather than at the call site because the overloads in `Schema.derivedVia`
       * infer their parameter types from the supplied function, not from `A`.
       */
-    def derivedViaImpl[A: Type, R: Type](using
+    def derivedViaImpl[A: Type, R: Type, F: Type](using
         Quotes
     )(
-        construct: Expr[Any],
+        construct: Expr[Frame ?=> F],
         constructed: Expr[Schema.Constructed[R, A]]
     ): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -1675,8 +1675,7 @@ import scala.quoted.*
 
         val fields     = sym.caseFields
         val fieldTypes = fields.map(f => tpe.memberType(f))
-        val fnTerm     = construct.asTerm
-        val paramTypes = fnTerm.tpe.widen.dealias match
+        val paramTypes = TypeRepr.of[F].widen.dealias match
             case AppliedType(tycon, args) if tycon.typeSymbol.fullName.startsWith("scala.Function") => args.init
             case other                                                                              =>
                 report.errorAndAbort(
@@ -1705,18 +1704,27 @@ import scala.quoted.*
         val typeNameExpr     = Expr(sym.name)
         val sourceFieldsExpr = productSourceFields[A]("Schema.derivedVia")
 
-        emitProductSchemaStatic[A](
-            tpe,
-            sym,
-            sourceFields = sourceFieldsExpr,
-            focusedType = tpe,
-            constructVia = Some { (args, reader) =>
-                val applied = Apply(Select.unique(fnTerm, "apply"), args).asExprOf[R]
-                '{
-                    kyo.internal.constructedOrThrow[A]($constructed.asResult($applied), $typeNameExpr)(using $reader.frame)
-                }.asTerm
+        // The constructor is bound once, outside the generated reader: spliced into it directly, a closure the caller's expression
+        // defines (an eta-expanded method) would keep the call site as its owner.
+        val outer: quotes.type = quotes
+        '{
+            val ctor: Frame => F = (frame: Frame) => $construct(using frame)
+            ${
+                emitProductSchemaStatic[A](using outer)(
+                    tpe,
+                    sym,
+                    sourceFields = sourceFieldsExpr,
+                    focusedType = tpe,
+                    constructVia = Some { (args, reader) =>
+                        val fn      = '{ ctor($reader.frame) }.asTerm
+                        val applied = Apply(Select.unique(fn, "apply"), args).asExprOf[R]
+                        '{
+                            kyo.internal.constructedOrThrow[A]($constructed.asResult($applied), $typeNameExpr)(using $reader.frame)
+                        }.asTerm
+                    }
+                )
             }
-        )
+        }
     end derivedViaImpl
 
     /** True iff `tpe` is a Scala type union (`A | B`). */
@@ -3147,12 +3155,12 @@ object SchemaDerivedMacro:
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         FocusMacro.derivedImpl[A]
 
-    def derivedViaImpl[A: Type, R: Type](using
+    def derivedViaImpl[A: Type, R: Type, F: Type](using
         Quotes
     )(
-        construct: Expr[Any],
+        construct: Expr[Frame ?=> F],
         constructed: Expr[Schema.Constructed[R, A]]
     ): Expr[Schema[A]] =
-        FocusMacro.derivedViaImpl[A, R](construct, constructed)
+        FocusMacro.derivedViaImpl[A, R, F](construct, constructed)
 
 end SchemaDerivedMacro

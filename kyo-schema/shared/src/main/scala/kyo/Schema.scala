@@ -1550,6 +1550,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * or `Try` of B (see [[Schema.Constructed]]); the outcome decides B before `from` is typed, so `from` needs no annotation.
       * Encode writes `from(b)`.
       *
+      * `construct` runs with the `Frame` of the decode call in scope, so a constructor that takes one, such as an
+      * `init(value)(using Frame)`, builds its rejection with the reader's site rather than the site that defined the given. The given
+      * is then built once, as a plain `given Schema[B]`.
+      *
       * {{{
       * opaque type Port = Int
       * object Port:
@@ -1557,7 +1561,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *     given Schema[Port]                      = summon[Schema[Int]].transformVia(parse)(identity)
       * }}}
       */
-    inline def transformVia[R, B](construct: A => R)(using constructed: Schema.Constructed[R, B])(from: B => A): Schema[B] =
+    inline def transformVia[R, B](construct: A => Frame ?=> R)(using constructed: Schema.Constructed[R, B])(from: B => A): Schema[B] =
         Schema.transformViaWith(this, construct, from, constructed, internal.SchemaTransformMacro.typeName[B])
 
     /** Returns a copy of this schema that carries the same codec but reports `structure` as its wire
@@ -2232,47 +2236,43 @@ object Schema:
       * naming the offending field. Its outcome may be A itself or any shape [[Constructed]] recognizes: `Result`, `Maybe`, `Option`,
       * `Either`, or `Try`.
       *
+      * `construct` is typed with the `Frame` of the decode call in scope, so a constructor that takes one, such as an
+      * `init(...)(using Frame)`, builds its rejection with the reader's site rather than the site that defined the given. The given is
+      * then built once, as a plain `given Schema[A]`.
+      *
+      * One method takes every arity, the constructor's shape read by [[Schema.Constructor]]: overloads by arity would type an explicit
+      * lambda before the `Frame` is in scope, resolving it at the given's own site.
+      *
       * @param construct
       *   the smart constructor, taking the case fields in declaration order
       */
-    inline def derivedVia[B1, R, A](construct: B1 => R)(using c: Constructed[R, A]): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Two-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, R, A](construct: (B1, B2) => R)(using c: Constructed[R, A]): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Three-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, R, A](construct: (B1, B2, B3) => R)(using c: Constructed[R, A]): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Four-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, B4, R, A](construct: (B1, B2, B3, B4) => R)(using c: Constructed[R, A]): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Five-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, B4, B5, R, A](construct: (B1, B2, B3, B4, B5) => R)(using c: Constructed[R, A]): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Six-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, B4, B5, B6, R, A](construct: (B1, B2, B3, B4, B5, B6) => R)(using
-        c: Constructed[R, A]
-    ): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Seven-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, B4, B5, B6, B7, R, A](construct: (B1, B2, B3, B4, B5, B6, B7) => R)(using
-        c: Constructed[R, A]
-    ): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
-
-    /** Eight-field overload of [[derivedVia]]. */
-    inline def derivedVia[B1, B2, B3, B4, B5, B6, B7, B8, R, A](construct: (B1, B2, B3, B4, B5, B6, B7, B8) => R)(using
-        c: Constructed[R, A]
-    ): Schema[A] =
-        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R]('construct, 'c) }
+    inline def derivedVia[F, R, A](construct: Frame ?=> F)(using fn: Constructor[F, R], c: Constructed[R, A]): Schema[A] =
+        ${ internal.SchemaDerivedMacro.derivedViaImpl[A, R, F]('construct, 'c) }
 
     // --- Public nested types ---
+
+    /** Evidence that `F` is a function of one to eight arguments returning `R`: the shape [[derivedVia]] accepts as a constructor.
+      *
+      * @tparam F
+      *   the constructor's function type
+      * @tparam R
+      *   the constructor's return type
+      */
+    @implicitNotFound(
+        "Schema.derivedVia expects a function of one to eight arguments, one per case field; got '${F}'."
+    )
+    sealed abstract class Constructor[F, R]
+
+    object Constructor:
+        given arity1[B1, R]: Constructor[B1 => R, R]                                                           = new Constructor {}
+        given arity2[B1, B2, R]: Constructor[(B1, B2) => R, R]                                                 = new Constructor {}
+        given arity3[B1, B2, B3, R]: Constructor[(B1, B2, B3) => R, R]                                         = new Constructor {}
+        given arity4[B1, B2, B3, B4, R]: Constructor[(B1, B2, B3, B4) => R, R]                                 = new Constructor {}
+        given arity5[B1, B2, B3, B4, B5, R]: Constructor[(B1, B2, B3, B4, B5) => R, R]                         = new Constructor {}
+        given arity6[B1, B2, B3, B4, B5, B6, R]: Constructor[(B1, B2, B3, B4, B5, B6) => R, R]                 = new Constructor {}
+        given arity7[B1, B2, B3, B4, B5, B6, B7, R]: Constructor[(B1, B2, B3, B4, B5, B6, B7) => R, R]         = new Constructor {}
+        given arity8[B1, B2, B3, B4, B5, B6, B7, B8, R]: Constructor[(B1, B2, B3, B4, B5, B6, B7, B8) => R, R] = new Constructor {}
+    end Constructor
 
     /** Reads the constructed value out of whatever shape a smart constructor reports its outcome in.
       *
@@ -2581,7 +2581,7 @@ object Schema:
     /** The schema [[Schema.transformVia]] builds; `typeName` is B's name as the rejection reports it. */
     @publicInBinary private[kyo] def transformViaWith[A, B, R](
         self: Schema[A],
-        construct: A => R,
+        construct: A => Frame ?=> R,
         from: B => A,
         constructed: Constructed[R, B],
         typeName: String
@@ -2589,7 +2589,9 @@ object Schema:
         Schema.init[B](
             writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
             readFn = (r: Reader) =>
-                internal.constructedOrThrow(constructed.asResult(construct(self.serializeRead(r))), typeName)(using r.frame),
+                internal.constructedOrThrow(constructed.asResult(construct(self.serializeRead(r))(using r.frame)), typeName)(using
+                    r.frame
+                ),
             structure = self.structure
         )
     end transformViaWith

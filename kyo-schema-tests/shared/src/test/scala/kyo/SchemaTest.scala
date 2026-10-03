@@ -3728,6 +3728,15 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(schema.encodeString[Json](DVPort.make(80).toMaybe.get) == """{"value":80}""")
         }
 
+        "a constructor's rejection carries the decoding caller's Frame, not the given's" in {
+            Json.decode[DVSpan]("""{"lo":2,"hi":1}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    e.rejection match
+                        case leaf: DVInvalidSpan => assert(leaf.frame == e.frame, s"rejected at ${leaf.frame}, decoded at ${e.frame}")
+                        case other               => fail(s"expected the constructor's own failure, got $other")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+        }
+
         "a derivedVia type nested as a field decodes through its constructor, not around it" in {
             val schema = Schema.derived[DVListener]
             assert(schema.encodeString[Json](DVListener("api", DVPort.make(80).toMaybe.get)) == """{"name":"api","port":{"value":80}}""")
@@ -3887,6 +3896,16 @@ object DVPort:
 end DVPort
 
 case class DVPortTwin(value: Int) derives CanEqual
+
+sealed abstract case class DVSpan private (lo: Int, hi: Int) derives CanEqual
+object DVSpan:
+    def init(lo: Int, hi: Int)(using Frame): Result[DVInvalidSpan, DVSpan] =
+        if lo <= hi then Result.succeed(new DVSpan(lo, hi) {}) else Result.fail(DVInvalidSpan())
+
+    given Schema[DVSpan] = Schema.derivedVia((lo: Int, hi: Int) => init(lo, hi))
+end DVSpan
+
+final class DVInvalidSpan(using Frame) extends KyoException("a span's low end is not above its high end")
 
 case class DVListener(name: String, port: DVPort) derives CanEqual, Schema
 
