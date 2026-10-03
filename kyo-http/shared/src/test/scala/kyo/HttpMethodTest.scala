@@ -92,4 +92,34 @@ class HttpMethodTest extends BaseHttpTest:
         }
     }
 
+    "method properties" - {
+        val all = Seq(
+            HttpMethod.GET,
+            HttpMethod.HEAD,
+            HttpMethod.OPTIONS,
+            HttpMethod.TRACE,
+            HttpMethod.PUT,
+            HttpMethod.DELETE,
+            HttpMethod.POST,
+            HttpMethod.PATCH,
+            HttpMethod.CONNECT,
+            HttpMethod.unsafe("CUSTOM")
+        )
+
+        "the safe methods are GET, HEAD, OPTIONS and TRACE" in {
+            assert(all.filter(_.isSafe) == Seq(HttpMethod.GET, HttpMethod.HEAD, HttpMethod.OPTIONS, HttpMethod.TRACE))
+        }
+
+        "the idempotent methods are the safe ones, PUT and DELETE" in {
+            assert(
+                all.filter(_.isIdempotent) ==
+                    Seq(HttpMethod.GET, HttpMethod.HEAD, HttpMethod.OPTIONS, HttpMethod.TRACE, HttpMethod.PUT, HttpMethod.DELETE)
+            )
+        }
+
+        "a method name is case-sensitive, so a lowercase name has neither property" in {
+            assert(!HttpMethod.unsafe("get").isSafe && !HttpMethod.unsafe("put").isIdempotent)
+        }
+    }
+
 end HttpMethodTest

@@ -51,7 +51,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+        client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
             Scope.run {
                 Scope.ensure(client.closeNow(conn)).andThen {
                     client.sendWith(conn, route, request)(identity)
@@ -192,7 +192,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok("alive"))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             // Connection should have the right host and port
@@ -213,7 +213,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         // Port 1 is not listening — connection refused
         val url = HttpUrl(Present("http"), "localhost", 1, "/", Absent)
         Abort.run[HttpException](
-            client.connectWith(url, 5.seconds, HttpTlsConfig.default) { conn =>
+            client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                 Scope.run {
                     Scope.ensure(client.closeNow(conn)).unit
                 }
@@ -358,7 +358,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
@@ -391,7 +391,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/bigstream"))) { resp =>
@@ -503,36 +503,24 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // 19. readLoopUnsafe handles EOF — premature connection close → error
     // ---------------------------------------------------------------------------
     "connection closed during body read results in HttpConnectionClosedException" in {
-        // Integration test: server sends partial body then closes connection
-        // A handler that sends 5 bytes but claims Content-Length: 100
-        val route = HttpRoute.getRaw("partial").response(_.bodyText)
-        val ep    = route.handler { _ =>
-            // Return a short body — the client expects more bytes based on Content-Length
-            HttpResponse.ok("short")
-        }
+        // The peer declares 100 bytes, sends 5 and closes; the transport flushes the 5 before it releases the socket.
+        val response = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello".getBytes(StandardCharsets.US_ASCII)
         Scope.run {
-            withServer(ep) { url =>
-                // The server will send "short" (5 bytes) with correct Content-Length: 5
-                // so this won't trigger EOF. Instead, test that closing the body channel
-                // results in the channel being closed.
-                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
-                val outbound = Channel.Unsafe.init[Span[Byte]](16)
-                val http1    = Http1ClientConnection.init(inbound, outbound)
-
-                // Stage a response claiming 100 bytes but only 5 in initial chunk
-                val responseHdr = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello"
-                discard(inbound.offer(Span.fromUnsafe(responseHdr.getBytes(StandardCharsets.US_ASCII))))
-
-                val parsedFiber = http1.send(HttpMethod.GET, "/", HttpHeaders.empty, Span.empty)
-                val parsed      = parsedFiber.poll() match
-                    case Present(Result.Success(pr)) => pr
-                    case other                       => fail(s"Expected synchronous parse, got: $other")
-
-                // Close channel to simulate EOF mid-body
-                discard(inbound.close())
-
-                // The body channel is now closed, so reads would fail
-                assert(inbound.closed())
+            Sync.Unsafe.defer {
+                kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
+                    conn.inbound.takeFiber().asInstanceOf[kyo.scheduler.IOPromise[Closed, Span[Byte]]].onComplete { _ =>
+                        discard(conn.outbound.offer(Span.fromUnsafe(response)))
+                        conn.close()
+                    }
+                }
+            }.map { fiber =>
+                fiber.safe.use { listener =>
+                    Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
+                        Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:${listener.port}/partial")).map { result =>
+                            assert(result == Result.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated)))
+                        }
+                    }
+                }
             }
         }
     }
@@ -563,7 +551,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         @volatile var releaseArg: Maybe[Result.Error[Any]] = Present(Result.Failure(new Exception("not called")))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(
@@ -594,7 +582,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
             withServer(ep) { url =>
                 var releaseArg: Maybe[Result.Error[Any]] = Absent
                 Abort.run[HttpException](
-                    client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                    client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                         Scope.run {
                             Scope.ensure(client.closeNow(conn)).andThen {
                                 client.sendWith(
@@ -604,7 +592,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                                     onRelease = err => Sync.Unsafe.defer { releaseArg = err }
                                 ) { _ =>
                                     // Simulate a failure inside the handler
-                                    Abort.fail(HttpConnectionClosedException())
+                                    Abort.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead))
                                 }
                             }
                         }
@@ -626,7 +614,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok(""))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         client.isAlive(conn).map { alive =>
                             assert(alive, "Connection should be alive before close")
@@ -650,7 +638,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok(""))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig.default) { conn =>
                     Scope.run {
                         // Close the connection
                         client.closeNow(conn).andThen {
