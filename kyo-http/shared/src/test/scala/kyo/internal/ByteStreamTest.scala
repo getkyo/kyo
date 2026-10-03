@@ -50,7 +50,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "finds delimiter and returns bytes before" in {
             val stream = streamFromChunks(Seq("hello\r\nworld"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
             }
             Abort.run[HttpException](result).map { r =>
@@ -60,7 +60,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "consumes delimiter — remaining stream starts after delimiter" in {
             val stream = streamFromChunks(Seq("hello\r\nworld"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 1024) {
                 (_, rest) =>
                     rest.run.map { chunk =>
                         new String(chunk.toSeq.flatMap(_.toArray).toArray, StandardCharsets.US_ASCII)
@@ -73,7 +73,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "with empty stream returns HttpConnectionClosedException" in {
             val stream = Stream.init[Span[Byte], Async](Seq.empty)
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
             }
             Abort.run[HttpException](result).map { r =>
@@ -84,7 +84,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "exceeds maxSize raises HttpProtocolException" in {
             val stream = streamFromChunks(Seq("hello world"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 5) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 5) {
                 (before, _) => str(before)
             }
             Abort.run[HttpException](result).map { r =>
@@ -95,7 +95,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "delimiter split across chunks" in {
             val stream = streamFromChunks(Seq("hello\r", "\nworld"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
             }
             Abort.run[HttpException](result).map { r =>
@@ -106,7 +106,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
         "maxSize exactly at delimiter — success" in {
             // "hello" is 5 bytes, delimiter is \r\n — maxSize=5 should succeed
             val stream = streamFromChunks(Seq("hello\r\nworld"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 5) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 5) {
                 (before, _) => str(before)
             }
             Abort.run[HttpException](result).map { r =>
@@ -119,7 +119,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "reads n bytes from stream" in {
             val stream = streamFromChunks(Seq("hello world"))
-            val result = ByteStream.readExactWith(stream, 5) {
+            val result = ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, 5) {
                 (bytes, _) => str(bytes)
             }
             Abort.run[HttpException](result).map { r =>
@@ -133,7 +133,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
             val chunk2 = "B" * 40
             val chunk3 = "C" * 50
             val stream = streamFromChunks(Seq(chunk1, chunk2, chunk3))
-            val result = ByteStream.readExactWith(stream, 100) {
+            val result = ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, 100) {
                 (bytes, _) => str(bytes)
             }
             Abort.run[HttpException](result).map { r =>
@@ -147,7 +147,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "n <= 0 returns empty immediately" in {
             val stream = streamFromChunks(Seq("hello"))
-            val result = ByteStream.readExactWith(stream, 0) {
+            val result = ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, 0) {
                 (bytes, _) => bytes.size
             }
             Abort.run[HttpException](result).map { r =>
@@ -157,7 +157,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "insufficient bytes raises HttpConnectionClosedException" in {
             val stream = streamFromChunks(Seq("hi"))
-            val result = ByteStream.readExactWith(stream, 100) {
+            val result = ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, 100) {
                 (bytes, _) => str(bytes)
             }
             Abort.run[HttpException](result).map { r =>
@@ -168,7 +168,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "reads exactly n=1 byte" in {
             val stream = streamFromChunks(Seq("hello"))
-            val result = ByteStream.readExactWith(stream, 1) {
+            val result = ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, 1) {
                 (bytes, _) => str(bytes)
             }
             Abort.run[HttpException](result).map { r =>
@@ -181,7 +181,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "finds CRLF and returns line without CRLF" in {
             val stream = streamFromChunks(Seq("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n"))
-            val result = ByteStream.readLineWith(stream) {
+            val result = ByteStream.readLineWith(HttpConnectionClosedException.Phase.BodyTruncated, stream) {
                 (line, _) => str(line)
             }
             Abort.run[HttpException](result).map { r =>
@@ -191,7 +191,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "respects maxSize — raises error if exceeded" in {
             val stream = streamFromChunks(Seq("a very long line that exceeds max size\r\n"))
-            val result = ByteStream.readLineWith(stream, maxSize = 10) {
+            val result = ByteStream.readLineWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, maxSize = 10) {
                 (line, _) => str(line)
             }
             Abort.run[HttpException](result).map { r =>
@@ -205,7 +205,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
             // The line itself is exactly 8192 bytes — at the delimiter the combined size
             // includes the delimiter too; test a line just under the default limit
             val stream = streamFromChunks(Seq(("Y" * 100) + "\r\n"))
-            val result = ByteStream.readLineWith(stream) {
+            val result = ByteStream.readLineWith(HttpConnectionClosedException.Phase.BodyTruncated, stream) {
                 (line, _) => str(line)
             }
             Abort.run[HttpException](result).map { r =>
@@ -218,7 +218,7 @@ class ByteStreamTest extends kyo.BaseHttpTest:
 
         "CRLF split: chunk1=hello\\r, chunk2=\\nworld yields hello" in {
             val stream = streamFromChunks(Seq("hello\r", "\nworld"))
-            val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
+            val result = ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BodyTruncated, stream, ByteStream.CRLF, 1024) {
                 (before, rest) =>
                     rest.run.map { remaining =>
                         val afterStr = new String(

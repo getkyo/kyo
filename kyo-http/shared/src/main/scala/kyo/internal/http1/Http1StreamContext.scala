@@ -28,27 +28,67 @@ final private[kyo] class Http1StreamContext(
 
     private var _request: ParsedRequest       = ParsedRequest.empty
     private var _bodySpan: Span[Byte]         = Span.empty[Byte]
-    private var _leftover: Span[Byte]         = Span.empty[Byte]
     private var _mustCloseConnection: Boolean = false
+    // The request asked for the connection to end with its response (Connection: close, or HTTP/1.0 without keep-alive).
+    private var _announceClose: Boolean = false
+    // Written by the fiber reading the body and read by the idle timer on its own carrier.
+    @volatile private var _phase: Http1StreamContext.ReadPhase = Http1StreamContext.ReadPhase.HeadPending
+    @volatile private var _bodyProgress: Long                  = 0L
+    @volatile private var _awaitingPeer: Boolean               = false
+    // Written by a chunked decode fiber on its own carrier and read on the handler's completion; the dispatch restarts the parser only
+    // once the decode has reached the terminal chunk, and the atomic carries the write across the carriers.
+    private val _leftover: AtomicRef.Unsafe[Span[Byte]] = AtomicRef.Unsafe.init(Span.empty[Byte])
+    // The last write the outbound channel could not take at once, while it is still pending. Writes complete in order, so once it
+    // completes every earlier one has too.
+    private var pendingWrite: Maybe[Fiber.Unsafe[Unit, Abort[Closed]]] = Absent
 
     /** Called by parser when request is ready. */
     def setRequest(req: ParsedRequest, body: Span[Byte]): Unit =
         _request = req
         _bodySpan = body
-        _leftover = Span.empty[Byte]
+        _leftover.set(Span.empty[Byte])
         _mustCloseConnection = false
+        _announceClose = !req.isKeepAlive
+        _phase =
+            if req.bodyBeyond(body.size) then Http1StreamContext.ReadPhase.BodyPending
+            else Http1StreamContext.ReadPhase.Handling
     end setRequest
 
     def request: ParsedRequest = _request
 
-    /** Marks the connection for closure after the in-flight handler settles. Set by a handler-path rejection (e.g. a chunked body over
-      * maxContentLength answered 413) whose declared body is not consumed, so the keep-alive restart must be suppressed and the connection
-      * closed instead (RFC 9112 section 9.3). Read by the dispatch's fiber onComplete.
+    /** Marks the connection to end after the current request, read by the dispatch's fiber onComplete in place of the keep-alive restart,
+      * and announced by the next response's head. A path that ends the connection marks it before it writes its answer, since the head is
+      * the only place the peer learns of the close (RFC 9112 section 9.6).
       */
     def requestConnectionClose(): Unit =
         _mustCloseConnection = true
 
     def mustCloseConnection: Boolean = _mustCloseConnection
+
+    /** What the connection waits for from its peer, read by the idle timer when it fires: a request head, the rest of a request body, or
+      * nothing while a handler works on a body already read.
+      */
+    def phase: Http1StreamContext.ReadPhase = _phase
+
+    def awaitHead(): Unit = _phase = Http1StreamContext.ReadPhase.HeadPending
+
+    def bodyComplete(): Unit = _phase = Http1StreamContext.ReadPhase.Handling
+
+    def startDraining(): Unit = _phase = Http1StreamContext.ReadPhase.Draining
+
+    /** Counts the reads that brought body bytes off the connection; the idle timer compares it with the count at its arming. */
+    def noteBodyProgress(): Unit =
+        _awaitingPeer = false
+        _bodyProgress += 1
+
+    def bodyProgress: Long = _bodyProgress
+
+    /** Marks the body reader as about to suspend on the connection; the next read that returns clears it. A reader parked elsewhere (on
+      * its own output, on the handler) is not waiting for the peer, and the idle timer must not read its silence as the peer's.
+      */
+    def awaitPeer(): Unit = _awaitingPeer = true
+
+    def awaitingPeer: Boolean = _awaitingPeer
 
     /** Returns the initial body bytes passed by the parser (e.g., chunk framing data for chunked requests, or partial body for
       * Content-Length requests). Consumes the span — subsequent calls return empty.
@@ -59,14 +99,28 @@ final private[kyo] class Http1StreamContext(
         result
     end takeBodySpan
 
+    /** Records the bytes a chunked decoder read past the body's end, which belong to the next request. A chunked request has no
+      * Content-Length, so `readBody` never records a leftover for the same request.
+      */
+    def setLeftover(bytes: Span[Byte]): Unit =
+        if bytes.nonEmpty then _leftover.set(bytes)
+
     /** Returns any leftover bytes after the body that belong to the next request. Called by UnsafeServerDispatch before restarting the
       * parser for keep-alive.
       */
     def takeLeftover(): Span[Byte] =
-        val result = _leftover
-        _leftover = Span.empty[Byte]
-        result
-    end takeLeftover
+        _leftover.getAndSet(Span.empty[Byte])
+
+    /** Runs `f` once the outbound channel has taken every write so far: now when none is waiting, otherwise when the waiting one completes.
+      * The dispatch restarts the parser through this, so the answers to requests a peer pipelines without reading stop the parse at the
+      * channel's capacity plus one answer instead of queuing one write per request (CWE-400).
+      */
+    def whenWritable(f: () => Unit)(using AllowUnsafe): Unit =
+        pendingWrite match
+            case Present(fiber) if !fiber.done() => fiber.onComplete(_ => f())
+            case _                               =>
+                pendingWrite = Absent
+                f()
 
     /** Reads the full request body, accumulating from the inbound channel if needed.
       *
@@ -77,12 +131,14 @@ final private[kyo] class Http1StreamContext(
     def readBody()(using Frame): Span[Byte] < (Async & Abort[Closed]) =
         val contentLength = _request.contentLength
         if contentLength <= 0 then
+            bodyComplete()
             Span.empty[Byte]
         else if _bodySpan.size >= contentLength then
             // Fast path: all body bytes already available
             val body = _bodySpan.slice(0, contentLength)
             if _bodySpan.size > contentLength then
-                _leftover = _bodySpan.slice(contentLength, _bodySpan.size)
+                _leftover.set(_bodySpan.slice(contentLength, _bodySpan.size))
+            bodyComplete()
             body
         else
             // Slow path: need more bytes from inbound channel
@@ -91,7 +147,10 @@ final private[kyo] class Http1StreamContext(
             if !_bodySpan.isEmpty then
                 val arr = _bodySpan.toArray
                 bodyBuf.writeBytes(arr, 0, arr.length)
-            accumulate(bodyBuf, contentLength)
+            accumulate(bodyBuf, contentLength).map { body =>
+                bodyComplete()
+                body
+            }
         end if
     end readBody
 
@@ -106,15 +165,23 @@ final private[kyo] class Http1StreamContext(
             if allBytes.length > contentLength then
                 val leftoverArr = new Array[Byte](allBytes.length - contentLength)
                 java.lang.System.arraycopy(allBytes, contentLength, leftoverArr, 0, leftoverArr.length)
-                _leftover = Span.fromUnsafe(leftoverArr)
+                _leftover.set(Span.fromUnsafe(leftoverArr))
             end if
             body
         else
-            // Need more data — take from channel (suspends fiber, does NOT block OS thread)
-            inbound.safe.take.map { span =>
+            // Bytes already in hand are taken without announcing a wait: the announcement is read by the idle timer on its own carrier,
+            // and a wait announced for a take that returns at once would read as the peer's silence.
+            def feed(span: Span[Byte]): Span[Byte] < (Async & Abort[Closed]) =
+                noteBodyProgress()
                 val arr = span.toArray
                 bodyBuf.writeBytes(arr, 0, arr.length)
                 accumulate(bodyBuf, contentLength)
+            end feed
+            inbound.safe.poll.map {
+                case Present(span) => feed(span)
+                case Absent        =>
+                    awaitPeer()
+                    inbound.safe.take.map(feed)
             }
 
     def bodyChannel: Channel.Unsafe[Span[Byte]] = inbound
@@ -123,7 +190,7 @@ final private[kyo] class Http1StreamContext(
     private def writeHead(status: HttpStatus, headers: HttpHeaders)(using AllowUnsafe): Unit =
         headerBuf.reset()
         val code   = status.code
-        val cached = if code >= 0 && code < 600 then Http1StreamContext.statusLineCache(code) else null
+        val cached = if HttpStatus.isValid(code) then Http1StreamContext.statusLineCache(code) else null
         if cached != null then
             headerBuf.writeBytes(cached, 0, cached.length)
         else
@@ -156,7 +223,11 @@ final private[kyo] class Http1StreamContext(
     def respond(status: HttpStatus, headers: HttpHeaders)(using AllowUnsafe): ResponseWriter =
         headers.invalidField match
             case Absent =>
-                writeHead(status, headers)
+                // The final response on a connection that is about to end, because the request asked or because the server marked it,
+                // announces it (RFC 9112 section 9.6), whatever the handler set: a `keep-alive` on a connection about to close would have
+                // the peer send its next request into a socket nothing reads.
+                val announced = if _announceClose || _mustCloseConnection then headers.set("Connection", "close") else headers
+                writeHead(status, announced)
                 http1ResponseWriter
             case Present(field) =>
                 Log.live.unsafe.error(s"Http1StreamContext respond: cannot write $field, responding 500")
@@ -164,15 +235,17 @@ final private[kyo] class Http1StreamContext(
                 Http1StreamContext.discardingResponseWriter
     end respond
 
+    /** Writes an interim response (a `100 Continue`), which precedes the final one on the same request (RFC 9110 section 15.2). */
+    def writeInterim(bytes: Span[Byte])(using AllowUnsafe): Unit =
+        offerOrLog(bytes, "Http1StreamContext interim response")
+
     /** Puts data to outbound channel with backpressure. Uses offer() first for the fast path, falls back to putFiber() when the channel is
-      * full to avoid silently dropping data.
+      * full to avoid silently dropping data; that write is the one `whenWritable` waits for.
       */
     private def offerOrLog(data: Span[Byte], context: String)(using AllowUnsafe): Unit =
         outbound.offer(data) match
-            case Result.Success(true)  => () // fast path: channel had space
-            case Result.Success(false) =>
-                // Channel full — queue via putFiber for backpressure (will complete when space available)
-                discard(outbound.putFiber(data))
+            case Result.Success(true)      => () // fast path: channel had space
+            case Result.Success(false)     => pendingWrite = Present(outbound.putFiber(data))
             case Result.Failure(_: Closed) => () // channel closed, connection shutting down
             case Result.Panic(t)           =>
                 Log.live.unsafe.error(s"$context: panic", t)
@@ -209,6 +282,12 @@ private[kyo] object Http1StreamContext:
       * lets the connection stay framed once the original response's body is discarded.
       */
     private val EmptyBodyHeaders: HttpHeaders = HttpHeaders.empty.add("Content-Length", 0)
+
+    /** What a connection waits for from its peer: a request head; the rest of a request body a reader wants; nothing, while a handler works
+      * on a body already read; or the rest of a request it has answered and will not use, read and discarded before the close.
+      */
+    enum ReadPhase derives CanEqual:
+        case HeadPending, BodyPending, Handling, Draining
 
     /** Drops everything written to it, for a response whose head was replaced by a 500. The 500 declares `Content-Length: 0`, so a body
       * write would run past the declared length and `finish()` would append the chunked last-chunk marker; either desynchronizes the

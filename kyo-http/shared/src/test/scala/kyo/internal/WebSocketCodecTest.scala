@@ -559,6 +559,19 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             }
         }
 
+        "a status code that only starts with 101 is refused as no status line, not read as a switch" in {
+            val conn = new MockConn("HTTP/1.1 1012 Switching\r\nUpgrade: websocket\r\n\r\n".getBytes(Utf8)):
+                override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+            }.map { result =>
+                assert(
+                    result.failure.exists(_.getMessage.contains("HttpWebSocket upgrade failed: expected 101, no status line")),
+                    result.toString
+                )
+            }
+        }
+
         "an answer that is not an HTTP/1.x status line is a protocol failure" in {
             Kyo.foreach(Chunk("HTTP/2 400\r\n\r\n", "HTTP/1.1 4x0 Bad\r\n\r\n", "HTTP/1.1 4000 Bad\r\n\r\n", "garbage\r\n\r\n")) {
                 response =>
@@ -771,7 +784,23 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         assert(r2.contains("chat"))
     }
 
-    "parseResponseSubprotocol returns None when header absent" in {
+    "upgradeRefusalDetail names the status code of any HTTP/1.x status line, and says so when the line is not one" in {
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 404 Not Found\r\n\r\n") ==
+            "HttpWebSocket upgrade failed: expected 101, got 404")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.0 200 OK\r\n\r\n") == "HttpWebSocket upgrade failed: expected 101, got 200")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 4o4 Not Found\r\n\r\n") ==
+            "HttpWebSocket upgrade failed: expected 101, no status line")
+        assert(WebSocketCodec.upgradeRefusalDetail("<html>\r\n\r\n") == "HttpWebSocket upgrade failed: expected 101, no status line")
+    }
+
+    "upgradeRefusalDetail reads a status code as exactly three digits, so a fourth digit is no status line" in {
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 4000 Bad\r\n\r\n") ==
+            "HttpWebSocket upgrade failed: expected 101, no status line")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 404") == "HttpWebSocket upgrade failed: expected 101, got 404")
+        assert(WebSocketCodec.upgradeRefusalDetail("HTTP/1.1 404\r\n\r\n") == "HttpWebSocket upgrade failed: expected 101, got 404")
+    }
+
+    "parseResponseSubprotocol returns Absent when header absent" in {
         val r = WebSocketCodec.parseResponseSubprotocol(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
         )

@@ -45,6 +45,15 @@ final private[kyo] class ConnectionRegistry[C]:
       */
     def markClosing(): Unit = closingFlag = true
 
+    /** The connections registered now. After `markClosing` it is every connection that will ever be served, since a later registration
+      * closes itself.
+      */
+    def snapshot: Chunk[C] =
+        val builder = ChunkBuilder.init[C]
+        conns.forEach(c => discard(builder += c))
+        builder.result()
+    end snapshot
+
     /** Mark closing and close every registered connection, claiming each through `remove` so a connection a concurrent
       * `register` is adding is closed exactly once (whichever of the two removes it wins).
       */
