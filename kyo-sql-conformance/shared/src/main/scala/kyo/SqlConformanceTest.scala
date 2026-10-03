@@ -13,8 +13,8 @@ package kyo
   * The descriptors are a constructor parameter because leaves register while the class is constructed, and a class parameter is assigned
   * before any of the battery's traits runs.
   *
-  * Each [[SqlConformanceBackend]] opens its clients through its own [[SqlConformanceBackend.backend]], so the battery needs no registry and no
-  * service file on any platform. A leaf that differs between engines branches on a descriptor capability, never on an engine name.
+  * Each [[SqlConformanceBackend]] opens its clients through the [[kyo.db.Backend]] it was constructed with, so the battery needs no registry
+  * and no service file on any platform. A leaf that differs between engines branches on a descriptor capability, never on an engine name.
   *
   * Leaves of the `forEachBackend` shape run once per reachable descriptor, named by its label. Leaves of the `agreeAcrossBackends` shape
   * compare engines inside one leaf; with a single descriptor, a leaf that pins its expected answer still asserts it, and one that only

@@ -15,7 +15,7 @@ class LinuxCgroupPathTest extends kyo.test.Test[Any]:
 
         "the v1 unlimited-memory marker routes to AbsentLong through the production LinuxCgroup.limit" in {
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 cgroup  = new LinuxCgroup(handles, sampler)
             yield
@@ -112,7 +112,7 @@ class LinuxCgroupPathTest extends kyo.test.Test[Any]:
                 "LinuxCgroup's mountinfo-based resolution is Linux-only; this leaf holds on a real Linux host"
             )
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 cgroup  = new LinuxCgroup(handles, sampler)
                 _       = cgroup.read()

@@ -1,0 +1,5 @@
+# Format: doctestFormat rewrites the fence into the .scalafmt.conf style without compiling; doctest then validates it.
+> doctestFormat
+$ must-mirror README.md expected/README.md
+> doctest
+$ must-mirror README.md expected/README.md

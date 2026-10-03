@@ -7,7 +7,7 @@ class DoltServerConformanceTest extends SqlContainerTest with DoltConformanceTes
 
     override def timeout: Duration = 5.minutes
 
-    private val descriptor = SqlConformanceBackends.byId("dolt")
+    private val descriptor = SqlConformanceBackends.dolt
 
     def withDolt[A](config: SqlConfig)(
         f: Dolt => A < (Async & Abort[SqlException] & Scope & DB)

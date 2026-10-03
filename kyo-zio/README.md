@@ -198,7 +198,7 @@ val program: String < (Abort[Nothing] & Async) =
 A scoped source layer behaves as expected: its acquire runs on layer build, its release runs when the surrounding Kyo `Scope` closes, and the close path receives the appropriate `Exit` (success, failure, or panic) based on how the consuming effect terminated.
 
 ```scala
-val acquired = java.util.concurrent.atomic.AtomicInteger(0)
+val acquired                          = java.util.concurrent.atomic.AtomicInteger(0)
 val scoped: ZLayer[Any, Nothing, Int] =
     ZLayer.scoped:
         zio.Scope.addFinalizer(ZIO.succeed(())) *>

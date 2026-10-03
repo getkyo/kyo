@@ -285,7 +285,9 @@ object TestKyo {
     // If the meta-build changed (project/*, .github/*), run all modules. A build.sbt change is
     // attributed to the specific projects whose settings, or whose `lazy val` blocks, cover the
     // changed lines (see buildSbtAffectedProjects), widening to all only when a changed line cannot
-    // be pinned to a project. Otherwise, run only affected modules + their transitive dependents.
+    // be pinned to a project. Otherwise, run the affected modules plus every module whose classpath
+    // the change reaches: a main change reaches all transitive dependents, a test-only change only
+    // the dependents that put the changed module's test classes on their classpath (`test->test`).
 
     /** The modules a diff selects, before the per-pass platform and Scala filters, or None when the
       * change is global and every module must run.
@@ -310,9 +312,6 @@ object TestKyo {
             return None
         }
 
-        val allNames = allRefs.map(_.project).toSet
-        val bd       = extracted.get(buildDependencies)
-
         // A build.sbt change maps to the projects whose settings changed; None means a changed
         // line could not be attributed to specific projects, so fall back to running all modules.
         val buildSbtProjects: Set[String] =
@@ -322,9 +321,9 @@ object TestKyo {
                 case None        => return None
             }
 
-        val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
+        val directlyChanged = changedNodes(changedFiles, extracted, allRefs) ++ buildSbtProjects.map(Node(_, isTest = false))
         val filtered        = a.platform match {
-            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
+            case Some(p) => directlyChanged.filter(n => matchesPlatform(n.project, p))
             case None    => directlyChanged
         }
 
@@ -333,14 +332,103 @@ object TestKyo {
             return Some(Set.empty)
         }
 
-        log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
-        val dependentMap = transitiveDependents(allRefs, bd)
-        Some(filtered.flatMap { name =>
-            allRefs.find(_.project == name) match {
-                case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
-                case None      => Set(name)
+        // A project changed in both configurations is a main change; its test side adds nothing.
+        val mainChanged = filtered.filterNot(_.isTest).map(_.project)
+        val described   = filtered.filter(n => !n.isTest || !mainChanged.contains(n.project)).toSeq.sortBy(_.project)
+        log(s"directly changed: ${described.map(n => if (n.isTest) s"${n.project} (test only)" else n.project).mkString(", ")}")
+        Some(propagate(filtered, extracted.get(buildDependencies)).map(_.project))
+    }
+
+    /** Directories outside a project's source and resource directories whose files feed its main
+      * artifact, such as a resource generator's input. A diff attributes a change under one to the
+      * project's main configuration, so it reaches the project's dependents even when the files are
+      * some other project's test sources.
+      */
+    val mainInputs: SettingKey[Seq[File]] = SettingKey[Seq[File]](
+        "testKyoMainInputs",
+        "Directories outside the source and resource directories whose files feed the project's main artifact"
+    )
+
+    /** A project's main or test configuration: the unit a change is attributed to and propagates from. */
+    final private case class Node(project: String, isTest: Boolean)
+
+    /** The configurations each changed file belongs to. A file is owned by every project whose
+      * unmanaged source or resource directory (or `mainInputs` directory) contains it, which is what
+      * sbt compiles from, so a directory several projects share attributes to all of them. A file no
+      * such directory contains (a README, generator input data, scripted fixtures) falls back to the
+      * module-directory heuristic, as a test change when it sits under `src/test`.
+      */
+    private def changedNodes(files: Seq[String], extracted: Extracted, allRefs: Seq[ProjectRef]): Set[Node] = {
+        val structure = extracted.structure
+        val root      = new File(extracted.currentRef.build).getCanonicalFile
+        val allNames  = allRefs.map(_.project).toSet
+
+        def dirs(ref: ProjectRef, config: Configuration): Seq[File] =
+            Seq(unmanagedSourceDirectories, unmanagedResourceDirectories)
+                .flatMap(key => (ref / config / key).get(structure.data).getOrElse(Nil))
+
+        val owners: Seq[(java.nio.file.Path, Node)] =
+            allRefs.filterNot(ref => aggregateProjects.contains(ref.project)).flatMap { ref =>
+                val main = dirs(ref, Compile) ++ (ref / mainInputs).get(structure.data).getOrElse(Nil)
+                val test = dirs(ref, Test)
+                main.map(_.getCanonicalFile.toPath -> Node(ref.project, isTest = false)) ++
+                    test.map(_.getCanonicalFile.toPath -> Node(ref.project, isTest = true))
             }
-        })
+
+        files.flatMap { f =>
+            val path  = new File(root, f).getCanonicalFile.toPath
+            val owned = owners.collect { case (dir, node) if path.startsWith(dir) => node }
+            if (owned.nonEmpty) owned
+            else {
+                val isTest = f.split("/").sliding(2).exists(_.sameElements(Array("src", "test")))
+                fileToProjects(f, allNames).map(Node(_, isTest))
+            }
+        }.toSet
+    }
+
+    /** The (dependent, dependency) configuration pairs of a classpath dependency's mapping, as
+      * isTest flags. No mapping is `compile->compile` and a bare `x` is `x->compile`. Every
+      * configuration but `test` counts as main, except a `*` target, which counts as test: a test
+      * target is the one that also receives test changes, so it never under-propagates.
+      */
+    private def configPairs(configuration: Option[String]): Seq[(Boolean, Boolean)] =
+        configuration.getOrElse("compile").split(";").toSeq.map(_.trim).filter(_.nonEmpty).flatMap { mapping =>
+            val (from, to) = mapping.split("->", 2) match {
+                case Array(f, t) => (f, t)
+                case Array(f)    => (f, "compile")
+            }
+            for {
+                f <- from.split(",").toSeq.map(_.trim)
+                t <- to.split(",").toSeq.map(_.trim)
+            } yield (f == "test", t == "test" || t == "*")
+        }
+
+    /** Every configuration a change reaches through the build's classpath dependencies. A main change
+      * reaches each dependent through every mapping, because a project's test configuration extends
+      * its main one; a test change reaches only the mappings whose target is `test`.
+      */
+    private def propagate(changed: Set[Node], bd: BuildDependencies): Set[Node] = {
+        val dependents: Map[String, Seq[(String, Boolean, Boolean)]] =
+            bd.classpath.toSeq.flatMap { case (project, deps) =>
+                deps.flatMap { dep =>
+                    configPairs(dep.configuration).map { case (fromTest, toTest) =>
+                        dep.project.project -> ((project.project, fromTest, toTest))
+                    }
+                }
+            }.groupBy(_._1).map { case (dependency, edges) => dependency -> edges.map(_._2) }
+
+        val reached = scala.collection.mutable.Set.empty[Node] ++= changed
+        val pending = scala.collection.mutable.Queue.empty[Node] ++= changed
+        while (pending.nonEmpty) {
+            val node = pending.dequeue()
+            dependents.getOrElse(node.project, Nil).foreach { case (dependent, fromTest, toTest) =>
+                if (!node.isTest || toTest) {
+                    val next = Node(dependent, fromTest)
+                    if (reached.add(next)) pending.enqueue(next)
+                }
+            }
+        }
+        reached.toSet
     }
 
     /** Submit every pass as one `;`-chained command string: switch, tasks, completion marker, and
@@ -655,27 +743,6 @@ object TestKyo {
             }
         }
         Some(names.toSet)
-    }
-
-    private def transitiveDependents(
-        allRefs: Seq[ProjectRef],
-        bd: BuildDependencies
-    ): Map[ProjectRef, Set[ProjectRef]] = {
-        val directDependents = scala.collection.mutable.Map[ProjectRef, Set[ProjectRef]]()
-        for {
-            (project, deps) <- bd.classpath
-            dep             <- deps
-        } {
-            directDependents(dep.project) =
-                directDependents.getOrElse(dep.project, Set.empty) + project
-        }
-
-        def closure(ref: ProjectRef, visited: Set[ProjectRef]): Set[ProjectRef] = {
-            val direct = directDependents.getOrElse(ref, Set.empty) -- visited
-            direct ++ direct.flatMap(d => closure(d, visited + d))
-        }
-
-        allRefs.map(ref => ref -> closure(ref, Set(ref))).toMap
     }
 
     /** Resolve shorthand scala versions: "2" to the Scala 2 version in crossScalaVersions, "3" to the

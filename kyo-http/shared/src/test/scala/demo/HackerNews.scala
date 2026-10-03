@@ -4,7 +4,7 @@ import kyo.*
 
 /** Hacker News API proxy.
   *
-  * Fetches stories from the official HN API and the Algolia HN Search API. Demonstrates baseUrl config, parallel fetching of individual
+  * Fetches stories from the official HN API and the Algolia HN Search API. Demonstrates timeout config, parallel fetching of individual
   * story details, and typed routes with query params.
   */
 object HackerNews extends KyoApp:
@@ -59,9 +59,9 @@ object HackerNews extends KyoApp:
         }
 
     def searchStories(query: String, limit: Int): Seq[SearchStory] < (Async & Abort[HttpException]) =
-        val url = s"https://hn.algolia.com/api/v1/search?query=${java.net.URLEncoder.encode(query, "UTF-8")}&hitsPerPage=$limit"
+        val params = Seq("query" -> query, "hitsPerPage" -> limit.toString)
         HttpClient.withConfig(_.timeout(10.seconds)) {
-            HttpClient.getJson[AlgoliaResponse](url).map { resp =>
+            HttpClient.getJson[AlgoliaResponse]("https://hn.algolia.com/api/v1/search", query = params).map { resp =>
                 resp.hits.map { hit =>
                     SearchStory(
                         hit.objectID,

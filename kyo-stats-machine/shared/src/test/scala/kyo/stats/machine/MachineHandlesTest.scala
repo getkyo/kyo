@@ -42,7 +42,8 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
 
         "clamps a decreasing raw delta to a non-negative observation" in {
             val boundaries = MachineHandles.nanosPerSecFor(8L)
-            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-clamp"), "rate", "d", boundaries)
+            val cell       =
+                MachineHandlesOwners.retain(new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-clamp"), "rate", "d", boundaries))
             cell.observe(100000000000L) // tick 1: baseline, no observation
             cell.observe(50000000000L)  // tick 2: cur < prior, delta clamps to 0
             cell.observe(80000000000L)  // tick 3: delta 30e9
@@ -57,7 +58,12 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
 
         "carries the cumulative total in its running sum so the removed `.total` Counter loses no signal" in {
             val boundaries = MachineHandles.nanosPerSecFor(8L)
-            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-runningsum"), "rate", "d", boundaries)
+            val cell       = MachineHandlesOwners.retain(new MachineHandles.RateCell(
+                Stat.initScope("mhtest-ratecell-runningsum"),
+                "rate",
+                "d",
+                boundaries
+            ))
             cell.observe(1000000000L) // baseline
             cell.observe(3000000000L) // delta 2e9
             cell.observe(4000000000L) // delta 1e9
@@ -67,7 +73,8 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
 
         "is retained as a live val so state persists across a forced GC (val->def would reset it)" in {
             val boundaries = MachineHandles.nanosPerSecFor(8L)
-            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-gc"), "rate", "d", boundaries)
+            val cell       =
+                MachineHandlesOwners.retain(new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-gc"), "rate", "d", boundaries))
             cell.observe(1000000000L) // baseline
             java.lang.System.gc()
             cell.observe(2000000000L) // delta 1e9, only meaningful if the prior AtomicLong survived the GC
@@ -80,7 +87,7 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "CounterCell" - {
 
         "advances by its own clamped delta and records into no Histogram" in {
-            val cell = new MachineHandles.CounterCell(Stat.initScope("mhtest-countercell"), "periods", "d")
+            val cell = MachineHandlesOwners.retain(new MachineHandles.CounterCell(Stat.initScope("mhtest-countercell"), "periods", "d"))
             cell.observe(100L) // baseline, advances 0
             cell.observe(150L) // advances 50
             cell.observe(120L) // reset, clamps to 0
@@ -93,7 +100,8 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "config LongGaugeCell" - {
 
         "is a plain Gauge in the gauges store, and a decreasing config reports the raw lower value not a wraparound" in {
-            val cell = new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-configgauge"), "memory.limit", "d")
+            val cell =
+                MachineHandlesOwners.retain(new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-configgauge"), "memory.limit", "d"))
             cell.set(1073741824L)
             val registeredAsGauge        = gaugeRegistered("mhtest-configgauge", "memory.limit")
             val registeredAsCounterGauge = counterGaugeRegistered("mhtest-configgauge", "memory.limit")
@@ -108,7 +116,7 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "DoubleGaugeCell" - {
 
         "a NaN observation registers nothing; a real value round-trips through the bit-packed AtomicLong holder" in {
-            val cell = new MachineHandles.DoubleGaugeCell(Stat.initScope("mhtest-doublegauge"), "one", "d")
+            val cell = MachineHandlesOwners.retain(new MachineHandles.DoubleGaugeCell(Stat.initScope("mhtest-doublegauge"), "one", "d"))
             cell.set(Double.NaN)
             val afterNaN = gaugeRegistered("mhtest-doublegauge", "one")
             cell.set(1.5)
@@ -123,7 +131,8 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "lazy-on-first-Present registration" - {
 
         "a host-absent metric registers no handle and a seeded gauge's first poll is the real value not a transient 0" in {
-            val cell      = new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-lazy-present"), "cpu.period", "d")
+            val cell =
+                MachineHandlesOwners.retain(new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-lazy-present"), "cpu.period", "d"))
             val beforeAny = gaugeRegistered("mhtest-lazy-present", "cpu.period")
             cell.set(Path.ReadHandle.AbsentLong) // a tick where the host produced nothing
             val afterAbsentTick = gaugeRegistered("mhtest-lazy-present", "cpu.period")
@@ -141,7 +150,7 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
 
         "builds exactly five `One` and never a cpu.full cell" in {
             val nanosPerSec = MachineHandles.nanosPerSecFor(8L)
-            val psi         = PsiHandles(Stat.initScope("mhtest-psi-five"), nanosPerSec)
+            val psi         = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("mhtest-psi-five"), nanosPerSec))
             psi.cpuSome.rate.observe(1000000000L)
             assert(psi.cpuSome ne null)
             assert(psi.memorySome ne null)
@@ -155,7 +164,7 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "metric taxonomy" - {
 
         "each reclassified metric maps to its concrete new cell type, asserted per name" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 assert(handles.cpuCores.isInstanceOf[MachineHandles.LongGaugeCell])
                 assert(handles.memTotal.isInstanceOf[MachineHandles.LongGaugeCell])
@@ -201,7 +210,7 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
         }
 
         "cpuCores is seeded and registered at init because the core count is available on every OS" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 assert(gaugeRegistered("machine", "cpu", "cores"))
                 assert(gaugePath("machine", "cpu", "cores") > 0.0)

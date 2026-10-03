@@ -48,13 +48,14 @@ private[kyo] object MachineStatFactory:
     /** Starts the sampler at most once across all factory constructions (CAS-gated), unless opted out. The
       * sampler runs in a detached fiber (`Fiber.initUnscoped`) so it outlives the triggering call's own
       * scope; the tick loop inside `MachineSampler.run` keeps that fiber's own scope open until interrupt.
-      * Returns true iff this call won the CAS and started the sampler, so a test can distinguish a start
-      * from an opt-out suppression from a CAS-lost one.
+      * Answers the sampler fiber iff this call won the CAS and started it, so a test can distinguish a start
+      * from an opt-out suppression from a CAS-lost one, and can stop the fiber it started. The sampler is a
+      * process-lifetime singleton, so the factory discards it and nothing in production holds a way to stop it.
       *
       * `disabled` defaults to the `kyo.machine.disabled` flag and is a parameter so a test can drive both
       * arms without a process-wide property; a `StaticFlag` resolves once at class load and cannot be staged.
       */
-    def triggerStart(disabled: Boolean = kyo.machine.disabled())(using AllowUnsafe): Boolean =
+    def triggerStart(disabled: Boolean = kyo.machine.disabled())(using AllowUnsafe): Maybe[Fiber.Unsafe[Unit, Any]] =
         if !disabled && started.compareAndSet(false, true) then
             given Frame = Frame.internal
             val fiber   = Sync.Unsafe.evalOrThrow {
@@ -64,25 +65,8 @@ private[kyo] object MachineStatFactory:
                     }
                 }
             }
-            startedFiber.set(Present(fiber.unsafe))
-            true
-        else false
-
-    /** The last-started sampler fiber, for the test seam below. Production never reads this (the sampler is
-      * a process-lifetime singleton), but a test that stages a start must be able to stop it rather than
-      * leak a forever-running detached fiber holding /proc read handles.
-      */
-    private val startedFiber: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]] =
-        AtomicRef.Unsafe.init(Absent)
-
-    /** Test-only seam: interrupts the last-started sampler fiber (if any) and clears the CAS, so a test that
-      * stages a `triggerStart` leaves no live sampler loop behind. Never called by production code.
-      */
-    private[machine] def stopForTest()(using AllowUnsafe): Unit =
-        given Frame = Frame.internal
-        startedFiber.getAndSet(Absent).foreach(f => discard(f.interrupt()))
-        started.set(false)
-    end stopForTest
+            Present(fiber.unsafe)
+        else Absent
 
     /** Test-only seam: whether the one-shot start CAS has already fired. */
     private[machine] def hasStarted(using AllowUnsafe): Boolean = started.get()

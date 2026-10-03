@@ -1,5 +1,6 @@
 package kyo.test.runner.internal
 
+import kyo.discard
 import kyo.test.RunConfig
 import kyo.test.TestReport
 import kyo.test.TestResult
@@ -28,6 +29,7 @@ final private[internal] class SbtTask(
     baseOverlay: RunConfig => RunConfig,
     testClassLoader: ClassLoader,
     results: java.util.concurrent.ConcurrentLinkedQueue[TestReport],
+    completed: java.util.Set[String],
     forked: Boolean
 ) extends Task:
 
@@ -42,6 +44,7 @@ final private[internal] class SbtTask(
         if forked then LeakCheck.registerCarrierThread()
         val report = runSuite()
         results.add(report)
+        discard(completed.add(taskDef.fullyQualifiedName()))
         emitEvents(report, eventHandler)
         Array.empty[Task]
     end execute
