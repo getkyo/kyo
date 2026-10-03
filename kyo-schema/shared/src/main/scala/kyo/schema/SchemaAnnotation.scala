@@ -97,6 +97,21 @@ final class rename(val wireName: String) extends SchemaAnnotation
   */
 final class alias(val names: String*) extends SchemaAnnotation
 
+/** Tags a sealed-trait variant with an integer instead of a name.
+  *
+  * For wire formats that tag their variants by number, such as `{"type": 2, ...}`. Where the representation writes a tag
+  * (`@discriminator`, `@adjacent`, `tupleTagged`, `tupleFlat`, `@tagOnly`), the tag is written as this integer and decode reads an
+  * integer there; a string tag is a `TypeMismatchException` and an unlisted number an `UnknownVariantException`. A catch-all variant
+  * takes the number in an `Int` or `Long` field, so an unknown number is kept with its input. Once one variant has a number, every
+  * variant except the catch-all needs one, the numbers must be distinct, and no variant may carry `@rename` or `@alias`; each of
+  * these is a compile error. The `variantNumbers` builder sets the same numbers.
+  *
+  * Placement: sealed-trait variants only.
+  *
+  * @param number the variant's tag on the wire
+  */
+final class tagNumber(val number: Int) extends SchemaAnnotation
+
 /** Selects internally-tagged (discriminated) sum representation.
   *
   * Places a discriminator field with the given key inside each variant's JSON object.
@@ -115,7 +130,8 @@ final class discriminator(val tagKey: String) extends SchemaAnnotation
   *
   * Encodes each variant as a two-field object: `tagKey` carries the variant wire name
   * and `contentKey` carries the variant payload. Decode reads `tagKey` first to identify
-  * the variant, then reconstructs from `contentKey`. Supports non-object payloads.
+  * the variant, then reconstructs from `contentKey`. Supports non-object payloads. A payload
+  * that encodes to an empty object writes no `contentKey`, and a missing content reads as one.
   *
   * Placement: sealed traits only. Placing this annotation on a case class is a compile
   * error ("sum-representation annotation").
@@ -136,6 +152,44 @@ final class adjacent(val tagKey: String, val contentKey: String) extends SchemaA
   * error ("sum-representation annotation").
   */
 final class untagged() extends SchemaAnnotation
+
+/** Selects the tag-only sum representation: each variant is written as its wire name alone, a string.
+  *
+  * For a sum whose variants carry no data, such as an enum of plain values, where the default wrapper
+  * object would write `{"Red":{}}` for what is only a name. The wire name comes from the variant-naming
+  * layer (`@rename` on the case, `variantNames`, `renameAllVariants`), and `@alias` names are accepted on
+  * decode. A string naming no variant fails with `UnknownVariantException`; a value that is not a string
+  * fails with `TypeMismatchException`. Requires a codec that can write a bare string where the sum sits
+  * (JSON, YAML, Ion, MsgPack); Protobuf fails with `RepresentationUnsupportedException`.
+  *
+  * Placement: sealed traits and enums only, whose every variant is a case object, an enum value without
+  * parameters, or a case class without fields. A variant with fields is a compile error naming it.
+  */
+final class tagOnly() extends SchemaAnnotation
+
+/** Marks the variant a sum decodes input into when no other variant matches it.
+  *
+  * For a sum read from a source that adds variants over time, such as a webhook or an event stream,
+  * where an unknown variant should be kept rather than fail the whole decode. The variant has one or
+  * two fields: a `String` field receives the tag where the representation has one, and the other field
+  * receives the unmatched input, read through that field's own schema (`Structure.Value` holds any
+  * value). Per representation: under a discriminator, the tag and the whole object; adjacent, the tag
+  * and the content; the wrapper object, its key and value; untagged, the whole value (a one-field
+  * variant); tag-only, the unknown name (a one-`String`-field variant). Encode writes what was read.
+  * Positional representations (`tupleTagged`, `tupleFlat`) reject it, and decoding it needs a
+  * self-describing codec.
+  *
+  * With `onFailure = true` the catch-all also receives input whose tag names a known variant that then
+  * fails to decode (a missing field, a value of another type), with the same tag and input an unknown
+  * tag would give it, so a source that changes a known variant's shape does not fail the whole decode.
+  * The variant's failure is not kept: decoding the held input as that variant reproduces it. Input
+  * whose tag is missing or of the wrong kind still fails, and so does input the catch-all's own fields
+  * reject, with the known variant's failure. Off by default, so a malformed known variant fails.
+  *
+  * Placement: one case-class variant of a sealed trait. Another shape, a second annotated variant, or an
+  * `onFailure` that is not a literal is a compile error.
+  */
+final class catchAll(val onFailure: Boolean = false) extends SchemaAnnotation
 
 /** Drops a field from the wire on encode, reconstructing it from its Scala default on decode.
   *
@@ -281,6 +335,25 @@ object Transformer:
       */
     trait ReadOnly[A] extends Transformer[A]:
         def read(reader: kyo.Codec.Reader): A
+
+    /** A `Full` transformer that reads and writes through `schema`.
+      *
+      * The way to give a field a codec that can reject: build the schema with `transformVia`, whose rejection is a
+      * `ConstructorRejectedException` carrying the field's path, rather than throwing from a hand-written `read`.
+      *
+      * {{{
+      * object DecimalText extends Transformer.Of[Int](
+      *     Schema[String].transformVia((s: String) => s.toIntOption.toRight(s"not a number: $s"))(_.toString)
+      * )
+      * case class Row(@transform(DecimalText) n: Int) derives Schema
+      * }}}
+      *
+      * @tparam A the field type this transformer applies to
+      */
+    class Of[A](schema: kyo.Schema[A]) extends Full[A]:
+        def write(value: A, writer: kyo.Codec.Writer): Unit = schema.serializeWrite(value, writer)
+        def read(reader: kyo.Codec.Reader): A               = schema.serializeRead(reader)
+    end Of
 end Transformer
 
 /** Namespace for Protobuf-specific schema annotations.

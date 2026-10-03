@@ -30,8 +30,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
     private def envelopeSchema(emitVersion: Boolean, handleExtras: Boolean): Schema[JsonRpcEnvelope] =
         new Schema[JsonRpcEnvelope](Seq.empty):
 
-            override private[kyo] def toStructureValue(env: JsonRpcEnvelope): Structure.Value =
-                given Frame = Frame.internal
+            override private[kyo] def toStructureValue(env: JsonRpcEnvelope)(using Frame): Structure.Value =
                 env match
                     case JsonRpcRequest(id, method, params, extras) =>
                         val base = versionPrefix ++ Chunk("id" -> Structure.encode(id), "method" -> Structure.Value.Str(method))
@@ -54,11 +53,10 @@ private[kyo] object JsonRpcEnvelopeSchema:
                 Result.catching[DecodeException](decodeEnvelope(sv))
 
             @publicInBinary private[kyo] def serializeWrite(env: JsonRpcEnvelope, writer: Writer): Unit =
-                Schema.writeStructureValue(writer, toStructureValue(env))
+                Schema.writeStructureValue(writer, toStructureValue(env)(using writer.frame))
 
             @publicInBinary private[kyo] def serializeRead(reader: Reader): JsonRpcEnvelope =
-                // Binary path: the Schema.serializeRead contract carries no Frame, so synthesize one here.
-                decodeEnvelope(summon[Schema[Structure.Value]].serializeRead(reader))(using Frame.internal)
+                decodeEnvelope(summon[Schema[Structure.Value]].serializeRead(reader))(using reader.frame)
 
             @publicInBinary private[kyo] def getter(value: JsonRpcEnvelope): Maybe[Any]                 = Maybe(value)
             @publicInBinary private[kyo] def setter(value: JsonRpcEnvelope, next: Any): JsonRpcEnvelope =
@@ -96,7 +94,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
             private def withExtras(
                 base: Chunk[(String, Structure.Value)],
                 extras: Maybe[Structure.Value]
-            ): Structure.Value =
+            )(using Frame): Structure.Value =
                 if !handleExtras then Structure.Value.Record(base)
                 else
                     extras match
@@ -108,7 +106,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
                                     throw JsonRpcInvalidRequestError(
                                         Structure.Value.Str(s"extras key '$key' is reserved"),
                                         Chunk.empty
-                                    )(using Frame.internal)
+                                    )
                                 case None =>
                                     Structure.Value.Record(base ++ extraFields)
                         case Present(Structure.Value.MapEntries(entries)) if entries.forall {
@@ -125,7 +123,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
                                     throw JsonRpcInvalidRequestError(
                                         Structure.Value.Str(s"extras key '$key' is reserved"),
                                         Chunk.empty
-                                    )(using Frame.internal)
+                                    )
                                 case None =>
                                     Structure.Value.Record(base ++ extraFields)
                             end match
@@ -133,7 +131,7 @@ private[kyo] object JsonRpcEnvelopeSchema:
                             throw JsonRpcInvalidRequestError(
                                 Structure.Value.Str("extras must be a Record, string-keyed map, or Null"),
                                 Chunk.empty
-                            )(using Frame.internal)
+                            )
                         case Present(other) =>
                             Structure.Value.Record(base :+ ("_extras" -> other))
 

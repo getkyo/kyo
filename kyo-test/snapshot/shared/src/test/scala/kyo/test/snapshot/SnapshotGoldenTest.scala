@@ -76,7 +76,7 @@ class SnapshotGoldenTest extends AsyncFreeSpec with NonImplicitAssertions:
       */
     private def panickingYamlCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer                                   = Yaml().newWriter()
+            def newWriter()(using kyo.Frame): Codec.Writer                  = Yaml().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw GoldenDecodePanic("golden decode panic")
 

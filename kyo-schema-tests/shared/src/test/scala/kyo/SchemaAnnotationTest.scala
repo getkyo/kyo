@@ -44,6 +44,9 @@ case class SA15Prod(@rename("first_name") firstName: String) derives Schema
 // SA15b: @rename on a Maybe field, whose schema is built from a tag for an opaque type
 case class SA15bProd(@rename("middle_name") middleName: Maybe[String]) derives Schema
 
+// SA15c: @rename to the field's own name
+case class SA15cProd(@rename("name") name: String, n: Int) derives Schema, CanEqual
+
 // SA16: @discriminator on sealed trait, @rename on a variant
 @discriminator("type") sealed trait SA16Sum derives Schema
 @rename("para") case class SA16V1(x: Int) extends SA16Sum derives Schema
@@ -71,7 +74,6 @@ case class SA20B(y: String) extends SA20Sum derives Schema
 @doc("a documented product") case class SA21Prod(@doc("identifier field") id: Int) derives Schema
 
 // SA22: @alias on a field combined with @rename
-// Field Scala name is "fieldName" (not "name") to avoid resolveTarget self-loop when source==wire.
 case class SA22Prod(@rename("name") @alias("fullName", "n") fieldName: String) derives Schema
 
 // SA23: @alias on a variant (routes onto variantAliases, not fieldAliases)
@@ -90,6 +92,21 @@ case class SA26Prod(@omit(schema.omit.WhenEmpty) xs: Chunk[Int]) derives Schema
 
 // SA27: @omit(omit.WhenDefault) on an Int field with a Scala default
 case class SA27Prod(@omit(schema.omit.WhenDefault) n: Int = 0) derives Schema
+
+// SA27b: @omit(omit.WhenDefault) on fields whose own Schema writes them in another shape than their structure: a @tagOnly case
+// object and a product with a renamed field
+@tagOnly() sealed trait SA27bMode derives CanEqual
+object SA27bMode:
+    @rename("draft") case object Draft         extends SA27bMode
+    @rename("published") case object Published extends SA27bMode
+    given Schema[SA27bMode] = Schema.derived[SA27bMode]
+end SA27bMode
+case class SA27bBox(@rename("w") v: Int) derives Schema, CanEqual
+case class SA27bProd(
+    x: Int,
+    @omit(schema.omit.WhenDefault) mode: SA27bMode = SA27bMode.Published,
+    @omit(schema.omit.WhenDefault) box: SA27bBox = SA27bBox(1)
+) derives Schema, CanEqual
 
 // SA28: @omit composes with @rename
 case class SA28Prod(@rename("a_field") @omit(schema.omit.WhenNone) a: Maybe[Int]) derives Schema
@@ -134,8 +151,8 @@ case class SA34V1(v: Int)    extends SA34Sum derives Schema
 case class SA34V2(w: String) extends SA34Sum derives Schema
 
 // SA35: @alias colliding with another field's wire name.
-// No `derives Schema` here; schema construction fires inside the test body so the
-// FieldNameCollisionException propagates directly rather than via ExceptionInInitializerError.
+// No `derives Schema` here: a type deriving a colliding schema would make every summon of it carry the collision, so the test body
+// derives it and asserts the failure at its first encode and decode.
 case class SA35Prod(@alias("id") a: Int, @rename("id") b: Int)
 
 // SA36: variant alias collision (two variants register the same alias).
@@ -172,8 +189,7 @@ final class marked(val tag: String = "x") extends SchemaAnnotation
 case class SA46Prod(@marked() h: Int) derives Schema
 
 // SA47: @alias on a variant colliding with another variant's primary tag.
-// No `derives Schema` here; schema construction is deferred to the test body via
-// Schema.derived[SA47Sum] inside interceptThrown (same pattern as SA35/SA36).
+// No `derives Schema` here; same reason as SA35.
 @discriminator("t") sealed trait SA47Sum
 case class SA47Circle(r: Int)                      extends SA47Sum
 @alias("SA47Circle") case class SA47Square(s: Int) extends SA47Sum
@@ -372,6 +388,14 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         )
     }
 
+    "@rename to the field's own name keeps the wire key, on every surface that resolves a rename" in {
+        assert(Json.encode(SA15cProd("ada", 1)) == """{"name":"ada","n":1}""")
+        assert(Json.decode[SA15cProd]("""{"name":"ada","n":1}""") == Result.succeed(SA15cProd("ada", 1)))
+        assert(Schema[SA15cProd].toStructureValue(SA15cProd("ada", 1)) ==
+            Structure.Value.Record(Chunk("name" -> Structure.Value.Str("ada"), "n" -> Structure.Value.Integer(1))))
+        assert(Schema[SA15cProd].fieldIdNameOverrides.keySet == Set("name"))
+    }
+
     "@rename on a variant changes the wire tag" in {
         val enc = Json.encode[SA16Sum](SA16V1(1))
         assert(enc == """{"type":"para","x":1}""", s"renamed variant tag must be 'para': $enc")
@@ -504,6 +528,12 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         )
     }
 
+    "@omit(Omit.WhenDefault) compares the value as its own Schema writes it, a @tagOnly case object and a renamed product included" in {
+        assert(Json.encode(SA27bProd(1)) == """{"x":1}""")
+        assert(Json.encode(SA27bProd(1, SA27bMode.Draft, SA27bBox(2))) == """{"x":1,"mode":"draft","box":{"w":2}}""")
+        assert(Json.decode[SA27bProd]("""{"x":1}""") == Result.succeed(SA27bProd(1)))
+    }
+
     "@omit composes with @rename" in {
         val encPresent = Json.encode(SA28Prod(Maybe(5)))
         assert(encPresent == """{"a_field":5}""", s"present renamed+omit field must emit renamed key: $encPresent")
@@ -573,31 +603,37 @@ class SchemaAnnotationTest extends kyo.test.Test[Any]:
         assert(dec2 == Result.succeed(SA34V2("hello"): SA34Sum), s"SA34V2 decode: $dec2")
     }
 
-    "a field alias colliding with another field's wire name raises FieldNameCollisionException at schema construction" in {
-        // @alias("id") on field a and @rename("id") on field b: alias "id" duplicates b's
-        // renamed primary wire name "id". Schema.init runs checkFieldAliases and throws
-        // FieldNameCollisionException before returning the schema object.
-        interceptThrown[FieldNameCollisionException] {
-            Schema.derived[SA35Prod]
-        }
+    "a field alias colliding with another field's wire name raises FieldNameCollisionException at the first encode or decode" in {
+        // @alias("id") on field a and @rename("id") on field b: alias "id" duplicates b's renamed primary wire name "id".
+        val schema = Schema.derived[SA35Prod]
+        val thrown = intercept[FieldNameCollisionException](schema.encodeString[Json](SA35Prod(1, 2)))
+        assert(thrown.wireName == "id")
+        assert(thrown.getMessage.contains("@alias"))
+        schema.decodeString[Json]("""{"a":1,"id":2}""") match
+            case Result.Panic(e: FieldNameCollisionException) => assert(e.wireName == "id")
+            case other                                        => fail(s"expected FieldNameCollisionException, got $other")
     }
 
-    "a variant alias collision raises VariantNameCollisionException at schema construction" in {
-        // Both SA36V1 and SA36V2 register alias "X". Schema.init runs checkVariantAliases
-        // and detects that alias "X" maps to two distinct variant wire names, throwing
-        // VariantNameCollisionException before returning the schema object.
-        interceptThrown[VariantNameCollisionException] {
-            Schema.derived[SA36Sum]
-        }
+    "a variant alias collision raises VariantNameCollisionException at the first encode or decode" in {
+        // Both SA36V1 and SA36V2 register alias "X", which maps to two distinct variant wire names.
+        val schema = Schema.derived[SA36Sum]
+        val thrown = intercept[VariantNameCollisionException](schema.encodeString[Json](SA36V1(1)))
+        assert(thrown.wireName == "X")
+        assert(thrown.getMessage.contains("@alias"))
+        schema.decodeString[Json]("""{"type":"X","v":1}""") match
+            case Result.Panic(e: VariantNameCollisionException) => assert(e.wireName == "X")
+            case other                                          => fail(s"expected VariantNameCollisionException, got $other")
     }
 
     "a variant @alias colliding with another variant's primary tag raises VariantNameCollisionException" in {
-        // SA47Square registers alias "SA47Circle" which equals SA47Circle's primary wire name.
-        // Schema.init uses the compile-time-baked effective-primaries set, catching this
-        // alias-vs-primary collision at construction rather than silently producing a dead alias.
-        interceptThrown[VariantNameCollisionException] {
-            Schema.derived[SA47Sum]
-        }
+        // SA47Square registers alias "SA47Circle" which equals SA47Circle's primary wire name: a collision at the first encode or
+        // decode, never a silently dead alias.
+        val schema = Schema.derived[SA47Sum]
+        val thrown = intercept[VariantNameCollisionException](schema.encodeString[Json](SA47Circle(1)))
+        assert(thrown.wireName == "SA47Circle")
+        schema.decodeString[Json]("""{"t":"SA47Circle","r":1}""") match
+            case Result.Panic(e: VariantNameCollisionException) => assert(e.wireName == "SA47Circle")
+            case other                                          => fail(s"expected VariantNameCollisionException, got $other")
     }
 
     "an unannotated field is never omitted, renamed, or dropped" in {

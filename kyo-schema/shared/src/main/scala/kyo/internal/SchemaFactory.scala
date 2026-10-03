@@ -22,11 +22,11 @@ private[kyo] object SchemaFactory:
     @nowarn("msg=anonymous")
     def createFrom[A, F2](
         source: Schema[A],
-        checks: Seq[A => Seq[ValidationFailedException]],
+        checks: Seq[(A, Frame) => Seq[ValidationFailedException]],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty,
-        flattenedReadFields: Chunk[(String, String)] = Chunk.empty
+        flattenedFields: Chunk[FlattenedField] = Chunk.empty
     ): Schema[A] { type Focused = F2 } =
         // Compute updated field metadata:
         // - drop removes all path-keyed entries whose first segment is the dropped field
@@ -86,12 +86,14 @@ private[kyo] object SchemaFactory:
             omitNoneAll = source.omitNoneAll,
             omitEmptyCollectionsAll = source.omitEmptyCollectionsAll,
             unionAmbiguityPolicy = source.unionAmbiguityPolicy,
-            variantDecoders = source.variantDecoders,
+            variantSchemas = source.variantSchemas,
             denyUnknownFieldsEnabled = source.denyUnknownFieldsEnabled,
             fieldDefaults = source.fieldDefaults,
             fieldTransforms = source.fieldTransforms,
             fieldMaterializedDefaults = source.fieldMaterializedDefaults,
-            flattenedReadFields0 = (source.flattenedReadFields ++ flattenedReadFields).distinct
+            flattenedFields0 = source.flattenedFields ++ flattenedFields,
+            catchAll0 = source.catchAll,
+            builderProblem0 = source.configurationProblem
         )
     end createFrom
 
