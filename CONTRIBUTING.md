@@ -103,7 +103,7 @@ The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup 
 
 #### The sbt Heap
 
-The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
+The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `docs`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
 
 A bare `sbt` carries no heap flag, so the JVM picks a quarter of physical memory. For the heap CI uses, start sbt through `scripts/sbt.sh` with a role; for any other heap, add `-J-Xmx`, which the launcher places after the role's:
 

@@ -174,9 +174,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            scripts/sbt.sh compile "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
+            scripts/sbt.sh docs "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
           else
-            scripts/sbt.sh compile doctest
+            scripts/sbt.sh docs doctest
           fi
 
       # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
@@ -204,9 +204,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            scripts/sbt.sh compile "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
+            scripts/sbt.sh docs "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
           else
-            scripts/sbt.sh compile kyoJVM/doc
+            scripts/sbt.sh docs kyoJVM/doc
           fi
 
       # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
