@@ -248,8 +248,12 @@ private[kyo] object WireLayout:
                 if group.size > 1 then reject(BuilderProblem.Failure.FieldCollision(wire, group))
             }
         end if
+        // An alias reaches the schema from an @alias annotation or the alias builder alike, and the schema keeps no record of which.
         if schema.variantNaming.fieldAliases.nonEmpty then
-            Schema.fieldAliasClash(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet).foreach(reject)
+            val call = s"@alias or alias(${schema.variantNaming.fieldAliases.map((a, p) => s"$a -> $p").mkString(", ")})"
+            Schema.fieldAliasClash(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet)
+                .foreach(failure => break(Result.fail(BuilderProblem(call, failure))))
+        end if
 
         val configured =
             schema.renamedFields.map(_._1).filterNot(n => schema.renamedFields.exists(_._2 == n)) ++

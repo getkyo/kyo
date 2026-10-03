@@ -302,9 +302,10 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         typeCheckFailure("Schema[kyo.SVNAccount].alias(_.middleName)(\"mname\")")("not found")
     }
 
-    "renameAllFields collision raises at the builder call" in {
+    "renameAllFields collision raises at the first encode" in {
+        val schema = Schema[SVNClash].renameAllFields(Schema.NameCase.SnakeCase)
         val result = Result.catching[FieldNameCollisionException] {
-            Schema[SVNClash].renameAllFields(Schema.NameCase.SnakeCase)
+            schema.encodeString[Json](SVNClash("x", "y"))
         }
         result match
             case Result.Failure(e) =>
@@ -378,8 +379,9 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         decodeResult match
             case Result.Failure(_: MissingFieldException) => succeed("missing required field reported as typed error")
             case _                                        => fail(s"expected MissingFieldException, got: $decodeResult")
-        val collision = Result.catching[FieldNameCollisionException](Schema[SVNClash].renameAllFields(Schema.NameCase.SnakeCase))
-        assert(collision.isFailure)
+        val collisionSchema = Schema[SVNClash].renameAllFields(Schema.NameCase.SnakeCase)
+        val encodeResult    = Result.catching[FieldNameCollisionException](collisionSchema.encodeString[Json](SVNClash("x", "y")))
+        assert(encodeResult.isFailure)
     }
 
     "alias before renameAllFields collision is order-independent first-encode" in {
