@@ -120,6 +120,11 @@ object KyoDoctestPlugin extends AutoPlugin {
             "Run doctest with a fresh throwaway cache directory."
         )
 
+        /** Rewrite the scala blocks of doctestSources into the build's `.scalafmt.conf` style. Compiles nothing. */
+        val doctestFormat: TaskKey[Unit] = taskKey[Unit](
+            "Rewrite the scala blocks in doctestSources into the build's .scalafmt.conf style, without compiling."
+        )
+
         /** Empty the cache directory. The next doctest run will be fully cold. */
         val doctestClean: TaskKey[Unit] = taskKey[Unit](
             "Empty the doctest cache directory."
@@ -151,8 +156,8 @@ object KyoDoctestPlugin extends AutoPlugin {
             if (refs.isEmpty) {
                 state.log.warn(s"$name: no projects have KyoDoctestPlugin enabled")
                 state
-            } else if (name == "doctestClean") {
-                // doctestClean has no upstream compile dependency, just emit it.
+            } else if (name == "doctestClean" || name == "doctestFormat") {
+                // Neither depends on a compile, so there is no compile phase to schedule first.
                 val cmds = refs.map(r => s"${r.project}/$name").mkString(" ")
                 s"all $cmds" :: state
             } else {
@@ -173,7 +178,8 @@ object KyoDoctestPlugin extends AutoPlugin {
         commands ++= Seq(
             aggregateCommand("doctest"),
             aggregateCommand("doctestFresh"),
-            aggregateCommand("doctestClean")
+            aggregateCommand("doctestClean"),
+            aggregateCommand("doctestFormat")
         ),
         // Cap concurrent doctest task instances across the whole build to 1.
         // Each task forks a JVM that runs a dotty driver; serialising at the
@@ -228,7 +234,14 @@ object KyoDoctestPlugin extends AutoPlugin {
         // compilation) size themselves to that number. Keeps a fork's CPU
         // contribution bounded to ~2 cores regardless of the host's core count.
         doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M", "-XX:ActiveProcessorCount=2"),
-        doctest                := Def.task {
+        // Two projects can name one README, and a rewrite truncates the file before writing it, so a concurrent format could read it
+        // half written. The doctest tag's build-wide limit of 1 serializes the rewrites; each takes milliseconds.
+        doctestFormat := Def.task {
+            val log         = streams.value.log
+            val scalafmtCfg = (LocalRootProject / baseDirectory).value / ".scalafmt.conf"
+            val _           = Formatter.run(doctestSources.value, scalafmtCfg, log)
+        }.tag(DoctestTag).value,
+        doctest := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value
             val baseCp      = (Test / fullClasspath).value.files
@@ -240,11 +253,8 @@ object KyoDoctestPlugin extends AutoPlugin {
             val predef      = doctestPredef.value
             val freshDriver = doctestFreshDriver.value
             val forkOpts    = doctestForkJavaOptions.value
-            val scalafmtCfg = (LocalRootProject / baseDirectory).value / ".scalafmt.conf"
-            // Auto-format the markdown blocks in place before validating, so doc examples stay in the
-            // codebase's scalafmt style without a separate command. No-op when no .scalafmt.conf is
-            // present; blocks that fail to parse (or carry a bare `noformat` fence token) are left as-is.
-            Formatter.run(sources, scalafmtCfg, log)
+            // Formats the blocks in place before validating, so doc examples stay in the codebase's scalafmt style.
+            val _ = doctestFormat.value
             Runner.run(
                 sources = sources,
                 classpath = classpath,

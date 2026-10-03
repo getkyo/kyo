@@ -323,6 +323,8 @@ Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
 // coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
 Global / excludeLintKeys += coverageExcludedFiles
+// checkClassNames reads it per project through a dynamic ScopeFilter, which the lint cannot see.
+Global / excludeLintKeys += ClassNameCheck.classNameGroup
 
 Global / onLoad := {
 
@@ -1056,7 +1058,7 @@ lazy val `kyo-parse` =
 lazy val `kyo-schema` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .dependsOn(`kyo-data`)
         .dependsOn(`kyo-core` % "test->compile")
         .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema"))
@@ -1149,7 +1151,7 @@ lazy val `kyo-schema-tests` =
 lazy val `kyo-schema-protobuf` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-protobuf"))
         .withKyoTest
@@ -1222,9 +1224,7 @@ lazy val `kyo-sql` =
         // only at the JSON tier, for Sql.jsonColumn's Schema-based overload.
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
-        // test->test as well: the leftover-container sweep the SQL suites create their containers through
-        // (`kyo.internal.TestContainers`) lives in kyo-pod's test tree.
-        .dependsOn(`kyo-pod` % "test->test;test->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1310,7 +1310,7 @@ lazy val `kyo-sql-mysql` =
 lazy val `kyo-sql-dolt-api` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql`)
         .in(file("kyo-sql-dolt-api"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1336,9 +1336,9 @@ lazy val `kyo-sql-dolt` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->test;test->compile")
+        .dependsOn(`kyo-sql-dolt-api`)
+        .dependsOn(`kyo-sql-mysql`)
+        .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-dolt"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1361,7 +1361,7 @@ lazy val `kyo-sql-dolt` =
 lazy val `kyo-sql-sqlite-driver` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql`)
         // The conformance answers every engine on this driver shares live in its tests, for both engines' descriptors.
         .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-ffi`)
@@ -1479,11 +1479,6 @@ lazy val `kyo-sql-sqlite` =
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
 
-// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
-// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
-// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
-// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
-// module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
 // Every platform DoltLite is built and bundled for, which is every one the build supports except Windows.
 //
 // `linkFlags` below links the static archive INTO the shim, so the engine travels with it. Upstream
@@ -1619,7 +1614,8 @@ lazy val `kyo-system-doltfs` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-system`)
         .dependsOn(`kyo-system-conformance` % Test)
-        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api`)
+        .dependsOn(`kyo-sql` % "test->test")
         // Test-only, and only one of the two engines: the conformance fixtures need a real engine and the embedded one
         // needs no container. The store speaks portable SQL, so what passes here is what a server runs. Compile scope
         // stays on the shared API, which keeps the filesystem engine-agnostic.
@@ -1678,15 +1674,26 @@ lazy val `kyo-system-doltfs` =
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
         )
 
-// base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
+// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
+// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
+// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
+// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
+// module (the other's suites could not see it). `test->test` goes only to the modules whose test trees hold
+// what the suites reuse: core's `Test` base and mocks, and the engine conformance fixtures in
+// `kyo-sql-sqlite-driver` and `kyo-sql-dolt-api`. A test-only diff follows exactly these edges, so an engine
+// module taken `test->test` without need re-runs this whole module on every change to its own tests.
+// It has only test sources, so there is nothing to publish; the battery external backends run ships as
+// `kyo-sql-conformance`.
 lazy val `kyo-sql-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-postgres`)
+        .dependsOn(`kyo-sql-mysql`)
+        .dependsOn(`kyo-sql-sqlite`)
+        .dependsOn(`kyo-sql-dolt`)
+        .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-tests"))
@@ -4345,10 +4352,14 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
-        // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
-        // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
-        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
-        scriptedLaunchOpts                     := Seq(
+        // The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, so a published plugin
+        // formats exactly as scalafmtAll does and never fetches a formatter at run time.
+        libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+            val conf = IO.read((ThisBuild / baseDirectory).value / ".scalafmt.conf")
+            """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+                .getOrElse(sys.error("no version in .scalafmt.conf"))
+        },
+        scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
@@ -4439,18 +4450,22 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // into the plugin jar as resources, plus an INDEX, so an external binding can
         // pull it in via `.compatConformance`. Copied verbatim from the canonical suite
         // the in-repo bindings compile against, so the bundle stays byte-identical.
+        // Declared as main inputs so a diff that only touches the suite, which the bindings see as
+        // their test sources, still selects this plugin.
+        TestKyo.mainInputs := Seq("test", "test-streams").map((ThisBuild / baseDirectory).value / "kyo-compat" / _),
         Compile / resourceGenerators += Def.task {
-            val outDir  = (Compile / resourceManaged).value / "kyo-compat-testkit"
-            val suites  = Seq("test" -> "test", "test-streams" -> "streams")
-            val buckets = Seq("shared", "jvm", "js", "native")
-            val base    = (ThisBuild / baseDirectory).value / "kyo-compat"
+            val outDir    = (Compile / resourceManaged).value / "kyo-compat-testkit"
+            val suiteTags = Map("test" -> "test", "test-streams" -> "streams")
+            val buckets   = Seq("shared", "jvm", "js", "native")
+            val suiteDirs = TestKyo.mainInputs.value
             IO.delete(outDir)
             val index     = scala.collection.mutable.ArrayBuffer.empty[String]
             val generated = scala.collection.mutable.ArrayBuffer.empty[File]
             for {
-                (suiteDir, suiteTag) <- suites
-                bucket               <- buckets
-                root = base / suiteDir / bucket / "src" / "test" / "scala"
+                suiteDir <- suiteDirs
+                suiteTag = suiteTags(suiteDir.getName)
+                bucket <- buckets
+                root = suiteDir / bucket / "src" / "test" / "scala"
                 if root.exists
                 src <- (root ** "*.scala").get
             } {

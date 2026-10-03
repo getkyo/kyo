@@ -94,11 +94,11 @@ object Runner {
             log.info(s"doctest: validating $labels (${classpath.size} classpath entries)")
             log.debug(s"doctest: fork command: ${command.mkString(" ")}")
 
-            val process = new ProcessBuilder(command: _*)
-                .inheritIO()
-                .start()
-
-            val exitCode = process.waitFor()
+            // The fork's output goes through the task's logger: an inherited stdout is the sbt server's own, which an
+            // `sbt --client` session never shows, so a failing block's compiler errors would reach no one.
+            val exitCode = scala.sys.process.Process(command).!(
+                scala.sys.process.ProcessLogger(line => log.info(line), line => log.error(line))
+            )
 
             // Parse the result file if it was written.
             val report: Option[ParsedReport] =

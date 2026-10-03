@@ -55,7 +55,7 @@ val cached: Unit < (Async & Abort[TastyError]) =
 When the classpath is already in hand (deserialized from a snapshot, constructed for a test, or carried across module boundaries) bind it directly. No file IO, no scope overhead.
 
 ```scala
-val classpath: Tasty.Classpath = Tasty.Classpath.empty
+val classpath: Tasty.Classpath   = Tasty.Classpath.empty
 val report: Chunk[String] < Sync =
     Tasty.withClasspath(classpath) {
         Tasty.allClasses.map(_.map(_.simpleName))
@@ -69,7 +69,7 @@ val report: Chunk[String] < Sync =
 `Tasty.Pickle(uuid, version, bytes)` packages one `.tasty` file's bytes. A `Chunk[Pickle]` is enough to drive `withPickles`, which decodes the bytes directly without touching the file system. Tests use this to assemble a classpath from fixtures.
 
 ```scala
-val pickles: Chunk[Tasty.Pickle] = Chunk.empty
+val pickles: Chunk[Tasty.Pickle]             = Chunk.empty
 val test: Unit < (Async & Abort[TastyError]) =
     Tasty.withPickles(pickles) {
         Tasty.allClasses.map(_ => ())
@@ -847,8 +847,8 @@ val discover: Chunk[PluginInfo] < (Async & Abort[TastyError]) =
             classpath <- Tasty.classpath
             impls = classpath.implementationsOf(plugin)
             infos = impls.map { impl =>
-                val name  = classpath.show(impl, Tasty.ShowFormat.FullyQualified)
-                val decls = classpath.members(impl, Tasty.MemberScope.Declared)
+                val name       = classpath.show(impl, Tasty.ShowFormat.FullyQualified)
+                val decls      = classpath.members(impl, Tasty.MemberScope.Declared)
                 val overridden = decls.collect {
                     case m: Tasty.Symbol.Method if m.isOverride => m
                 }

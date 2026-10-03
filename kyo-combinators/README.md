@@ -109,6 +109,7 @@ trait LegacyRepo:
     def lookupResult(id: Long): Result[OrderNotFound, Order]
     def lookupOrThrow(id: Long): Order
     def lookupAsync(id: Long): Future[Order]
+end LegacyRepo
 val legacy: LegacyRepo           = ???
 val rawJson: String              = "{}"
 val orderPromise: Promise[Order] = Promise[Order]()
@@ -894,8 +895,8 @@ val checkout: (Order, Profile) < (Async & Scope & Sync) =
             // Concurrency: the profile loads on its own fiber meanwhile
             profileFiber <- profileFor(orderId).fork
             // Sequencing and error handling: log, look up with retries, fall back to a default
-            order <- (Kyo.logInfo("loading order") *> found).retry(3).recover(_ => Order(0L))
-            _     <- txn.commit
+            order   <- (Kyo.logInfo("loading order") *> found).retry(3).recover(_ => Order(0L))
+            _       <- txn.commit
             profile <- profileFiber.join
         yield (order, profile)
     }

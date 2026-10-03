@@ -107,7 +107,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         discard(sampler.readInto(slot, decode))
 
     "the steady-state per-OS decode+observe allocates exactly 0 bytes per op".onlyJvm in {
-        val macosHandles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-macos"), 8L)
+        val macosHandles = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-macos"), 8L)
         val macosSampler = new MachineSampler(macosHandles)
         val macosMachine = new MachineMacos(macosHandles, macosSampler)
         val macosStub    = new StubMacosBindings
@@ -121,7 +121,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
             out.setDouble(0, 1.5); out.setDouble(1, 2.5); out.setDouble(2, 3.5); n
         AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(realDecodeObserve(macosMachine, macosStub))
 
-        val windowsHandles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-windows"), 8L)
+        val windowsHandles = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-windows"), 8L)
         val windowsSampler = new MachineSampler(windowsHandles)
         val windowsMachine = new MachineWindows(windowsHandles, windowsSampler)
         val windowsStub    = new StubWindowsBindings
@@ -141,7 +141,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
         Scope.run(Path.run {
             for
                 dir <- Path.tempDir("kyo-stats-machine-allocprobe-linux")
-                handles  = MachineHandles.initForTest(Stat.initScope("mstest-alloc-linux"), 8L)
+                handles  = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-linux"), 8L)
                 statFile = dir / "stat"
                 memFile  = dir / "meminfo"
                 _ <- statFile.write("cpu 100 20 30 40 50 6 7 80\n")
@@ -166,7 +166,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
     }
 
     "the steady-state disk read on an unchanged mount table allocates exactly 0 bytes per op".onlyJvm in {
-        val handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-macos"), 8L)
+        val handles = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-disk-macos"), 8L)
         val disk    = new MacosDisk(handles)
         // A direct trait implementation, not StubMacosBindings's mutable-Function2-field idiom: calling
         // through a Function2 field boxes a primitive Int argument outside the JVM's small-integer cache
@@ -196,7 +196,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
     }
 
     "the Windows steady-state disk read on an unchanged drive set allocates exactly 0 bytes per op".onlyJvm in {
-        val handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-windows"), 8L)
+        val handles = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-disk-windows"), 8L)
         val disk    = new WindowsDisk(handles)
         // A direct trait implementation, not StubWindowsBindings's mutable-Function2-field idiom, the same
         // choice the macOS and Linux disk leaves above make for this measured-window leaf.
@@ -236,7 +236,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 dir <- Path.tempDir("kyo-stats-machine-allocprobe-disk-linux")
                 mountsFile = dir / "mounts"
                 _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n")
-                handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-linux"), 8L)
+                handles = MachineHandlesOwners.initForTest(Stat.initScope("mstest-alloc-disk-linux"), 8L)
                 sampler = new MachineSampler(handles)
                 disk    = new LinuxDisk(handles, sampler, mountsFile)
                 _       = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0, perWindowFloorBytes)(disk.read(Present(stub)))
@@ -277,7 +277,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 tickFile     = dir / "stat-tick"
                 _ <- baselineFile.write("cpu 0 0 0 0 0 0 0 0\n")
                 _ <- tickFile.write("cpu 100 20 30 40 50 6 7 80\n")
-                isolated     = MachineHandles.initForTest(Stat.initScope("mstest-substance"), 8L)
+                isolated     = MachineHandlesOwners.initForTest(Stat.initScope("mstest-substance"), 8L)
                 sampler      = new MachineSampler(isolated)
                 baselineSlot = sampler.openSlot(baselineFile)
                 tickSlot     = sampler.openSlot(tickFile)
