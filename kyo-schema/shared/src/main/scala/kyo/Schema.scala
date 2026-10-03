@@ -284,6 +284,22 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] lazy val tagKeyClash: Unit =
         internal.SchemaSerializer.checkTagKeys(this, internalTagKeys)(using Frame.internal)
 
+    /** Where the catch-all takes the tag and the unmatched input under each representation this sum may select, or why it does not
+      * fit, worked out once on first use. Builders set the representation, the numbers and the catch-all in any order, so a schema
+      * between two builder calls need not fit, and the fit reads the variants from `structure`.
+      */
+    @publicInBinary private[kyo] lazy val catchAllPlacement: Map[Schema.UnionRepresentation, Result[String, (Int, Int)]] =
+        catchAll match
+            case Maybe.Present(c) =>
+                (representation +: representationChain.getOrElse(Chunk.empty)).distinct
+                    .map(rep => rep -> internal.SchemaSerializer.catchAllFit(this, rep, c)).toMap
+            case _ => Map.empty
+
+    /** Why tagOnly cannot write this sum without a catch-all: a variant with a field, worked out once on first use, for the reason
+      * `catchAllPlacement` gives.
+      */
+    @publicInBinary private[kyo] lazy val tagOnlyProblem: Maybe[String] = internal.SchemaSerializer.tagOnlyProblem(this, Maybe.empty)
+
     /** The tables a transform-aware read consults; lazy because they read `structure`, which a recursive schema cannot force here. */
     @publicInBinary private[kyo] lazy val readTables: internal.SchemaSerializer.ReadTables[A] = internal.SchemaSerializer.readTables(this)
 

@@ -72,6 +72,32 @@ class SchemaCatchAllTest extends kyo.test.Test[Any]:
         assert(Json.encode(value) == "\"blue\"")
     }
 
+    "a catch-all that does not fit the representation" - {
+
+        "fails the first encode and the first decode with one reason, before anything is written" in {
+            val schema                       = Schema[SCAShape].discriminator("type").catchAll("SCAOther")
+            val encoded                      = Result.catching[TransformFailedException](schema.encodeString[Json](SCACircle(1)))
+            val decoded                      = schema.decodeString[Json]("""{"type":"SCACircle","radius":1}""")
+            def reason(e: Throwable): String =
+                e.getMessage.linesIterator.find(_.contains("does not fit")).map(line => line.substring(line.indexOf("catch-all")))
+                    .getOrElse(e.getMessage)
+            val reasons = Chunk[Result[Any, Any]](encoded, decoded).map {
+                case Result.Failure(e: Throwable) => reason(e)
+                case Result.Panic(e)              => reason(e)
+                case other                        => s"not refused: $other"
+            }
+            assert(reasons.forall(_.contains("catch-all variant 'SCAOther' does not fit")), reasons.toString)
+            assert(reasons(0) == reasons(1), reasons.toString)
+        }
+
+        "fits once a later builder sets a representation it fits, so it is not checked between builder calls" in {
+            val schema = Schema[SCAShape].discriminator("type").catchAll("SCAOther").untagged
+            val side   = Structure.Value.Record(Chunk("side" -> Structure.Value.Integer(2)))
+            assert(schema.decodeString[Json]("""{"side":2}""") == Result.succeed(SCAOther(side)))
+            assert(schema.encodeString[Json](SCAOther(side)) == """{"side":2}""")
+        }
+    }
+
     "the builder and tagOnly compose in either order" in {
         val before = Schema[SCAPlainColor].catchAll("SCAPlainOther").tagOnly
         val after  = Schema[SCAPlainColor].tagOnly.catchAll("SCAPlainOther")

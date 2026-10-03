@@ -472,7 +472,7 @@ private[kyo] object SchemaSerializer:
                     transformed
                 case Schema.UnionRepresentation.TagOnly =>
                     requireTopLevelCapable(writer, "TagOnly")
-                    if schema.catchAll.isEmpty then requireTagOnlyShape(schema, Maybe.empty)
+                    if schema.catchAll.isEmpty then requireTagOnlyShape(schema)
                     tagOnlyEncode(transformed, resolveVariantTag(schema))
                 case Schema.UnionRepresentation.Internal(tagKey) =>
                     val merged = flattenWithDiscriminator(transformed, tagKey, resolveVariantTag(schema))
@@ -719,55 +719,67 @@ private[kyo] object SchemaSerializer:
         end match
     end readStringKeyed
 
-    /** Where a catch-all variant takes the tag and the unmatched input under `rep`: field positions, -1 for none.
+    /** Where the catch-all takes the tag and the unmatched input under `rep`, as `Schema.catchAllPlacement` worked it out, raising
+      * the reason when it does not fit.
+      */
+    private def catchAllSlots[A](schema: Schema[A], rep: Schema.UnionRepresentation, catchAll: CatchAll)(using Frame): (Int, Int) =
+        discard(tagsOf(schema))
+        schema.catchAllPlacement.getOrElse(rep, catchAllFit(schema, rep, catchAll)) match
+            case Result.Success(slots)  => slots
+            case Result.Failure(reason) => throw TransformFailedException(reason)
+            case Result.Panic(error)    => throw error
+        end match
+    end catchAllSlots
+
+    /** Where a catch-all variant takes the tag and the unmatched input under `rep` (field positions, -1 for none), or why it does not
+      * fit.
       *
       * A tagged representation needs both (a two-field variant with a tag field), untagged the input alone (one field), tag-only the
       * tag alone (one tag field). The tag field is a `String`, or an `Int` or `Long` when the variants are numbered; the wrapper
       * object's key is always a name. Under tag-only no other variant may have a field: the tag-only check admits a one-field variant
-      * for the catch-all builder, so one that is not the catch-all is caught here. A mismatch is a configuration error, raised at the
-      * first encode or decode because builders may set the representation, the numbers and the catch-all in any order.
+      * for the catch-all builder, so one that is not the catch-all is caught here.
       */
-    private def catchAllSlots[A](schema: Schema[A], rep: Schema.UnionRepresentation, catchAll: CatchAll)(using
-        Frame
-    ): (Int, Int) =
-        def unfit(needs: String): Nothing =
-            throw TransformFailedException(
-                s"catch-all variant '${catchAll.variant}' does not fit the $rep representation, which needs $needs."
-            )
-        val tags       = tagsOf(schema)
+    private[kyo] def catchAllFit[A](schema: Schema[A], rep: Schema.UnionRepresentation, catchAll: CatchAll): Result[String, (Int, Int)] =
+        def unfit(needs: String): Result[String, (Int, Int)] =
+            Result.fail(s"catch-all variant '${catchAll.variant}' does not fit the $rep representation, which needs $needs.")
+        val tags       = schema.variantTags
         val numericTag = tags.numbered && rep != Schema.UnionRepresentation.External
         val tagField   = if numericTag then "an Int or Long field" else "a String field"
         val tagFits    = catchAll.tagIndex >= 0 && tags.catchAllTagIsNumber == numericTag
         rep match
             case Schema.UnionRepresentation.Untagged =>
-                if catchAll.arity == 1 then (-1, 0) else unfit("a variant with one field, which receives the whole value")
+                if catchAll.arity == 1 then Result.succeed((-1, 0)) else unfit("a variant with one field, which receives the whole value")
             case Schema.UnionRepresentation.TagOnly =>
                 if catchAll.arity != 1 || !tagFits then unfit(s"a variant with one field, $tagField, which receives the tag")
                 else
-                    requireTagOnlyShape(schema, Maybe(catchAll.variant))
-                    (0, -1)
+                    tagOnlyProblem(schema, Maybe(catchAll.variant)) match
+                        case Maybe.Present(reason) => Result.fail(reason)
+                        case _                     => Result.succeed((0, -1))
             case Schema.UnionRepresentation.Tuple | Schema.UnionRepresentation.TupleFlat =>
                 unfit("no catch-all, since a positional array has no place for the unmatched input")
             case _ =>
-                if catchAll.arity == 2 && tagFits then (catchAll.tagIndex, 1 - catchAll.tagIndex)
+                if catchAll.arity == 2 && tagFits then Result.succeed((catchAll.tagIndex, 1 - catchAll.tagIndex))
                 else unfit(s"a variant with two fields, $tagField for the tag and one for the unmatched input")
         end match
-    end catchAllSlots
+    end catchAllFit
+
+    /** Raises `Schema.tagOnlyProblem` for a sum with no catch-all, which tagOnly writes as names alone. */
+    private def requireTagOnlyShape[A](schema: Schema[A])(using Frame): Unit =
+        schema.tagOnlyProblem.foreach(reason => throw TransformFailedException(reason))
 
     /** Under tagOnly no variant may have a field except the catch-all. The builder admits a one-`String` variant because a catch-all
-      * builder may follow it, so a variant of that shape that never became the catch-all is caught at the first encode or decode.
+      * builder may follow it, so a variant of that shape that never became the catch-all is caught on first use.
       */
-    private def requireTagOnlyShape[A](schema: Schema[A], catchAllVariant: Maybe[String])(using Frame): Unit =
+    private[kyo] def tagOnlyProblem[A](schema: Schema[A], catchAllVariant: Maybe[String]): Maybe[String] =
         val others = schema.fieldBearingVariants.filterNot(name => catchAllVariant.contains(name))
-        if others.nonEmpty then
+        if others.isEmpty then Maybe.empty
+        else
             val exception = catchAllVariant match
                 case Maybe.Present(variant) => s"and is not the catch-all variant '$variant'"
                 case _                      => "and no catch-all variant is configured"
-            throw TransformFailedException(
-                s"tagOnly writes each variant as its name alone; ${others.mkString(", ")} has a field $exception."
-            )
+            Maybe(s"tagOnly writes each variant as its name alone; ${others.mkString(", ")} has a field $exception.")
         end if
-    end requireTagOnlyShape
+    end tagOnlyProblem
 
     /** Builds the catch-all variant from its tag and the unmatched input, placed by `catchAllSlots`. */
     private def buildCatchAll(
@@ -1060,7 +1072,7 @@ private[kyo] object SchemaSerializer:
       */
     def readTagOnly[A](schema: Schema[A], reader: Reader): A =
         given Frame = reader.frame
-        if schema.catchAll.isEmpty then requireTagOnlyShape(schema, Maybe.empty)
+        if schema.catchAll.isEmpty then requireTagOnlyShape(schema)
         val tree = reader.captureValue() match
             case ir: Codec.IntrospectingReader => ir.readStructure()
             case _                             =>
