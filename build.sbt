@@ -3964,10 +3964,11 @@ lazy val `kyo-website` =
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
-            // The suites render the live root and module READMEs and read build.sbt as text.
+            // The suites render the live root and module READMEs, copy the root logos, and read build.sbt as text.
             TestKyo.testInputs := {
                 val root = (ThisBuild / baseDirectory).value
-                Seq(root / "README.md", root / "build.sbt") ++ (root * DirectoryFilter * "README.md").get
+                Seq(root / "README.md", root / "build.sbt", root / "kyo.png", root / "kyo.svg") ++
+                    (root * DirectoryFilter * "README.md").get
             },
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.

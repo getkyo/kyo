@@ -139,13 +139,18 @@ object KyoDoctestPlugin extends AutoPlugin {
     // NoClassDefFoundError, "native JS type called on the JVM"), so the aggregate
     // skips these. "wasm" is the Scala.js WebAssembly backend
     // (WasmPlatform.identifier), in the same JVM-incompatible category as "js".
+    // CrossType.Pure hides the platform directory behind a dot (`.js`), so the
+    // comparison drops a leading dot.
     private val nonJvmCrossDirs = Set("native", "js", "wasm")
+
+    /** Whether a project's base directory is a non-JVM platform directory of a cross project. */
+    def isNonJvmCrossDir(base: File): Boolean = nonJvmCrossDirs.contains(base.getName.stripPrefix("."))
 
     private def projectsWithDoctest(state: State): Seq[ProjectRef] = {
         val structure = Project.extract(state).structure
         structure.allProjectRefs.filter { ref =>
             structure.allProjects.find(_.id == ref.project).exists { p =>
-                p.autoPlugins.contains(KyoDoctestPlugin) && !nonJvmCrossDirs.contains(p.base.getName)
+                p.autoPlugins.contains(KyoDoctestPlugin) && !isNonJvmCrossDir(p.base)
             }
         }
     }
