@@ -3026,10 +3026,12 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(result == Result.succeed("hello"), s"Non-destructive probe must decode String 'hello', got $result")
     }
 
-    "union member naming via reused variantNames rejects a non-member name at the builder call site" in {
-        val s      = summon[Schema[Int | String]]
-        val result = Result.catching[SchemaException](s.variantNames("Nope" -> "x"))
-        assert(result.isFailure, s"variantNames with unknown member must fail; got $result")
+    "union member naming via reused variantNames rejects a non-member name at the first encode" in {
+        val s      = summon[Schema[Int | String]].variantNames("Nope" -> "x")
+        val result = Result.catching[UnknownVariantException](s.encodeString[Json](1))
+        result match
+            case Result.Failure(e) => assert(e.variantName == "Nope")
+            case other             => fail(s"variantNames with unknown member must fail; got $other")
     }
 
     "nominal untagged sum keeps first-declared-wins decode while type unions probe all members" in {
@@ -3876,6 +3878,74 @@ class SchemaTest extends kyo.test.Test[Any]:
         val outside = Schema.derived[OSHolder.Labelled]
         assert(outside.encodeString[Json](value) == """{"the_label":"a","count":1}""")
         assert(Json.decode[OSHolder.Labelled]("""{"the_label":"a","count":1}""") == Result.succeed(value))
+    }
+
+    "a schema builder takes no Frame" - {
+        import SBFGivens.given
+
+        "every builder builds a given where no Frame can be derived, and the schema round-trips" in {
+            val account = SBFAccount("Ada", "Lovelace")
+            assert(Json.encode(account) == """{"first_name":"Ada","last_name":"Lovelace"}""")
+            assert(Json.decode[SBFAccount]("""{"given_name":"Ada","last_name":"Lovelace"}""") == Result.succeed(account))
+            val order = SBFOrder(3, "ab1", Chunk("x"))
+            assert(Json.decode[SBFOrder](Json.encode(order)) == Result.succeed(order))
+            assert(Json.decode[SBFOrder]("""{"count":3,"sku":"ab1","tags":["x"]}""") == Result.succeed(order))
+            assert(Protobuf.decode[SBFOrder](Protobuf.encode(order)) == Result.succeed(order))
+            assert(Json.decode[SBFShape]("""{"type":"round","radius":2}""") == Result.succeed(SBFCircle(2)))
+            Seq[SBFShape](SBFCircle(2), SBFSquare(1)).foreach(s => assert(Json.decode[SBFShape](Json.encode(s)) == Result.succeed(s)))
+            Seq[SBFPoint](SBFFlat(1), SBFSpace(1, 2)).foreach(p => assert(Json.decode[SBFPoint](Json.encode(p)) == Result.succeed(p)))
+            Seq[SBFCoin](SBFHeads(), SBFTails()).foreach(c => assert(Json.decode[SBFCoin](Json.encode(c)) == Result.succeed(c)))
+        }
+
+        "a misconfigured builder fails at the first decode that reaches it, with that call's Frame and the builder that caused it" in {
+            val decodeSite = summon[Frame]
+            Json.decode[SBFHolder]("""{"clash":{"type":"side","n":1}}""")(using summon[Json], summon[Schema[SBFHolder]], decodeSite) match
+                case Result.Panic(e: VariantNameCollisionException) =>
+                    assert(e.wireName == "side")
+                    assert(e.variants == Chunk("SBFLeft", "SBFRight"))
+                    assert(e.frame == decodeSite, s"raised at ${e.frame}, decoded at $decodeSite")
+                    assert(e.getMessage.contains("variantNames"), e.getMessage)
+                case other => fail(s"expected a VariantNameCollisionException, got $other")
+            end match
+        }
+
+        "a misconfigured builder fails at the first encode that reaches it, with that call's Frame" in {
+            val encodeSite = summon[Frame]
+            Result.catching[VariantNameCollisionException](
+                Json.encode(SBFHolder(SBFLeft(1)))(using summon[Schema[SBFHolder]], encodeSite, summon[Json])
+            ) match
+                case Result.Failure(e) =>
+                    assert(e.wireName == "side")
+                    assert(e.variants == Chunk("SBFLeft", "SBFRight"))
+                    assert(e.frame == encodeSite, s"raised at ${e.frame}, encoded at $encodeSite")
+                    assert(e.getMessage.contains("variantNames"), e.getMessage)
+                case other => fail(s"expected a VariantNameCollisionException, got $other")
+            end match
+        }
+
+        "a field transformer that refuses its input fails the decode with the decode call's Frame and the field's path, never a throw" in {
+            assert(Json.decode[SBFLine]("""{"sku":"ab1","quantity":2}""").map(_.sku.value) == Result.succeed("ab1"))
+            val decodeSite = summon[Frame]
+            Json.decode[SBFLine]("""{"sku":"a b","quantity":2}""")(using summon[Json], summon[Schema[SBFLine]], decodeSite) match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.path == Seq("sku"))
+                    assert(e.frame == decodeSite, s"decoded at $decodeSite, reported at ${e.frame}")
+                    e.rejection match
+                        case leaf: SBFInvalidSku =>
+                            assert(leaf.text == "a b")
+                            assert(leaf.frame == decodeSite, s"decoded at $decodeSite, rejected at ${leaf.frame}")
+                        case other => fail(s"expected the constructor's own failure, got $other")
+                    end match
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "a failed check carries the validate call's Frame" in {
+            def validated(order: SBFOrder)(using site: Frame) = (site, summon[Schema[SBFOrder]].validate(order))
+            val (validateSite, failures)                      = validated(SBFOrder(200, "zz", Chunk.empty))
+            assert(failures.map(_.message).toSet == Set("count is at most 100", "code is not zz"))
+            failures.foreach(f => assert(f.frame == validateSite, s"failed at ${f.frame}, validated at $validateSite"))
+        }
     }
 
 end SchemaTest

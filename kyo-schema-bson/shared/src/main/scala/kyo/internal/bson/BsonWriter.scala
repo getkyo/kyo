@@ -3,6 +3,7 @@ package kyo.internal.bson
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec
+import kyo.Frame
 import kyo.OrderedDict
 import kyo.OrderedDictBuilder
 import kyo.SchemaNotSerializableException
@@ -10,8 +11,10 @@ import kyo.Span
 import kyo.discard
 import scala.collection.mutable
 
-final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
+final class BsonWriter(config: kyo.Bson.Config)(using site: Frame) extends Codec.Writer:
     import BsonFormat.*
+
+    override def frame: Frame = site
     import BsonValue.*
 
     private val KindDocument: 1 = 1
@@ -267,4 +270,4 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
 end BsonWriter
 
 object BsonWriter:
-    def apply(config: kyo.Bson.Config = kyo.Bson.Config.Default): BsonWriter = new BsonWriter(config)
+    def apply(config: kyo.Bson.Config = kyo.Bson.Config.Default)(using Frame): BsonWriter = new BsonWriter(config)

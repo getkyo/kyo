@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets
   *   [[kyo.Schema]] for the type-driven serialization entry point
   */
 abstract class Codec:
-    def newWriter(): Codec.Writer
+    def newWriter()(using Frame): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 
     /** Reads one value of `A` from `input` and requires the whole of it to have been consumed.
@@ -350,6 +350,11 @@ object Codec:
       *   [[kyo.Codec]] for the factory that pairs a Writer with a Reader
       */
     abstract class Writer:
+
+        /** The source location of the encode call this Writer serves, as [[Reader.frame]] is for a decode: a failure raised while
+          * writing, such as a schema's configuration failure, carries it.
+          */
+        def frame: Frame
 
         private var _schemaTransformOverrides: List[Schema[?]] = Nil
 

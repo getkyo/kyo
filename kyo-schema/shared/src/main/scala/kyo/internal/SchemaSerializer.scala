@@ -12,7 +12,7 @@ import scala.annotation.tailrec
   */
 private[kyo] object SchemaSerializer:
 
-    final private[internal] case class SyntheticField(name: String, value: () => Structure.Value)
+    final private[internal] case class SyntheticField(name: String, value: Frame => Structure.Value)
 
     /** What `readWithTransforms` consults for every record a schema reads, and `writeWithTransforms` for the fields it writes as null,
       * computed from the schema's slots once, on first use.
@@ -83,8 +83,8 @@ private[kyo] object SchemaSerializer:
                     else None
                 }.toMap
 
-        def materializeDefault(fieldDefault: Schema.FieldDefault): Structure.Value =
-            val writer = StructureValueWriter()
+        def materializeDefault(fieldDefault: Schema.FieldDefault, frame: Frame): Structure.Value =
+            val writer = StructureValueWriter()(using frame)
             fieldDefault.writeDefault(fieldDefault.supplier(), writer)
             writer.getResult
         end materializeDefault
@@ -96,14 +96,14 @@ private[kyo] object SchemaSerializer:
                 else
                     defaultByName.get(field.name) match
                         case Some(fieldDefault) =>
-                            Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
+                            Some(SyntheticField(field.name, materializeDefault(fieldDefault, _)))
                         case None if omitDefaultedNames.contains(field.name) =>
                             if isMappingTag(field) then
-                                Some(SyntheticField(field.name, () => emptyMappingWireValue))
+                                Some(SyntheticField(field.name, _ => emptyMappingWireValue))
                             else
                                 val zero = zeroForField(field)
                                 if zero == null then None
-                                else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
+                                else Some(SyntheticField(field.name, _ => zeroToStructureValue(zero)))
                         case None =>
                             None
                     end match
@@ -306,7 +306,7 @@ private[kyo] object SchemaSerializer:
         val layout = schema.wireLayout
         if layout.flattens && !writer.isSelfDescribing then
             throw TransformUnsupportedException(writer.codecName, "flatten")
-        if layout.flatSum.nonEmpty then discard(layout.flatSumKeys)
+        if layout.flatSum.nonEmpty then layout.flatSumProblem.foreach(_.raise()(using writer.frame))
 
         val selected     = selectRepresentation(schema, writer)
         val structWriter = StructureValueWriter(Maybe(writer), selected == Schema.UnionRepresentation.TupleFlat)
@@ -643,7 +643,8 @@ private[kyo] object SchemaSerializer:
         keySchema: Schema[K],
         valueSchema: Schema[V],
         writer: Writer
-    )(using Frame): Unit =
+    ): Unit =
+        given Frame = writer.frame
         writer.mapStart(size)
         var idx = 0
         foreachEntry { (k, v) =>
@@ -937,21 +938,24 @@ private[kyo] object SchemaSerializer:
       * `flattenWithDiscriminator`). A derived `@discriminator` sum is checked at compile time as well; this check covers a tag key a
       * builder sets and a variant laid out by its own given.
       */
-    private[kyo] def checkTagKeys(schema: Schema[?], tagKeys: Chunk[String])(using Frame): Unit =
+    private[kyo] def tagKeyClash(schema: Schema[?], tagKeys: Chunk[String]): Maybe[BuilderProblem.Failure] =
         val names = variantNamesOf(schema)
-        schema.variantSchemas.zipWithIndex.foreach { (variantSchema, idx) =>
+        val clash = schema.variantSchemas.iterator.zipWithIndex.flatMap { (variantSchema, idx) =>
             val name    = names.lift(idx).getOrElse(idx.toString)
             val variant = variantSchema()
-            if !schema.catchAll.exists(_.variant == name) && variant.catchAll.isEmpty then
+            if schema.catchAll.exists(_.variant == name) || variant.catchAll.nonEmpty then Iterator.empty
+            else
                 val written =
                     if WireLayout.isSum(variant) then WireLayout.sumFixedKeys(variant).map(key => key -> key)
                     else variant.wireLayout.slots.collect { case slot if !slot.flattened => slot.wire -> slot.source }
-                written.foreach { (key, field) =>
-                    if tagKeys.contains(key) then throw FieldNameCollisionException(key, Chunk("<discriminator>", s"$name.$field"))
+                written.iterator.collect {
+                    case (key, field) if tagKeys.contains(key) =>
+                        BuilderProblem.Failure.FieldCollision(key, Chunk("<discriminator>", s"$name.$field"))
                 }
             end if
-        }
-    end checkTagKeys
+        }.nextOption()
+        Maybe.fromOption(clash)
+    end tagKeyClash
 
     /** A sum's variant Scala names in variant order: the names a derived sum passes, else its structure's. */
     private[kyo] def variantNamesOf(schema: Schema[?]): Chunk[String] =
@@ -1189,7 +1193,7 @@ private[kyo] object SchemaSerializer:
             (reader match
                 case _: Codec.IntrospectingReader => true
                 case _                            => false)
-        if flattened && layout.flatSum.nonEmpty then discard(layout.flatSumKeys)
+        if flattened && layout.flatSum.nonEmpty then layout.flatSumProblem.foreach(_.raise()(using reader.frame))
         // A flattened sum reads the whole parent record, the parent's own keys included, so the record is captured once and both the
         // parent's fields and the sum read from the captured value. A wrapper-object sum is the exception: it takes its one key as the
         // variant name, so it reads the record without the keys the parent's fields own.
@@ -2783,7 +2787,7 @@ private[kyo] object SchemaSerializer:
                 val rawResult =
                     try transform.read.get(inner)
                     catch case e: DecodeException => throw e.prependPath(sourceName)
-                val svWriter = StructureValueWriter()
+                val svWriter = StructureValueWriter()(using frame)
                 transform.writeDerived(rawResult, svWriter)
                 _pendingSyntheticValue = svWriter.getResult
                 // The field is matched by its source name, whatever key the wire held it under.
@@ -2972,7 +2976,7 @@ private[kyo] object SchemaSerializer:
                     _matchedField = false
                     _syntheticField = true
                     _rawFieldName = field.name
-                    _pendingSyntheticValue = field.value()
+                    _pendingSyntheticValue = field.value(frame)
                     _syntheticActive = true
                     true
                 else false

@@ -22,7 +22,7 @@ private[kyo] object SchemaFactory:
     @nowarn("msg=anonymous")
     def createFrom[A, F2](
         source: Schema[A],
-        checks: Seq[A => Seq[ValidationFailedException]],
+        checks: Seq[(A, Frame) => Seq[ValidationFailedException]],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
         droppedFields: Set[String] = Set.empty,
@@ -92,7 +92,8 @@ private[kyo] object SchemaFactory:
             fieldTransforms = source.fieldTransforms,
             fieldMaterializedDefaults = source.fieldMaterializedDefaults,
             flattenedFields0 = source.flattenedFields ++ flattenedFields,
-            catchAll0 = source.catchAll
+            catchAll0 = source.catchAll,
+            builderProblem0 = source.configurationProblem
         )
     end createFrom
 

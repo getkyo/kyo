@@ -101,9 +101,10 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         assert(!json.contains("disc"))
     }
 
-    "variantNames collision config-time" in {
+    "variantNames collision first-encode" in {
         Result.catching[VariantNameCollisionException] {
             Schema[SVNShape].discriminator("type").variantNames("SVNCircle" -> "shape", "SVNSquare" -> "shape")
+                .encodeString[Json](SVNCircle(5.0): SVNShape)
         } match
             case Result.Failure(e) =>
                 assert(e.wireName == "shape")
@@ -113,11 +114,12 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
                 fail("expected VariantNameCollisionException")
     }
 
-    "variantAlias collision with primary config-time" in {
+    "variantAlias collision with primary first-encode" in {
         val result = Result.catching[VariantNameCollisionException] {
             Schema[SVNShape].discriminator("type")
                 .variantNames("SVNCircle" -> "circle", "SVNSquare" -> "square")
                 .variantAlias("circle", "square")
+                .encodeString[Json](SVNCircle(5.0): SVNShape)
         }
         assert(result.isFailure)
         result match
@@ -215,9 +217,9 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         assert(json.contains("\"u1\""))
     }
 
-    "config-time variant-name typo raises UnknownVariantException" in {
+    "a variant-name typo raises UnknownVariantException at the first encode" in {
         val typoResult = Result.catching[UnknownVariantException] {
-            Schema[SVNShape].discriminator("type").variantNames("SVNTypo" -> "x")
+            Schema[SVNShape].discriminator("type").variantNames("SVNTypo" -> "x").encodeString[Json](SVNCircle(5.0): SVNShape)
         }
         assert(typoResult.isFailure)
         typoResult match
@@ -231,6 +233,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
             Schema[SVNShape].discriminator("type")
                 .variantNames("SVNCircle" -> "circle")
                 .variantAlias("nope", "alt")
+                .encodeString[Json](SVNCircle(5.0): SVNShape)
         }
         assert(aliasResult.isFailure)
         aliasResult match
@@ -241,7 +244,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         end match
 
         val validResult = Result.catching[UnknownVariantException] {
-            Schema[SVNShape].discriminator("type").variantNames("SVNCircle" -> "circle")
+            Schema[SVNShape].discriminator("type").variantNames("SVNCircle" -> "circle").encodeString[Json](SVNCircle(5.0): SVNShape)
         }
         assert(!validResult.isFailure)
     }
@@ -313,9 +316,10 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "field alias collision with primary config-time" in {
+    "field alias collision with primary first-encode" in {
         val result = Result.catching[FieldNameCollisionException] {
             Schema[SVNAccount].renameAllFields(Schema.NameCase.SnakeCase).alias("last_name", "first_name")
+                .encodeString[Json](SVNAccount("ada", "lovelace"))
         }
         result match
             case Result.Failure(e) =>
@@ -378,9 +382,10 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         assert(collision.isFailure)
     }
 
-    "alias before renameAllFields collision is order-independent config-time" in {
+    "alias before renameAllFields collision is order-independent first-encode" in {
         val result = Result.catching[FieldNameCollisionException] {
             Schema[SVNAccount].alias("firstName", "last_name").renameAllFields(Schema.NameCase.SnakeCase)
+                .encodeString[Json](SVNAccount("ada", "lovelace"))
         }
         result match
             case Result.Failure(e) =>
@@ -390,9 +395,10 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "renameAllFields before alias collision is order-independent config-time" in {
+    "renameAllFields before alias collision is order-independent first-encode" in {
         val result = Result.catching[FieldNameCollisionException] {
             Schema[SVNAccount].renameAllFields(Schema.NameCase.SnakeCase).alias("firstName", "last_name")
+                .encodeString[Json](SVNAccount("ada", "lovelace"))
         }
         result match
             case Result.Failure(e) =>
@@ -402,14 +408,15 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "variantAlias then renameAllVariants collision is order-independent config-time" in {
+    "variantAlias then renameAllVariants collision is order-independent first-encode" in {
         // alias("svn_user_deleted", ...) is registered first, then renameAllVariants derives
         // svn_user_deleted as SVNUserDeleted's primary. The convention primary collides with
-        // the alias, so renameAllVariants must raise VariantNameCollisionException.
+        // the alias, so renameAllVariants records a VariantNameCollisionException the encode raises.
         val result = Result.catching[VariantNameCollisionException] {
             Schema[SVNEvent].discriminator("kind")
                 .variantAlias("SVNUserCreated", "svn_user_deleted")
                 .renameAllVariants(Schema.NameCase.SnakeCase)
+                .encodeString[Json](SVNUserCreated("u1"): SVNEvent)
         }
         result match
             case Result.Failure(e) =>
@@ -419,7 +426,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "renameAllVariants then variantAlias collision is order-independent config-time" in {
+    "renameAllVariants then variantAlias collision is order-independent first-encode" in {
         // renameAllVariants derives svn_user_deleted as SVNUserDeleted's primary.
         // variantAlias("svn_user_created", "svn_user_deleted") registers svn_user_deleted as
         // an alias for another variant's primary, colliding with SVNUserDeleted's convention primary.
@@ -427,6 +434,7 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
             Schema[SVNEvent].discriminator("kind")
                 .renameAllVariants(Schema.NameCase.SnakeCase)
                 .variantAlias("svn_user_created", "svn_user_deleted")
+                .encodeString[Json](SVNUserCreated("u1"): SVNEvent)
         }
         result match
             case Result.Failure(e) =>

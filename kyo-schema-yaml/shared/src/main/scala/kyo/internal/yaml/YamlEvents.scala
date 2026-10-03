@@ -381,8 +381,9 @@ private[kyo] object YamlEvents:
             new Renderer(config)
     end Renderer
 
-    abstract class EventCodecWriter(config: Yaml.WriterConfig) extends Codec.Writer:
+    abstract class EventCodecWriter(config: Yaml.WriterConfig)(using site: Frame) extends Codec.Writer:
 
+        override def frame: Frame                       = site
         override def canWriteTopLevelNonObject: Boolean = true
         override def isSelfDescribing: Boolean          = true
         override def codecName: String                  = "Yaml"
@@ -580,7 +581,7 @@ private[kyo] object YamlEvents:
         context: Ctx,
         handler: Yaml.Events.Handler[Ctx, Err],
         config: Yaml.WriterConfig
-    ) extends EventCodecWriter(config):
+    )(using Frame) extends EventCodecWriter(config):
 
         private var current: Result[Err, Ctx] = Result.succeed(context)
 
@@ -629,11 +630,11 @@ private[kyo] object YamlEvents:
             context: Ctx,
             handler: Yaml.Events.Handler[Ctx, Err],
             config: Yaml.WriterConfig
-        ): EventWriter[Ctx, Err] =
+        )(using Frame): EventWriter[Ctx, Err] =
             new EventWriter(context, handler, config)
     end EventWriter
 
-    final class Writer private[YamlEvents] (config: Yaml.WriterConfig) extends EventCodecWriter(config):
+    final class Writer private[YamlEvents] (config: Yaml.WriterConfig)(using Frame) extends EventCodecWriter(config):
 
         private var renderer = Renderer(config)
 
@@ -689,7 +690,7 @@ private[kyo] object YamlEvents:
     end Writer
 
     object Writer:
-        def apply(config: Yaml.WriterConfig): Writer =
+        def apply(config: Yaml.WriterConfig)(using Frame): Writer =
             new Writer(config)
     end Writer
 

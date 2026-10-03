@@ -628,9 +628,10 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(result.age == 30)
         }
 
-        "fieldId with non-positive id throws SchemaException" in {
+        "fieldId with non-positive id throws SchemaException at the first encode" in {
+            val schema = Schema[MTUser].fieldId(_.name)(0)
             try
-                Schema[MTUser].fieldId(_.name)(0)
+                discard(schema.encode[Protobuf](MTUser("a", 1, "b", "c")))
                 fail("Expected an exception for non-positive fieldId, but none was thrown")
             catch
                 case _: SchemaException => succeed("SchemaException was thrown for a non-positive fieldId; catching it is the verification")
@@ -2654,14 +2655,13 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 assert(addressStreetId != addressCityId)
             }
 
-            "Schema.fieldId rejects non-positive IDs" in {
-                intercept[TransformFailedException] {
-                    Schema[FIDPerson].fieldId(_.name)(0)
+            "Schema.fieldId rejects non-positive IDs at the first encode" in {
+                Seq(0, -1).foreach { id =>
+                    val rejected = intercept[TransformFailedException] {
+                        Schema[FIDPerson].fieldId(_.name)(id).encode[Protobuf](FIDPerson("Bob", 25, "bob@example.com"))
+                    }
+                    assert(rejected.detail == s"Field ID must be positive, got $id")
                 }
-                intercept[TransformFailedException] {
-                    Schema[FIDPerson].fieldId(_.name)(-1)
-                }
-                ()
             }
 
             "JSON schema round-trip works correctly" in {

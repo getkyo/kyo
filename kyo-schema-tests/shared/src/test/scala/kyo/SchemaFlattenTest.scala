@@ -26,6 +26,12 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
         assert(s.decode[C](wire) == Result.succeed(value), s"byte round-trip failed for $value")
     end roundTripBytes
 
+    // A layout that cannot round-trip is the schema's configuration problem: the first decode raises it before reading the input.
+    private def firstDecodeFailure[A](schema: Schema[A])(using Frame): Maybe[Throwable] =
+        schema.decodeString[Json]("{}") match
+            case Result.Panic(e) => Present(e)
+            case _               => Absent
+
     "writes and reads the nested record's fields at the parent level" in {
         val schema = Schema[MTPersonAddr].flatten
         val flat   = """{"name":"Alice","age":30,"street":"Main St","city":"Portland","zip":"97201"}"""
@@ -93,9 +99,10 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
         )
     }
 
-    "a flattened key whose wire name equals a kept parent key is rejected when the schema is built" in {
-        val result = Result.catching[FieldNameCollisionException](Schema[FLCodeParent].flatten)
-        assert(result == Result.fail(FieldNameCollisionException("id", Chunk("id", "child.code"))), result.toString)
+    "a flattened key whose wire name equals a kept parent key is rejected at the first decode" in {
+        firstDecodeFailure(Schema[FLCodeParent].flatten) match
+            case Present(e: FieldNameCollisionException) => assert(e == FieldNameCollisionException("id", Chunk("id", "child.code")))
+            case other                                   => fail(s"expected a FieldNameCollisionException, got $other")
     }
 
     "maps a child's own @rename on write and read" in {
@@ -270,14 +277,13 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
         assertDecodes(schema, wire, person)
     }
 
-    "a builder that names a flattened child field is rejected when the schema is built" in {
-        val result = Result.catching[TransformFailedException](Schema[MTPersonAddr].flatten.rename("city", "town"))
-        assert(
-            result == Result.fail(TransformFailedException(
-                "'city' is a field of the flattened field 'address'; configure it on the schema of the flattened field's type"
-            )),
-            result.toString
-        )
+    "a builder that names a flattened child field is rejected at the first decode" in {
+        firstDecodeFailure(Schema[MTPersonAddr].flatten.rename("city", "town")) match
+            case Present(e: TransformFailedException) =>
+                assert(e == TransformFailedException(
+                    "'city' is a field of the flattened field 'address'; configure it on the schema of the flattened field's type"
+                ))
+            case other => fail(s"expected a TransformFailedException, got $other")
     }
 
     "flatten(_.field) flattens that field only" - {
@@ -426,9 +432,10 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
             )
         }
 
-        "a parent field named like the discriminator is rejected when the schema is built" in {
-            val result = Result.catching[FieldNameCollisionException](Schema[FLTypedEntity].flatten(_.kind))
-            assert(result == Result.fail(FieldNameCollisionException("type", Chunk("type", "kind.type"))), result.toString)
+        "a parent field named like the discriminator is rejected at the first decode" in {
+            firstDecodeFailure(Schema[FLTypedEntity].flatten(_.kind)) match
+                case Present(e: FieldNameCollisionException) => assert(e == FieldNameCollisionException("type", Chunk("type", "kind.type")))
+                case other                                   => fail(s"expected a FieldNameCollisionException, got $other")
         }
 
         "a renamed variant field that collides with a parent key is a compile error naming both" in {
@@ -449,31 +456,35 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
             )
         }
 
-        "a tag-only or tuple sum is refused when the schema is built, since it writes no record" in {
-            val tagOnly = Result.catching[TransformFailedException](Schema[FLPriorityHolder].flatten(_.priority))
+        "a tag-only or tuple sum is refused at the first decode, since it writes no record" in {
+            val tagOnly = firstDecodeFailure(Schema[FLPriorityHolder].flatten(_.priority))
             assert(
-                tagOnly.failure.exists(_.getMessage.contains(
-                    "flatten(_.priority): the sum is written as a bare name, not a record, so it has no keys to move to the parent level"
-                )),
+                tagOnly.exists(e =>
+                    e.isInstanceOf[TransformFailedException] && e.getMessage.contains(
+                        "flatten(_.priority): the sum is written as a bare name, not a record, so it has no keys to move to the parent level"
+                    )
+                ),
                 tagOnly.toString
             )
-            val tupled = Result.catching[TransformFailedException](
-                Schema[FLTupleHolder].flatten(_.shape)
-            )
+            val tupled = firstDecodeFailure(Schema[FLTupleHolder].flatten(_.shape))
             assert(
-                tupled.failure.exists(_.getMessage.contains(
-                    "flatten(_.shape): the sum is written as an array, not a record, so it has no keys to move to the parent level"
-                )),
+                tupled.exists(e =>
+                    e.isInstanceOf[TransformFailedException] && e.getMessage.contains(
+                        "flatten(_.shape): the sum is written as an array, not a record, so it has no keys to move to the parent level"
+                    )
+                ),
                 tupled.toString
             )
         }
 
-        "two flattened sums in one record are rejected when the schema is built" in {
-            val result = Result.catching[TransformFailedException](Schema[FLTwoSums].flatten(_.first).flatten(_.second))
+        "two flattened sums in one record are rejected at the first decode" in {
+            val result = firstDecodeFailure(Schema[FLTwoSums].flatten(_.first).flatten(_.second))
             assert(
-                result.failure.exists(_.getMessage.contains(
-                    "flatten: 'first' and 'second' are both sums; a record holds at most one flattened sum, since each reads the whole record"
-                )),
+                result.exists(e =>
+                    e.isInstanceOf[TransformFailedException] && e.getMessage.contains(
+                        "flatten: 'first' and 'second' are both sums; a record holds at most one flattened sum, since each reads the whole record"
+                    )
+                ),
                 result.toString
             )
         }

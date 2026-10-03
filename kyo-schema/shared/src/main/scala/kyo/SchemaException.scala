@@ -54,18 +54,20 @@ end TypeMismatchException
 
 /** Thrown when a variant name is not defined in the sealed type.
   *
-  * Raised at decode time when the discriminator value does not match any known variant, and at config time when a
-  * `variantNames` or `variantAlias` call references an unknown Scala variant name.
+  * Raised at decode time when the discriminator value does not match any known variant, and, naming the builder call, at the first
+  * encode or decode through a schema whose `variantNames`, `variantNumbers` or `variantAlias` call references an unknown variant name.
   */
-case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)
-    extends SchemaException(
+case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
         s"Unknown variant '$variantName'" + SchemaException.pathSuffix(path) + (
             if path.isEmpty then ". Check that the Scala variant name is one of the defined case class or object variants."
             else ". Check that the discriminator value matches one of the defined case class or object variants."
-        )
+        ),
+        call.describe
     )
     with DecodeException derives CanEqual:
-    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownVariantException = copy(path = f(path))(using frame)
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownVariantException = copy(path = f(path))(using frame)(using call)
 end UnknownVariantException
 
 /** Thrown when an input field is not recognized during decoding.
@@ -260,21 +262,26 @@ case class ValidationFailedException(path: Seq[String], message: String)(using F
 // --- Transform ---
 
 /** Thrown when a schema transform operation (drop, rename, map) cannot complete. */
-case class TransformFailedException(detail: String)(using Frame)
-    extends SchemaException(s"Transform failed: $detail")
+case class TransformFailedException(detail: String)(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(s"Transform failed: $detail", call.describe)
     with TransformException derives CanEqual
 
 /** Thrown when two variants (or a variant and an alias) map to the same wire discriminator value. */
-case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)
-    extends SchemaException(
-        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name."
+case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name.",
+        call.describe
     )
     with TransformException derives CanEqual
 
 /** Thrown when two fields (or a field and an alias) map to the same wire name. */
-case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)
-    extends SchemaException(
-        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name."
+case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name.",
+        call.describe
     )
     with TransformException derives CanEqual
 
@@ -319,11 +326,13 @@ case class TransformUnsupportedException(codec: String, transform: String)(using
     with TransformException derives CanEqual
 
 /** Thrown when a representation chain (`representations` / `orElseRepresentation`) contains a
-  * duplicate entry. Raised at the builder call site, before any encode, never silently normalized.
+  * duplicate entry. Raised by the first encode or decode through the schema, before any byte is written, never silently normalized.
   */
-case class DuplicateRepresentationException(chain: Chunk[Schema.UnionRepresentation])(using Frame)
-    extends SchemaException(
-        s"Representation chain contains a duplicate entry: ${chain.mkString(", ")}. Each chain entry must be distinct."
+case class DuplicateRepresentationException(chain: Chunk[Schema.UnionRepresentation])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Representation chain contains a duplicate entry: ${chain.mkString(", ")}. Each chain entry must be distinct.",
+        call.describe
     )
     with TransformException derives CanEqual
 
@@ -333,5 +342,18 @@ case class SchemaIndexOutOfBoundsException(path: Seq[String], index: Int, size: 
     with NavigationException derives CanEqual
 
 object SchemaException:
+
+    /** The builder call a configuration failure comes from, such as `variantNames(Circle -> shape, Square -> shape)`.
+      *
+      * A builder takes no `Frame`, so it records a failure it finds and the first codec call that reaches the schema raises it, with
+      * that call's `Frame`. The failure carries the builder call as its cause, so its message still names the configuration at fault.
+      * Every other site that raises the same failure leaves it empty.
+      */
+    final case class BuilderCall(describe: String) derives CanEqual
+
+    object BuilderCall:
+        val none: BuilderCall = BuilderCall("")
+
     private[kyo] def pathSuffix(path: Seq[String]): String =
         if path.nonEmpty then s" at ${path.mkString(".")}" else ""
+end SchemaException

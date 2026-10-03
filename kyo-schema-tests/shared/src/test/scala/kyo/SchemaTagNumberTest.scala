@@ -173,23 +173,28 @@ class SchemaTagNumberTest extends kyo.test.Test[Any]:
             assert(Result.catching[TransformFailedException](schema.encodeString[Json](STNCircle(1))).isFailure)
         }
 
-        "an unknown variant name is rejected at the call" in {
-            assert(Result.catching[UnknownVariantException](Schema[STNShape].variantNumbers("STNNope" -> 1)).isFailure)
+        "an unknown variant name is rejected at the first encode" in {
+            Result.catching[UnknownVariantException](Schema[STNShape].variantNumbers("STNNope" -> 1).encodeString[Json](STNCircle(1))) match
+                case Result.Failure(e) => assert(e.variantName == "STNNope")
+                case other             => fail(s"expected UnknownVariantException, got $other")
         }
 
-        "two variants with one number are rejected at the call" in {
-            Result.catching[VariantNameCollisionException](Schema[STNShape].variantNumbers("STNCircle" -> 1, "STNSquare" -> 1)) match
+        "two variants with one number are rejected at the first encode" in {
+            val schema = Schema[STNShape].variantNumbers("STNCircle" -> 1, "STNSquare" -> 1)
+            Result.catching[VariantNameCollisionException](schema.encodeString[Json](STNCircle(1))) match
                 case Result.Failure(e) => assert(e.getMessage.contains("STNCircle") && e.getMessage.contains("STNSquare"))
                 case other             => fail(s"expected VariantNameCollisionException, got $other")
         }
 
-        "mixing numbers with variant names is rejected at the call, in either order" in {
+        "mixing numbers with variant names is rejected at the first encode, in either order" in {
+            def rejected(schema: Schema[STNShape]): Boolean =
+                Result.catching[TransformFailedException](schema.encodeString[Json](STNCircle(1))).isFailure
             val named = Schema[STNShape].variantNames("STNCircle" -> "circle")
-            assert(Result.catching[TransformFailedException](named.variantNumbers("STNCircle" -> 1, "STNSquare" -> 2)).isFailure)
+            assert(rejected(named.variantNumbers("STNCircle" -> 1, "STNSquare" -> 2)))
             val numbered = Schema[STNShape].variantNumbers("STNCircle" -> 1, "STNSquare" -> 2)
-            assert(Result.catching[TransformFailedException](numbered.variantNames("STNCircle" -> "circle")).isFailure)
-            assert(Result.catching[TransformFailedException](numbered.renameAllVariants(Schema.NameCase.SnakeCase)).isFailure)
-            assert(Result.catching[TransformFailedException](numbered.variantAlias("1", "one")).isFailure)
+            assert(rejected(numbered.variantNames("STNCircle" -> "circle")))
+            assert(rejected(numbered.renameAllVariants(Schema.NameCase.SnakeCase)))
+            assert(rejected(numbered.variantAlias("1", "one")))
         }
 
         "a String catch-all tag field under numbers fails at the first decode" in {

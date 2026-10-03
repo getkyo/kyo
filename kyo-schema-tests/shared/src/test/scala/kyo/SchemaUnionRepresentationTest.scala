@@ -1132,19 +1132,25 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(schema.representationFor(capFalse) == Schema.UnionRepresentation.External)
     }
 
-    "duplicate chain is rejected at the builder call site" in {
-        val dupChain = Result.catching[DuplicateRepresentationException](
-            Schema[SSRShape].representations(
-                Schema.UnionRepresentation.TupleFlat,
-                Schema.UnionRepresentation.TupleFlat
-            )
+    "duplicate chain is rejected at the first decode, naming the builder call" in {
+        val dupChain = Schema[SSRShape].representations(
+            Schema.UnionRepresentation.TupleFlat,
+            Schema.UnionRepresentation.TupleFlat
         )
-        assert(dupChain.isFailure)
+        dupChain.decodeString[Json]("{}") match
+            case Result.Panic(e: DuplicateRepresentationException) =>
+                assert(e.chain == Chunk(Schema.UnionRepresentation.TupleFlat, Schema.UnionRepresentation.TupleFlat))
+                assert(e.getMessage.contains("representations(TupleFlat, TupleFlat)"), e.getMessage)
+            case other => fail(s"expected a DuplicateRepresentationException, got $other")
+        end match
 
-        val dupOrElse = Result.catching[DuplicateRepresentationException](
-            Schema[SSRShape].tupleFlat.orElseRepresentation(Schema.UnionRepresentation.TupleFlat)
-        )
-        assert(dupOrElse.isFailure)
+        val dupOrElse = Schema[SSRShape].tupleFlat.orElseRepresentation(Schema.UnionRepresentation.TupleFlat)
+        dupOrElse.decodeString[Json]("{}") match
+            case Result.Panic(e: DuplicateRepresentationException) =>
+                assert(e.chain == Chunk(Schema.UnionRepresentation.TupleFlat, Schema.UnionRepresentation.TupleFlat))
+                assert(e.getMessage.contains("orElseRepresentation(TupleFlat)"), e.getMessage)
+            case other => fail(s"expected a DuplicateRepresentationException, got $other")
+        end match
     }
 
     "representations requires a first parameter - single-arg form compiles" in {

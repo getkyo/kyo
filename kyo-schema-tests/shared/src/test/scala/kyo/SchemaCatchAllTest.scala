@@ -213,10 +213,15 @@ class SchemaCatchAllTest extends kyo.test.Test[Any]:
             typeCheckFailure("kyo.Schema.derived[kyo.SCATagOnlyWithoutCatchAll]")("SCAStray")
         }
 
-        "a positional representation rejects a catch-all when the schema is built, in either order" in {
-            val untagged = Schema[SCAShape].untagged.catchAll("SCAOther")
-            assert(Result.catching[TransformFailedException](untagged.tupleTagged).isFailure)
-            assert(Result.catching[TransformFailedException](Schema[SCAShape].tupleFlat.catchAll("SCAOther")).isFailure)
+        "a positional representation rejects a catch-all at the first encode or decode, in either order" in {
+            Seq(Schema[SCAShape].untagged.catchAll("SCAOther").tupleTagged, Schema[SCAShape].tupleFlat.catchAll("SCAOther")).foreach {
+                schema =>
+                    assert(Result.catching[TransformFailedException](schema.encodeString[Json](SCACircle(1))).isFailure)
+                    schema.decodeString[Json]("""["SCACircle",{"radius":1}]""") match
+                        case Result.Panic(ex: TransformFailedException) => assert(ex.getMessage.contains("catchAll(SCAOther)"))
+                        case other                                      => fail(s"expected TransformFailedException, got $other")
+                    end match
+            }
         }
 
         "a tagged representation needs a tag field, reported at the first decode or encode" in {

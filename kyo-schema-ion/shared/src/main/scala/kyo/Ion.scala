@@ -11,7 +11,7 @@ package kyo
   */
 final class Ion(val config: Ion.Config = Ion.Config()) extends Codec:
     /** Creates an Ion writer for this instance's configured format. */
-    def newWriter(): Codec.Writer =
+    def newWriter()(using Frame): Codec.Writer =
         config.format match
             case Ion.Format.Text   => kyo.internal.IonWriter(config)
             case Ion.Format.Binary => kyo.internal.ionbinary.IonBinaryWriter(config)

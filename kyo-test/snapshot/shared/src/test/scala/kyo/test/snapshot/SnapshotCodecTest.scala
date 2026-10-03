@@ -21,7 +21,7 @@ class SnapshotCodecTest extends AnyFunSuite with NonImplicitAssertions:
     /** A minimal Codec double: only identity (never encode/decode) is exercised by this test. */
     private def fakeCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer = throw NotImplementedError("fakeCodec.newWriter is not exercised by this test")
+            def newWriter()(using Frame): Codec.Writer = throw NotImplementedError("fakeCodec.newWriter is not exercised by this test")
             def newReader(input: Span[Byte])(using Frame): Codec.Reader =
                 throw NotImplementedError("fakeCodec.newReader is not exercised by this test")
 

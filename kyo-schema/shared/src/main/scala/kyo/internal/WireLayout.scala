@@ -1,6 +1,8 @@
 package kyo.internal
 
 import kyo.*
+import scala.util.boundary
+import scala.util.boundary.break
 
 /** The key each of a schema's fields is written and read under, decided once per schema, when the schema is built.
   *
@@ -14,11 +16,12 @@ import kyo.*
   * aliases, field-id pins, and the flattened fields' own layouts. A sum's sum-ness is its variant schemas. So a recursive schema,
   * whose structure reads a given still being built, is laid out safely.
   *
-  * Construction rejects a layout that cannot round-trip: two written keys or an alias naming one wire key
+  * Construction finds a layout that cannot round-trip: two written keys or an alias naming one wire key
   * (`FieldNameCollisionException`), a flattened field that is not a stored field of the parent, a builder on the parent naming a
   * flattened field's own field, two flattened sums, and a flattened sum written as a bare name or an array (`TransformFailedException`).
-  * A flattened sum's variant fields are the one set of keys it cannot see, since they live in variant schemas that may be recursive
-  * givens; `flatSumKeys` checks them on first use, before anything is written or read.
+  * It answers the failure, naming the field configuration, as the schema's configuration problem, which the first encode or decode
+  * raises. A flattened sum's variant fields are the one set of keys it cannot see, since they live in variant schemas that may be
+  * recursive givens; `flatSumProblem` checks them on first use, before anything is written or read.
   *
   * Read routes go the other way. A wire key reads as its field (a renamed, cased or aliased key, `fieldReverse`), or as a flattened
   * field and the key its record reads (`flatReverse`), so the record a child schema reads back carries keys that schema accepts.
@@ -83,29 +86,34 @@ final private[kyo] class WireLayout private (
       */
     def writtenKeys: Chunk[String] = slots.collect { case s if !s.flattened => s.wire }
 
-    /** Refuses a flattened sum whose variant writes, beside its tag, a key the parent's own fields write. Checked on the first write or
-      * read, before anything is written: the variant schemas cannot be read while the parent is built. A catch-all variant, and a
-      * variant that is itself a sum with one, holds the input it was read from, the parent's keys included, and is exempt.
+    /** A flattened sum whose variant writes, beside its tag, a key the parent's own fields write, as the problem the first write or read
+      * raises with its own `Frame`, before anything is written: the variant schemas cannot be read while the parent is built. A
+      * catch-all variant, and a variant that is itself a sum with one, holds the input it was read from, the parent's keys included,
+      * and is exempt.
       */
-    lazy val flatSumKeys: Unit =
-        flatSum.foreach { case FlatSum(parent, child) =>
+    lazy val flatSumProblem: Maybe[BuilderProblem] =
+        flatSum.flatMap { case FlatSum(parent, child) =>
             child.representation match
                 case Schema.UnionRepresentation.Internal(_) =>
-                    given Frame    = Frame.internal
                     val parentKeys = writtenKeys.toSet
                     val names      = SchemaSerializer.variantNamesOf(child)
-                    child.variantSchemas.zipWithIndex.foreach { (variantSchema, idx) =>
+                    val clash      = child.variantSchemas.iterator.zipWithIndex.flatMap { (variantSchema, idx) =>
                         val name    = names.lift(idx).getOrElse(idx.toString)
                         val variant = variantSchema()
                         if !child.catchAll.exists(_.variant == name) && variant.catchAll.isEmpty && !isSum(variant) then
-                            variant.wireLayout.writtenKeys.map(casedFlatSumKey).find(parentKeys.contains).foreach { key =>
-                                throw TransformFailedException(
-                                    s"flatten: the sum '$parent' wrote the key '$key', which the parent's field '$key' also writes"
-                                )
-                            }
+                            variant.wireLayout.writtenKeys.map(casedFlatSumKey).find(parentKeys.contains)
+                        else None
                         end if
-                    }
-                case _ => ()
+                    }.nextOption()
+                    Maybe.fromOption(clash).map(key =>
+                        BuilderProblem(
+                            s"flatten(_.$parent)",
+                            BuilderProblem.Failure.Transform(
+                                s"flatten: the sum '$parent' wrote the key '$key', which the parent's field '$key' also writes"
+                            )
+                        )
+                    )
+                case _ => Absent
         }
 end WireLayout
 
@@ -149,8 +157,13 @@ private[kyo] object WireLayout:
             Map.empty
         )
 
-    def apply(schema: Schema[?]): WireLayout =
-        given Frame = Frame.internal
+    /** The layout of `schema`, or the problem that keeps it from round-tripping, which the first codec call through the schema raises. */
+    def apply(schema: Schema[?]): Result[BuilderProblem, WireLayout] = boundary {
+        def reject(failure: BuilderProblem.Failure): Nothing = break(Result.fail(BuilderProblem(configurationOf(schema), failure)))
+        def transformFailure(detail: String): Nothing        = reject(BuilderProblem.Failure.Transform(detail))
+
+        // A flattened child that cannot be laid out fails the parent with its own problem, not with what its empty layout implies.
+        schema.flattenedFields.foreach(field => field.schema.configurationProblem.foreach(problem => break(Result.fail(problem))))
 
         val product     = !isSum(schema)
         val sourceNames = Chunk.from(schema.sourceFields).map(_.name)
@@ -172,15 +185,15 @@ private[kyo] object WireLayout:
                             case Some(src) => src
                             case None      =>
                                 acc.find((_, c, _) => !isSum(c) && childEntries(c).exists((s, w, _) => s == name || w == name)) match
-                                    case Some((parent, _, _)) => throw nestedFieldException(name, parent)
-                                    case None                 => throw TransformFailedException(s"flatten: '$name' is not a stored field")
+                                    case Some((parent, _, _)) => transformFailure(nestedFieldDetail(name, parent))
+                                    case None                 => transformFailure(s"flatten: '$name' is not a stored field")
                 acc :+ ((source, child, optional))
         }
         val flattenedSources = flattened.map(_._1).toSet
 
         val sums = flattened.filter((_, child, _) => isSum(child))
         if sums.size > 1 then
-            throw TransformFailedException(
+            transformFailure(
                 s"flatten: '${sums(0)._1}' and '${sums(1)._1}' are both sums; a record holds at most one flattened sum, since each " +
                     "reads the whole record"
             )
@@ -188,11 +201,11 @@ private[kyo] object WireLayout:
         sums.foreach { (parent, child, _) =>
             (child.representation +: child.representationChain.getOrElse(Chunk.empty)).foreach {
                 case Schema.UnionRepresentation.TagOnly =>
-                    throw TransformFailedException(
+                    transformFailure(
                         s"flatten(_.$parent): the sum is written as a bare name, not a record, so it has no keys to move to the parent level"
                     )
                 case Schema.UnionRepresentation.Tuple | Schema.UnionRepresentation.TupleFlat =>
-                    throw TransformFailedException(
+                    transformFailure(
                         s"flatten(_.$parent): the sum is written as an array, not a record, so it has no keys to move to the parent level"
                     )
                 case _ => ()
@@ -232,11 +245,11 @@ private[kyo] object WireLayout:
             val byWire = labels.groupBy(_._1)
             labels.map(_._1).distinct.foreach { wire =>
                 val group = Chunk.from(byWire(wire).map(_._2)).distinct
-                if group.size > 1 then throw FieldNameCollisionException(wire, group)
+                if group.size > 1 then reject(BuilderProblem.Failure.FieldCollision(wire, group))
             }
         end if
         if schema.variantNaming.fieldAliases.nonEmpty then
-            Schema.checkFieldAliases(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet)
+            Schema.fieldAliasClash(schema.variantNaming.fieldAliases, sourceNames.map(ownWire).toSet).foreach(reject)
 
         val configured =
             schema.renamedFields.map(_._1).filterNot(n => schema.renamedFields.exists(_._2 == n)) ++
@@ -247,7 +260,7 @@ private[kyo] object WireLayout:
         configured.foreach { name =>
             if !sourceNames.contains(name) then
                 flattened.find((_, c, _) => !isSum(c) && childEntries(c).exists((s, w, _) => s == name || w == name)).foreach {
-                    (parent, _, _) => throw nestedFieldException(name, parent)
+                    (parent, _, _) => transformFailure(nestedFieldDetail(name, parent))
                 }
         }
 
@@ -280,7 +293,7 @@ private[kyo] object WireLayout:
             Iterator(n -> number, wire -> number)
         }.toMap
 
-        new WireLayout(
+        Result.succeed(new WireLayout(
             slots,
             fieldRoutes,
             flatRoutes,
@@ -294,7 +307,8 @@ private[kyo] object WireLayout:
             flattened.flatMap((parent, _, _) => Chunk(renameMap.getOrElse(parent, parent), ownWire(parent))).toSet,
             Maybe.fromOption(sums.headOption.map((parent, child, _) => FlatSum(parent, child))),
             pins ++ renamedIds
-        )
+        ))
+    }
     end apply
 
     /** A sum's sum-ness without its structure: only a sum or a union is built with variant schemas. */
@@ -318,9 +332,22 @@ private[kyo] object WireLayout:
     private def conventionOf(schema: Schema[?]): Maybe[String => String] =
         schema.variantNaming.fieldCase.map(NameCaseConversion.convert)
 
-    private def nestedFieldException(name: String, parent: String)(using Frame): TransformFailedException =
-        TransformFailedException(
-            s"'$name' is a field of the flattened field '$parent'; configure it on the schema of the flattened field's type"
-        )
+    private def nestedFieldDetail(name: String, parent: String): String =
+        s"'$name' is a field of the flattened field '$parent'; configure it on the schema of the flattened field's type"
+
+    /** The field configuration a layout failure comes from, as the builder calls that set it: the failure names the colliding keys,
+      * and this names what produced them.
+      */
+    private def configurationOf(schema: Schema[?]): String =
+        def call(name: String, args: Iterable[String]): Chunk[String] =
+            if args.isEmpty then Chunk.empty else Chunk(s"$name(${args.mkString(", ")})")
+        val calls =
+            call("rename", schema.renamedFields.map((s, w) => s"$s -> $w")) ++
+                call("renameAllFields", schema.variantNaming.fieldCase.toChunk.map(_.toString)) ++
+                call("alias", schema.variantNaming.fieldAliases.map((a, p) => s"$a -> $p")) ++
+                call("flatten", schema.flattenedFields.map(_.name)) ++
+                call("drop", schema.droppedFields)
+        if calls.isEmpty then "the derived field layout" else calls.mkString(", ")
+    end configurationOf
 
 end WireLayout

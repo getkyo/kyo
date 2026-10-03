@@ -18,10 +18,12 @@ import kyo.Codec.Writer
   * @see
   *   [[kyo.Structure.Value]] for the value tree data model
   */
-final class StructureValueWriter(target: Maybe[Writer], positionalPayload: Boolean) extends Writer:
+final class StructureValueWriter(target: Maybe[Writer], positionalPayload: Boolean)(using site: Frame) extends Writer:
 
-    def this(target: Maybe[Writer]) = this(target, false)
-    def this() = this(Maybe.empty, false)
+    def this(target: Maybe[Writer])(using Frame) = this(target, false)
+    def this()(using Frame) = this(Maybe.empty, false)
+
+    override def frame: Frame = site
 
     // A positional sum's payload is the record directly inside the root variant frame. A variant schema with transforms decides its
     // omissions against this writer before the payload opens, and materializes its record into a writer of its own, whose root asks

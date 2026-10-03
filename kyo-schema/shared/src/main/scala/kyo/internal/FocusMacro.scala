@@ -249,13 +249,13 @@ import scala.util.control.NonFatal
             $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (_: Any) =>
                 // Cast: Schema and computed-field lambda are stored as Any at the Focus boundary; type is recovered here.
                 // Focus.schema is always present for computed focuses: the macro sets it unconditionally in generateComputedFocus.
-                val schema = $focus.schema.getOrElse(throw kyo.TransformFailedException(
+                val schema = $focus.schema.getOrElse(kyo.internal.focusInvariantBroken(
                     s"Focus.schema is absent: computed-field focus requires a Schema instance"
-                )(using summonInline[kyo.Frame])).asInstanceOf[Schema[A]]
+                )).asInstanceOf[Schema[A]]
                 val computeFn = schema.computedFields.toSeq.find(_._1 == $fieldNameExpr)
-                    .getOrElse(throw kyo.TransformFailedException(
+                    .getOrElse(kyo.internal.focusInvariantBroken(
                         s"focus computed field '${$fieldNameExpr}' not present in Schema[A].computedFields: macro generation invariant violated"
-                    )(using summonInline[kyo.Frame]))
+                    ))
                     ._2
                 computeFn(root).asInstanceOf[V]
             }
@@ -927,16 +927,16 @@ import scala.util.control.NonFatal
                                                 case '[t] =>
                                                     matDefEntries =
                                                         '{
-                                                            val writer = kyo.internal.StructureValueWriter()
                                                             // Unsafe: the materialized default's static type is erased at
                                                             // this macro site; the value is the field's own declared default
                                                             // so it conforms to the field type `t`.
-                                                            kyo.internal.writeField[t](
-                                                                scala.compiletime.summonInline[kyo.Schema[t]],
-                                                                $defVal.asInstanceOf[t],
-                                                                writer
+                                                            (
+                                                                $srcExpr,
+                                                                kyo.internal.declaredValue[t](
+                                                                    scala.compiletime.summonInline[kyo.Schema[t]],
+                                                                    $defVal.asInstanceOf[t]
+                                                                )
                                                             )
-                                                            ($srcExpr, writer.getResult)
                                                         } :: matDefEntries
                                         case scala.None => ()
                                     end match
@@ -1345,7 +1345,7 @@ import scala.util.control.NonFatal
 
         // The tag is written beside a variant's fields, so a field written under the tag key would be overwritten by it. The catch-all
         // holds the input it was read from, tag key included, and writes the tag in its place. A variant with its own given is checked
-        // when the schema is first used (`SchemaSerializer.checkTagKeys`).
+        // when the schema is first used (`SchemaSerializer.tagKeyClash`).
         discriminatorKey.foreach { key =>
             inlineVariantKeys(tpe, sym, children).foreach { (variant, keys) =>
                 if !catchAllChild.exists(_.name.stripSuffix("$") == variant) then
@@ -2118,12 +2118,7 @@ import scala.util.control.NonFatal
                         rawType.asType match
                             case '[t] =>
                                 val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[t]]
-                                '{
-                                    () =>
-                                        val writer = kyo.internal.StructureValueWriter()
-                                        kyo.internal.writeField[t]($fieldSchemaRef, $defVal.asInstanceOf[t], writer)
-                                        kyo.Maybe(writer.getResult)
-                                }
+                                '{ () => kyo.Maybe(kyo.internal.declaredValue[t]($fieldSchemaRef, $defVal.asInstanceOf[t])) }
                     case None =>
                         '{ () => kyo.Maybe.empty[kyo.Structure.Value] }
                 end match

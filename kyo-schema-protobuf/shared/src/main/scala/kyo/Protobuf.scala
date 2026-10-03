@@ -4,7 +4,7 @@ import scala.annotation.tailrec
 
 final class Protobuf(val config: Protobuf.Config) extends Codec:
     def this() = this(Protobuf.Config.Default)
-    def newWriter(): Codec.Writer                               = new kyo.internal.ProtobufWriter()
+    def newWriter()(using Frame): Codec.Writer                  = new kyo.internal.ProtobufWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         new kyo.internal.ProtobufReader(input.toArray)
 

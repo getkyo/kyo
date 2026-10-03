@@ -55,6 +55,19 @@ inline def readField[A](inline s: Schema[A], r: Reader): A =
         case _: Char    => r.char().asInstanceOf[A]
         case _          => s.serializeRead(r)
 
+// A value a schema declares itself (a field's default, an example), written through the schema while the schema is built or described:
+// no encode call exists, so there is no caller Frame to give the writer, and the site may sit in package kyo, where none can be derived.
+def declaredValue[A](s: Schema[A], a: A): kyo.Structure.Value =
+    val writer = StructureValueWriter()(using Frame.internal)
+    s.serializeWrite(a, writer)
+    writer.getResult
+end declaredValue
+
+// A broken invariant of the code the focus macro generates: a kyo bug with no caller to name, raised from a focus that may sit in
+// package kyo, where no Frame can be derived.
+def focusInvariantBroken(detail: String): Nothing =
+    throw kyo.TransformFailedException(detail)(using Frame.internal)
+
 // An absent optional field is left off the wire, except in a record read back by position, where it is written as null so the later
 // positions stay in place; null decodes to the absent value.
 def writeAbsentField(nameBytes: Array[Byte], fieldId: Int, w: Writer): Unit =

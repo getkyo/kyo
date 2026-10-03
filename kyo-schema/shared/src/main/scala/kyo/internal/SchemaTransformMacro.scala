@@ -323,7 +323,8 @@ object SchemaTransformMacro:
       * For each field in Focused whose value type is a case class, replaces the field with the case class's sub-fields. Primitive and
       * non-case-class fields pass through unchanged. Each flattened field's schema is the one summoned here, and its wire names decide
       * where the flat keys go (`WireLayout`). Two fields sharing a name at this level, a flattened field's own name included, cannot
-      * share one flat record, so they are rejected here; a collision only the wire names reveal is rejected when the schema is built.
+      * share one flat record, so they are rejected here; a collision only the wire names reveal fails at the schema's first encode or
+      * decode.
       */
     def flattenImpl[A: Type, F: Type](
         meta: Expr[Schema[A]]
@@ -708,11 +709,8 @@ object SchemaTransformMacro:
                 $schema.sourceFields.find(_.name == ${ Expr(nameStr) }) match
                     case Some(field) =>
                         field.default match
-                            case Maybe.Present(d) =>
-                                val writer = kyo.internal.StructureValueWriter()
-                                kyo.internal.writeField[V](fieldSchema, d.asInstanceOf[V], writer)
-                                Maybe(writer.getResult)
-                            case Maybe.Absent => Maybe.empty
+                            case Maybe.Present(d) => Maybe(kyo.internal.declaredValue[V](fieldSchema, d.asInstanceOf[V]))
+                            case Maybe.Absent     => Maybe.empty
                     case None => Maybe.empty
             new Schema.OmitWhen[A, F]($schema, ${ Expr(nameStr) }, materializedDefault)
         }

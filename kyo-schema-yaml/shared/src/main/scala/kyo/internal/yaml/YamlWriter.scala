@@ -6,7 +6,9 @@ import kyo.Codec.Writer
 import kyo.internal.Ryu
 import scala.annotation.tailrec
 
-final private[kyo] class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
+final private[kyo] class YamlWriter private (private var config: Yaml.WriterConfig, private var _frame: Frame) extends Writer:
+
+    override def frame: kyo.Frame = _frame
 
     override def canWriteTopLevelNonObject: Boolean = true
     override def isSelfDescribing: Boolean          = true
@@ -548,14 +550,15 @@ object YamlWriter:
     final private val EndMarker               = "...\n"
     private[internal] val cache               = new ThreadLocal[YamlWriter]
 
-    def apply(): YamlWriter = apply(Yaml.WriterConfig.Default)
+    def apply()(using Frame): YamlWriter = apply(Yaml.WriterConfig.Default)
 
-    def apply(config: Yaml.WriterConfig): YamlWriter =
+    def apply(config: Yaml.WriterConfig)(using frame: Frame): YamlWriter =
         val cached = cache.get()
-        if cached == null then new YamlWriter(config)
+        if cached == null then new YamlWriter(config, frame)
         else
             cache.set(null)
             cached.config = config
+            cached._frame = frame
             cached
         end if
     end apply

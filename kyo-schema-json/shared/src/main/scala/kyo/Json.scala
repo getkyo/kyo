@@ -1,7 +1,7 @@
 package kyo
 
 final class Json extends Codec:
-    def newWriter(): Codec.Writer                               = kyo.internal.JsonWriter()
+    def newWriter()(using Frame): Codec.Writer                  = kyo.internal.JsonWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.JsonReader(input)
 
@@ -188,7 +188,7 @@ object Json:
                     schema.fieldDocs,
                     schema.fieldDeprecated,
                     if schema.examples.isEmpty then Chunk.empty
-                    else schema.examples.map(e => schema.toStructureValue(e)),
+                    else schema.examples.map(kyo.internal.declaredValue(schema, _)),
                     schema.constraints,
                     schema.droppedFields,
                     schema.wireLayout.renamedKeys

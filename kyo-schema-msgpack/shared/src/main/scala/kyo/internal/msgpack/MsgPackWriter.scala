@@ -3,6 +3,7 @@ package kyo.internal.msgpack
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec.Writer
+import kyo.Frame
 import kyo.MsgPack
 import kyo.Span
 import scala.annotation.tailrec
@@ -19,7 +20,9 @@ import scala.annotation.tailrec
   * `Map` keys and the `Result`/`Either`/tuple discriminator keys) always writes a string, because those keys are not recoverable from a
   * hash.
   */
-final class MsgPackWriter(config: MsgPack.Config) extends Writer:
+final class MsgPackWriter(config: MsgPack.Config)(using site: Frame) extends Writer:
+
+    override def frame: Frame = site
 
     override def canWriteTopLevelNonObject: Boolean = true
     override def isSelfDescribing: Boolean          = true

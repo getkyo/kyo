@@ -162,7 +162,7 @@ Sealed traits support seven wire representations, selected by a builder on the s
 | Untagged | `.untagged` | `{"radius":10.0}` |
 | Tag only | `.tagOnly` | `"Circle"` (only for variants without fields) |
 
-**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the builder call, not at encode time.
+**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the first encode or decode through the schema, naming the builder call.
 
 ```scala
 sealed trait Shape
@@ -205,10 +205,10 @@ import kyo.schema.*
 
 @discriminator("type")
 sealed trait Event
-sealed trait Pointer                extends Event
-case class Click(x: Int)            extends Pointer
-case class Scroll(dy: Int)          extends Pointer
-case class KeyPress(key: String)    extends Event
+sealed trait Pointer             extends Event
+case class Click(x: Int)         extends Pointer
+case class Scroll(dy: Int)       extends Pointer
+case class KeyPress(key: String) extends Event
 
 Json.encode[Event](Scroll(3))
 // {"type":"Scroll","dy":3}
@@ -235,7 +235,7 @@ Json.decode[Node]("""{"kind":"dlist","head_ref":"h1"}""")
 // Result.Success(DList("h1"))
 ```
 
-The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at config time.
+The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at the first encode or decode, naming the call.
 
 Variant naming applies to every representation that writes a variant's name: `discriminator`, `adjacent`, `tupleTagged`, `tupleFlat` and `tagOnly`. The default wrapper-object format keeps the Scala variant names, a variant's `@rename` included, and `untagged` writes no name, so under those two the configuration has no effect.
 
@@ -346,7 +346,7 @@ import kyo.schema.*
 
 @discriminator("type")
 sealed trait Event
-case class Click(x: Int)                                             extends Event
+case class Click(x: Int)                                                   extends Event
 @catchAll() case class UnknownEvent(tag: String, payload: Structure.Value) extends Event
 
 Json.decode[Event]("""{"type":"scroll","dy":3}""")
@@ -356,7 +356,7 @@ Json.encode[Event](UnknownEvent("scroll", Structure.Value.Record(Chunk("type" ->
 // {"type":"scroll"}
 ```
 
-What the variant receives follows the representation: under a discriminator the tag and the whole object, adjacent the tag and the content, the wrapper object its key and value, untagged the whole value (a variant with one field), tag-only the unknown name (a variant with one `String` field, or `Int` or `Long` for numbered variants). Encode writes the value back in that shape. A representation the variant's shape does not fit fails at the first encode or decode, `tupleTagged` and `tupleFlat` reject a catch-all when the schema is built, and decoding needs a self-describing codec.
+What the variant receives follows the representation: under a discriminator the tag and the whole object, adjacent the tag and the content, the wrapper object its key and value, untagged the whole value (a variant with one field), tag-only the unknown name (a variant with one `String` field, or `Int` or `Long` for numbered variants). Encode writes the value back in that shape. A representation the variant's shape does not fit, `tupleTagged` and `tupleFlat` included, fails at the first encode or decode, and decoding needs a self-describing codec.
 
 A known tag whose variant fails to decode still fails the whole decode, since the input claims a shape it does not have. A source that also changes the shape of variants it already sent can keep that input too: `@catchAll(onFailure = true)`, or `.catchAll("Variant", onFailure = true)`, gives the catch-all the tag and input of a known variant that fails, as it would for an unknown tag:
 
@@ -365,7 +365,7 @@ import kyo.schema.*
 
 @discriminator("type")
 sealed trait Event
-case class Click(x: Int)                                                           extends Event
+case class Click(x: Int)                                                                   extends Event
 @catchAll(onFailure = true) case class UnknownEvent(tag: String, payload: Structure.Value) extends Event
 
 Json.decode[Event]("""{"type":"Click"}""")
@@ -1639,7 +1639,7 @@ Schema[Person].flatten
 // Serialized: {"name":"Alice","city":"Portland","zip":"97201"}
 ```
 
-Each flattened key is the nested type's own wire name, so a `@rename` or a renaming given on `Address` carries over. A `renameAllFields` on the flattened schema applies to the flattened keys too, except a key the nested type renamed or cased itself, which is kept as written. Input in the nested form (`{"name":"Alice","address":{...}}`) still decodes. Every key must stay unique in the flat record: two nested fields of one type, or a nested field named like a kept field, are a compile error, and a collision that only the wire names reveal raises `FieldNameCollisionException` when the schema is built. Configure a nested field on its own type's schema, not on the flattened one: a builder after `flatten` that names a nested field raises `TransformFailedException`. The flat form needs a self-describing codec to decode, so Protobuf refuses to encode a flattened schema with `TransformUnsupportedException`.
+Each flattened key is the nested type's own wire name, so a `@rename` or a renaming given on `Address` carries over. A `renameAllFields` on the flattened schema applies to the flattened keys too, except a key the nested type renamed or cased itself, which is kept as written. Input in the nested form (`{"name":"Alice","address":{...}}`) still decodes. Every key must stay unique in the flat record: two nested fields of one type, or a nested field named like a kept field, are a compile error, and a collision that only the wire names reveal raises `FieldNameCollisionException` at the first encode or decode. Configure a nested field on its own type's schema, not on the flattened one: a builder after `flatten` that names a nested field raises `TransformFailedException` at the first encode or decode. The flat form needs a self-describing codec to decode, so Protobuf refuses to encode a flattened schema with `TransformUnsupportedException`.
 
 `flatten(_.field)` flattens one nested field and keeps the others nested, which is how a record with two fields of one type flattens one of them: `Schema[Order].flatten(_.billing)` writes `{"id":1,"street":"a","city":"b","shipping":{"street":"c","city":"d"}}`.
 
@@ -1978,11 +1978,11 @@ A format is implemented as a `Codec`, which is a factory for a matching `Writer`
 
 ```scala
 abstract class Codec:
-    def newWriter(): Codec.Writer
+    def newWriter()(using Frame): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 ```
 
-`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
+`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Each keeps the `Frame` of the encode or decode call it serves as its `frame`, so a failure raised while writing or reading names that call. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
 
 ### The event model
 
@@ -2010,7 +2010,7 @@ A complete codec is three classes: a `Writer` that accumulates bytes from struct
 ```scala doctest:expect=skipped
 import java.nio.charset.StandardCharsets
 
-final class LinesWriter extends Codec.Writer:
+final class LinesWriter()(using val frame: Frame) extends Codec.Writer:
     private val sb                                 = StringBuilder()
     def objectStart(name: String, size: Int): Unit = ()
     def objectEnd(): Unit                          = ()
@@ -2027,7 +2027,7 @@ final class LinesReader(input: Span[Byte])(using val frame: Frame) extends Codec
 end LinesReader
 
 object Lines extends Codec:
-    def newWriter(): Codec.Writer                               = LinesWriter()
+    def newWriter()(using Frame): Codec.Writer                  = LinesWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader = LinesReader(input)
 ```
 
@@ -2063,7 +2063,7 @@ Errors raised by the schema core and schema codecs extend the sealed `SchemaExce
 | `ParseException` | raw input cannot be parsed by the codec |
 | `RepresentationUnsupportedException` | a `.tupleTagged`, `.tupleFlat`, or `.untagged` representation is encoded through a codec that cannot express it (Protobuf) |
 | `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
-| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
+| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the first encode or decode, naming the builder call) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `TrailingInputException` | decode finishes one complete value but the input still contains extra content |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |

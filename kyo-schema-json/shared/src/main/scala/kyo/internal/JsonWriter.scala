@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.Codec.Writer
+import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.*
 import kyo.Span
@@ -15,8 +16,11 @@ final class JsonWriter private (
     private var buf: Array[Byte],
     private var pos: Int,
     private var depth: Int,
-    private var needsComma: Array[Long]
+    private var needsComma: Array[Long],
+    private var _frame: Frame
 ) extends Writer:
+
+    override def frame: Frame = _frame
 
     override def canWriteTopLevelNonObject: Boolean = true
     override def isSelfDescribing: Boolean          = true
@@ -435,13 +439,14 @@ object JsonWriter:
 
     private[internal] val cache = new ThreadLocal[JsonWriter]
 
-    def apply(): JsonWriter =
+    def apply()(using frame: Frame): JsonWriter =
         val cached = Maybe(cache.get()) // ThreadLocal.get() returns JVM null when absent
         cached match
             case Maybe.Present(w) =>
                 cache.set(null) // Clear pool slot (Java API requires null)
+                w._frame = frame
                 w
-            case _ => new JsonWriter(new Array[Byte](256), 0, 0, new Array[Long](1))
+            case _ => new JsonWriter(new Array[Byte](256), 0, 0, new Array[Long](1), frame)
         end match
     end apply
 
