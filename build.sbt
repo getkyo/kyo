@@ -349,7 +349,11 @@ Global / onLoad := {
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
+    val ci        = insideCI.value
+    val buildRoot = (ThisBuild / baseDirectory).value
+
     (Global / onLoad).value andThen { state =>
+        if (!ci) GitHooks.enable(buildRoot, state.log)
         // ci-release publishes from the platform aggregates, so a project that does not skip
         // publishing and is missing from its platform's aggregate builds, tests, and never ships,
         // with nothing failing: testKyo discovers modules from the whole build, and a scripted
@@ -4368,6 +4372,7 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
+        scalafmtOnCompile  := !insideCI.value,
         // The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, so a published plugin
         // formats exactly as scalafmtAll does and never fetches a formatter at run time.
         libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
@@ -4427,6 +4432,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
+        scalafmtOnCompile  := !insideCI.value,
         // Plugin code adds rows to a `ProjectMatrix` programmatically, so
         // it compiles against sbt-projectmatrix; it also references the
         // %%% macro from sbt-scalajs-crossproject / sbt-scala-native-crossproject's
@@ -4637,6 +4643,7 @@ lazy val `kyo-test-sbt` =
             sbtPlugin          := true,
             scalaVersion       := "2.12.21",
             crossScalaVersions := Seq("2.12.21"),
+            scalafmtOnCompile  := !insideCI.value,
             // Must never lag project/plugins.sbt: a consumer who takes ScalaJSPlugin through this
             // plugin links kyo's published artifacts with these versions, and Scala.js IR is
             // forward-incompatible. Scala Native NIR has the same directional constraint.
@@ -4657,6 +4664,7 @@ lazy val `kyo-test-sbt-publish` =
             sbtPlugin                              := true,
             scalaVersion                           := "2.12.21",
             crossScalaVersions                     := Seq("2.12.21"),
+            scalafmtOnCompile                      := !insideCI.value,
             buildInfoKeys                          := Seq[BuildInfoKey](BuildInfoKey.map(version) { case (_, v) => ("kyoVersion", v) }),
             buildInfoPackage                       := "kyo.test.sbt",
             buildInfoObject                        := "BuildInfo",
