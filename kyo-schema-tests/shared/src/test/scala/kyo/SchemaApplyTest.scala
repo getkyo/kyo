@@ -114,6 +114,11 @@ class SchemaApplyTest extends kyo.test.Test[Any]:
             )
         }
 
+        "a given's own definition builds when the type deriving Schema is declared beside it" in {
+            import SchemaApplyOwnBesideDerives.given
+            assert(Json.encode[SchemaApplyOwnBesideDerives.SAPriority](SchemaApplyOwnBesideDerives.SAPriority.High) == "\"High\"")
+        }
+
         "is an imported given when the companion derives Schema, as summon is" in {
             import SchemaApplyOverride.given
             val summoned = summon[Schema[SADerived]].encodeString[Json](SADerived(1))
@@ -136,6 +141,13 @@ case class SADerived(value: Int) derives CanEqual, Schema
 object SchemaApplyOverride:
     given Schema[SADerived] = Schema[SADerived].rename("value", "v")
 end SchemaApplyOverride
+
+// The README's tag-only example: the enum's companion derives Schema, and the configured given sits in the same object.
+object SchemaApplyOwnBesideDerives:
+    enum SAPriority derives CanEqual, Schema:
+        case Low, High
+    given Schema[SAPriority] = Schema[SAPriority].tagOnly
+end SchemaApplyOwnBesideDerives
 
 object SchemaApplyNested:
     case class Configured(a: Int, b: String) derives CanEqual
