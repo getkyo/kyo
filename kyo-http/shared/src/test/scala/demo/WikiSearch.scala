@@ -24,9 +24,8 @@ object WikiSearch extends KyoApp:
     case class ApiError(error: String) derives Schema
 
     def searchWikipedia(query: String, limit: Int): SearchResponse < (Async & Abort[HttpException]) =
-        val url =
-            s"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${java.net.URLEncoder.encode(query, "UTF-8")}&srlimit=$limit&format=json"
-        HttpClient.getJson[WikiSearchResponse](url).map { resp =>
+        val params = Seq("action" -> "query", "list" -> "search", "srsearch" -> query, "srlimit" -> limit.toString, "format" -> "json")
+        HttpClient.getJson[WikiSearchResponse]("https://en.wikipedia.org/w/api.php", query = params).map { resp =>
             SearchResponse(
                 query,
                 resp.query.search.map { r =>
@@ -34,17 +33,24 @@ object WikiSearch extends KyoApp:
                         r.title,
                         r.snippet.replaceAll("<[^>]*>", ""), // strip HTML tags from snippets
                         r.wordcount,
-                        s"https://en.wikipedia.org/wiki/${java.net.URLEncoder.encode(r.title.replace(' ', '_'), "UTF-8")}"
+                        s"https://en.wikipedia.org/?curid=${r.pageid}"
                     )
                 }
             )
         }
     end searchWikipedia
 
+    // The title is a route capture, so the client percent-encodes it as one path segment.
+    private val wikiSummaryRoute = HttpRoute
+        .getRaw("api" / "rest_v1" / "page" / "summary" / HttpPath.Capture[String]("title"))
+        .response(_.bodyJson[WikiSummaryResponse])
+
+    // An empty path makes the client build the path from the route.
+    private val wikipedia = HttpUrl(Present("https"), "en.wikipedia.org", 443, "", Absent)
+
     def fetchSummary(title: String): Summary < (Async & Abort[HttpException]) =
-        val encoded = java.net.URLEncoder.encode(title, "UTF-8")
-        val url     = s"https://en.wikipedia.org/api/rest_v1/page/summary/$encoded"
-        HttpClient.getJson[WikiSummaryResponse](url).map { r =>
+        val request = HttpRequest.getRaw(wikipedia).addField("title", title)
+        HttpClient.use(_.sendWith(wikiSummaryRoute, request)(_.fields.body)).map { r =>
             Summary(
                 r.title,
                 r.extract,
