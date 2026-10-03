@@ -144,6 +144,15 @@ final class Scheduler(
         blockingMonitor.wake()
     }
 
+    /** Records that `task`, running on the calling thread, released its interrupt: what it runs next, its finalizers among it, must not see
+      * the thread interrupt the blocking monitor dispatched for it. A no-op off a worker thread, which the monitor never interrupts.
+      */
+    def notifyInterruptReleased(task: Task): Unit = {
+        val worker = Worker.current()
+        if (worker ne null)
+            worker.interruptReleased(task)
+    }
+
     /** Schedules a task for execution by the scheduler.
       *
       * The scheduler will assign the task to an available worker based on current load and system conditions. Tasks are executed according

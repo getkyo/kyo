@@ -132,6 +132,17 @@ abstract private class Worker(
         if (!interruptLock.compareAndSet(false, true))
             acquireInterruptLock()
 
+    /** Clears the thread interrupt the monitor dispatched for `task`, once `task` no longer answers needsInterrupt. Called on this
+      * worker's own thread. Under the lock, so a dispatch that read needsInterrupt before the change lands before the clear, never after.
+      */
+    private[scheduler] def interruptReleased(task: Task): Unit = {
+        acquireInterruptLock()
+        try {
+            if (currentTask eq task)
+                Thread.interrupted(): Unit
+        } finally interruptLock.set(false)
+    }
+
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
     @volatile private var taskStartMs                  = 0L
