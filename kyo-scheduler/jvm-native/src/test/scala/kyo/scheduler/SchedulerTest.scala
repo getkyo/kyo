@@ -266,13 +266,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
             // Three workers, two of them held by spinning tasks, and a sampling stride of one so the placement search regularly
             // misses the free worker and reaches the fallback.
             val cfg = Scheduler.Config.default.copy(cores = 3, coreWorkers = 3, minWorkers = 3, maxWorkers = 3, scheduleStride = 1)
-            // The free worker is available only while its own task is within its slice and the blocking monitor sees its carrier
-            // progress, and on a loaded runner the OS can hold that carrier off the CPU long enough to lose both: placement then
-            // finds no worker available and rightly falls back onto a stalled one. So the scheduler's time is frozen, and moved
-            // once to stall the spinning tasks, and the monitor is stopped: this leaf is about preemption, not blocking.
-            val time = new java.util.concurrent.atomic.AtomicLong(InternalClock.monotonicMillis())
-            withScheduler(cfg, () => time.get()) { s =>
-                s.blockingMonitor.stop()
+            withScheduler(cfg) { s =>
                 val release = new CountDownLatch(1)
                 val started = new CountDownLatch(2)
                 try {
@@ -284,9 +278,8 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                         }))
                     )
                     assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
-                    time.addAndGet(cfg.timeSliceMs + 1L)
-                    // Wait (poll, not a fixed sleep) until the clock has carried the move and both carriers are Stalled. The
-                    // deadline is a hang-guard for a pool that never stalls, never the pass condition.
+                    // Wait (poll, not a fixed sleep) until both carriers are past their slice and Stalled. The deadline is a
+                    // hang-guard for a pool that never stalls, never the pass condition.
                     val deadline = java.lang.System.nanoTime() + 15000000000L
                     var stalled  = 0
                     while (
@@ -297,29 +290,14 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                         Thread.sleep(1)
                     assert(stalled == 2, s"the spinning tasks never stalled their workers (stalled=$stalled)")
 
-                    // The free worker's carrier is held mid-task while the tasks are placed, as a carrier the OS has descheduled is,
-                    // for longer than a slice of real time. Under the real clock that stalls it and every task falls back.
-                    val holding = new CountDownLatch(1)
-                    val hold    = new CountDownLatch(1)
-                    s.schedule(TestTask(_run = () => {
-                        holding.countDown()
-                        hold.await()
-                        Task.Done
-                    }))
-                    assert(holding.await(5, java.util.concurrent.TimeUnit.SECONDS))
-                    val heldUntil = java.lang.System.nanoTime() + 3L * cfg.timeSliceMs * 1000000L
-                    while (java.lang.System.nanoTime() < heldUntil) Thread.sleep(1)
-
                     val served = new CountDownLatch(100)
                     var landed = 0
-                    try
-                        (0 until 100).foreach { _ =>
-                            s.schedule(TestTask(_run = () => { served.countDown(); Task.Done }))
-                            // The free worker is available throughout, so no task may be placed on a stalled one: a stalled worker's
-                            // load is its spinning task alone.
-                            if (s.status().workers.exists(w => (w ne null) && w.isStalled && w.load > 1)) landed += 1
-                        }
-                    finally hold.countDown()
+                    (0 until 100).foreach { _ =>
+                        s.schedule(TestTask(_run = () => { served.countDown(); Task.Done }))
+                        // The free worker is available throughout, so no task may be placed on a stalled one: a stalled worker's load
+                        // is its spinning task alone.
+                        if (s.status().workers.exists(w => (w ne null) && w.isStalled && w.load > 1)) landed += 1
+                    }
                     assert(landed == 0, s"$landed tasks were placed on a stalled worker while a worker was available")
                     assert(
                         served.await(10, java.util.concurrent.TimeUnit.SECONDS),
@@ -512,12 +490,9 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
       * JVM, so a test sharing it silently freezes the regulator (probesSent stays ~0). A dedicated pool sized well past the
       * 2 pinned loops removes that trap, and shutting it down afterwards avoids thread accumulation on Native.
       */
-    private def withScheduler[A](cfg: Scheduler.Config)(testCode: Scheduler => A): A =
-        withScheduler(cfg, () => InternalClock.monotonicMillis())(testCode)
-
-    private def withScheduler[A](cfg: Scheduler.Config, clockSource: () => Long)(testCode: Scheduler => A): A = {
+    private def withScheduler[A](cfg: Scheduler.Config)(testCode: Scheduler => A): A = {
         val timer     = java.util.concurrent.Executors.newScheduledThreadPool(8, kyo.scheduler.util.Threads("test-timer"))
-        val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, cfg, clockSource)
+        val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled, timer, cfg)
         try testCode(scheduler)
         finally { scheduler.shutdown(); timer.shutdownNow(): Unit }
     }

@@ -93,25 +93,17 @@ import scala.concurrent.ExecutionContext
   * @see
   *   Concurrency for concurrency regulation details
   */
-final class Scheduler private[scheduler] (
-    workerExecutor: Executor,
-    clockExecutor: Executor,
-    timerExecutor: ScheduledExecutorService,
-    config: Config,
-    clockSource: () => Long
+final class Scheduler(
+    workerExecutor: Executor = Scheduler.defaultWorkerExecutor,
+    clockExecutor: Executor = Scheduler.defaultClockExecutor,
+    timerExecutor: ScheduledExecutorService = Scheduler.defaultTimerExecutor,
+    config: Config = Config.default
 ) {
-
-    def this(
-        workerExecutor: Executor = Scheduler.defaultWorkerExecutor,
-        clockExecutor: Executor = Scheduler.defaultClockExecutor,
-        timerExecutor: ScheduledExecutorService = Scheduler.defaultTimerExecutor,
-        config: Config = Config.default
-    ) = this(workerExecutor, clockExecutor, timerExecutor, config, () => InternalClock.monotonicMillis())
 
     import config.*
 
     private val pool    = LoomSupport.tryVirtualize(virtualizeWorkers, workerExecutor)
-    private val clock   = new InternalClock(clockExecutor, clockSource)
+    private val clock   = new InternalClock(clockExecutor)
     private val workers = new Array[Worker](maxWorkers)
     private val flushes = new LongAdder
     // Declared before cycleTask, which starts the loop that writes them: an initializer that ran after the loop started would
