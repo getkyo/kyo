@@ -273,4 +273,64 @@ expect_eq "sched snapshot without ts" "$(sched_run "$test_dir/sched-nots")" 'kyo
 
 expect_eq "sched snapshot missing file" "$(sched_run "$test_dir/absent")" ""
 
+# Runner liveness: the two runner processes with pid and state, the path stripped, everything else ignored. A stuck runner
+# shows as state D; a vanished one as none.
+cat > "$test_dir/bin/ps" <<'STUB'
+#!/usr/bin/env bash
+cat <<'ROWS'
+  812 Ssl  /home/runner/actions-runner/cached/bin/Runner.Listener
+ 2290 Dl   Runner.Worker
+ 3001 S    java
+ROWS
+STUB
+chmod +x "$test_dir/bin/ps"
+
+runner_run() {
+    PATH="$test_dir/bin:$PATH" GITHUB_ACTIONS="$1" OS="$2" "$bash_bin" -c "
+        $(sed -n '/^runner_headline()/,/^}/p' "$script_dir/ci-monitor.sh")
+        runner_headline
+    " || fail "runner_headline exited non-zero"
+}
+
+expect_eq "runner liveness" "$(runner_run true Linux)" 'runner=[Runner.Listener:812/Ssl Runner.Worker:2290/Dl]'
+expect_eq "runner liveness off Actions" "$(runner_run "" Linux)" ""
+expect_eq "runner liveness on Windows" "$(runner_run true MINGW64_NT-10.0)" ""
+
+cat > "$test_dir/bin/ps" <<'STUB'
+#!/usr/bin/env bash
+echo "  3001 S    java"
+STUB
+expect_eq "runner gone" "$(runner_run true Linux)" 'runner=[none]'
+
+# Kernel filter: a hung-task report and the trace lines after it pass, prefixed; container churn before it does not.
+kern_run() {
+    "$bash_bin" -c "
+        $(sed -n '/^kern_filter()/,/^}/p' "$script_dir/ci-monitor.sh")
+        kern_filter
+    " || fail "kern_filter exited non-zero"
+}
+
+kern_out=$(printf '%s\n' \
+    '2026-10-03T14:07:10 docker0: port 2(veth1) entered forwarding state' \
+    '2026-10-03T14:07:11 INFO: task node:4242 blocked for more than 120 seconds.' \
+    '2026-10-03T14:07:11 Call trace:' \
+    '2026-10-03T14:07:11  io_uring_cancel_generic+0x1a0/0x2c0' | kern_run)
+expect_eq "kernel hung task" "$kern_out" "$(printf '%s\n' \
+    '[ci-mon-kern] 2026-10-03T14:07:11 INFO: task node:4242 blocked for more than 120 seconds.' \
+    '[ci-mon-kern] 2026-10-03T14:07:11 Call trace:' \
+    '[ci-mon-kern] 2026-10-03T14:07:11  io_uring_cancel_generic+0x1a0/0x2c0')"
+
+# Upper-case kernel markers match although the match is on a lowercased copy; a debug line does not match "bug:".
+expect_eq "kernel BUG" "$(printf '%s\n' 'x kernel BUG: scheduling while atomic' | kern_run)" '[ci-mon-kern] x kernel BUG: scheduling while atomic'
+expect_eq "kernel debug noise" "$(printf '%s\n' 'x usb 1-1: debug message' | kern_run)" ""
+
+# The context window closes 40 lines after the last hit.
+kern_window=$( { echo 'x Out of memory: Killed process 1 (java)'; for i in $(seq 1 45); do echo "x trace $i"; done; } | kern_run)
+expect_eq "kernel context window" "$(printf '%s\n' "$kern_window" | wc -l | tr -d ' ')" "41"
+
+# A flood stops at the cap with one note.
+kern_flood=$(for i in $(seq 1 600); do echo "x oom-kill $i"; done | kern_run)
+expect_eq "kernel cap" "$(printf '%s\n' "$kern_flood" | wc -l | tr -d ' ')" "501"
+expect_eq "kernel cap note" "$(printf '%s\n' "$kern_flood" | tail -1)" '[ci-mon-kern] 500-line cap reached, later kernel lines dropped'
+
 printf 'ci-monitor-selftest: ok\n'
