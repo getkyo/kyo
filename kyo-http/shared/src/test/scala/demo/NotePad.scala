@@ -180,7 +180,8 @@ object NotePadClient extends KyoApp:
             server <- HttpServer.init(HttpServerConfig.default.port(0))(list, create, get, patch, delete, changes)
             _      <- Console.printLine(s"NotePadClient started server on http://localhost:${server.port}")
 
-            _ <- HttpClient.withConfig(_.baseUrl(s"http://localhost:${server.port}").timeout(5.seconds)) {
+            api <- Abort.get(HttpClientConfig.BaseUrl.init(s"http://localhost:${server.port}"))
+            _   <- HttpClient.withConfig(_.baseUrl(api).timeout(5.seconds)) {
                 for
                     _  <- Console.printLine("\n=== Creating notes ===")
                     n1 <- HttpClient.postJson[Note]("/notes", CreateNote("Shopping", "Milk, eggs, bread"))

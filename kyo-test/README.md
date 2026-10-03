@@ -303,9 +303,8 @@ A leaf that uses an effect beyond the baseline (`Env` or `Var`) must discharge i
 
 ```scala
 class DbLeafTest extends Test[Env[Db]]:
-    "reads the balance".handle[Env[
-        Db
-    ]]([A] => (body: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("jdbc:test"))(body)) in {
+    "reads the balance"
+        .handle[Env[Db]]([A] => (leaf: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("jdbc:test"))(leaf)) in {
         Bank.balance(1).map(b => assert(b == 0L))
     }
 end DbLeafTest

@@ -33,7 +33,10 @@ Compile / unmanagedSourceDirectories +=
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-doctest" / "plugin" / "src" / "main" / "scala"
 
-// sbt-scalafmt brings only scalafmt-dynamic-core, which has no downloader for the scalafmt
-// version .scalafmt.conf names; without this the plugin's Formatter cannot load scalafmt.
-// Keep the version equal to the kyo-doctest-plugin project's.
-libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5"
+// The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, since scalafmt refuses a config
+// naming another version. It cannot fetch one at run time: the scalafmt-dynamic-core sbt-scalafmt brings has no downloader.
+libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+    val conf = IO.read(baseDirectory.value.getParentFile / ".scalafmt.conf")
+    """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+        .getOrElse(sys.error("no version in .scalafmt.conf"))
+}

@@ -1,6 +1,0 @@
-# Format reuse: the first run loads scalafmt, the next two format with it and load almost nothing.
-> a/doctest
-> recordLoaded
-> b/doctest
-> c/doctest
-> checkFewLoaded

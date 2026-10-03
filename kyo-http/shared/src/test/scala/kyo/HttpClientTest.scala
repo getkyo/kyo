@@ -189,6 +189,27 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "a baseUrl without a scheme or a host fails with HttpUrlParseException naming why" in {
+            assert(Chunk(
+                HttpClientConfig().baseUrl("/api").failure.map(_.reason),
+                HttpClientConfig.BaseUrl.init(HttpUrl.fromUri("/api")).failure.map(_.reason),
+                HttpClientConfig().baseUrl(HttpUrl(Present("http"), "", 80, "/", Absent)).failure.map(_.reason),
+                HttpClientConfig.BaseUrl.init("not a url").failure.map(_.reason)
+            ) == Chunk(
+                Present(HttpUrlParseException.Reason.NotAbsolute),
+                Present(HttpUrlParseException.Reason.NotAbsolute),
+                Present(HttpUrlParseException.Reason.EmptyHost),
+                Present(HttpUrlParseException.Reason.Relative)
+            ))
+        }
+
+        "a baseUrl with a scheme and a host is the base" in {
+            assert(
+                HttpClientConfig().baseUrl("http://h:8080/v1").map(_.baseUrl.map(_.url)) ==
+                    Result.succeed(Present(HttpUrl(Present("http"), "h", 8080, "/v1", Absent)))
+            )
+        }
+
         "zero connectTimeout throws" in {
             interceptThrown[IllegalArgumentException] {
                 HttpClientConfig(connectTimeout = Duration.Zero)
@@ -341,6 +362,18 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        // A path segment is percent-encoded by RFC 3986, where '+' is an ordinary character and a space is %20; the form
+        // encoding's '+' for a space would reach the handler as a literal '+'.
+        "String with a space and a '+'" - {
+            val route = HttpRoute.getRaw("users" / Capture[String]("name")).response(_.bodyText)
+            val ep    = route.handler(req => HttpResponse.ok(s"[${req.fields.name}]"))
+            runServer(ep) { url =>
+                // An empty path makes the client build the target from the route, encoding the capture.
+                val request = HttpRequest.getRaw(HttpUrl(Absent, "", 80, "", Absent)).addField("name", "a b+c")
+                send(url, route, request).map(resp => assert(resp.fields.body == "[a b+c]"))
+            }
+        }
+
         "multiple" - {
             val route = HttpRoute.getRaw("orgs" / Capture[String]("org") / "repos" / Capture[Int]("id"))
                 .response(_.bodyText)
@@ -373,6 +406,15 @@ class HttpClientTest extends BaseHttpTest:
                 send(url, route, request).map { resp =>
                     assert(resp.fields.body == "results for: kyo")
                 }
+            }
+        }
+
+        "a value with a space, a '+' and an '&'" - {
+            val route = HttpRoute.getRaw("search").request(_.query[String]("q")).response(_.bodyText)
+            val ep    = route.handler(req => HttpResponse.ok(s"[${req.fields.q}]"))
+            runServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/search")).addField("q", "a b+c&d")
+                send(url, route, request).map(resp => assert(resp.fields.body == "[a b+c&d]"))
             }
         }
 
@@ -826,18 +868,46 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("api-response"))
             runServer(ep) { url =>
                 var called = false
-                val config = HttpClientConfig(
-                    baseUrl = Present(HttpUrl(url.scheme, url.host, url.port, "/", Absent)),
-                    timeout = Duration.Infinity
-                )
-                HttpClient.withConfig(config) {
-                    withClient { client =>
-                        client.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/api"))) { resp =>
-                            called = true
-                            assert(resp.fields.body == "api-response")
+                Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/", Absent))).map { base =>
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                        withClient { client =>
+                            client.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/api"))) { resp =>
+                                called = true
+                                assert(resp.fields.body == "api-response")
+                            }
                         }
+                    }.andThen(assert(called))
+                }
+            }
+        }
+
+        // HttpClientConfig documents baseUrl as a prefix: a request to `/path` goes to `baseUrl + /path`.
+        "its path prefixes the request path" - {
+            val route = HttpRoute.getRaw("v1" / "api").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok("prefixed"))
+            runServer(ep) { url =>
+                Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/v1/", Absent))).map { base =>
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                        withClient(_.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/api")))(resp =>
+                            assert(resp.fields.body == "prefixed")
+                        ))
                     }
-                }.andThen(assert(called))
+                }
+            }
+        }
+
+        "its path prefixes a path the route builds from captures" - {
+            val route = HttpRoute.getRaw("v1" / "users" / Capture[String]("name")).response(_.bodyText)
+            val ep    = route.handler(req => HttpResponse.ok(s"[${req.fields.name}]"))
+            runServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl(Absent, "", 80, "", Absent)).addField("name", "a b+c")
+                Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/v1", Absent))).map { base =>
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                        withClient(_.sendWith(HttpRoute.getRaw("users" / Capture[String]("name")).response(_.bodyText), request)(resp =>
+                            assert(resp.fields.body == "[a b+c]")
+                        ))
+                    }
+                }
             }
         }
 
@@ -846,19 +916,17 @@ class HttpClientTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("direct"))
             runServer(ep) { url =>
                 var called = false
-                val config = HttpClientConfig(
-                    baseUrl = Present(HttpUrl(Present("http"), "other-host", 9999, "/", Absent)),
-                    timeout = Duration.Infinity
-                )
-                HttpClient.withConfig(config) {
-                    withClient { client =>
-                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/data", Absent))
-                        client.sendWith(route, request) { resp =>
-                            called = true
-                            assert(resp.fields.body == "direct")
+                Abort.get(HttpClientConfig.BaseUrl.init("http://other-host:9999/")).map { base =>
+                    HttpClient.withConfig(HttpClientConfig(baseUrl = Present(base), timeout = Duration.Infinity)) {
+                        withClient { client =>
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/data", Absent))
+                            client.sendWith(route, request) { resp =>
+                                called = true
+                                assert(resp.fields.body == "direct")
+                            }
                         }
-                    }
-                }.andThen(assert(called))
+                    }.andThen(assert(called))
+                }
             }
         }
     }
@@ -1030,6 +1098,53 @@ class HttpClientTest extends BaseHttpTest:
                         }
                     }
                 }.andThen(assert(called))
+            }
+        }
+
+        "a relative-path Location resolves against the request's directory, dot segments removed (RFC 3986 section 5.2)" - {
+            val route                        = HttpRoute.getRaw("a" / "b" / "start").response(_.bodyText)
+            val sibling                      = HttpRoute.getRaw("a" / "b" / "next").request(_.query[String]("x")).response(_.bodyText)
+            val cousin                       = HttpRoute.getRaw("a" / "c" / "next").response(_.bodyText)
+            val siblingEp                    = sibling.handler(req => HttpResponse.ok(s"sibling x=${req.fields.x}"))
+            val cousinEp                     = cousin.handler(_ => HttpResponse.ok("cousin"))
+            def redirectTo(location: String) =
+                route.handler(_ => HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", location)))
+            "a sibling" - {
+                runServer(siblingEp, redirectTo("next?x=1")) { url =>
+                    HttpClient.withConfig(noTimeout) {
+                        withClient { client =>
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/a/b/start", Absent))
+                            client.sendWith(route, request)(resp => assert(resp.fields.body == "sibling x=1"))
+                        }
+                    }
+                }
+            }
+            "through a parent" - {
+                runServer(cousinEp, redirectTo("../c/./next")) { url =>
+                    HttpClient.withConfig(noTimeout) {
+                        withClient { client =>
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/a/b/start", Absent))
+                            client.sendWith(route, request)(resp => assert(resp.fields.body == "cousin"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "a network-path Location goes to the host and port it names (RFC 3986 section 4.2)" in {
+            val route    = HttpRoute.getRaw("start").response(_.bodyText)
+            val landed   = HttpRoute.getRaw("landed").response(_.bodyText)
+            val landedEp = landed.handler(_ => HttpResponse.ok("landed"))
+            HttpServer.init(0, "127.0.0.1")(landedEp).map { target =>
+                val redirectEp = route.handler { _ =>
+                    HttpResponse.halt(HttpResponse(HttpStatus.Found).setHeader("Location", s"//127.0.0.1:${target.port}/landed"))
+                }
+                HttpServer.init(0, "127.0.0.1")(redirectEp).map { origin =>
+                    HttpClient.withConfig(noTimeout) {
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "127.0.0.1", origin.port, "/start", Absent))
+                        HttpClient.use(_.sendWith(route, request)(resp => assert(resp.fields.body == "landed")))
+                    }
+                }
             }
         }
 
@@ -3079,14 +3194,15 @@ class HttpClientTest extends BaseHttpTest:
                 else HttpResponse.ok("ok")
             }
             withServer(ep) { url =>
-                val base = HttpUrl(url.scheme, url.host, url.port, "/", Absent)
-                // Outer sets baseUrl, inner adds retry — both should apply
-                HttpClient.withConfig(noTimeout.copy(baseUrl = Present(base))) {
-                    HttpClient.withConfig(_.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(3)))) {
-                        withClient { c =>
-                            c.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/stack"))) { resp =>
-                                assert(resp.status == HttpStatus.OK)
-                                assert(attempts == 2)
+                Abort.get(HttpClientConfig.BaseUrl.init(HttpUrl(url.scheme, url.host, url.port, "/", Absent))).map { base =>
+                    // Outer sets baseUrl, inner adds retry — both should apply
+                    HttpClient.withConfig(noTimeout.copy(baseUrl = Present(base))) {
+                        HttpClient.withConfig(_.copy(retrySchedule = Present(Schedule.fixed(1.millis).take(3)))) {
+                            withClient { c =>
+                                c.sendWith(route, HttpRequest.getRaw(HttpUrl.fromUri("/stack"))) { resp =>
+                                    assert(resp.status == HttpStatus.OK)
+                                    assert(attempts == 2)
+                                }
                             }
                         }
                     }
@@ -3095,18 +3211,19 @@ class HttpClientTest extends BaseHttpTest:
         }
 
         "withConfig transform preserves untouched fields" in {
-            val base   = HttpUrl(Present("http"), "localhost", 1234, "/", Absent)
-            val config = noTimeout.copy(
-                baseUrl = Present(base),
-                maxRedirects = 3,
-                followRedirects = false
-            )
-            HttpClient.withConfig(config) {
-                HttpClient.withConfig(_.copy(maxRedirects = 20)) {
-                    HttpClient.use { _ =>
-                        // Can't directly read config from outside, but we can verify
-                        // the transform API compiles and works by checking behavior
-                        succeed("compile and runtime check: nested withConfig transforms compose without error")
+            Abort.get(HttpClientConfig.BaseUrl.init("http://localhost:1234/")).map { base =>
+                val config = noTimeout.copy(
+                    baseUrl = Present(base),
+                    maxRedirects = 3,
+                    followRedirects = false
+                )
+                HttpClient.withConfig(config) {
+                    HttpClient.withConfig(_.copy(maxRedirects = 20)) {
+                        HttpClient.use { _ =>
+                            // Can't directly read config from outside, but we can verify
+                            // the transform API compiles and works by checking behavior
+                            succeed("compile and runtime check: nested withConfig transforms compose without error")
+                        }
                     }
                 }
             }

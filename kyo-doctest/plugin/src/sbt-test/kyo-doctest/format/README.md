@@ -1,9 +1,10 @@
 # Format Test
 
-A block scalafmt rewrites:
+This README contains one scala fence that is not in scalafmt style.
 
 ```scala
-val   total   =   List(1,2,3).sum
+val   x   =   List( 1,2,3 )
+assert( x.sum==6 )
 ```
 
 A block that does not parse is left as written:

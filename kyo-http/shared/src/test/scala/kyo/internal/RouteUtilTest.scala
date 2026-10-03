@@ -909,9 +909,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             )
             assert(!url.contains(" "))
             assert(url.contains("q="))
-            // Decoded value should round-trip
             val encoded = url.split("q=")(1)
-            assert(java.net.URLDecoder.decode(encoded, "UTF-8") == "hello world&foo=bar")
+            assert(encoded == "hello%20world%26foo%3Dbar")
         }
 
         "URL-encoded special characters in path capture" in {

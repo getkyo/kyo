@@ -21,7 +21,7 @@ private[kyo] trait UnixSocketTestHelper:
       */
     def unixSocketsSupported: Boolean          = true
     def encodeSocketPath(path: String): String =
-        java.net.URLEncoder.encode(path, "UTF-8")
+        PercentEncoding.encode(path, PercentEncoding.Mode.Component)
     def mkUrl(socketPath: String, httpPath: String): String =
         s"http+unix://${encodeSocketPath(socketPath)}$httpPath"
 end UnixSocketTestHelper

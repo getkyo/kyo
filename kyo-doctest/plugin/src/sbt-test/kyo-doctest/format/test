@@ -1,3 +1,6 @@
-# Format: the parseable block is rewritten, the unparseable and noformat blocks are not.
+# Format: doctestFormat rewrites the parseable fence into the .scalafmt.conf style without compiling, and leaves the unparseable
+# and noformat fences as written; doctest then validates them.
+> doctestFormat
+$ must-mirror README.md expected/README.md
 > doctest
-$ must-mirror README.md expected.md
+$ must-mirror README.md expected/README.md

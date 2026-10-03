@@ -65,7 +65,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
     "WindowsDisk.diskFreeInto" - {
 
         "writes total and free straight into the drive's retained cells; a zero return writes nothing" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val okCell  = handles.diskStore("wbtest-diskfreeinto-ok")
                 val okStore =
@@ -89,7 +89,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
         }
 
         "contains a NonFatal throw from the free-space binding and writes nothing" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val cell  = handles.diskStore("wbtest-nonfatal")
                 val store = new WindowsDisk.Store("wbtest-g:\\", Buffer.alloc[Long](1), Buffer.alloc[Long](1), Buffer.alloc[Long](1), cell)
@@ -102,7 +102,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
         }
 
         "contains a LinkageError from an unresolved symbol and writes nothing" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val cell  = handles.diskStore("wbtest-linkage")
                 val store = new WindowsDisk.Store("wbtest-h:\\", Buffer.alloc[Long](1), Buffer.alloc[Long](1), Buffer.alloc[Long](1), cell)
@@ -122,7 +122,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
             // absence of D:'s gauge before the bitmask picks it up, which the shared root cannot support (the
             // real-host leaf below registers the runner's own real drives, D: included on a windows-latest
             // runner, into the shared "machine" scope).
-            val handles = MachineHandles.initForTest(Stat.initScope("wbtest-bitmask-newdrive"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("wbtest-bitmask-newdrive"), 8L)
             val stub    = new StubBindings
             stub.getDriveTypeFn = _ => WindowsBindings.DriveFixed
             stub.diskFreeSpaceFn = (_, _, t, f) =>
@@ -149,7 +149,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
             // non-advancement of the cpu.total.rate count, which the shared root cannot support (a
             // concurrently-running sibling suite's own genuine observation into the shared counter would
             // fail this leaf despite the degrade path under test writing nothing).
-            val handles        = MachineHandles.initForTest(Stat.initScope("wbtest-offwindows-degrade"), 8L)
+            val handles        = MachineHandlesOwners.initForTest(Stat.initScope("wbtest-offwindows-degrade"), 8L)
             val sampler        = new MachineSampler(handles)
             val machine        = new MachineWindows(handles, sampler)
             val cpuCountBefore = histogramSummary("wbtest-offwindows-degrade", "cpu", "total.rate").count
@@ -164,7 +164,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
                 "GetLogicalDrives/GetDiskFreeSpaceExA are Windows-specific"
             )
             val bindings = Ffi.load[WindowsBindings]
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val disk = new WindowsDisk(handles)
                 disk.read(bindings)

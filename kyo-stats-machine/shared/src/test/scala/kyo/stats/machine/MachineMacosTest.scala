@@ -75,7 +75,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.hostCpuLoadFn = out =>
                 out.set(0, 1000000000L); out.set(1, 2000000000L); out.set(2, 7000000000L); out.set(3, 300000000L); 0
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -98,7 +98,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             val stub = new StubBindings
             stub.hostCpuLoadFn = _ => 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -113,7 +113,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.hostCpuLoadFn = out =>
                 out.set(0, 1L); out.set(1, 1L); out.set(2, 1L); out.set(3, 1L); 0
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -140,7 +140,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // call resolves to (also written by MachineLinuxTest's own meminfo leaves): StatsRegistry keeps
             // only the first-ever-registered cell for a path canonical for the process lifetime, so a poll
             // against the shared scope could read a value a different leaf registered first.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-memory-decode"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-memory-decode"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler)
             machine.readMemory(stub)
@@ -157,7 +157,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.swapUsageFn = out =>
                 out.set(0, 4294967296L); out.set(1, 1073741824L); 0
             // A uniquely-scoped MachineHandles; see the memTotal note in "memory decode" above.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-swap-decode"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-swap-decode"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler)
             machine.readSwap(stub)
@@ -169,7 +169,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             val stub = new StubBindings
             stub.swapUsageFn = _ => 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -189,7 +189,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // A uniquely-scoped MachineHandles; see the memTotal note in "memory decode" above. Load has
             // no histogram-backed sibling to fall back on, so the routing claim (index i -> the right
             // named cell, not a swap between five/fifteen) needs this isolation to be checked exactly.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-load-decode"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-load-decode"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler)
             machine.readLoad(stub)
@@ -203,7 +203,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.getloadavgFn = (out, n) =>
                 out.set(0, 9.0); 1
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
                 machine = new MachineMacos(handles, sampler)
             yield
@@ -229,7 +229,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // A uniquely-scoped MachineHandles, never touched by any other leaf or suite, so every path
             // under it starts genuinely unregistered and an absolute check is meaningful (unlike the
             // shared "machine" scope, which MachineLinuxTest's own leaves may have already populated).
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-family-independence"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-family-independence"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler)
             machine.readCpu(stub); machine.readMemory(stub); machine.readSwap(stub); machine.readLoad(stub)
@@ -259,7 +259,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // A uniquely-scoped MachineHandles: disk store paths are derived from the handles' own root
             // scope, so "/" -> "root" here cannot collide with the OTHER disk leaf below (or another
             // suite) also decoding a "/" mount under the shared "machine" scope.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-disk-enum"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-disk-enum"), 8L)
             val disk    = new MacosDisk(handles)
             disk.read(stub)
             assert(gaugeRegistered("mmactest-disk-enum", "disk", "root", "total"))
@@ -277,7 +277,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                 else
                     out.set(0, 4096000L); out.set(1, 1024000L); 0
             // A uniquely-scoped MachineHandles; see the disk-enumeration leaf above for why.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-disk-statfs-fail"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-disk-statfs-fail"), 8L)
             val disk    = new MacosDisk(handles)
             disk.read(stub) // no throw despite the per-mount failure
             assert(gaugePath("mmactest-disk-statfs-fail", "disk", "root", "total") == 4096000.0)
@@ -293,7 +293,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                 "the macOS shim returns live values on a real macOS host; this leaf asserts the off-macOS degrade"
             )
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler        = new MachineSampler(handles)
                 machine        = new MachineMacos(handles, sampler)
                 cpuCountBefore = histogramSummary("machine", "cpu", "total.rate").count
@@ -316,7 +316,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                     throw new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
             // A uniquely-scoped MachineHandles, never touched by any other leaf or suite, so every path under
             // it starts genuinely unregistered and the absolute "nothing registered" check is meaningful.
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-shim-load-fail"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-shim-load-fail"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler, failing)
             try
@@ -342,7 +342,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                     throw new ExceptionInInitializerError(
                         new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
                     )
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-shim-clinit-fail"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-shim-clinit-fail"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler, failing)
             try
@@ -362,7 +362,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             // re-touched, which raises NoClassDefFoundError from inside a read rather than from the load.
             val stub = new StubBindings
             stub.hostCpuLoadFn = _ => throw new NoClassDefFoundError("kyo.stats.machine.MacosBindingsImpl")
-            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-late-linkage"), 8L)
+            val handles = MachineHandlesOwners.initForTest(Stat.initScope("mmactest-late-linkage"), 8L)
             val sampler = new MachineSampler(handles)
             val machine = new MachineMacos(handles, sampler)
             try
