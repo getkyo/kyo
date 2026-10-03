@@ -11,8 +11,19 @@ sealed abstract class SchemaException(message: String, cause: String | Throwable
 
 // --- Operation markers ---
 
-/** Marker for exceptions raised during decoding (deserialization). */
-sealed trait DecodeException extends SchemaException
+/** Marker for exceptions raised during decoding (deserialization).
+  *
+  * The `path` of a decode failure is the chain of record fields (by wire key), sequence indices and map keys from the decoded root to
+  * the value that failed. A sum adds no segment: a variant's fields continue the path of the sum's own position. A failure that is not
+  * about one value (truncated or trailing input, a limit, a failed record of a stream) carries no path.
+  */
+sealed trait DecodeException extends SchemaException:
+    /** This failure with its path rewritten by `f`; a failure that carries no path is returned as is. */
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): DecodeException
+
+    /** This failure one level further from the root: `segment` is the field, index or key it was read under. */
+    final private[kyo] def prependPath(segment: String): DecodeException = mapPath(segment +: _)
+end DecodeException
 
 /** Marker for exceptions raised when a validation constraint is violated. */
 sealed trait ValidationException extends SchemaException
@@ -28,28 +39,36 @@ sealed trait NavigationException extends SchemaException
 /** Thrown when a required field is absent in the input during decoding. */
 case class MissingFieldException(path: Seq[String], fieldName: String)(using Frame)
     extends SchemaException(s"Missing required field '$fieldName'" + SchemaException.pathSuffix(path) + ". Add this field to the input.")
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): MissingFieldException = copy(path = f(path))(using frame)
+end MissingFieldException
 
 /** Thrown when the actual runtime type does not match the expected type during decoding or navigation. */
 case class TypeMismatchException(path: Seq[String], expected: String, actual: String)(using Frame)
     extends SchemaException(s"Type mismatch" + SchemaException.pathSuffix(
         path
     ) + s": expected $expected but got $actual. Check the input value matches the expected type.")
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TypeMismatchException = copy(path = f(path))(using frame)
+end TypeMismatchException
 
 /** Thrown when a variant name is not defined in the sealed type.
   *
-  * Raised at decode time when the discriminator value does not match any known variant, and at config time when a
-  * `variantNames` or `variantAlias` call references an unknown Scala variant name.
+  * Raised at decode time when the discriminator value does not match any known variant, and, naming the builder call, at the first
+  * encode or decode through a schema whose `variantNames`, `variantNumbers` or `variantAlias` call references an unknown variant name.
   */
-case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)
-    extends SchemaException(
+case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
         s"Unknown variant '$variantName'" + SchemaException.pathSuffix(path) + (
             if path.isEmpty then ". Check that the Scala variant name is one of the defined case class or object variants."
             else ". Check that the discriminator value matches one of the defined case class or object variants."
-        )
+        ),
+        call.describe
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownVariantException = copy(path = f(path))(using frame)(using call)
+end UnknownVariantException
 
 /** Thrown when an input field is not recognized during decoding.
   *
@@ -66,7 +85,9 @@ case class UnknownFieldException(path: Seq[String], fieldName: String)(using Fra
         s"Unknown field '$fieldName'" + SchemaException.pathSuffix(path) +
             ". Remove this field from the input, or decode with a schema that does not configure denyUnknownFields."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): UnknownFieldException = copy(path = f(path))(using frame)
+end UnknownFieldException
 
 /** Thrown when an untagged sum decode matches no variant.
   *
@@ -78,7 +99,9 @@ case class NoVariantMatchException(path: Seq[String], variants: Chunk[String])(u
         s"No variant matched the untagged input" + SchemaException.pathSuffix(path) +
             s". Attempted ${variants.size} variants: ${variants.mkString(", ")}. Ensure the input matches one of the declared variants."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): NoVariantMatchException = copy(path = f(path))(using frame)
+end NoVariantMatchException
 
 /** Thrown when an untagged union decode matches more than one member under the `Strict` ambiguity
   * policy. Carries the matched member wire names. Surfaces as a `Result.Failure` on decode.
@@ -88,7 +111,9 @@ case class AmbiguousVariantMatchException(path: Seq[String], matched: Chunk[Stri
         s"Multiple union members matched the untagged input" + SchemaException.pathSuffix(path) +
             s". Matched ${matched.size} members: ${matched.mkString(", ")}. Configure unionAmbiguity(FirstMatch) to resolve by declared order, or tag the union with a representation."
     )
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): AmbiguousVariantMatchException = copy(path = f(path))(using frame)
+end AmbiguousVariantMatchException
 
 /** Thrown when an adjacently-tagged sum decode input is missing the configured tag key.
   *
@@ -99,7 +124,9 @@ case class MissingTagKeyException(path: Seq[String], tagKey: String)(using Frame
         s"Missing adjacent tag key '$tagKey'" + SchemaException.pathSuffix(path) +
             ". Add the tag key to the input or check the adjacent representation configuration."
     )
-    with DecodeException with NavigationException derives CanEqual
+    with DecodeException with NavigationException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): MissingTagKeyException = copy(path = f(path))(using frame)
+end MissingTagKeyException
 
 /** Thrown when raw input cannot be parsed into the target type.
   *
@@ -126,12 +153,16 @@ case class ParseException(
             s" as $targetType" +
             (if position >= 0 then s" at position $position" else "") +
             SchemaException.pathSuffix(path)
-    ) with DecodeException
+    ) with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): ParseException = copy(path = f(path))(using frame)
+end ParseException
 
 /** Thrown when the input byte stream ends before a complete value can be decoded. */
 case class TruncatedInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Truncated input: $detail")
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TruncatedInputException = this
+end TruncatedInputException
 
 /** Thrown when input remains after a complete value has been decoded.
   *
@@ -143,7 +174,9 @@ case class TruncatedInputException(format: Codec, detail: String)(using Frame)
   */
 case class TrailingInputException(format: Codec, detail: String)(using Frame)
     extends SchemaException(s"Unexpected trailing content: $detail")
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): TrailingInputException = this
+end TrailingInputException
 
 /** Thrown when one record in a multi-record stream fails to decode.
   *
@@ -177,17 +210,25 @@ case class RecordDecodeException(
     cause: DecodeException
 )(using Frame)
     extends SchemaException(s"Failed to decode record $recordIndex at byte $byteOffset", cause)
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RecordDecodeException = this
+end RecordDecodeException
 
 /** Thrown when a configured safety limit is exceeded during decoding. */
 case class LimitExceededException(limit: String, actual: Int, maximum: Int)(using Frame)
     extends SchemaException(s"$limit $actual exceeds maximum $maximum")
-    with DecodeException derives CanEqual
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): LimitExceededException = this
+end LimitExceededException
 
-/** Thrown when a numeric value is outside the valid range of the target type (e.g., Int overflow). */
-case class RangeException(value: Long, targetType: String, min: Long, max: Long)(using Frame)
-    extends SchemaException(s"Value $value out of range for $targetType ($min to $max)")
-    with DecodeException derives CanEqual
+/** Thrown when a numeric value is outside the valid range of the target type (e.g., Int overflow). `value` is the number as read, which
+  * may be beyond a Long.
+  */
+case class RangeException(value: BigDecimal, targetType: String, min: Long, max: Long, path: Seq[String] = Seq.empty)(using Frame)
+    extends SchemaException(s"Value $value out of range for $targetType ($min to $max)" + SchemaException.pathSuffix(path))
+    with DecodeException derives CanEqual:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): RangeException = copy(path = f(path))(using frame)
+end RangeException
 
 /** Thrown when a smart constructor refuses the decoded fields.
   *
@@ -207,7 +248,9 @@ case class ConstructorRejectedException(path: Seq[String], typeName: String, rej
             "Correct the input, or decode with a schema whose constructor accepts it.",
         rejection
     )
-    with DecodeException
+    with DecodeException:
+    private[kyo] def mapPath(f: Seq[String] => Seq[String]): ConstructorRejectedException = copy(path = f(path))(using frame)
+end ConstructorRejectedException
 
 // --- Validation ---
 
@@ -219,21 +262,26 @@ case class ValidationFailedException(path: Seq[String], message: String)(using F
 // --- Transform ---
 
 /** Thrown when a schema transform operation (drop, rename, map) cannot complete. */
-case class TransformFailedException(detail: String)(using Frame)
-    extends SchemaException(s"Transform failed: $detail")
+case class TransformFailedException(detail: String)(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(s"Transform failed: $detail", call.describe)
     with TransformException derives CanEqual
 
 /** Thrown when two variants (or a variant and an alias) map to the same wire discriminator value. */
-case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)
-    extends SchemaException(
-        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name."
+case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name.",
+        call.describe
     )
     with TransformException derives CanEqual
 
 /** Thrown when two fields (or a field and an alias) map to the same wire name. */
-case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)
-    extends SchemaException(
-        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name."
+case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name.",
+        call.describe
     )
     with TransformException derives CanEqual
 
@@ -267,12 +315,24 @@ case class RepresentationUnsupportedException(codec: String, representation: Str
     )
     with TransformException derives CanEqual
 
-/** Thrown when a representation chain (`representations` / `orElseRepresentation`) contains a
-  * duplicate entry. Raised at the builder call site, before any encode, never silently normalized.
+/** Thrown when a schema transform is used to encode through a codec whose reader cannot read the result back. `flatten` regroups the
+  * flat keys on decode by reading each value without its schema, which needs a self-describing codec, so a codec such as Protobuf
+  * refuses it. Raised before any bytes are written.
   */
-case class DuplicateRepresentationException(chain: Chunk[Schema.UnionRepresentation])(using Frame)
+case class TransformUnsupportedException(codec: String, transform: String)(using Frame)
     extends SchemaException(
-        s"Representation chain contains a duplicate entry: ${chain.mkString(", ")}. Each chain entry must be distinct."
+        s"Codec '$codec' cannot carry the '$transform' schema transform. Use a self-describing codec (such as: Json, Yaml, Ion, MsgPack, Bson) or a schema without it."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when a representation chain (`representations` / `orElseRepresentation`) contains a
+  * duplicate entry. Raised by the first encode or decode through the schema, before any byte is written, never silently normalized.
+  */
+case class DuplicateRepresentationException(chain: Chunk[Schema.UnionRepresentation])(using Frame)(using
+    call: SchemaException.BuilderCall = SchemaException.BuilderCall.none
+) extends SchemaException(
+        s"Representation chain contains a duplicate entry: ${chain.mkString(", ")}. Each chain entry must be distinct.",
+        call.describe
     )
     with TransformException derives CanEqual
 
@@ -282,5 +342,18 @@ case class SchemaIndexOutOfBoundsException(path: Seq[String], index: Int, size: 
     with NavigationException derives CanEqual
 
 object SchemaException:
+
+    /** The builder call a configuration failure comes from, such as `variantNames(Circle -> shape, Square -> shape)`.
+      *
+      * A builder takes no `Frame`, so it records a failure it finds and the first codec call that reaches the schema raises it, with
+      * that call's `Frame`. The failure carries the builder call as its cause, so its message still names the configuration at fault.
+      * Every other site that raises the same failure leaves it empty.
+      */
+    final case class BuilderCall(describe: String) derives CanEqual
+
+    object BuilderCall:
+        val none: BuilderCall = BuilderCall("")
+
     private[kyo] def pathSuffix(path: Seq[String]): String =
         if path.nonEmpty then s" at ${path.mkString(".")}" else ""
+end SchemaException

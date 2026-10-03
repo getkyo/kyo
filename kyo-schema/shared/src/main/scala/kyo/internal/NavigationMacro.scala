@@ -104,15 +104,31 @@ object NavigationMacro:
 
         val nameStr            = extractName[Name]
         val expanded           = ExpandMacro.expandType(TypeRepr.of[Focus])
-        val (valueType, isSum) = classifyField(expanded, nameStr).getOrElse {
-            val available = MacroUtils.collectFields(expanded).map(_._1)
-            report.errorAndAbort(
-                s"Field '$nameStr' not found. Available fields: ${available.mkString(", ")}."
-            )
-        }
+        val (valueType, isSum) = classifyField(expanded, nameStr).getOrElse(fieldNotFound(expanded, nameStr))
 
         ResolvedField(nameStr, valueType, isSum)
     end resolve
+
+    /** Aborts with the missing field and the fields `expanded` does have.
+      *
+      * A focus type that is an abstract type member has no fields to list: it is the `Focused` of a schema whose static type does not
+      * refine it, typically a given declared as a plain `Schema[A]`. The message says so, since "no available fields" alone reads as
+      * a type without fields.
+      */
+    private def fieldNotFound(using Quotes)(expanded: quotes.reflect.TypeRepr, nameStr: String): Nothing =
+        import quotes.reflect.*
+        val available = MacroUtils.collectFields(expanded).map(_._1)
+        val sym       = expanded.typeSymbol
+        if available.isEmpty && sym.isTypeDef && !sym.isClassDef && sym.name == "Focused" then
+            report.errorAndAbort(
+                s"Field '$nameStr' not found: the schema's Focused type is abstract, so its fields are not known. A given Schema[A] " +
+                    "declared without a `type Focused` refinement does not expose its fields; declare it with the refinement, for example " +
+                    "`given Schema[A] { type Focused = \"id\" ~ Int } = ...`, to navigate it."
+            )
+        else
+            report.errorAndAbort(s"Field '$nameStr' not found. Available fields: ${available.mkString(", ")}.")
+        end if
+    end fieldNotFound
 
     /** Resolve returning only the value type (for navigators that don't need product/sum classification). */
     def resolveSimple[Focus: Type, Name <: String: Type](using q: Quotes): (String, quotes.reflect.TypeRepr) =
@@ -120,12 +136,7 @@ object NavigationMacro:
 
         val nameStr   = extractName[Name]
         val expanded  = ExpandMacro.expandType(TypeRepr.of[Focus])
-        val valueType = findValueType(expanded, nameStr).getOrElse {
-            val available = MacroUtils.collectFields(expanded).map(_._1)
-            report.errorAndAbort(
-                s"Field '$nameStr' not found. Available fields: ${available.mkString(", ")}."
-            )
-        }
+        val valueType = findValueType(expanded, nameStr).getOrElse(fieldNotFound(expanded, nameStr))
 
         (nameStr, valueType)
     end resolveSimple

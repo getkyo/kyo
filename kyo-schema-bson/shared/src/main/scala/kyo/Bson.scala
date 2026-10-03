@@ -14,7 +14,7 @@ import kyo.internal.bson.BsonWriter
   * BSON-specific options can be added without changing call sites.
   */
 final class Bson(val config: Bson.Config = Bson.Config.Default) extends Codec:
-    def newWriter(): Codec.Writer = BsonWriter(config)
+    def newWriter()(using Frame): Codec.Writer = BsonWriter(config)
 
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         BsonReader(input, config)

@@ -83,24 +83,27 @@ object JsonRpcError:
         @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): JsonRpcError =
             // Binary deserialization path (JSON/Protobuf). For Structure.Value round-trips the
             // fromStructureValue override below is used instead. Hot-path streaming codec read: an
-            // imperative field loop with single-owner local accumulators (code/message/index).
-            var code: Int       = -32603
-            var message: String = ""
-            val n               = reader.objectStart()
-            var i               = 0
-            while i < n do
+            // imperative field loop with single-owner local accumulators.
+            var code: Int                    = -32603
+            var message: String              = ""
+            var data: Maybe[Structure.Value] = Absent
+            discard(reader.objectStart())
+            while reader.hasNextField() do
                 reader.fieldParse()
                 if reader.matchField("code".getBytes("UTF-8")) then
                     code = reader.int()
                 else if reader.matchField("message".getBytes("UTF-8")) then
                     message = reader.string()
+                else if reader.matchField("data".getBytes("UTF-8")) then
+                    data = summon[Schema[Structure.Value]].serializeRead(reader) match
+                        case Structure.Value.Null => Absent
+                        case v                    => Present(v)
                 else
                     reader.skip()
                 end if
-                i += 1
             end while
             reader.objectEnd()
-            fromWire(code, message, Absent)(using Frame.internal)
+            fromWire(code, message, data)(using reader.frame)
         end serializeRead
         @publicInBinary private[kyo] def getter(value: JsonRpcError): Maybe[Any]              = Maybe(value)
         @publicInBinary private[kyo] def setter(value: JsonRpcError, next: Any): JsonRpcError =

@@ -71,18 +71,19 @@ object IonSchema:
         case Annotations(names: Chunk[String])
         case ValidRange(min: Maybe[(Double, Boolean)], max: Maybe[(Double, Boolean)])
         case ValidValues(values: Chunk[String])
+        case ValidIntegers(values: Chunk[Long])
         case CodepointLength(min: Maybe[Int], max: Maybe[Int])
         case ContainerLength(min: Maybe[Int], max: Maybe[Int])
         case Regex(pattern: String)
     end Constraint
 
     /** Derives an Ion Schema document for type `A`. */
-    inline def from[A](using schema: Schema[A]): IonSchema =
+    inline def from[A](using schema: Schema[A], frame: Frame): IonSchema =
         fromSchema(schema)
     end from
 
     /** Derives an Ion Schema document from a runtime [[Schema]]. */
-    def fromSchema[A](schema: Schema[A], config: Config = Config.Default): IonSchema =
+    def fromSchema[A](schema: Schema[A], config: Config = Config.Default)(using Frame): IonSchema =
         val constraints = constraintsByPath(schema.constraints)
         val root        = fromStructure(schema.structure, constraints, Seq.empty, schema, config, Set.empty)
         val name        = rootName(schema.structure)
@@ -136,7 +137,7 @@ object IonSchema:
     end render
 
     /** Derives and encodes an Ion Schema document for type `A` as ISL text. */
-    inline def encode[A](config: Config = Config.Default)(using schema: Schema[A]): String =
+    inline def encode[A](config: Config = Config.Default)(using schema: Schema[A], frame: Frame): String =
         IonSchema.encode(fromSchema(schema, config))
     end encode
 
@@ -150,7 +151,11 @@ object IonSchema:
       * Requires `AllowUnsafe`: this writes directly to a caller-supplied `OutputStream` outside
       * the effect system, so the caller opts into the side effect.
       */
-    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using schema: Schema[A], allow: AllowUnsafe): Unit =
+    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using
+        schema: Schema[A],
+        frame: Frame,
+        allow: AllowUnsafe
+    ): Unit =
         // Unsafe: the write is a synchronous, unsuspended side effect on the caller's OutputStream.
         // AllowUnsafe is the caller's proof that they own the stream and opt into the write.
         IonSchema.encodeTo(fromSchema(schema, config), out)
@@ -176,7 +181,7 @@ object IonSchema:
         schema: Schema[A],
         config: Config,
         seen: Set[String]
-    ): TypeExpr =
+    )(using Frame): TypeExpr =
         val base =
             structure match
                 case p: Structure.Type.Primitive =>
@@ -189,10 +194,13 @@ object IonSchema:
                     if seen.contains(product.name) then TypeExpr.AnyType
                     else
                         val nextSeen = seen + product.name
-                        val renamed  = schema.renamedFields.toMap
-                        val fields   =
+                        // The schema's keys name its own record's fields; a nested record is written by its own schema.
+                        val root    = path.isEmpty
+                        val renamed = if root then schema.wireLayout.renamedKeys else Map.empty[String, String]
+                        val dropped = if root then schema.droppedFields else Set.empty[String]
+                        val fields  =
                             product.fields.flatMap { field =>
-                                if schema.droppedFields.contains(field.name) then Chunk.empty
+                                if dropped.contains(field.name) then Chunk.empty
                                 else
                                     val wireName  = renamed.getOrElse(field.name, field.name)
                                     val fieldPath = path :+ field.name
@@ -210,42 +218,75 @@ object IonSchema:
                     if seen.contains(sum.name) then TypeExpr.AnyType
                     else
                         val nextSeen = seen + sum.name
-                        val wires    = Schema.effectiveVariantWires(sum, schema.variantNaming)
-                        val options  = sum.variants.zip(wires).map { (variant, wireName) =>
-                            val payload = applyAnnotations(
+                        // Numbers and the catch-all are configured on the root schema and name its own variants only.
+                        val ownSum = schema.structure match
+                            case root: Structure.Type.Sum => root.name == sum.name
+                            case _                        => false
+                        // The wrapper object's key is the Scala name; every other representation writes the tag.
+                        val wires =
+                            if !ownSum then Schema.effectiveVariantWires(sum.variants.map(_.name), schema.variantNaming)
+                            else
+                                val tags = schema.variantTags
+                                sumRepresentation(schema) match
+                                    case Schema.UnionRepresentation.External => sum.variants.map(_.name)
+                                    case _ => sum.variants.map(v => tags.tagOf(v.name).fold(v.name)(_.show))
+                                end match
+                        val numbered        = ownSum && schema.variantTags.numbered
+                        val catchAllVariant = if ownSum then schema.catchAll.map(_.variant) else Maybe.empty
+                        val anyTag          = TypeExpr.Scalar(if numbered then "int" else "string")
+                        val options         = sum.variants.zip(wires).map { (variant, wireName) =>
+                            def payload = applyAnnotations(
                                 fromStructure(variant.variantType, constraints, path :+ variant.name, schema, config, nextSeen),
                                 variant.annotations,
                                 config
                             )
-                            sumRepresentation(schema).match
-                                case Schema.UnionRepresentation.External =>
-                                    TypeExpr.Struct(Chunk(Field(wireName, payload, required = true)), closed = true)
-                                case Schema.UnionRepresentation.Internal(tagKey) =>
-                                    flattenDiscriminatorType(tagKey, wireName, payload)
-                                case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
-                                    TypeExpr.Struct(
-                                        Chunk(
-                                            discriminatorField(tagKey, wireName),
-                                            Field(contentKey, payload, required = true)
-                                        ),
-                                        closed = true
-                                    )
-                                case unsupported =>
-                                    throw SchemaNotSerializableException(
-                                        s"Ion Schema generation cannot describe union representation $unsupported"
-                                    )(using Frame.internal)
-                            end match
+                            if catchAllVariant.contains(variant.name) then
+                                // The catch-all holds whatever tag and input no other variant matched.
+                                sumRepresentation(schema) match
+                                    case Schema.UnionRepresentation.Internal(tagKey) =>
+                                        TypeExpr.Struct(Chunk(Field(tagKey, anyTag, required = true)), closed = false)
+                                    case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
+                                        TypeExpr.Struct(
+                                            Chunk(
+                                                Field(tagKey, anyTag, required = true),
+                                                Field(contentKey, TypeExpr.AnyType, required = true)
+                                            ),
+                                            closed = true
+                                        )
+                                    case Schema.UnionRepresentation.TagOnly => anyTag
+                                    case _                                  => TypeExpr.AnyType
+                            else
+                                sumRepresentation(schema) match
+                                    case Schema.UnionRepresentation.External =>
+                                        TypeExpr.Struct(Chunk(Field(wireName, payload, required = true)), closed = true)
+                                    case Schema.UnionRepresentation.Internal(tagKey) =>
+                                        flattenDiscriminatorType(tagKey, numbered, wireName, payload)
+                                    case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
+                                        TypeExpr.Struct(
+                                            Chunk(
+                                                discriminatorField(tagKey, numbered, wireName),
+                                                Field(contentKey, payload, required = true)
+                                            ),
+                                            closed = true
+                                        )
+                                    case Schema.UnionRepresentation.TagOnly =>
+                                        tagType(numbered, wireName)
+                                    case unsupported =>
+                                        throw SchemaNotSerializableException(
+                                            s"Ion Schema generation cannot describe union representation $unsupported"
+                                        )
+                                end match
+                            end if
                         }
                         TypeExpr.OneOf(options)
-                case Structure.Type.Mapping(_, _, keyType, valueType) =>
-                    keyType match
-                        case p: Structure.Type.Primitive
-                            if p.kind == Structure.PrimitiveKind.String || p.kind == Structure.PrimitiveKind.Char =>
+                case Structure.Type.Mapping(_, _, keyType, valueType, form) =>
+                    form match
+                        case Structure.MapForm.Object =>
                             TypeExpr.MapOf(
                                 fromStructure(valueType, constraints, path :+ "*", schema, config, seen),
                                 distinctFieldNames = false
                             )
-                        case _ =>
+                        case Structure.MapForm.Pairs =>
                             val key =
                                 Field("key", fromStructure(keyType, constraints, path :+ "key", schema, config, seen), required = true)
                             val value = Field(
@@ -286,16 +327,16 @@ object IonSchema:
             case Maybe.Absent         => schema.representation
     end sumRepresentation
 
-    private def discriminatorField(name: String, value: String): Field =
-        Field(
-            name,
-            TypeExpr.Constrained(TypeExpr.Scalar("string"), Chunk(Constraint.ValidValues(Chunk(value)))),
-            required = true
-        )
-    end discriminatorField
+    /** The one value a variant's tag takes: its number for a numbered sum, else its name. */
+    private def tagType(numbered: Boolean, wireName: String): TypeExpr =
+        if numbered then TypeExpr.Constrained(TypeExpr.Scalar("int"), Chunk(Constraint.ValidIntegers(Chunk(wireName.toLong))))
+        else TypeExpr.Constrained(TypeExpr.Scalar("string"), Chunk(Constraint.ValidValues(Chunk(wireName))))
 
-    private def flattenDiscriminatorType(tagKey: String, wireName: String, payload: TypeExpr): TypeExpr =
-        val tag = discriminatorField(tagKey, wireName)
+    private def discriminatorField(name: String, numbered: Boolean, wireName: String): Field =
+        Field(name, tagType(numbered, wireName), required = true)
+
+    private def flattenDiscriminatorType(tagKey: String, numbered: Boolean, wireName: String, payload: TypeExpr): TypeExpr =
+        val tag = discriminatorField(tagKey, numbered, wireName)
         payload match
             case TypeExpr.Struct(fields, _) =>
                 TypeExpr.Struct(tag +: fields, closed = true)
@@ -539,6 +580,9 @@ object IonSchema:
                     renderString(out, value)
                 }
                 emit(out, "],\n")
+            case Constraint.ValidIntegers(values) =>
+                writeIndent(out, indent)
+                emit(out, s"valid_values: [${values.mkString(", ")}],\n")
             case Constraint.CodepointLength(min, max) =>
                 renderIntRange(out, indent, "codepoint_length", min, max)
             case Constraint.ContainerLength(min, max) =>
