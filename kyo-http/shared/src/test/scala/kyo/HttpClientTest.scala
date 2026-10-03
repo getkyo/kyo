@@ -77,7 +77,7 @@ class HttpClientTest extends BaseHttpTest:
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
         def once: HttpResponse[Out] < (Async & Abort[HttpException]) =
-            client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+            client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                 Scope.run {
                     Scope.ensure(client.closeNow(conn)).andThen {
                         client.sendWith(conn, route, request)(identity)
@@ -657,7 +657,7 @@ class HttpClientTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
@@ -687,14 +687,14 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                var called                                = false
-                val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                var called                                                       = false
+                val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
                     Span.fromUnsafe("chunk1".getBytes("UTF-8")),
                     Span.fromUnsafe("chunk2".getBytes("UTF-8"))
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, request) { resp =>
@@ -719,13 +719,13 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                var called                                = false
-                val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                var called                                                       = false
+                val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
                     Span.fromUnsafe("alice".getBytes("UTF-8"))
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, request) { resp =>
@@ -2017,8 +2017,8 @@ class HttpClientTest extends BaseHttpTest:
                             fibers <- Kyo.foreach(0 until size) { i =>
                                 Fiber.initUnscoped {
                                     latch.await.andThen {
-                                        val marker                                = s"marker-$i"
-                                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                                        val marker                                                       = s"marker-$i"
+                                        val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
                                             Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
                                             Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
                                         ))
@@ -2240,7 +2240,7 @@ class HttpClientTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", chunks)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
@@ -2256,8 +2256,7 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
-        "streaming response: server-side stream error propagates to client" - {
-            // Server stream throws after first chunk. Client should see an error, not hang.
+        "streaming response: a server-side stream error fails the client's body stream as a cut body" - {
             val route = HttpRoute.getRaw("fail-stream").response(_.bodyStream)
             val ep    = route.handler { _ =>
                 val failingStream = Stream[Span[Byte], Async] {
@@ -2268,15 +2267,16 @@ class HttpClientTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", failingStream)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
                                 assert(resp.status == HttpStatus.OK)
-                                // Stream should either deliver partial data or error, but not hang
-                                Abort.run[Throwable](Abort.catching[Throwable] {
-                                    resp.fields.body.run.map { _ => () }
-                                }).map(_ => ())
+                                Abort.run[HttpException](resp.fields.body.run).map {
+                                    case Result.Failure(e: HttpConnectionClosedException) =>
+                                        assert(e.phase == HttpConnectionClosedException.Phase.BodyTruncated)
+                                    case other => fail(s"a failed response stream must reach the client as a cut body, got: $other")
+                                }
                             }
                         }
                     }
@@ -2310,6 +2310,80 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "streaming response SSE: an event that does not decode fails the client's stream on its row, after the events before it" - {
+            val serverRoute = HttpRoute.getRaw("sse-bad").response(_.bodyStream)
+            val ep          = serverRoute.handler { _ =>
+                val frames: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
+                    Span.fromUnsafe("data: {\"id\":1,\"name\":\"alice\"}\n\n".getBytes("UTF-8")),
+                    Span.fromUnsafe("data: not json\n\n".getBytes("UTF-8"))
+                ))
+                HttpResponse.ok.addField("body", frames).addHeader("Content-Type", "text/event-stream")
+            }
+            val clientRoute = HttpRoute.getRaw("sse-bad").response(_.bodySseJson[User])
+            runServer(ep) { url =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            client.sendWith(conn, clientRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse-bad"))) { resp =>
+                                assert(resp.status == HttpStatus.OK)
+                                AtomicRef.init(Chunk.empty[User]).map { seen =>
+                                    Abort.run[HttpException](resp.fields.body.foreach(event =>
+                                        seen.updateAndGet(_.append(event.data)).unit
+                                    )).map {
+                                        result =>
+                                            seen.get.map { users =>
+                                                assert(
+                                                    users == Chunk(User(1, "alice")),
+                                                    s"the events before the fault must arrive, observed $users"
+                                                )
+                                                result match
+                                                    case Result.Failure(_: HttpJsonDecodeException) => succeed
+                                                    case other                                      =>
+                                                        fail(
+                                                            s"an event that does not decode must fail the stream with HttpJsonDecodeException, got: $other"
+                                                        )
+                                                end match
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "streaming request body: a body stream that fails settles the request with that failure and closes the connection" - {
+            val route = HttpRoute.postRaw("upload").request(_.bodyStream).response(_.bodyText)
+            val ep    = route.handler { req =>
+                Abort.run[HttpException](req.fields.body.run).map(_ => HttpResponse.ok("answered"))
+            }
+            runServer(ep) { url =>
+                import AllowUnsafe.embrace.danger
+                val fault                                                  = HttpMalformedBodyException("the client's body failed")
+                val body: Stream[Span[Byte], Async & Abort[HttpException]] = Stream[Span[Byte], Async & Abort[HttpException]] {
+                    Emit.valueWith(Chunk(Span.fromUnsafe("part".getBytes("UTF-8"))))(Abort.fail(fault))
+                }
+                val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload")).addField("body", body)
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                    Scope.run {
+                        Scope.ensure(client.closeNow(conn)).andThen {
+                            Abort.run[HttpException](client.sendWith(conn, route, request)(_ => "answered")).map { result =>
+                                result match
+                                    case Result.Failure(e) =>
+                                        assert(e eq fault, s"the request must settle with the body's own failure, got: $e")
+                                    case other => fail(s"the request must settle with the body's failure, got: $other")
+                                end match
+                                pollUntil(!conn.transport.isOpen).map { closed =>
+                                    assert(closed, "the connection carrying an unfinished body must be closed")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         "streaming request body: sent correctly" - {
             val route = HttpRoute.postRaw("echo")
                 .request(_.bodyStream)
@@ -2323,10 +2397,10 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
-                            val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                            val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
                                 Span.fromUnsafe("hello ".getBytes("UTF-8")),
                                 Span.fromUnsafe("world".getBytes("UTF-8"))
                             ))
@@ -2353,8 +2427,8 @@ class HttpClientTest extends BaseHttpTest:
                     req.fields.body.take(1).run.map(_ => HttpResponse.ok("ok"))
                 }
                 withServer(ep) { url =>
-                    client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
-                        val infiniteBody = Stream[Span[Byte], Async] {
+                    client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
+                        val infiniteBody = Stream[Span[Byte], Async & Abort[HttpException]] {
                             Sync.ensure(writeDone.release) {
                                 kyo.Loop.foreach {
                                     Async.delay(1.millis) {
@@ -3284,7 +3358,7 @@ class HttpClientTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/pump-stream"))) { resp =>
@@ -4322,7 +4396,7 @@ class HttpClientTest extends BaseHttpTest:
                         // Use the low-level client to verify the header was sent
                         // by checking the server's echo of the header value
                         val rawUrl = url.copy(path = "/raw-headers")
-                        client.connectWith(rawUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(rawUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val textRoute = HttpRoute.postRaw("raw-headers").request(_.bodyBinary).response(_.bodyText)
@@ -4355,7 +4429,7 @@ class HttpClientTest extends BaseHttpTest:
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         val rawUrl = url.copy(path = "/raw-body")
-                        client.connectWith(rawUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(rawUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val bodyBytes   = Span.fromUnsafe("hello raw body".getBytes("UTF-8"))

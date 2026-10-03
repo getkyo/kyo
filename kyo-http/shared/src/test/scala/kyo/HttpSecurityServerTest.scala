@@ -26,12 +26,81 @@ class HttpSecurityServerTest extends BaseHttpTest:
     val emptyRoute   = HttpRoute.getRaw("empty").response(_.header[String]("X-Empty"))
     val emptyHandler = emptyRoute.handler(_ => HttpResponse.ok.addField("X-Empty", "yes"))
 
+    // Two streaming-request routes: one answers without reading its body, the other reads the body to its end and answers its size.
+    val sinkRoute    = HttpRoute.postRaw("sink").request(_.bodyStream).response(_.bodyText)
+    val sinkHandler  = sinkRoute.handler(_ => HttpResponse.ok("sunk"))
+    val drainRoute   = HttpRoute.postRaw("drain").request(_.bodyStream).response(_.bodyText)
+    val drainHandler = drainRoute.handler(req => req.fields.body.run.map(spans => HttpResponse.ok(s"[${spans.map(_.size).sum}]")))
+
+    val loopback = HttpServerConfig.default.port(0).host("127.0.0.1")
+
     /** Start a plain HTTP server and run a test against it. */
     def withEchoServer(
         test: (String, Int) => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit < (Scope & Async & Abort[Any]) =
-        HttpServer.init(0, "127.0.0.1")(echoHandler, bodyHandler, markerHandler, streamHandler, emptyHandler).map { s =>
-            test("127.0.0.1", s.port)
+        withEchoServer(loopback)(test)
+
+    def withEchoServer(config: HttpServerConfig)(
+        test: (String, Int) => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame): Unit < (Scope & Async & Abort[Any]) =
+        HttpServer.init(config)(echoHandler, bodyHandler, markerHandler, streamHandler, emptyHandler, sinkHandler, drainHandler).map {
+            s =>
+                test("127.0.0.1", s.port)
+        }
+
+    /** How many complete responses `bytes` holds, each framed by the Content-Length the server declares on every answer here. */
+    def completeResponses(bytes: String): Int =
+        def loop(from: Int, count: Int): Int =
+            val headerEnd = bytes.indexOf("\r\n\r\n", from)
+            if headerEnd < 0 then count
+            else
+                val head   = bytes.substring(from, headerEnd)
+                val length = "Content-Length: (\\d+)".r.findFirstMatchIn(head).map(_.group(1).toInt).getOrElse(0)
+                val end    = headerEnd + 4 + length
+                if bytes.length < end then count else loop(end, count + 1)
+            end if
+        end loop
+        loop(0, 0)
+    end completeResponses
+
+    /** Runs `f` over a raw connection to the server, closing it afterwards. */
+    def withRawConnection[A](host: String, port: Int)(f: kyo.net.Connection => A < (Async & Abort[Any]))(using
+        Frame
+    ): A < (Async & Abort[Any]) =
+        Sync.Unsafe.defer {
+            kyo.net.NetPlatform.transport.connect(host, port).safe.get.map { conn =>
+                f(conn).map(a => Sync.Unsafe.defer(conn.close()).andThen(a))
+            }
+        }
+
+    def putRaw(conn: kyo.net.Connection, s: String)(using Frame): Unit < Async =
+        Abort.run[Closed](conn.outbound.safe.put(Span.fromUnsafe(s.getBytes("ISO-8859-1")))).unit
+
+    /** Reads until `acc` holds one complete response, or until the server closes the connection. */
+    def readOneResponse(conn: kyo.net.Connection, acc: String)(using Frame): String < Async =
+        if completeResponses(acc) >= 1 then acc
+        else
+            Abort.run[Closed](conn.inbound.safe.take).map {
+                case Result.Success(d) => readOneResponse(conn, acc + new String(d.toArray, "ISO-8859-1"))
+                case Result.Failure(_) => acc
+                case Result.Panic(t)   => throw t
+            }
+
+    /** Reads until the server closes the connection. */
+    def readUntilClosed(conn: kyo.net.Connection, acc: String)(using Frame): String < Async =
+        Abort.run[Closed](conn.inbound.safe.take).map {
+            case Result.Success(d) if d.isEmpty => acc
+            case Result.Success(d)              => readUntilClosed(conn, acc + new String(d.toArray, "ISO-8859-1"))
+            case Result.Failure(_)              => acc
+            case Result.Panic(t)                => throw t
+        }
+
+    /** Writes `first` and reads one complete response, then writes `second` and reads one complete response to it. */
+    def exchangeTwice(host: String, port: Int, first: String, second: String)(using Frame): (String, String) < (Async & Abort[Any]) =
+        withRawConnection(host, port) { conn =>
+            putRaw(conn, first).andThen(readOneResponse(conn, "")).map { answer =>
+                putRaw(conn, second).andThen(readOneResponse(conn, "")).map(next => (answer, next))
+            }
         }
 
     /** Opens a connection, writes each of `writes` with a pause between them, then reads everything the server sends
@@ -341,11 +410,24 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         end assertReaped
 
-        // A request with no headers at all is the case that leaked: keep-alive is carried by a header, so a bare
-        // request line is not keep-alive, and the branch that handled that answered without closing or rearming
-        // anything. This and the leaf below are the two that actually exercise the close.
-        "a request with a missing Host header" in {
-            assertReaped("GET /echo HTTP/1.1\r\n\r\n", "missing Host")
+        // A request with no headers at all is the case that leaked: the branch that handled a non-keep-alive request answered
+        // without closing or rearming anything. Keep-alive is the request line's version (RFC 9112 section 9.3): an HTTP/1.0
+        // bare request line is closed after its 400, and an HTTP/1.1 one is kept alive like the invalid-Host request below,
+        // since the message was framed and carries no body.
+        "an HTTP/1.0 request with a missing Host header is closed after its 400" in {
+            assertReaped("GET /echo HTTP/1.0\r\n\r\n", "missing Host")
+        }
+
+        "an HTTP/1.1 request with no header fields is answered 400 and the next request on the connection is served" in {
+            withEchoServer { (host, port) =>
+                exchangeTwice(host, port, "GET /echo HTTP/1.1\r\n\r\n", "GET /marker HTTP/1.1\r\nHost: a\r\n\r\n").map { (answer, next) =>
+                    assert(
+                        answer.startsWith("HTTP/1.1 400"),
+                        s"the header-less request is refused for its missing Host:\n${answer.take(300)}"
+                    )
+                    assert(next.startsWith("HTTP/1.1 200"), s"the connection is keep-alive and serves the next request:\n${next.take(300)}")
+                }
+            }
         }
 
         // The parser-level refusal, which reaches a different branch than the Host checks.
@@ -361,14 +443,20 @@ class HttpSecurityServerTest extends BaseHttpTest:
         // to look like an oversight. The message was framed correctly and only its content was wrong, so the next
         // request's boundary is known and the connection stays usable; RFC 9110 section 7.2 asks for the 400, not for a
         // teardown. The connection is then reclaimed by the ordinary idle timer like any other idle connection.
-        //
-        // Earlier versions of these leaves used a one second idle timeout, which made this case indistinguishable from
-        // the closing ones: all four went to EOF and three of them were passing on the timer.
-        "an invalid Host on a keep-alive request is answered without closing" in {
-            val cfg = HttpServerConfig.default.port(0).host("127.0.0.1").idleTimeout(30.seconds)
-            HttpServer.init(cfg)(echoHandler).map { server =>
-                reapedAfter("127.0.0.1", server.port, "GET /echo HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n").map { reaped =>
-                    assert(!reaped, "a keep-alive request with a bad Host must be answered, not disconnected")
+        "an invalid Host on a keep-alive request is answered 400 and the next request on the connection is served" in {
+            withEchoServer { (host, port) =>
+                exchangeTwice(
+                    host,
+                    port,
+                    "GET /echo HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+                    "GET /marker HTTP/1.1\r\nHost: a\r\n\r\n"
+                ).map {
+                    (answer, next) =>
+                        assert(answer.startsWith("HTTP/1.1 400"), s"a request with two Host fields is refused:\n${answer.take(300)}")
+                        assert(
+                            next.startsWith("HTTP/1.1 200"),
+                            s"the connection is keep-alive and serves the next request:\n${next.take(300)}"
+                        )
                 }
             }
         }
@@ -527,7 +615,161 @@ class HttpSecurityServerTest extends BaseHttpTest:
                 }
             }
         }
+
+        // The unconsumed-body class on a STREAMED chunked body. The body is decoded by a fiber of its own while the handler runs; a
+        // handler that answers without reading leaves the body's later bytes on the connection, where a keep-alive restart reads
+        // them as the next request. RFC 9112 section 9.3 requires the close here as much as on the buffered paths above.
+        // A server that closes a connection whose body may still be arriving first reads and discards it until the peer's EOF or
+        // `lingeringTimeout`; the peer here never closes. The server runs on a controlled clock with no idle timer, so a drain's bound is
+        // its one pending sleep: the read races that sleep's registration, advancing exactly the bound once it exists, and so ends on the
+        // server's close whether or not the server drained, never on a clock. The leaf timeouts bound only the failing state, a server that
+        // never closes.
+        val lingering = 1.hour
+        val drainable = loopback.idleTimeout(Duration.Infinity).lingeringTimeout(lingering)
+
+        def readUntilClosedAdvancing(tc: Clock.TimeControl, conn: kyo.net.Connection)(using Frame): String < Async =
+            Fiber.initUnscoped(readUntilClosed(conn, "")).map { reader =>
+                Async.race(reader.get, tc.awaitPendingSleepers(1).andThen(tc.advance(lingering)).andThen(reader.get))
+            }
+
+        // Writes `request` and reads everything the server sends until it closes.
+        def closedExchange(request: String)(check: String => Unit < (Async & Abort[Any]))(using
+            Frame
+        ): Unit < (Async & Abort[Any] & Scope) =
+            Clock.withTimeControl { tc =>
+                withEchoServer(drainable) { (host, port) =>
+                    withRawConnection(host, port)(conn => putRaw(conn, request).andThen(readUntilClosedAdvancing(tc, conn)).map(check))
+                }
+            }
+
+        // Writes `first` and reads one complete response to it, then writes a request for the marker and reads everything the server
+        // sends until it closes. The answer is read before the marker goes out: a server that closes after its answer resets a peer
+        // still writing, and the reset can discard the answer before the peer reads it.
+        def drainedExchange(first: String)(check: (String, String) => Unit < (Async & Abort[Any]))(using
+            Frame
+        ): Unit < (Async & Abort[Any] & Scope) =
+            val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            Clock.withTimeControl { tc =>
+                withEchoServer(drainable) { (host, port) =>
+                    withRawConnection(host, port) { conn =>
+                        putRaw(conn, first).andThen(readOneResponse(conn, "")).map { answer =>
+                            putRaw(conn, smuggled).andThen(readUntilClosedAdvancing(tc, conn)).map(rest => check(answer, rest))
+                        }
+                    }
+                }
+            }
+        end drainedExchange
+
+        "a streamed chunked body the handler did not read is not parsed as the next request".timeout(30.seconds) in {
+            drainedExchange("POST /sink HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n") {
+                (answer, rest) =>
+                    assert(answer.startsWith("HTTP/1.1 200"), s"the handler's own answer comes first:\n${answer.take(300)}")
+                    assert(rest.isEmpty, s"the connection must close with nothing after the answer, observed:\n${rest.take(300)}")
+            }
+        }
+
+        // The same class after a framing fault: the decoder refused a chunk, so where the body ends is unknown, yet the handler was
+        // answered as if the body were complete and the connection kept alive. The fault is a 400 (as on the buffered path) and the
+        // bytes after it are never a request.
+        "a malformed chunk in a streamed body is answered 400, and the request behind it is not served".timeout(30.seconds) in {
+            drainedExchange("POST /drain HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nZZ\r\n") {
+                (answer, rest) =>
+                    assert(answer.startsWith("HTTP/1.1 400"), s"a refused body is a 400, not the handler's answer:\n${answer.take(300)}")
+                    assert(rest.isEmpty, s"the connection must close with nothing after the 400, observed:\n${rest.take(300)}")
+            }
+        }
+
+        // RFC 9112 section 7.1: the trailer section's lines end in CRLF. A decoder that takes a bare LF as the end of the section
+        // ends the body one byte early against an upstream that does not, and the bytes it then hands to the next parse, in the same
+        // write, are served as a request.
+        "a bare LF ending a chunked body's trailer section does not end the body early".timeout(30.seconds) in {
+            val request  = "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\n"
+            val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            closedExchange(request + smuggled) { response =>
+                assertRejected(response, "a chunked body whose trailer section ends in a bare LF")
+                assert(
+                    !response.contains("SMUGGLED-MARKER"),
+                    s"the bytes after the bare LF were served as a request:\n${response.take(300)}"
+                )
+            }
+        }
+
+        // RFC 9112 section 7.1: chunk-size = 1*HEXDIG. An empty size line is not the last chunk.
+        "an empty chunk-size line does not end a chunked body".timeout(30.seconds) in {
+            val request  = "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n\r\n"
+            val smuggled = "GET /marker HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            closedExchange(request + smuggled) { response =>
+                assertRejected(response, "a chunked body with an empty chunk-size line")
+                assert(
+                    !response.contains("SMUGGLED-MARKER"),
+                    s"the bytes after the empty size line were served as a request:\n${response.take(300)}"
+                )
+            }
+        }
+
+        // RFC 9112 section 6.1: an HTTP/1.0 message carrying Transfer-Encoding has faulty framing and the connection is closed after it.
+        "an HTTP/1.0 request carrying Transfer-Encoding is refused".timeout(30.seconds) in {
+            closedExchange(
+                "POST /echo HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+            ) {
+                response => assertRejected(response, "HTTP/1.0 with Transfer-Encoding")
+            }
+        }
     }
+
+    // A request answered with no handler (here a missing route) is answered inside the parser's callback, and the parser continues with
+    // the next pipelined request from there. Each must cost a bounded stack, whatever the count in one read, and the answers must wait for
+    // the peer to read them rather than queue without bound (CWE-400).
+    "pipelined requests answered without a handler" - {
+
+        "50,000 pipelined requests to no route in one write are each answered".timeout(60.seconds) in {
+            withEchoServer { (host, port) =>
+                val n       = 50000
+                val request = "GET /missing HTTP/1.1\r\nHost: localhost\r\n\r\n" * n
+                Sync.Unsafe.defer {
+                    kyo.net.NetPlatform.transport.connect(host, port).safe.get.map { conn =>
+                        // The peer reads while it writes: the answers outgrow the socket buffers long before the write completes, and a
+                        // server that stops reading while its answers wait would otherwise deadlock against a peer that only writes.
+                        Fiber.initUnscoped(Abort.run[Closed](conn.outbound.safe.put(Span.fromUnsafe(request.getBytes("ISO-8859-1"))))).map {
+                            writing =>
+                                def count(acc: String, answers: Int): Int < (Async & Abort[Any]) =
+                                    val complete = answers + completeResponses(acc)
+                                    if complete >= n then complete
+                                    else
+                                        Abort.run[Closed](conn.inbound.safe.take).map {
+                                            case Result.Success(d) =>
+                                                // Count the answers that are complete, keep the tail that is not.
+                                                val text = acc + new String(d.toArray, "ISO-8859-1")
+                                                val done = completeResponses(text)
+                                                val kept = if done == 0 then text else text.drop(lastCompleteEnd(text, done))
+                                                count(kept, answers + done)
+                                            case _ => complete
+                                        }
+                                    end if
+                                end count
+                                count("", 0).map { answers =>
+                                    writing.get.andThen(Sync.Unsafe.defer(conn.close())).andThen {
+                                        assert(answers == n, s"observed $answers answers")
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** The end offset of the `n`th complete response in `bytes`. */
+    private def lastCompleteEnd(bytes: String, n: Int): Int =
+        def loop(from: Int, remaining: Int): Int =
+            if remaining == 0 then from
+            else
+                val headerEnd = bytes.indexOf("\r\n\r\n", from)
+                val length    =
+                    "Content-Length: (\\d+)".r.findFirstMatchIn(bytes.substring(from, headerEnd)).map(_.group(1).toInt).getOrElse(0)
+                loop(headerEnd + 4 + length, remaining - 1)
+        loop(0, n)
+    end lastCompleteEnd
 
     "handshake-stall DoS defenses" - {
 
