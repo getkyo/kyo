@@ -738,6 +738,60 @@ class ClockTest extends kyo.test.Test[Any]:
                 end for
             }
         }
+        "time passing before the next sleep is armed keeps the interval".notJs in {
+            Clock.withTimeControl { control =>
+                for
+                    queue   <- Queue.Unbounded.init[Instant]()
+                    entered <- Latch.init(1)
+                    gate    <- Latch.init(1)
+                    task    <- Clock.repeatAtInterval(10.millis) {
+                        Clock.now.map { now =>
+                            queue.add(now).andThen {
+                                if now == Instant.Epoch + 10.millis then entered.release.andThen(gate.await)
+                                else Kyo.unit
+                            }
+                        }
+                    }
+                    _ <- control.awaitPendingSleepers(1)
+                    _ <- control.advance(10.millis)
+                    _ <- entered.await
+                    // The run at 10ms is still in its body, so its next sleep is not armed yet.
+                    _        <- control.advance(5.millis)
+                    _        <- gate.release
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- Loop.repeat(3)(control.advance(5.millis).andThen(control.awaitPendingSleepers(1)))
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield assert(instants.toSeq == Seq(0, 10, 20, 30).map(i => Instant.Epoch + i.millis), instants.toSeq.mkString(", "))
+            }
+        }
+        "a run longer than the interval starts the next one when it completes".notJs in {
+            Clock.withTimeControl { control =>
+                for
+                    queue   <- Queue.Unbounded.init[Instant]()
+                    entered <- Latch.init(1)
+                    gate    <- Latch.init(1)
+                    task    <- Clock.repeatAtInterval(10.millis) {
+                        Clock.now.map { now =>
+                            queue.add(now).andThen {
+                                if now == Instant.Epoch + 10.millis then entered.release.andThen(gate.await)
+                                else Kyo.unit
+                            }
+                        }
+                    }
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- control.advance(10.millis)
+                    _        <- entered.await
+                    _        <- control.advance(15.millis)
+                    _        <- gate.release
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- control.advance(5.millis)
+                    _        <- control.awaitPendingSleepers(1)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield assert(instants.toSeq == Seq(0, 10, 25, 30).map(i => Instant.Epoch + i.millis), instants.toSeq.mkString(", "))
+            }
+        }
         "respects interrupt" in {
             for
                 channel  <- Channel.init[Instant](10)

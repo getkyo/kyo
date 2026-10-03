@@ -831,8 +831,11 @@ object Clock:
                             period.next(now) match
                                 case Absent                            => Loop.done(state)
                                 case Present((duration, nextSchedule)) =>
+                                    // Measured from the scheduled start, not from now: the body and the re-arm take time.
                                     val nextExecution = lastExecution + duration
-                                    clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
+                                    clock.sleep(nextExecution.minusOrZero(now)).map(
+                                        _.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule)))
+                                    )
                         }
                     }
                 }
