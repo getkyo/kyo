@@ -85,9 +85,13 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
         end kyo_uring_cqe_res
     end AcceptErrnoInjectingUring
 
+    /** Runs `body` over a driver on the injecting ring, then closes the driver and waits for its reap loop to exit, so every close the
+      * driver owes has been issued by the time the closes are counted. `sockets` records each close; the test closes its own fds through it
+      * too, so a descriptor closed by both the driver and the test shows a count of 2.
+      */
     private def withInjectingDriver[A](
-        body: (IoUringDriver, AcceptErrnoInjectingUring) => A < (Abort[Closed] & Async)
-    )(using Frame): A < (Abort[Closed] & Async) =
+        body: (IoUringDriver, AcceptErrnoInjectingUring, RecordingSocketBindings) => A < (Abort[Closed] & Async)
+    )(using Frame): (A, RecordingSocketBindings) < (Abort[Closed] & Async) =
         val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
@@ -96,12 +100,15 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
             realRing.close()
             throw Closed("AcceptErrnoInjectingUring", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = new AcceptErrnoInjectingUring(realUring, realRing)
-        val driver    = TestDrivers.forBindings(recording, realRing)
-        discard(driver.start())
-        Sync.ensure(Sync.defer(driver.close()))(body(driver, recording))
+        val sockets   = RecordingSocketBindings(Ffi.load[SocketBindings])
+        val driver    = TestDrivers.forBindings(recording, realRing, sockets)
+        val reapLoop  = driver.start()
+        Sync.ensure(Sync.defer(driver.close()))(body(driver, recording, sockets)).map { a =>
+            reapLoop.safe.get.andThen((a, sockets))
+        }
     end withInjectingDriver
 
-    /** Bind + listen a fresh loopback server fd; returns (serverFd, port). Caller closes serverFd. */
+    /** Bind + listen a fresh loopback server fd; returns (serverFd, port). The caller wraps serverFd in a handle whose `closeHandle` closes it. */
     private def listenSocket()(using Frame): (Int, Int) =
         val s      = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
@@ -131,7 +138,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
     "IoUringDriver accept transient-errno classification" - {
         "a transient accept errno does not fail the accept promise; a subsequent connection is still accepted" in {
             PosixTestSockets.assumeUring()
-            withInjectingDriver { (drv, recording) =>
+            withInjectingDriver { (drv, recording, sockets) =>
                 val (serverFd, port) = listenSocket()
                 val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
@@ -144,13 +151,12 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                     connectClient(port).map { client2 =>
                         Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
                             drv.closeHandle(listenH)
-                            discard(sock.close(client1))
-                            discard(sock.close(client2))
-                            discard(sock.close(serverFd))
+                            discard(sockets.close(client1))
+                            discard(sockets.close(client2))
                             outcome match
                                 case Result.Success(fd) =>
                                     assert(fd >= 0, s"the re-armed accept must deliver a valid fd; got $fd")
-                                    discard(sock.close(fd)) // close the re-armed accept's connection so it does not outlive the test
+                                    discard(sockets.close(fd)) // close the re-armed accept's connection so it does not outlive the test
                                 case Result.Failure(_: Timeout) =>
                                     fail("accept hung: a transient errno was neither failed nor retried")
                                 case Result.Failure(c: Closed) =>
@@ -160,15 +166,16 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                                     )
                                 case other => fail(s"unexpected accept outcome: $other")
                             end match
+                            serverFd
                         }
                     }
                 }
-            }.map(_ => succeed)
+            }.map { case (serverFd, sockets) => assertClosedOnce(sockets, serverFd) }
         }
 
         "an EMFILE accept errno re-arms after a resource backoff, not immediately (no reap-carrier busy-spin)" in {
             PosixTestSockets.assumeUring()
-            withInjectingDriver { (drv, recording) =>
+            withInjectingDriver { (drv, recording, sockets) =>
                 val (serverFd, port) = listenSocket()
                 val listenH          = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                 val promise          = Promise.Unsafe.init[Int, Abort[Closed]]()
@@ -184,8 +191,7 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                     // into a failed test rather than a hang.
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(recording.reArmSeen.safe.get)).map { seen =>
                         drv.closeHandle(listenH)
-                        discard(sock.close(client1))
-                        discard(sock.close(serverFd))
+                        discard(sockets.close(client1))
                         seen match
                             case Result.Success(_) =>
                                 val reapCycle  = recording.waitCountAtEmfileReap
@@ -200,10 +206,17 @@ class IoUringDriverAcceptTransientErrnoTest extends Test:
                                 fail("the accept was never re-armed after the EMFILE errno; the listener would be wedged")
                             case other => fail(s"unexpected accept re-arm outcome: $other")
                         end match
+                        serverFd
                     }
                 }
-            }.map(_ => succeed)
+            }.map { case (serverFd, sockets) => assertClosedOnce(sockets, serverFd) }
         }
     }
+
+    // The handle owns serverFd once closeHandle runs, so the driver's close must be the only one: a second close of the same number lands on
+    // whatever reused it (a later suite's socket, or the class loader's open .class file in one CI run).
+    private def assertClosedOnce(sockets: RecordingSocketBindings, serverFd: Int)(using Frame, kyo.test.AssertScope): Unit =
+        val closes = sockets.closeCounts.getOrDefault(serverFd, 0)
+        assert(closes == 1, s"the listener fd $serverFd must be closed exactly once, by the driver; it was closed $closes times")
 
 end IoUringDriverAcceptTransientErrnoTest
