@@ -723,6 +723,60 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    /** The other ordering: the connect hands its connection over, and the caller is interrupted before it resumes to use it. The handoff
+      * succeeded, so the connect has nothing to close, and the caller's code that would take the connection never runs. A request timeout
+      * landing as a fresh connection completes produces exactly this, and the socket then stays open with nobody to close it.
+      *
+      * The connect completes and the interrupt follows in one synchronous step, so the caller's resumption is still queued when the
+      * interrupt lands. A worker can still take that resumption between the two, so each leaf repeats the step and counts every
+      * connection left open.
+      */
+    "a caller interrupted as its connection is handed over closes that connection" - {
+
+        val url = HttpUrl.parse("http://test.invalid/ping").getOrThrow
+
+        def leftOpen(start: HttpClientBackend => Any < (Async & Abort[Any] & Scope))(using
+            Frame,
+            kyo.test.AssertScope
+        ): Unit < (Async & Abort[Any]) =
+            Kyo.foreach(1 to 200) { _ =>
+                val (clientConn, _) = TransportConnection.inMemoryPair()
+                val recording       = new RecordingConnection(clientConn)
+                val transport       = new DeferredConnectTransport(recording)
+                val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
+                for
+                    fiber  <- Fiber.initUnscoped(Scope.run(start(backend)))
+                    parked <- pollUntil(transport.connectRequested)
+                    _      <- Sync.Unsafe.defer(transport.release()).andThen(fiber.interrupt)
+                    _      <- fiber.getResult
+                    // A Scope's finalizers can still be running when the interrupted fiber settles.
+                    closed <- pollUntil(recording.wasClosed, maxPolls = 10000)
+                    _      <- backend.closeFiber(Duration.Zero).safe.get
+                yield (parked, closed)
+                end for
+            }.map { outcomes =>
+                assert(outcomes.forall(_._1), "every caller reached its connect")
+                assert(outcomes.count(!_._2) == 0, s"${outcomes.count(!_._2)} of ${outcomes.size} handed-over connections were left open")
+            }
+
+        "a pooled request's fresh connection" in {
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            leftOpen(_.sendWithConfig(route, HttpRequest.getRaw(url), HttpClientConfig(timeout = Duration.Infinity))(identity))
+        }
+
+        "connectWith" in {
+            leftOpen(_.connectWith(url, Duration.Infinity, HttpTlsConfig.default)(_ => Kyo.unit))
+        }
+
+        "connectWebSocket" in {
+            leftOpen(_.connectWebSocket(url, HttpHeaders.empty, HttpWebSocket.Config())(_ => Kyo.unit))
+        }
+
+        "connectRaw" in {
+            leftOpen(_.connectRaw(url, HttpMethod.GET, Span.empty, HttpHeaders.empty, Duration.Infinity))
+        }
+    }
+
     private def withRawPeer[A](response: String)(
         test: Int => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =

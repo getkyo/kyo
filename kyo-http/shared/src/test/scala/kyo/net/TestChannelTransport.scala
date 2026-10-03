@@ -121,7 +121,11 @@ end TlsCloseConnection
   * hands back an already-completed fiber.
   */
 final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extends Transport:
-    private val gate = Promise.Unsafe.init[Connection, Abort[NetException]]()
+    private val gate      = Promise.Unsafe.init[Connection, Abort[NetException]]()
+    private val requested = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Whether a caller has asked for the connect. */
+    def connectRequested: Boolean = requested.get()
 
     /** Let the pending connect succeed with the prepared connection. */
     def release()(using AllowUnsafe, Frame): Unit = discard(gate.complete(Result.succeed(conn)))
@@ -129,7 +133,10 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
     def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
         AllowUnsafe,
         Frame
-    ): Fiber.Unsafe[Connection, Abort[NetException]] = gate
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
+        requested.set(true)
+        gate
+    end connect
 
     private def unsupported[A](op: String)(using AllowUnsafe): Fiber.Unsafe[A, Abort[NetException]] =
         Fiber.Unsafe.fromResult(Result.panic(new UnsupportedOperationException(s"DeferredConnectTransport: $op not supported")))
