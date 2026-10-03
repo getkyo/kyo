@@ -1,0 +1,3 @@
+# Guide
+
+No project validates this file. The cache key is built in [Cache.scala:40-52].

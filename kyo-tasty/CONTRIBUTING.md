@@ -177,7 +177,7 @@ them. Each carries an inline `// Unsafe:` comment explaining the boundary.
 
 `rg 'AllowUnsafe.embrace.danger' kyo-tasty/shared/src/main` returns 0 lines, and
 the `jvm/src/main` site count is exactly 3. The observable contract of Sites 1-4 is
-exercised by `InvariantsSpec` (`kyo-tasty/shared/src/test/scala/kyo/InvariantsSpec.scala:8-12`
+exercised by `InvariantsSpec` (its scaladoc in `kyo-tasty/shared/src/test/scala/kyo/InvariantsSpec.scala`
 enumerates exactly those four), which asserts each site's behavior (`Tasty.global` is a
 stable lazy singleton; `Tasty.bodyTree` returns `Maybe.Absent` for a classpath installed
 without a `DecodeContext`; and so on). Site 5's decode-backed pair is exercised by
@@ -187,14 +187,14 @@ without a `DecodeContext`; and so on). Site 5's decode-backed pair is exercised 
 
 ## Decode-error discrimination: MalformedSection, ClasspathClosed, graceful degrade
 
-`Tasty.bodyTree` (`kyo/Tasty.scala:666-752`) decodes a body slice inside its
+`Tasty.bodyTree` (`kyo/Tasty.scala`) decodes a body slice inside its
 `Sync.Unsafe.defer` block and maps every failure mode to one of three outcomes on
 the `Abort[TastyError]` row. All three must stay distinct:
 
 - **`TastyError.MalformedSection`**, and only for corrupt input: a body whose
-  `(bodyStart, bodyEnd)` bounds are malformed (validated up front at `Tasty.scala:694`,
+  `(bodyStart, bodyEnd)` bounds are malformed (validated up front, before the decode,
   `b.bodyStart < 0 || b.bodyEnd > sectionLen || b.bodyStart > b.bodyEnd`), or a
-  genuinely-malformed byte ENCODING caught as a `NonFatal` throwable (`Tasty.scala:734`,
+  genuinely-malformed byte ENCODING caught as a `NonFatal` throwable (the last catch arm,
   e.g. a `MalformedVarintException` where the varint guard fires on too many continuation
   bytes). Bounds are computed from the integers themselves rather than relying on a thrown
   `ArrayIndexOutOfBoundsException`, because Scala.js turns the same out-of-bounds read into
@@ -202,11 +202,12 @@ the `Abort[TastyError]` row. All three must stay distinct:
   escapes every catch arm.
 - **`TastyError.ClasspathClosed`** when the backing mmap arena was already closed (the scope
   finalizer flipped the closed flag), detected via the `isArenaClosed(IllegalStateException)`
-  predicate (`Tasty.scala:662-664`, matched at `Tasty.scala:721`).
+  predicate (`Tasty.isArenaClosed`, matched by the `case ise: IllegalStateException if
+  isArenaClosed(ise)` arm).
 - **Graceful degrade** to a top-level `Tree.Unknown(0, 0)` (a `Result.Success`) for a reader
-  gap on IN-BOUNDS bytes: a `TreeUnpickler.DecodeException` (`Tasty.scala:715`), an
-  `ArrayIndexOutOfBoundsException` from a nested read past its slice (`Tasty.scala:717`), or
-  any NON-arena `IllegalStateException` (`Tasty.scala:725`). These are well-formed TASTy
+  gap on IN-BOUNDS bytes: a `TreeUnpickler.DecodeException`, an
+  `ArrayIndexOutOfBoundsException` from a nested read past its slice, or
+  any NON-arena `IllegalStateException` (one catch arm each). These are well-formed TASTy
   carrying a construct the reader does not yet model, or a cursor desync, not corrupt input;
   the README "Errors and diagnostics" contract is degradation, not abort. A non-arena
   `IllegalStateException` degrades here; it is NOT reported as `MalformedSection`.
@@ -215,42 +216,42 @@ Keep these arms separate when touching `bodyTree`: collapsing the closed-arena a
 degrade arm loses the distinction callers rely on, and promoting a reader-gap degrade into
 `MalformedSection` mislabels a modelling gap as corruption.
 
-`Tasty.occurrencesInFile` (`kyo/Tasty.scala:765-872`, the Site 5 shared boundary) is the
+`Tasty.occurrencesInFile` (`kyo/Tasty.scala`, the Site 5 shared boundary) is the
 SECOND site running this exact discrimination, with the same five catch arms in the same
-order (`Tasty.scala:844-859`). Two differences only: the degrade VALUE is an empty
-`Chunk[Occurrence]` (`Tasty.scala:847-848, 853`) where `bodyTree` yields `Tree.Unknown`, and
-the upfront bounds check (`Tasty.scala:788-790`) runs over EVERY body in the file before any
-decode rather than one body. A non-arena `IllegalStateException` degrades to empty
-(`Tasty.scala:853`), not `MalformedSection`; only bad bounds (`Tasty.scala:815-821`) and a
-`NonFatal` throwable (`Tasty.scala:854-859`) reach `MalformedSection`. When editing either
+order (the `occResult` catch arms). Two differences only: the degrade VALUE is an empty
+`Chunk[Occurrence]` where `bodyTree` yields `Tree.Unknown`, and
+the upfront bounds check (`truncatedBody`) runs over EVERY body in the file before any
+decode rather than one body. A non-arena `IllegalStateException` degrades to empty,
+not `MalformedSection`; only bad bounds (the `truncatedBody` match) and a
+`NonFatal` throwable (the last `occResult` arm) reach `MalformedSection`. When editing either
 site, edit both: it is one discipline at two call sites.
 
 ---
 
 ## SourceRange, Occurrence, and the 1-based position contract
 
-`Tasty.SourceRange` (`kyo/Tasty.scala:1453-1462`) is the element type of `Tasty.references`:
+`Tasty.SourceRange` (`kyo/Tasty.scala`) is the element type of `Tasty.references`:
 a contiguous span within ONE source file,
 `SourceRange(sourceFile, startLine, startColumn, endLine, endColumn)`. All four coordinates
 are 1-based, matching `Tasty.Position`. The start `(startLine, startColumn)` is inclusive;
 the end `(endLine, endColumn)` is end-exclusive (the 1-based column one past the last
 character), so a half-open `[start, end)` reading maps onto an editor range. The end is read
 directly from the TASTy Positions section, never reconstructed from a name length
-(`Tasty.scala:1448-1449`). A single `sourceFile` for the whole span makes a cross-file range
+(the `SourceRange` scaladoc). A single `sourceFile` for the whole span makes a cross-file range
 unrepresentable by construction; equality is structural across all five fields (`derives
 Schema, CanEqual`).
 
-`Tasty.Occurrence` (`kyo/Tasty.scala:1470`, `final private[kyo] case class Occurrence(range:
+`Tasty.Occurrence` (`kyo/Tasty.scala`, `final private[kyo] case class Occurrence(range:
 SourceRange, symbolId: SymbolId)`) is the internal use-site carrier: a `SourceRange` plus the
 `SymbolId` it resolves to. It is produced by `OccurrenceScanner.scanFile` and memoized per
 file in `DecodeContext.occurrenceMemo`; it never reaches the public surface (`symbolAt`
 returns `Maybe[Symbol]`, `references` returns `Chunk[SourceRange]`).
 
 **Positions are 1-based; the `+1` conversion is the caller's job.** `symbolAt`'s documented
-contract (`Tasty.scala:879-881`) states that the LSP 0-based wire position is converted with
+contract (the `Tasty.symbolAt` scaladoc) states that the LSP 0-based wire position is converted with
 `+1` at the call site, never inside kyo-tasty. This is a FORWARD contract, not an exercised
 integration: no LSP call site into kyo-tasty exists in this tree. `kyo-lsp` depends only on
-`kyo-jsonrpc`, not `kyo-tasty` (`build.sbt:1300`), and imports no `kyo.Tasty`; the
+`kyo-jsonrpc`, not `kyo-tasty` (`kyo-lsp` in `build.sbt`), and imports no `kyo.Tasty`; the
 `.references(` / `.symbolAt(` names present in kyo-lsp are its own LSP-protocol client
 methods, unrelated to these. kyo-tasty owns the 1-based invariant; the eventual consumer owns
 the wire-offset conversion.
@@ -260,7 +261,7 @@ the wire-offset conversion.
 ## OccurrenceScanner: use-site reference resolution
 
 The lazy body decoder does NOT resolve use-site references to final classpath `SymbolId`s
-(`OccurrenceScanner.scala:13-20`): a same-pickle reference decodes as
+(the `OccurrenceScanner` scaladoc): a same-pickle reference decodes as
 `Tree.TermRefDirect(address)` (a raw section-relative address, no `Type`), a member selection
 as `Tree.Select(qualifier, name, Type.Wildcard)` (the `Select` carries no symbol info), and
 any `Type.Named` a node holds is still `PHASE_B_ADDR_OFFSET`-encoded because the lazy decode
@@ -269,22 +270,22 @@ never runs `finalizeMerge`'s offset->final-id remap.
 each shape to a genuine final `SymbolId` itself:
 
 - `TermRefDirect(address)` / `TermRefSymbol(address, _)`: through the load-populated final-id
-  `addrMap`, `body.addrMap.get(body.sectionOffset + address)` (`OccurrenceScanner.scala:138-141`);
+  `addrMap`, `body.addrMap.get(body.sectionOffset + address)` (`OccurrenceScanner.directId`);
   the map's keys are absolute, `address` is section-relative, so `sectionOffset` is added.
 - `Ident(_, Type.Named(id))`: the lazy remap mirroring `ClasspathOrchestrator.remapType`,
   `body.addrMap.get(id.value - phaseBOffset)` for a PHASE_B-encoded id
-  (`OccurrenceScanner.scala:152-161`); an already-final id is kept, a negId dropped.
+  (`OccurrenceScanner.remapNamed`); an already-final id is kept, a negId dropped.
 - `Select` / `SelectIn(qual, name, _)`: from the QUALIFIER's resolved type, never the
-  (`Type.Wildcard`) `Select.tpe` (`OccurrenceScanner.scala:172-187`). The qualifier resolves
+  (`Type.Wildcard`) `Select.tpe` (`OccurrenceScanner.selectTarget`). The qualifier resolves
   to a symbol, its declared type widens to the class-like whose members are in scope (a type
-  parameter widens to its upper bound; `classLikeOf`, `OccurrenceScanner.scala:271-293`), and
+  parameter widens to its upper bound; `OccurrenceScanner.classLikeOf`), and
   the member is found via `classpath.findMember(_, _, MemberScope.All)`.
 - A bare module qualifier (a top-level module selection like `Foo.bar`, decoded as
   `Ident(name, Named(id))` reconstructing the TASTy `TERMREFpkg` / `TYPEREFpkg` tags): resolved
   directly to its owning package by its fully-qualified name via `classpath.findPackage`, using
   `unresolvedIdToFullName` tracked on the lazy `TypeUnpickler.TreeTypeSession`
-  (`OccurrenceScanner.scala:197-205`, `packageOwnerOf`; the tracker is
-  `TreeTypeSession.unresolvedIdToFullName`, `TypeUnpickler.scala:130-146`, the
+  (`OccurrenceScanner.packageOwnerOf`; the tracker is
+  `TreeTypeSession.unresolvedIdToFullName` in `TypeUnpickler.scala`, the
   lazy-body-decode counterpart of Pass 1's `DecodeSession.unresolvedIdToFullName`).
 - A TYPE-position reference (a symbol used AS A TYPE: `val x: Foo`, `def f(a: Foo): Bar`, a `Foo`
   type argument) is a decoded `Type` in the file's `TreeTypeSession.addrCache`, surfaced by
@@ -300,13 +301,13 @@ each shape to a genuine final `SymbolId` itself:
   therefore reported by source location as well as by symbol via `implementationsOf`/`parents`.
 
 Every resolved id is bounds-checked against `classpath.symbols.size`, NOT a bare `id.value >=
-0` (`OccurrenceScanner.scala:101`, `if id.value >= 0 && id.value < syms.size` where `syms =
-classpath.symbols`, `OccurrenceScanner.scala:76`): a leaked PHASE_B temp id or an unresolved
+0` (`emit` inside `OccurrenceScanner.scanFile`, `if id.value >= 0 && id.value < syms.size` where
+`syms = classpath.symbols`): a leaked PHASE_B temp id or an unresolved
 cross-pickle negId is dropped, never emitted as an occurrence. An id that resolves but has no
-Positions entry for its address (a synthetic node) is dropped too (`OccurrenceScanner.scala:105-106`).
+Positions entry for its address (a synthetic node) is dropped too (the same `emit`).
 `scanFile` runs pure under the propagated `AllowUnsafe`: the single `Sync.Unsafe.defer` is the
 Site 5 boundary in the Tasty query layer, and this object adds no `embrace.danger`
-(`OccurrenceScanner.scala:48-50`).
+(the `OccurrenceScanner` scaladoc).
 
 ---
 
@@ -316,15 +317,15 @@ Site 5 boundary in the Tasty query layer, and this object adds no `embrace.dange
 shadow a same-named inherited PUBLIC member; `MemberScope.Declared` keeps it. The consequence:
 `MemberScope.All` is NOT a strict superset of `MemberScope.Declared`.
 
-In `Classpath.members` (`kyo/Tasty.scala:4478-4497`), the `Inherited` arm builds its
-`directNames` shadow-set skipping any private own declaration (`Tasty.scala:4494`, `if
+In `Classpath.members` (`kyo/Tasty.scala`), the `Inherited` arm builds its
+`directNames` shadow-set skipping any private own declaration (`if
 !s.isPrivate then discard(directNames.add(s.simpleName))`), so an inherited public member with
-that name survives the trailing `filter`. `allMembersOf` (backing `MemberScope.All`,
-`Tasty.scala:4622-4641`) applies the same skip for BOTH its `seen` shadow-set and its output
-(`Tasty.scala:4637-4639`, `if !d.isPrivate then ...`), so `All` emits the inherited public
-member and omits the private own one. `Declared` (`Tasty.scala:4480-4483`) reads
+that name survives the trailing `filter`. `Classpath.allMembersOf` (backing `MemberScope.All`)
+applies the same skip for BOTH its `seen` shadow-set and its output
+(`if !d.isPrivate then ...`), so `All` emits the inherited public
+member and omits the private own one. The `Declared` arm of `Classpath.members` reads
 `declarationIds` unfiltered, so it DOES include the private member. The cited shape is
-`tasty-query#195` (`Tasty.scala:4492-4493`, `4635-4636`): a `Child(y: Int)` primary-constructor
+`tasty-query#195` (the comments at both skips): a `Child(y: Int)` primary-constructor
 param retained as a private field must never hide the inherited public `Parent.y`. This is why
 `OccurrenceScanner.selectTarget` resolves a use-site selection with `MemberScope.All`: a `.y`
 selection through an external reference must reach `Parent.y`, not the private ctor artifact.
@@ -449,7 +450,7 @@ via `TypedSymbolFactory.from`.
 
 ### DecodeContext
 
-`DecodeContext` (`kyo/internal/tasty/query/Binding.scala:36-52`) carries the decode-time
+`DecodeContext` (`kyo/internal/tasty/query/Binding.scala`) carries the decode-time
 context needed to decode TASTy body bytes on demand. It is wrapped in
 `Binding.decodeCtx` and is `Maybe.Absent` for a `Binding` built from a
 pre-existing `Classpath` or from the empty fallback. Each `withClasspath` /
@@ -466,16 +467,16 @@ across calls. Its four fields:
   byte slice retained at load, keyed by `pickleId` (Int), NOT by source-file path. Two
   top-level decls of one `.scala` compile to two `.tasty` pickles sharing one source file,
   each with its own Positions bytes and `sectionOffset`, so a String key would
-  last-write-wins-collide (`Binding.scala:45-51`). `readSpans` runs lazily at first query;
+  last-write-wins-collide (the comment on `DecodeContext.positionsStore`). `readSpans` runs lazily at first query;
   retaining the slice runs no decode at load.
 
 **INV-MEMO-ASYMMETRY: `bodyMemo` caches every result; `occurrenceMemo` caches only
 successes.** `bodyTree` writes EVERY result into `bodyMemo`, failures included
-(`Tasty.scala:742`, `ctx.bodyMemo.put(symbol.id, result)` runs before the Success/Failure
+(`ctx.bodyMemo.put(symbol.id, result)` in `Tasty.bodyTree` runs before the Success/Failure
 split), so a deterministically-corrupt body re-aborts from the memo without re-decoding.
 `occurrencesInFile` writes ONLY a `Result.Success` into `occurrenceMemo`
-(`Tasty.scala:860-864`, where the `Result.Failure` arm aborts without a `put`), by deliberate
-design (`Tasty.scala:759-761`): a deterministically-corrupt file re-decodes and re-aborts on
+(its `Result.Failure` arm aborts without a `put`), by deliberate
+design (the `Tasty.occurrencesInFile` scaladoc): a deterministically-corrupt file re-decodes and re-aborts on
 each query, keeping the cache free of poisoned entries and leaving a cancelled `references`
 drain with a consistent partial cache (each file's entry is written whole or not at all).
 Both caches sit on the same `DecodeContext`; when extending either, do not assume the other's
@@ -499,7 +500,7 @@ loading-layer type.
 
 Every public type in `kyo/Tasty.scala` and `kyo/TastyError.scala` carries a
 scaladoc comment between 8 and 35 lines. The bar is defined in the root
-`CONTRIBUTING.md` under "Type-Level Scaladoc" (lines 434-455). In summary:
+`CONTRIBUTING.md` under [Type-Level Scaladoc](../CONTRIBUTING.md#type-level-scaladoc). In summary:
 
 - First line: one-sentence purpose statement (what, not how).
 - Middle lines: concrete field semantics or composition examples; no prose padding.

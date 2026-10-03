@@ -164,11 +164,14 @@ jobs:
           restore-keys: |
             doctest-${{ runner.os }}-${{ runner.arch }}-
 
+      # The `doctest` aggregate checks every git-tracked Markdown file for source line-number citations before it compiles
+      # anything. `testKyo` runs only the reached projects' doctest tasks, which check their own sources, so a pull request
+      # names the repository-wide check explicitly: a change to a contributor guide reaches no doctest project.
       - name: README doctests
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            sbt "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
+            sbt doctestLineCitations "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
           else
             sbt doctest
           fi
