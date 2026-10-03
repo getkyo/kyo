@@ -92,11 +92,8 @@ Before you begin, make sure you have the following installed:
 
 ### Configuring Java Options
 
-The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup is needed. The sbt launcher appends `.jvmopts` after `JAVA_OPTS`, so a flag set in both takes the `.jvmopts` value, and an `-Xmx` in `JAVA_OPTS` has no effect.
+The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup is needed. It carries every flag except the heap:
 
-#### Explanation of Parameters
-
-- `-Xmx12G`: maximum heap of 12GB.
 - `-Xss10M`: thread stack size of 10MB.
 - `-XX:+UseG1GC`: the G1 garbage collector.
 - `-XX:+UseCompactObjectHeaders`: compact object headers (a JDK 25 flag).
@@ -104,14 +101,18 @@ The sbt JVM is configured by the checked-in `.jvmopts`, so no environment setup 
 - `-XX:ReservedCodeCacheSize=256M`: 256MB reserved for compiled code.
 - `-Dfile.encoding=UTF-8`: UTF-8 file encoding.
 
-#### Adjusting These Values
+#### The sbt Heap
 
-To change the heap for one run, pass it on the command line, which the launcher places after `.jvmopts`:
+The driver heap is chosen in one place, `scripts/sbt-heap-lib.sh`, by the role the sbt process plays: `compile`, `test-jvm`, `run`, `link`, `publish` or `tool`. Each role's value is what that driver measured as needing on a 16GB CI runner, clamped to the memory of the machine it runs on. CI and `scripts/build.sh` start every sbt through it, and the `checks` workflow fails on a heap set anywhere else (`scripts/sbt-heap-check.sh`).
+
+A bare `sbt` carries no heap flag, so the JVM picks a quarter of physical memory. For the heap CI uses, start sbt through `scripts/sbt.sh` with a role; for any other heap, add `-J-Xmx`, which the launcher places after the role's:
+
 ```sh
+scripts/sbt.sh compile 'kyo-coreJVM/Test/compile'
 sbt -J-Xmx8G 'kyo-coreJVM/test'
 ```
 
-`JAVA_OPTS` still carries flags that `.jvmopts` does not set, such as `-Xms`.
+A heap in `JAVA_OPTS` is placed before these and has no effect when a role is set. `SBT_OPTS` is placed after them, so `scripts/sbt.sh`, `scripts/ci-test.sh` and `scripts/build.sh` clear it.
 
 ### How to Build Locally
 

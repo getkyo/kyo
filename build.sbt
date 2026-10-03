@@ -197,7 +197,7 @@ lazy val `kyo-settings` = Seq(
                 }
             }
             // Named so a module that documents locally documents on a runner: the JVM default is a
-            // quarter of physical RAM, 4G beside the 12G driver on the 16G runner that runs this.
+            // quarter of physical RAM, 4G beside the driver on the 16G runner that runs this.
             val exit = Fork.java(
                 ForkOptions()
                     .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
@@ -260,9 +260,9 @@ lazy val `kyo-settings` = Seq(
     // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
     // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
     // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
-    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts): it runs no forked-test
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
-    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
@@ -4313,7 +4313,7 @@ lazy val `js-settings` = Seq(
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
-    // linker state overflows the 12G sbt heap now that the schema family links per-format
+    // linker state overflows the driver heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
     // irrelevant in CI, footprint is what matters.
     scalaJSLinkerConfig := {

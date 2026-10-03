@@ -34,9 +34,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: macos-14
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -91,12 +88,12 @@ jobs:
             # failure in any of them fails the attempt instead of being retried into a false success.
             set -euo pipefail
             # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
             # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
             # ffiCFlags is a build-wide setting, so one ThisBuild append covers every project this leg
             # cross-builds. Same form the plugin's own generated workflow uses.
-            sbt -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
       - name: Collect darwin natives
         shell: bash
         run: |
@@ -130,9 +127,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -177,7 +171,7 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
@@ -221,7 +215,7 @@ jobs:
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
               bash kyo-sql-sqlite/scripts/build-sqlite.sh
               bash kyo-sql-doltlite/scripts/build-doltlite.sh
-              sbt -Dplatform=JVM ffiCompileAll
+              bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
             '
@@ -266,9 +260,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-24.04-arm
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -313,7 +304,7 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
@@ -351,7 +342,7 @@ jobs:
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
               bash kyo-sql-sqlite/scripts/build-sqlite.sh
               bash kyo-sql-doltlite/scripts/build-doltlite.sh
-              sbt -Dplatform=JVM ffiCompileAll
+              bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
             '
@@ -405,9 +396,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: windows-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -443,7 +431,7 @@ jobs:
           # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
           retry_on: error
           shell: bash
-          command: sbt -Dplatform=JVM ffiCompileAll
+          command: scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-x86_64
@@ -454,7 +442,7 @@ jobs:
           if-no-files-found: error
 
   # windows-11-arm is free for public repositories and the same 4 vCPU / 16 GB tier as every other
-  # pole, so the memory tuning above carries over unchanged.
+  # pole.
   natives-windows-aarch64:
     if: |
       github.repository == 'getkyo/kyo' && (
@@ -463,9 +451,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: windows-11-arm
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -507,7 +492,7 @@ jobs:
           # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
           retry_on: error
           shell: bash
-          command: sbt -Dplatform=JVM ffiCompileAll
+          command: scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-aarch64
@@ -526,9 +511,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -569,7 +551,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
+          command: rm -rf target/sona-staging && scripts/sbt.sh publish -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -583,7 +565,7 @@ jobs:
           timeout_minutes: 120
           # The Scala.js artifact bundles the same shim (under kyo-ffi/native/<os>-<arch>), and koffi loads
           # it on macOS exactly as the JVM does, so the JS stage stages the darwin natives too.
-          command: sbt -Dplatform=JS 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
+          command: scripts/sbt.sh publish -Dplatform=JS 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -596,7 +578,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: sbt -Dplatform=Native "ci-release"
+          command: scripts/sbt.sh publish -Dplatform=Native "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -611,7 +593,7 @@ jobs:
       - name: Native classifier completeness guard (pre-release belt)
         shell: bash
         run: |
-          sbt -Dplatform=JVM \
+          scripts/sbt.sh tool -Dplatform=JVM \
             'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' \
             kyo-netJVM/kyoNetNativeClassifierGuard
       # Every FFI module, on both publishing platforms: each staged native must match the platform
@@ -623,8 +605,8 @@ jobs:
       - name: FFI native packaging guard, every module (pre-release belt)
         shell: bash
         run: |
-          sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
-          sbt -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          scripts/sbt.sh tool -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
@@ -634,7 +616,7 @@ jobs:
         with:
           max_attempts: 1
           timeout_minutes: 120
-          command: sbt -Dplatform=JVM "sonaRelease"
+          command: scripts/sbt.sh tool -Dplatform=JVM "sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}

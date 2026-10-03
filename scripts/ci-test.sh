@@ -54,6 +54,8 @@ set -uo pipefail
 PLATFORMS="JVM JS Native Wasm"
 ACTIONS="test testDiff compile link"
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sbt-heap-lib.sh"
+
 usage() {
     echo "Usage: ci-test.sh <platform> <action>" >&2
     echo "  <platform>  one of: $PLATFORMS" >&2
@@ -159,7 +161,7 @@ if [ "${1:-}" = "--self-test" ]; then
         : > "$CALLS"; : > "$HEAP"; : > "$OUT"; : > "$PODCALLS"
         make_fake_sbt "$body"
         env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
-            CONTAINER_SWEEP=0 "$@" \
+            CONTAINER_SWEEP=0 SBT_HEAP_MEMORY_MB=16384 "$@" \
             "$SELF" "$platform" "$action" > "$OUT" 2>&1
         CT_EXIT=$?
     }
@@ -167,6 +169,14 @@ if [ "${1:-}" = "--self-test" ]; then
     run_runner() {  # run_runner <platform> <action> <body>
         run_runner_env "$3" "$1" "$2"
     }
+
+    # Each role's heap flag on the 16GB runner the harness pins, so a case asserts which role a
+    # process was given without restating the table's values.
+    H_COMPILE=$(SBT_HEAP_MEMORY_MB=16384 sbt_heap compile)
+    H_TESTJVM=$(SBT_HEAP_MEMORY_MB=16384 sbt_heap test-jvm)
+    H_RUN=$(SBT_HEAP_MEMORY_MB=16384 sbt_heap run)
+    H_LINK=$(SBT_HEAP_MEMORY_MB=16384 sbt_heap link)
+    H_TOOL=$(SBT_HEAP_MEMORY_MB=16384 sbt_heap tool)
 
     # Assertion helpers, evaluated against CT_EXIT and CALLS.
     exit_is()      { [ "$CT_EXIT" = "$1" ]; }
@@ -195,56 +205,74 @@ if [ "${1:-}" = "--self-test" ]; then
 
     echo "Running ci-test.sh self-tests..."
 
-    # 1. JVM phase-split: three ordered processes on a full run.
+    # 1. JVM phase-split on a full run: each compile phase is a Scala 3 driver then a cross driver, and
+    # the run phase follows in its own driver.
     run_runner JVM test 'exit 0'
-    if calls_count 3 \
-       && call_nth_is 1 "testKyo --phase compile-main --all JVM" \
-       && call_nth_is 2 "testKyo --phase compile-test --all JVM" \
-       && call_nth_is 3 "testKyo --all JVM" && exit_is 0
-    then record ok "JVM phase-split: three ordered processes (full)"
-    else record no "JVM phase-split: three ordered processes (full)"; fi
+    if calls_count 5 \
+       && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 --all JVM" \
+       && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross --all JVM" \
+       && call_nth_is 3 "$H_COMPILE testKyo --phase compile-test --scala 3 --all JVM" \
+       && call_nth_is 4 "$H_COMPILE testKyo --phase compile-test --cross --all JVM" \
+       && call_nth_is 5 "$H_TESTJVM testKyo --all JVM" && exit_is 0
+    then record ok "JVM phase-split: Scala 3 and cross driver per compile phase, then the run (full)"
+    else record no "JVM phase-split: Scala 3 and cross driver per compile phase, then the run (full)"; fi
 
-    # 2. JS and Wasm take the same three-process split. Their run phase (call 3) carries the out-of-JVM
-    # driver heap cap; the two compile phases do not.
+    # 2. JS and Wasm take the same split, with the run role on their run phase.
     run_runner JS test 'exit 0'
     js_ok=no
-    if calls_count 3 && call_nth_is 3 "-J-Xmx6G testKyo --all JS" && exit_is 0; then js_ok=yes; fi
+    if calls_count 5 && call_nth_is 5 "$H_RUN testKyo --all JS" && exit_is 0; then js_ok=yes; fi
     run_runner Wasm test 'exit 0'
-    if [ "$js_ok" = yes ] && calls_count 3 && call_nth_is 3 "-J-Xmx6G testKyo --all Wasm" \
-       && call_nth_is 1 "testKyo --phase compile-main --all Wasm" && exit_is 0
-    then record ok "JS and Wasm take the same three-process split"
-    else record no "JS and Wasm take the same three-process split"; fi
+    if [ "$js_ok" = yes ] && calls_count 5 && call_nth_is 5 "$H_RUN testKyo --all Wasm" \
+       && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 --all Wasm" \
+       && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross --all Wasm" && exit_is 0
+    then record ok "JS and Wasm take the same split"
+    else record no "JS and Wasm take the same split"; fi
 
-    # 3. Phase-split fails fast on a compile-main failure.
+    # 3. Phase-split fails fast on a compile-main failure, before the cross driver.
     run_runner JVM test 'exit 1'
-    if calls_count 1 && call_nth_is 1 "testKyo --phase compile-main --all JVM" && exit_is 1
+    if calls_count 1 && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 --all JVM" && exit_is 1
     then record ok "phase-split fails fast on compile-main failure"
     else record no "phase-split fails fast on compile-main failure"; fi
 
-    # 4. testDiff omits --all but still splits into three processes.
-    run_runner JVM testDiff 'exit 0'
-    if calls_count 3 \
-       && call_nth_is 1 "testKyo --phase compile-main  JVM" \
-       && call_nth_is 3 "testKyo  JVM" && exit_is 0
-    then record ok "testDiff omits --all but still splits into three processes"
-    else record no "testDiff omits --all but still splits into three processes"; fi
+    # 3a. A failed cross compile driver stops the run before compile-test.
+    run_runner JVM test 'if [[ "$*" == *"--cross"* ]]; then exit 1; fi; exit 0'
+    if calls_count 2 && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross --all JVM" && exit_is 1
+    then record ok "a failed cross compile driver stops the run before compile-test"
+    else record no "a failed cross compile driver stops the run before compile-test"; fi
 
-    # 5. compile action runs only the two compile phases (no run).
+    # 4. testDiff omits --all but keeps the same split.
+    run_runner JVM testDiff 'exit 0'
+    if calls_count 5 \
+       && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 JVM" \
+       && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross JVM" \
+       && call_nth_is 5 "$H_TESTJVM testKyo  JVM" && exit_is 0
+    then record ok "testDiff omits --all but keeps the same split"
+    else record no "testDiff omits --all but keeps the same split"; fi
+
+    # 5. compile action runs only the compile drivers (no run).
     run_runner JVM compile 'exit 0'
-    if calls_count 2 && calls_lack "testKyo --all JVM" && exit_is 0
-    then record ok "compile action runs only the two compile phases"
-    else record no "compile action runs only the two compile phases"; fi
+    if calls_count 4 && calls_lack "testKyo --all JVM" && exit_is 0
+    then record ok "compile action runs only the compile drivers"
+    else record no "compile action runs only the compile drivers"; fi
+
+    # 5-mem. The runner's memory reaches every process's heap: a 7GB runner clamps each role.
+    run_runner_env 'exit 0' JVM test SBT_HEAP_MEMORY_MB=7168
+    if call_nth_is 1 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap compile) testKyo --phase compile-main --scala 3 --all JVM" \
+       && call_nth_is 5 "$(SBT_HEAP_MEMORY_MB=7168 sbt_heap test-jvm) testKyo --all JVM" \
+       && calls_lack "$H_COMPILE" && exit_is 0
+    then record ok "the runner's memory clamps every process's heap"
+    else record no "the runner's memory clamps every process's heap"; fi
 
     # 5a. JS_TEST_BATCH turns the JS run phase into a plan, ordered batches, and the cross pass, each
-    # its own process under the run-phase heap cap.
+    # its own process.
     FAKE_PLAN="m1JS m2JS m3JS m4JS m5JS"
     run_runner_env 'exit 0' JS test JS_TEST_BATCH=2
-    if calls_count 7 \
-       && call_nth_has 3 "testKyo --dry-run --plan-file " && call_nth_has 3 " --scala 3 --all JS" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1JS,m2JS JS" \
-       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m3JS,m4JS JS" \
-       && call_nth_is 6 "-J-Xmx6G testKyo --scala 3 --modules m5JS JS" \
-       && call_nth_is 7 "-J-Xmx6G testKyo --cross --all JS" && exit_is 0
+    if calls_count 9 \
+       && call_nth_has 5 "$H_TOOL testKyo --dry-run --plan-file " && call_nth_has 5 " --scala 3 --all JS" \
+       && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m1JS,m2JS JS" \
+       && call_nth_is 7 "$H_RUN testKyo --scala 3 --modules m3JS,m4JS JS" \
+       && call_nth_is 8 "$H_RUN testKyo --scala 3 --modules m5JS JS" \
+       && call_nth_is 9 "$H_RUN testKyo --cross --all JS" && exit_is 0
     then record ok "JS_TEST_BATCH: plan, ordered batches, then the cross pass"
     else record no "JS_TEST_BATCH: plan, ordered batches, then the cross pass"; fi
 
@@ -252,18 +280,18 @@ if [ "${1:-}" = "--self-test" ]; then
     # not reach Wasm.
     FAKE_PLAN="m1Wasm m2Wasm m3Wasm"
     run_runner_env 'exit 0' Wasm testDiff WASM_TEST_BATCH=2 JS_TEST_BATCH=1
-    if calls_count 6 \
-       && call_nth_has 3 "testKyo --dry-run --plan-file " && call_nth_has 3 " --scala 3 Wasm" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1Wasm,m2Wasm Wasm" \
-       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m3Wasm Wasm" \
-       && call_nth_is 6 "-J-Xmx6G testKyo --cross Wasm" && calls_lack "--all" && exit_is 0
+    if calls_count 8 \
+       && call_nth_has 5 "testKyo --dry-run --plan-file " && call_nth_has 5 " --scala 3 Wasm" \
+       && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m1Wasm,m2Wasm Wasm" \
+       && call_nth_is 7 "$H_RUN testKyo --scala 3 --modules m3Wasm Wasm" \
+       && call_nth_is 8 "$H_RUN testKyo --cross Wasm" && calls_lack "--all" && exit_is 0
     then record ok "WASM_TEST_BATCH batches a diff run; JS_TEST_BATCH does not reach Wasm"
     else record no "WASM_TEST_BATCH batches a diff run; JS_TEST_BATCH does not reach Wasm"; fi
 
     # 5c. A failed batch fails the run before any later batch or the cross pass.
     FAKE_PLAN="m1Wasm m2Wasm m3Wasm"
     run_runner_env 'if [[ "$*" == *"--modules m1Wasm"* ]]; then exit 1; fi; exit 0' Wasm test WASM_TEST_BATCH=1
-    if calls_count 4 && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m1Wasm Wasm" && exit_is 1
+    if calls_count 6 && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m1Wasm Wasm" && exit_is 1
     then record ok "a failed JS/Wasm batch stops the run before the next batch and the cross pass"
     else record no "a failed JS/Wasm batch stops the run before the next batch and the cross pass"; fi
     FAKE_PLAN="kyo-dataNative kyo-preludeNative"
@@ -272,10 +300,10 @@ if [ "${1:-}" = "--self-test" ]; then
     # the kyoNative aggregate (only the planned modules are linked at all).
     run_runner Native test "$PASS_BODY"
     if calls_count 4 \
-       && call_nth_has 1 "testKyo --dry-run --plan-file" && call_nth_has 1 "--scala 3 --all Native" \
-       && call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
-       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --cross --all Native" \
+       && call_nth_has 1 "$H_TOOL testKyo --dry-run --plan-file" && call_nth_has 1 "--scala 3 --all Native" \
+       && call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 3 "$H_RUN testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 4 "$H_RUN testKyo --cross --all Native" \
        && calls_lack "kyoNative/Test/nativeLink" && exit_is 0
     then record ok "Native plans, then links the plan before any test process"
     else record no "Native plans, then links the plan before any test process"; fi
@@ -287,11 +315,13 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "the Native test path never sends a compile phase"
     else record no "the Native test path never sends a compile phase"; fi
 
-    # 8. The Native compile action is the compile phases and nothing else: no plan, no link, no run.
+    # 8. The Native compile action is the compile drivers and nothing else: no plan, no link, no run.
     run_runner Native compile 'exit 0'
-    if calls_count 2 \
-       && call_nth_is 1 "testKyo --phase compile-main Native" \
-       && call_nth_is 2 "testKyo --phase compile-test Native" \
+    if calls_count 4 \
+       && call_nth_is 1 "$H_COMPILE testKyo --phase compile-main --scala 3 Native" \
+       && call_nth_is 2 "$H_COMPILE testKyo --phase compile-main --cross Native" \
+       && call_nth_is 3 "$H_COMPILE testKyo --phase compile-test --scala 3 Native" \
+       && call_nth_is 4 "$H_COMPILE testKyo --phase compile-test --cross Native" \
        && calls_lack "--plan-file" && calls_lack "--phase link" && exit_is 0
     then record ok "the Native compile action runs the two compile phases and nothing else"
     else record no "the Native compile action runs the two compile phases and nothing else"; fi
@@ -303,26 +333,26 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "a Native link-batch failure exits 1 before any test process"
     else record no "a Native link-batch failure exits 1 before any test process"; fi
 
-    # 10. The run-phase heap cap reaches the Native test batches and the cross pass and nothing else:
-    # not the plan, not the link batches, and not the JVM run (its tests run in the driver).
-    run_runner JVM test 'exit 0'
-    jvm_uncapped=no
-    if call_nth_is 3 "testKyo --all JVM"; then jvm_uncapped=yes; fi
-    run_runner Native test "$PASS_BODY"
-    if [ "$jvm_uncapped" = yes ] \
-       && calls_have "-J-Xmx6G testKyo --scala 3 --modules" \
-       && calls_have "-J-Xmx6G testKyo --cross" \
-       && calls_lack "-J-Xmx6G testKyo --dry-run" \
-       && calls_lack "-J-Xmx6G testKyo --phase link"
-    then record ok "run-phase heap cap: Native test batches and cross only, never plan, link, or JVM"
-    else record no "run-phase heap cap: Native test batches and cross only, never plan, link, or JVM"; fi
+    # 10. Every sbt process carries exactly one heap flag, first on its command line, so nothing the
+    # launcher reads later can be what sizes it.
+    FAKE_PLAN="kyo-schema-testsNative kyo-dataNative"
+    run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
+    FAKE_PLAN="kyo-dataNative kyo-preludeNative"
+    heap_ok=yes
+    while IFS= read -r line; do
+        case "$line" in -J-Xmx*M\ *) ;; *) heap_ok=no ;; esac
+        [ "$(grep -o -- '-Xmx' <<<"$line" | wc -l | tr -d ' ')" = 1 ] || heap_ok=no
+    done < "$CALLS"
+    if [ "$heap_ok" = yes ] && calls_count 5
+    then record ok "every sbt process carries exactly one leading heap flag"
+    else record no "every sbt process carries exactly one leading heap flag"; fi
 
     # 11. NATIVE_HEAVY pre-links a planned heavy module in its own process before the link pool.
     FAKE_PLAN="kyo-schema-testsNative kyo-dataNative"
     run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
     if call_nth_has 1 "--plan-file" \
-       && call_nth_is 2 "kyo-schema-testsNative/Test/nativeLink" \
-       && call_nth_is 3 "testKyo --phase link --scala 3 --modules kyo-schema-testsNative,kyo-dataNative Native" \
+       && call_nth_is 2 "$H_LINK kyo-schema-testsNative/Test/nativeLink" \
+       && call_nth_is 3 "$H_LINK testKyo --phase link --scala 3 --modules kyo-schema-testsNative,kyo-dataNative Native" \
        && exit_is 0
     then record ok "NATIVE_HEAVY pre-links a planned heavy module before the link pool"
     else record no "NATIVE_HEAVY pre-links a planned heavy module before the link pool"; fi
@@ -340,7 +370,7 @@ if [ "${1:-}" = "--self-test" ]; then
     # 13. A heavy pre-link failure aborts before the link pool and before any tests.
     run_runner_env 'if [[ "$*" == *"kyo-schema-testsNative/Test/nativeLink"* ]]; then exit 3; fi
 '"$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
-    if calls_count 2 && call_nth_is 2 "kyo-schema-testsNative/Test/nativeLink" \
+    if calls_count 2 && call_nth_is 2 "$H_LINK kyo-schema-testsNative/Test/nativeLink" \
        && calls_lack "--phase link" && calls_lack "testKyo --scala 3 --modules" && exit_is 1
     then record ok "NATIVE_HEAVY pre-link failure aborts before the link pool and tests"
     else record no "NATIVE_HEAVY pre-link failure aborts before the link pool and tests"; fi
@@ -349,7 +379,7 @@ if [ "${1:-}" = "--self-test" ]; then
     FAKE_PLAN="kyo-dataNative kyo-preludeNative"
     run_runner_env "$PASS_BODY" Native test NATIVE_HEAVY="kyo-schema-tests"
     if calls_lack "kyo-schema-testsNative/Test/nativeLink" \
-       && call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
        && exit_is 0
     then record ok "an unplanned NATIVE_HEAVY module is not pre-linked"
     else record no "an unplanned NATIVE_HEAVY module is not pre-linked"; fi
@@ -360,15 +390,15 @@ if [ "${1:-}" = "--self-test" ]; then
     FAKE_SKIP="kyo-aeron"
     run_runner_env "$PASS_BODY" Native test NATIVE_SKIP="kyo-aeron,kyo-sql"
     if call_nth_has 1 "--exclude kyo-aeron,kyo-sql" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --cross --exclude kyo-aeron,kyo-sql --all Native" \
+       && call_nth_is 4 "$H_RUN testKyo --cross --exclude kyo-aeron,kyo-sql --all Native" \
        && calls_lack "--modules kyo-dataNative,kyo-aeronNative" \
        && calls_lack "--only" && exit_is 0
     then record ok "NATIVE_SKIP reaches the plan and the cross pass; batches carry no --exclude"
     else record no "NATIVE_SKIP reaches the plan and the cross pass; batches carry no --exclude"; fi
 
     # 16. A module NATIVE_SKIP names is absent from the plan, so neither pool ever sees it.
-    if call_nth_is 2 "testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
-       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+    if call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
+       && call_nth_is 3 "$H_RUN testKyo --scala 3 --modules kyo-dataNative,kyo-preludeNative Native" \
        && calls_lack "kyo-aeronNative"
     then record ok "a skipped module is absent from the plan and from both pools"
     else record no "a skipped module is absent from the plan and from both pools"; fi
@@ -378,7 +408,7 @@ if [ "${1:-}" = "--self-test" ]; then
     # cross-built modules).
     FAKE_PLAN=""
     run_runner Native test "$PASS_BODY"
-    if calls_count 2 && call_nth_is 2 "-J-Xmx6G testKyo --cross --all Native" && exit_is 0
+    if calls_count 2 && call_nth_is 2 "$H_RUN testKyo --cross --all Native" && exit_is 0
     then record ok "an empty plan skips both pools and still runs the cross pass"
     else record no "an empty plan skips both pools and still runs the cross pass"; fi
 
@@ -386,9 +416,9 @@ if [ "${1:-}" = "--self-test" ]; then
     FAKE_PLAN="m1Native m2Native m3Native m4Native m5Native m6Native m7Native"
     run_runner_env 'exit 0' Native link NATIVE_LINK_BATCH=3
     if calls_count 4 \
-       && call_nth_is 2 "testKyo --phase link --scala 3 --modules m1Native,m2Native,m3Native Native" \
-       && call_nth_is 3 "testKyo --phase link --scala 3 --modules m4Native,m5Native,m6Native Native" \
-       && call_nth_is 4 "testKyo --phase link --scala 3 --modules m7Native Native" && exit_is 0
+       && call_nth_is 2 "$H_LINK testKyo --phase link --scala 3 --modules m1Native,m2Native,m3Native Native" \
+       && call_nth_is 3 "$H_LINK testKyo --phase link --scala 3 --modules m4Native,m5Native,m6Native Native" \
+       && call_nth_is 4 "$H_LINK testKyo --phase link --scala 3 --modules m7Native Native" && exit_is 0
     then record ok "NATIVE_LINK_BATCH partitions the plan into ordered link processes"
     else record no "NATIVE_LINK_BATCH partitions the plan into ordered link processes"; fi
 
@@ -401,11 +431,11 @@ fi
 '"$PASS_BODY" Native test NATIVE_TEST_BATCH=3
     rm -f "$SELFDIR/crash"
     if calls_count 7 \
-       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules m1Native,m2Native,m3Native Native" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules m4Native,m5Native,m6Native Native" \
-       && call_nth_is 5 "-J-Xmx6G testKyo --scala 3 --modules m4Native,m5Native,m6Native Native --quick" \
-       && call_nth_is 6 "-J-Xmx6G testKyo --scala 3 --modules m7Native Native" \
-       && call_nth_is 7 "-J-Xmx6G testKyo --cross --all Native" && exit_is 0
+       && call_nth_is 3 "$H_RUN testKyo --scala 3 --modules m1Native,m2Native,m3Native Native" \
+       && call_nth_is 4 "$H_RUN testKyo --scala 3 --modules m4Native,m5Native,m6Native Native" \
+       && call_nth_is 5 "$H_RUN testKyo --scala 3 --modules m4Native,m5Native,m6Native Native --quick" \
+       && call_nth_is 6 "$H_RUN testKyo --scala 3 --modules m7Native Native" \
+       && call_nth_is 7 "$H_RUN testKyo --cross --all Native" && exit_is 0
     then record ok "a crashed test batch is retried alone, the other batches run once"
     else record no "a crashed test batch is retried alone, the other batches run once"; fi
 
@@ -415,8 +445,8 @@ fi
     run_runner Native test 'if [[ "$*" == *"--phase link"* ]]; then exit 0; fi
 echo "Tests: succeeded 100, failed 0"; exit 1'
     if calls_count 4 \
-       && call_nth_is 3 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative Native" \
-       && call_nth_is 4 "-J-Xmx6G testKyo --scala 3 --modules kyo-dataNative Native --quick" \
+       && call_nth_is 3 "$H_RUN testKyo --scala 3 --modules kyo-dataNative Native" \
+       && call_nth_is 4 "$H_RUN testKyo --scala 3 --modules kyo-dataNative Native --quick" \
        && calls_lack "--cross" && exit_is 1
     then record ok "a clean tail without the completion marker is retried, then fails"
     else record no "a clean tail without the completion marker is retried, then fails"; fi
@@ -519,7 +549,7 @@ echo "[error]   forbidden: https://repo1.maven.org/maven2/org/scala-native/nativ
 esac
 echo "Tests: succeeded 100, failed 0"; exit 0'
     rm -f "$SELFDIR/resolv"
-    if exit_is 0 && [ "$(grep -c -- '--phase compile-main' "$CALLS")" = 2 ]
+    if exit_is 0 && [ "$(grep -c -- '--phase compile-main --scala 3' "$CALLS")" = 2 ]
     then record ok "transient resolution 403 on compile-main is retried then passes"
     else record no "transient resolution 403 on compile-main is retried then passes"; fi
 
@@ -652,7 +682,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 58 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 60 ]
     exit $?
 fi
 
@@ -730,11 +760,13 @@ log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 # such marker (or reproduces every attempt) and still fails. tee keeps output streaming for the console
 # and native watchdog. Compile and link route through here; the JVM/JS/Wasm run phase routes through the
 # stricter sbt_run_resolve_retry below, and the run phase also retries a no-Tests failure in check_log.
+# sbt_resolve_retry <heap role> <sbt args...>
 sbt_resolve_retry() {
-    local attempt=1 rc tmp
+    local attempt=1 rc tmp heap
+    heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$@" 2>&1 | tee "$tmp"
+        sbt "$heap" "$@" 2>&1 | tee "$tmp"
         rc=${PIPESTATUS[0]}
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
@@ -756,11 +788,13 @@ sbt_resolve_retry() {
 # The trigger is the ++ cross-pass linker (scalajs-linker) re-resolving against Maven Central during
 # the version restore after tests pass; a retry re-runs the whole phase, which the 360-minute leg budget
 # absorbs, and is strictly cheaper than a red leg forcing a full-matrix re-dispatch.
+# sbt_run_resolve_retry <heap role> <sbt args...>
 sbt_run_resolve_retry() {
-    local attempt=1 rc tmp
+    local attempt=1 rc tmp heap
+    heap=$(sbt_heap "$1") || return 2; shift
     tmp="$(mktemp)"
     while :; do
-        sbt "$@" 2>&1 | tee "$tmp"
+        sbt "$heap" "$@" 2>&1 | tee "$tmp"
         rc=${PIPESTATUS[0]}
         if [ "$rc" -eq 0 ]; then rm -f "$tmp"; return 0; fi
         if [ "$attempt" -lt "$MAX_RETRIES" ] &&
@@ -783,9 +817,9 @@ link_sbt() {
     if [ -n "$NATIVE_LINK_CPUS" ]; then
         JAVA_OPTS="${JAVA_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
         JVM_OPTS="${JVM_OPTS:-} -XX:ActiveProcessorCount=$NATIVE_LINK_CPUS" \
-            sbt_resolve_retry "$@"
+            sbt_resolve_retry link "$@"
     else
-        sbt_resolve_retry "$@"
+        sbt_resolve_retry link "$@"
     fi
 }
 
@@ -798,16 +832,19 @@ run_arg() {
     esac
 }
 
-# Run-phase driver heap cap for the out-of-JVM targets. JS/Wasm run in Node and Native runs the linked
-# binary, so the run-phase driver holds no test heap, yet .jvmopts pins -Xmx12G for the compile phases. On
-# a 16GB runner a 12GB run-phase driver (measured 9-11GB RSS) leaves under 1GB for the Node/Wasm runtime
-# plus podman, so kyo-pod container suites hit `sh: Cannot fork` (EAGAIN) and OOM kills. Cap it for those
-# targets; JVM and the compile/heavy-link phases keep the full heap (they are the heap-heavy ones).
-# `-J-Xmx` is appended after .jvmopts so it wins. Overridable via RUN_HEAP_CAP.
-RUN_HEAP_CAP="${RUN_HEAP_CAP:-6G}"
-run_phase_heap() {
-    [ "$PLATFORM" = JVM ] && return 0
-    printf -- '-J-Xmx%s' "$RUN_HEAP_CAP"
+# The run phase's heap role: the JVM run drives forked test JVMs, the other targets drive Node or a linked
+# binary, and the two are sized separately in sbt-heap-lib.sh.
+run_role() {
+    if [ "$PLATFORM" = JVM ]; then echo test-jvm; else echo run; fi
+}
+
+# One compile phase as two drivers: the primary Scala 3 pass, then the 2.x cross passes. A driver that
+# chains ++ keeps the Scala 3 compiles' heap and adds the 300,000-setting reapply on top (measured +1.2GB
+# at ++2.13), so the cross passes start from a fresh process. compile_phase <phase> [flags...]
+compile_phase() {
+    local phase="$1"; shift
+    sbt_resolve_retry compile "$(native_cmd "testKyo --phase $phase --scala 3" "$@" "$PLATFORM")" || return $?
+    sbt_resolve_retry compile "$(native_cmd "testKyo --phase $phase --cross" "$@" "$PLATFORM")" || return $?
 }
 
 # -- JVM / JS / Wasm: three-process phase-split, fail-fast --
@@ -815,8 +852,8 @@ run_phase_split() {
     local arg; arg=$(run_arg)
     case "$ACTION" in
         compile)
-            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            compile_phase compile-main "$arg" || return $?
+            compile_phase compile-test "$arg" || return $?
             return 0
             ;;
         link)
@@ -824,17 +861,17 @@ run_phase_split() {
             return 0
             ;;
         *)
-            sbt_resolve_retry "testKyo --phase compile-main $arg $PLATFORM" || return $?
-            sbt_resolve_retry "testKyo --phase compile-test $arg $PLATFORM" || return $?
+            compile_phase compile-main "$arg" || return $?
+            compile_phase compile-test "$arg" || return $?
             local size; size=$(run_test_batch_size)
             if [ -z "$size" ] || [ "$size" = 0 ]; then
-                sbt_run_resolve_retry $(run_phase_heap) "testKyo $arg $PLATFORM" || return $?
+                sbt_run_resolve_retry "$(run_role)" "testKyo $arg $PLATFORM" || return $?
                 return 0
             fi
             trap native_cleanup EXIT
             local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" '--scala 3' "$arg" "$PLATFORM")
             log "planning $PLATFORM test modules: sbt $plan_cmd"
-            sbt_resolve_retry "$plan_cmd" || { log "$PLATFORM planning failed"; return 1; }
+            sbt_resolve_retry tool "$plan_cmd" || { log "$PLATFORM planning failed"; return 1; }
             if [ ! -f "$PLAN" ]; then
                 log "$PLATFORM planning wrote no plan file ($PLAN)"; return 1
             fi
@@ -842,9 +879,9 @@ run_phase_split() {
             local batch
             for batch in $(plan_batches "$size"); do
                 log "$PLATFORM test batch: sbt testKyo --scala 3 --modules $batch $PLATFORM"
-                sbt_run_resolve_retry $(run_phase_heap) "testKyo --scala 3 --modules $batch $PLATFORM" || return $?
+                sbt_run_resolve_retry "$(run_role)" "testKyo --scala 3 --modules $batch $PLATFORM" || return $?
             done
-            sbt_run_resolve_retry $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$arg" "$PLATFORM")" || return $?
+            sbt_run_resolve_retry "$(run_role)" "$(native_cmd 'testKyo --cross' "$arg" "$PLATFORM")" || return $?
             return 0
             ;;
     esac
@@ -989,12 +1026,12 @@ check_log() {
 # crash-retry loop: a hung process (no output for STALE_TIMEOUT) is killed and retried, a mid-RPC
 # errno-104 reset is retried, a clean pass or a real test failure returns immediately. Returns 0
 # (pass) or 1 (real failure, or no verdict after MAX_RETRIES). Because it wraps ONE batch, a crash
-# costs that batch's modules rather than the whole test phase. The caller sets the driver heap (a
-# leading -J-Xmx arg) and any NATIVE_LINK_CPUS cap via the environment; this loop just runs whatever
-# sbt command it is handed.
+# costs that batch's modules rather than the whole test phase.
+# run_watched <label> <heap role> <sbt args...>
 run_watched() {
-    local label="$1"; shift
-    local -a base=("$@")
+    local label="$1" heap
+    heap=$(sbt_heap "$2") || return 1; shift 2
+    local -a base=("$heap" "$@")
     # Heartbeat: append each watched unit (link batch, test batch, cross pass) to the run summary as it starts,
     # so a stalled native leg shows on the summary which batch it stopped on, without waiting for the whole
     # job's log to finalize. No-op off CI (GITHUB_STEP_SUMMARY unset), so the self-test is unaffected.
@@ -1004,8 +1041,7 @@ run_watched() {
         # A retry re-runs through testKyo --quick so only the tests sbt did not record as passing run
         # again: a crashed native suite is left unrecorded and re-runs, while every module in the
         # batch that already passed is skipped, keeping the reroll off the modules the first attempt
-        # cleared. The testKyo command is the final positional arg; an optional -J-Xmx heap arg
-        # precedes it.
+        # cleared. The testKyo command is the final positional arg.
         local -a cmd=("${base[@]}")
         if [ "$attempt" -ge 2 ]; then
             local li=$(( ${#cmd[@]} - 1 ))
@@ -1118,8 +1154,8 @@ run_native() {
 
     # compile: compile main and test only, no plan, no link, no run.
     if [ "$ACTION" = "compile" ]; then
-        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-main' "$skip_flag" "$arg" Native)" || return $?
-        sbt_resolve_retry "$(native_cmd 'testKyo --phase compile-test' "$skip_flag" "$arg" Native)" || return $?
+        compile_phase compile-main "$skip_flag" "$arg" || return $?
+        compile_phase compile-test "$skip_flag" "$arg" || return $?
         return 0
     fi
 
@@ -1129,7 +1165,7 @@ run_native() {
     # identical module list and each batch's membership lands in the runner log.
     local plan_cmd; plan_cmd=$(native_cmd "testKyo --dry-run --plan-file $PLAN" "$skip_flag" '--scala 3' "$arg" Native)
     log "planning native modules: sbt $plan_cmd"
-    sbt_resolve_retry "$plan_cmd" || { log "native planning failed"; return 1; }
+    sbt_resolve_retry tool "$plan_cmd" || { log "native planning failed"; return 1; }
     if [ ! -f "$PLAN" ]; then
         log "native planning wrote no plan file ($PLAN)"; return 1
     fi
@@ -1154,16 +1190,14 @@ run_native() {
     fi
 
     LOG=$(mktemp)
-    # The run-phase heap cap keeps headroom for the podman/chrome forks the container and browser
-    # modules spawn; the plan and the links above run at the full .jvmopts heap.
     for batch in $(plan_batches "$NATIVE_TEST_BATCH"); do
-        run_watched "test batch $batch" $(run_phase_heap) "testKyo --scala 3 --modules $batch Native" || return 1
+        run_watched "test batch $batch" run "testKyo --scala 3 --modules $batch Native" || return 1
         check_worker_count "$batch"
         sweep_containers "after test batch $batch"
     done
     # The cross-build modules select themselves per Scala 2.x version, so they are outside the plan
     # and outside both pools.
-    run_watched "cross pass" $(run_phase_heap) "$(native_cmd 'testKyo --cross' "$skip_flag" "$arg" Native)" || return 1
+    run_watched "cross pass" run "$(native_cmd 'testKyo --cross' "$skip_flag" "$arg" Native)" || return 1
     return 0
 }
 
