@@ -532,6 +532,8 @@ object TestKyo {
     /** The files a Markdown file's relative links point at, resolved against its directory. External
       * links and same-document anchors are dropped, as the doctest link check drops them. Links inside
       * fenced code are skipped; one inside an inline code span is kept, which can only add a target.
+      * A target that is not a legal path on this platform (Windows rejects `|`, `*`, `"` and more) is
+      * dropped rather than failing the whole selection: no changed file can be at such a path.
       */
     private def linkTargetsOf(markdown: File): Seq[java.nio.file.Path] = {
         val parent  = markdown.getCanonicalFile.getParentFile
@@ -545,7 +547,7 @@ object TestKyo {
                 markdownLink.findAllMatchIn(line).map(_.group(1)).toList.flatMap { target =>
                     val path = target.takeWhile(c => c != '#' && c != '?')
                     if (path.isEmpty || urlScheme.findFirstIn(path).isDefined) Nil
-                    else List(canonical(new File(parent, path)))
+                    else scala.util.Try(canonical(new File(parent, path))).toOption.toList
                 }
         }
     }
