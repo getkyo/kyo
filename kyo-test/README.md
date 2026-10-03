@@ -576,7 +576,7 @@ The command-line entry point (`kyo.test.runner.Cli`) takes flags that map onto t
 |------|--------|
 | `--parallel=N` | Concurrency: `1` = within-suite sequential, `0` (auto) or `N > 1` = parallel (the global pool sets the real degree) |
 | `--randomize` / `--randomize=SEED` | Shuffle leaf order (time-seeded, or a fixed seed to reproduce) |
-| `--filter=GLOB` | Include only leaves whose dot-joined path matches GLOB (repeatable) |
+| `--filter=GLOB` | Include only leaves whose dot-joined path matches GLOB, anchored at both ends (repeatable). `*` matches within one segment, `**` across segments, `?` one character other than `.` |
 | `--tag=NAME` / `--exclude-tag=NAME` | Include / exclude leaves by tag (repeatable) |
 | `--reporter=VALUE` | Add a reporter: `console`, `tap`, `tap:PATH`, `junit-xml:PATH` (comma-separated or repeatable) |
 | `--verbose` / `--quiet` | Raise / lower console detail |
@@ -584,7 +584,7 @@ The command-line entry point (`kyo.test.runner.Cli`) takes flags that map onto t
 | `--heartbeat-interval=D` | Report a leaf still running after `D` (`30s`, `2 minutes`; `infinity` disables). Default 1 minute; a leaf whose own limit is shorter is reported at three quarters of it, so the hang dump precedes the timeout |
 | `--help` | Print usage |
 
-The same flags work under sbt after `--` (`sbt 'kyo-coreJVM/testOnly kyo.ChannelTest -- --filter=**/put'`). Flags overlay each suite's own `config`: a flag changes only the field it names, and the suite keeps its timeout, ordering and leak settings.
+The same flags work under sbt after `--` (`sbt 'kyo-coreJVM/testOnly kyo.ChannelTest -- --filter=**put**'`). Flags overlay each suite's own `config`: a flag changes only the field it names, and the suite keeps its timeout, ordering and leak settings.
 
 Exit codes are `0` (all passed, or nothing ran), `1` (a leaf failed, was cancelled, or timed out), and `2` (argument parse error).
 
