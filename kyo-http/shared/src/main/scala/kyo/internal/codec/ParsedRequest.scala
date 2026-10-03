@@ -11,8 +11,8 @@ import scala.annotation.tailrec
   * caller explicitly requests a String value.
   *
   * Binary layout (all offsets relative to raw bytes section start):
-  *   - [0..1] flags: 2 bytes — high byte = method ordinal, low byte = bit flags: bit0=chunked, bit1=keepAlive, bit2=hasQuery,
-  *     bit3=expectContinue, bit4=hasHost, bit5=multipleHost, bit6=emptyHost, bit7=upgrade
+  *   - [0..1] flags: 2 bytes: bit 15 = HTTP/1.0, bits 8 to 14 = method ordinal, bits 0 to 7 = bit0=chunked, bit1=keepAlive,
+  *     bit2=hasQuery, bit3=expectContinue, bit4=hasHost, bit5=multipleHost, bit6=emptyHost, bit7=upgrade
   *   - [2..5] contentLength: 4 bytes big-endian (-1 if absent)
   *   - [6..9] pathOff:2 + pathLen:2
   *   - [10..13] queryOff:2 + queryLen:2 (0/0 if no query)
@@ -93,10 +93,15 @@ private[kyo] object ParsedRequest:
 
     extension (self: ParsedRequest)
 
-        /** HTTP method from the high byte of flags. */
+        /** HTTP method from bits 8 to 14 of flags. */
         def method: HttpMethod =
             val flags = readShort(self, 0)
-            methodFromOrdinal((flags >> 8) & 0xff)
+            methodFromOrdinal((flags >> 8) & 0x7f)
+
+        /** Whether the request line named HTTP/1.0. Bit 15 of flags. A response to it carries no `Transfer-Encoding` (RFC 9112 section
+          * 6.1) and no interim response (RFC 9110 section 10.1.1).
+          */
+        def isHttp10: Boolean = (readShort(self, 0) & 0x8000) != 0
 
         /** Whether Transfer-Encoding: chunked was detected. Bit 0 of flags. */
         def isChunked: Boolean = (readShort(self, 0) & 1) != 0
@@ -125,6 +130,11 @@ private[kyo] object ParsedRequest:
         /** Pre-parsed Content-Length (-1 if absent). */
         def contentLength: Int =
             readInt(self, 2)
+
+        /** Whether body bytes remain on the wire after the `inHand` bytes the parser took with the head (RFC 9112 section 6.3): a chunked
+          * body, which only its decoder can end, or a Content-Length longer than what is in hand.
+          */
+        def bodyBeyond(inHand: Int): Boolean = isChunked || contentLength > inHand
 
         /** Number of path segments. */
         def pathSegmentCount: Int =

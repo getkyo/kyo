@@ -128,6 +128,24 @@ class ParsedRequestTest extends kyo.BaseHttpTest:
             assert(req.isKeepAlive == false)
         }
 
+        "bodyBeyond: a chunked body or a Content-Length past the bytes in hand leaves body on the wire" in {
+            def request(contentLength: Int, chunked: Boolean): ParsedRequest =
+                val builder = new ParsedRequestBuilder()
+                builder.setMethod(ParsedRequest.ordinalFromName("POST"))
+                val pathBytes = "/data".getBytes(StandardCharsets.UTF_8)
+                builder.setPath(pathBytes, 0, pathBytes.length)
+                if contentLength >= 0 then builder.setContentLength(contentLength)
+                builder.setChunked(chunked)
+                builder.build()
+            end request
+            assert(request(-1, chunked = true).bodyBeyond(0))
+            assert(request(-1, chunked = true).bodyBeyond(100))
+            assert(request(10, chunked = false).bodyBeyond(9))
+            assert(!request(10, chunked = false).bodyBeyond(10))
+            assert(!request(0, chunked = false).bodyBeyond(0))
+            assert(!request(-1, chunked = false).bodyBeyond(0))
+        }
+
         "build with keep-alive flag" in {
             val builder = new ParsedRequestBuilder()
             builder.setMethod(ParsedRequest.ordinalFromName("GET"))

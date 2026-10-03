@@ -129,7 +129,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>
@@ -164,14 +164,14 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 val client = internal.HttpTestPlatformBackend.client
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
-                        val parsedUrl                             = HttpUrl.parse(url).getOrThrow
-                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                        val parsedUrl                                                    = HttpUrl.parse(url).getOrThrow
+                        val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(Seq(
                             Span.fromUnsafe("chunk1".getBytes("UTF-8")),
                             Span.fromUnsafe("chunk2".getBytes("UTF-8"))
                         ))
                         val request = HttpRequest.postRaw(parsedUrl)
                             .addField("body", bodyStream)
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, request) { resp =>
@@ -205,13 +205,13 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                         val client = internal.HttpTestPlatformBackend.client
                         HttpClient.init().map { httpClient =>
                             HttpClient.let(httpClient) {
-                                val parsedUrl                             = HttpUrl.parse(url).getOrThrow
-                                val oneKb                                 = Array.fill[Byte](1024)(65)
-                                val chunks                                = (1 to 100).map(_ => Span.fromUnsafe(oneKb.clone()))
-                                val bodyStream: Stream[Span[Byte], Async] = Stream.init(chunks)
-                                val request                               = HttpRequest.postRaw(parsedUrl)
+                                val parsedUrl = HttpUrl.parse(url).getOrThrow
+                                val oneKb     = Array.fill[Byte](1024)(65)
+                                val chunks    = (1 to 100).map(_ => Span.fromUnsafe(oneKb.clone()))
+                                val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream.init(chunks)
+                                val request                                                      = HttpRequest.postRaw(parsedUrl)
                                     .addField("body", bodyStream)
-                                client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                                client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                                     Scope.run {
                                         Scope.ensure(client.closeNow(conn)).andThen {
                                             client.sendWith(conn, route, request) { resp =>
@@ -351,7 +351,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>
