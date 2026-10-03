@@ -14,7 +14,7 @@ private[bson] object BsonDecimal128:
     private val SpecialMask  = BigInt(3) << 125
     private val SpecialBits  = BigInt(3) << 125
 
-    def encode(value: BigDecimal): Array[Byte] =
+    def encode(value: BigDecimal)(using kyo.Frame): Array[Byte] =
         val stripped =
             val bd = value.bigDecimal.stripTrailingZeros()
             if bd.signum == 0 then java.math.BigDecimal.ZERO else bd
@@ -86,7 +86,7 @@ private[bson] object BsonDecimal128:
         result
     end fromLittleEndian
 
-    private def invalid(message: String): Nothing =
-        throw SchemaNotSerializableException(message)(using kyo.Frame.internal)
+    private def invalid(message: String)(using kyo.Frame): Nothing =
+        throw SchemaNotSerializableException(message)
     end invalid
 end BsonDecimal128

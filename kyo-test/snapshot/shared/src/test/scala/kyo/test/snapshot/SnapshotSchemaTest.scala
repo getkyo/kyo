@@ -65,7 +65,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
       */
     private def throwingCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer                                   = Protobuf().newWriter()
+            def newWriter()(using kyo.Frame): Codec.Writer                  = Protobuf().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw RawCodecDefect("raw codec defect")
 
@@ -75,7 +75,7 @@ class SnapshotSchemaTest extends AnyFunSuite with NonImplicitAssertions:
       */
     private def throwingTextCodec(): Codec =
         new Codec:
-            def newWriter(): Codec.Writer                                   = Yaml().newWriter()
+            def newWriter()(using kyo.Frame): Codec.Writer                  = Yaml().newWriter()
             def newReader(input: Span[Byte])(using kyo.Frame): Codec.Reader =
                 throw RawCodecDefect("raw text codec defect")
 

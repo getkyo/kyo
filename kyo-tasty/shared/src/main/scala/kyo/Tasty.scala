@@ -1034,37 +1034,42 @@ object Tasty:
 
     // ── SymbolId ────────────────────────────────────────────────────────────
 
-    /** Opaque integer handle that references a Symbol within a single Classpath instance.
-      *
-      * Obtained from `Classpath.symbol`, `Classpath.rootSymbolId`, `Classpath.topLevelClassIds`,
-      * `Classpath.packageIds`, or any `SymbolId` field on `Symbol` or `Type`. User code cannot construct a
-      * `SymbolId` from a raw `Int`.
-      *
-      * Two `SymbolId` values from the same classpath compare equal via `==` exactly when they refer to the
-      * same symbol. `SymbolId` values are not portable across classpaths: distinct `Tasty.withClasspath` calls
-      * produce independent id spaces, so to resolve a symbol from one classpath against another, look it up by
-      * fully-qualified name via `findSymbol` / `findClass` / `findObject`.
-      */
-    opaque type SymbolId = Int
+    // SymbolId, Name, Uuid and Flags each live in an object of their own: in the template declaring an opaque type a Tag
+    // for its underlying type is refused, and every schema derived in Tasty needs Tags for Int, String and Long.
+    object SymbolIds:
+        /** Opaque integer handle that references a Symbol within a single Classpath instance.
+          *
+          * Obtained from `Classpath.symbol`, `Classpath.rootSymbolId`, `Classpath.topLevelClassIds`,
+          * `Classpath.packageIds`, or any `SymbolId` field on `Symbol` or `Type`. User code cannot construct a
+          * `SymbolId` from a raw `Int`.
+          *
+          * Two `SymbolId` values from the same classpath compare equal via `==` exactly when they refer to the
+          * same symbol. `SymbolId` values are not portable across classpaths: distinct `Tasty.withClasspath` calls
+          * produce independent id spaces, so to resolve a symbol from one classpath against another, look it up by
+          * fully-qualified name via `findSymbol` / `findClass` / `findObject`.
+          */
+        opaque type SymbolId = Int
 
-    object SymbolId:
+        object SymbolId:
 
-        /** Internal smart constructor. Callable only from inside `kyo` (via `private[kyo]`); user code cannot invoke this. */
-        private[kyo] def apply(i: Int): SymbolId = i
+            /** Internal smart constructor. Callable only from inside `kyo` (via `private[kyo]`); user code cannot invoke this. */
+            private[kyo] def apply(i: Int): SymbolId = i
 
-        extension (id: SymbolId)
-            /** Internal accessor for the underlying integer value. Used by `Classpath.symbol(id)` to index the dense
-              * `symbols: IndexedSeq[Symbol]` array.
-              */
-            private[kyo] def value: Int = id
-        end extension
+            extension (id: SymbolId)
+                /** Internal accessor for the underlying integer value. Used by `Classpath.symbol(id)` to index the dense
+                  * `symbols: IndexedSeq[Symbol]` array.
+                  */
+                private[kyo] def value: Int = id
+            end extension
 
-        given CanEqual[SymbolId, SymbolId] = CanEqual.canEqualAny
+            given CanEqual[SymbolId, SymbolId] = CanEqual.canEqualAny
 
-        /** Schema[SymbolId] delegates to Schema[Int], mirroring the Schema[Name] = Schema[String] precedent. */
-        given schemaSymbolId: Schema[SymbolId] = summon[Schema[Int]]
+            /** Schema[SymbolId] delegates to Schema[Int], mirroring the Schema[Name] = Schema[String] precedent. */
+            given schemaSymbolId: Schema[SymbolId] = summon[Schema[Int]]
 
-    end SymbolId
+        end SymbolId
+    end SymbolIds
+    export SymbolIds.SymbolId
 
     // ── Version ─────────────────────────────────────────────────────────────
 
@@ -1094,163 +1099,172 @@ object Tasty:
 
     // ── Names and flags ─────────────────────────────────────────────────────
 
-    /** A name backed by a `String`.
-      *
-      * The opaque alias over `String` keeps `Name` distinct from raw `String` at the type level while
-      * eliminating the per-name allocation and per-classpath intern table that the former `Interner.Entry`
-      * representation required. Equality and ordering are `String` equality. `Schema[Name]` delegates to
-      * `Schema[String]` so serialization round-trips byte-stably.
-      */
-    opaque type Name = String
-    object Name:
-        given CanEqual[Name, Name] = CanEqual.canEqualAny
-        given Schema[Name]         = summon[Schema[String]]
+    object Names:
+        /** A name backed by a `String`.
+          *
+          * The opaque alias over `String` keeps `Name` distinct from raw `String` at the type level while
+          * eliminating the per-name allocation and per-classpath intern table that the former `Interner.Entry`
+          * representation required. Equality and ordering are `String` equality. `Schema[Name]` delegates to
+          * `Schema[String]` so serialization round-trips byte-stably.
+          */
+        opaque type Name = String
+        object Name:
+            given CanEqual[Name, Name] = CanEqual.canEqualAny
+            given Schema[Name]         = summon[Schema[String]]
 
-        /** Internal factory: widen a raw `String` to `Name`. For use by kyo-internal unpicklers only. */
-        private[kyo] def apply(s: String): Name = s
+            /** Internal factory: widen a raw `String` to `Name`. For use by kyo-internal unpicklers only. */
+            private[kyo] def apply(s: String): Name = s
 
-        extension (n: Name)
-            /** Return the `String` form of this name. */
-            def asString: String = n
+            extension (n: Name)
+                /** Return the `String` form of this name. */
+                def asString: String = n
 
-            /** True when this name is the empty string. */
-            def isEmpty: Boolean = n.isEmpty
-        end extension
-    end Name
+                /** True when this name is the empty string. */
+                def isEmpty: Boolean = n.isEmpty
+            end extension
+        end Name
+    end Names
+    export Names.Name
 
     // ── Uuid ────────────────────────────────────────────────────────────────
 
-    /** Canonical 36-character lowercase hex form of a 128-bit UUID, used by `TastyError.InconsistentClasspath`.
-      *
-      * Constructed via `Uuid.parse(input)`, which accepts uppercase or lowercase hex and normalises to lowercase.
-      * Malformed input surfaces as `Result.fail(TastyError.InvalidUuid(input))`. Two `Uuid` values are equal when
-      * their canonical strings agree.
-      *
-      * The internal `private[kyo]` companion helpers (`unsafeWrap`, `msb`, `lsb`) compose the wire-boundary
-      * encoding for the snapshot reader and writer; they keep the JDK `java.util.UUID` round-trip scoped to this
-      * companion so no JDK type leaks onto the public surface.
-      */
-    opaque type Uuid = String
-
-    object Uuid:
-
-        private val HexPattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}".r
-
-        /** Parse a 36-character hex UUID string. Accepts uppercase or lowercase; returns the canonical
-          * lowercase form. Non-conforming input produces `Result.fail(TastyError.InvalidUuid(input))`.
+    object Uuids:
+        /** Canonical 36-character lowercase hex form of a 128-bit UUID, used by `TastyError.InconsistentClasspath`.
+          *
+          * Constructed via `Uuid.parse(input)`, which accepts uppercase or lowercase hex and normalises to lowercase.
+          * Malformed input surfaces as `Result.fail(TastyError.InvalidUuid(input))`. Two `Uuid` values are equal when
+          * their canonical strings agree.
+          *
+          * The internal `private[kyo]` companion helpers (`unsafeWrap`, `msb`, `lsb`) compose the wire-boundary
+          * encoding for the snapshot reader and writer; they keep the JDK `java.util.UUID` round-trip scoped to this
+          * companion so no JDK type leaks onto the public surface.
           */
-        def parse(input: String): Result[TastyError, Uuid] =
-            if HexPattern.matches(input) then Result.succeed(input.toLowerCase(java.util.Locale.ROOT))
-            else Result.fail(TastyError.InvalidUuid(input))
+        opaque type Uuid = String
 
-        /** Internal: wrap a canonical lowercase 36-character hex string as a `Uuid` without re-validating.
-          * The caller MUST supply a canonical form (the wire-boundary reader builds it via
-          * `new java.util.UUID(msb, lsb).toString`, which is canonical by construction).
+        object Uuid:
+
+            private val HexPattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}".r
+
+            /** Parse a 36-character hex UUID string. Accepts uppercase or lowercase; returns the canonical
+              * lowercase form. Non-conforming input produces `Result.fail(TastyError.InvalidUuid(input))`.
+              */
+            def parse(input: String): Result[TastyError, Uuid] =
+                if HexPattern.matches(input) then Result.succeed(input.toLowerCase(java.util.Locale.ROOT))
+                else Result.fail(TastyError.InvalidUuid(input))
+
+            /** Internal: wrap a canonical lowercase 36-character hex string as a `Uuid` without re-validating.
+              * The caller MUST supply a canonical form (the wire-boundary reader builds it via
+              * `new java.util.UUID(msb, lsb).toString`, which is canonical by construction).
+              */
+            private[kyo] def unsafeWrap(canonicalLowercaseHex: String): Uuid =
+                canonicalLowercaseHex
+
+            // Unsafe: internal wire-boundary helper; the JDK round-trip is scoped to this opaque companion so the
+            // public surface does not expose `java.util.UUID`.
+            private[kyo] def msb(uuid: Uuid): Long =
+                java.util.UUID.fromString(uuid).getMostSignificantBits
+
+            // Unsafe: internal wire-boundary helper; the JDK round-trip is scoped to this opaque companion so the
+            // public surface does not expose `java.util.UUID`.
+            private[kyo] def lsb(uuid: Uuid): Long =
+                java.util.UUID.fromString(uuid).getLeastSignificantBits
+
+            extension (uuid: Uuid)
+                /** The underlying canonical hex string. */
+                def asString: String = uuid
+
+                /** Human-readable form: the canonical hex string itself. */
+                def show: String = uuid
+            end extension
+
+            given CanEqual[Uuid, Uuid] = CanEqual.derived
+
+            /** Schema[Uuid] delegates to Schema[String]; the wire encoding is the canonical hex form. */
+            given Schema[Uuid] = summon[Schema[String]]
+        end Uuid
+    end Uuids
+    export Uuids.Uuid
+
+    object FlagSets:
+        /** A packed set of `Flag` modifiers, treated as an immutable bitmask.
+          *
+          * Backed by an opaque `Long`: a single 64-bit word stores up to 64 distinct flag bits, so testing,
+          * combining, and equality are all O(1) and allocate nothing. Each public modifier (`Flag.Inline`,
+          * `Flag.Private`, ...) has a unique bit; `Flags` is the union of zero or more such bits.
+          *
+          * **Construction.** `Flags.empty` is the empty set. `Flags(flag, rest*)` constructs a set from one or
+          * more `Flag` values. `flags1.union(flags2)` is the union of two sets. The underlying bits are exposed only
+          * via `private[kyo]` accessors (`bits`, `Flags.fromBits`) for the internal unpicklers and snapshot
+          * writer; user code should not depend on a specific bit layout because the layout is not stable across
+          * kyo-tasty versions.
+          *
+          * **Querying.** `flags.contains(flag)` tests membership. `flags.isEmpty` returns true for the empty
+          * set. `flags.show` renders a human-readable representation (`"Flags(Inline, Private)"`).
+          *
+          * **Equality.** Reference / value equality on the underlying `Long`; `CanEqual[Flags, Flags]` is
+          * provided so `==` works without an import.
           */
-        private[kyo] def unsafeWrap(canonicalLowercaseHex: String): Uuid =
-            canonicalLowercaseHex
+        opaque type Flags = Long
 
-        // Unsafe: internal wire-boundary helper; the JDK round-trip is scoped to this opaque companion so the
-        // public surface does not expose `java.util.UUID`.
-        private[kyo] def msb(uuid: Uuid): Long =
-            java.util.UUID.fromString(uuid).getMostSignificantBits
+        object Flags:
+            /** The empty flag set (no modifiers). */
+            val empty: Flags = 0L
 
-        // Unsafe: internal wire-boundary helper; the JDK round-trip is scoped to this opaque companion so the
-        // public surface does not expose `java.util.UUID`.
-        private[kyo] def lsb(uuid: Uuid): Long =
-            java.util.UUID.fromString(uuid).getLeastSignificantBits
+            /** Combine one or more flags into a `Flags` value. */
+            def apply(head: Flag, rest: Flag*): Flags =
+                var b = head.bit
+                rest.foreach(f => b |= f.bit)
+                b
+            end apply
 
-        extension (uuid: Uuid)
-            /** The underlying canonical hex string. */
-            def asString: String = uuid
+            /** Construct a `Flags` directly from its underlying bitmask. For use by kyo-internal
+              * unpicklers and snapshot reader/writer that need to materialise an accumulated mask.
+              */
+            private[kyo] def fromBits(bits: Long): Flags = bits
 
-            /** Human-readable form: the canonical hex string itself. */
-            def show: String = uuid
-        end extension
+            /** Reference equality on the underlying Long; safe because Flags is a pure bitmask. */
+            given CanEqual[Flags, Flags] = CanEqual.canEqualAny
 
-        given CanEqual[Uuid, Uuid] = CanEqual.derived
+            /** Schema[Flags] delegates to Schema[Long]; the wire encoding is the bitmask. */
+            given Schema[Flags] = summon[Schema[Long]]
 
-        /** Schema[Uuid] delegates to Schema[String]; the wire encoding is the canonical hex form. */
-        given Schema[Uuid] = summon[Schema[String]]
-    end Uuid
+            /** Public operations on [[Flags]], in implicit scope wherever `Tasty.Flags` is. */
+            extension (flags: Flags)
+                /** True when `flag`'s bit is set in this flag set. */
+                def contains(flag: Flag): Boolean = (flags & flag.bit) != 0L
 
-    /** A packed set of `Flag` modifiers, treated as an immutable bitmask.
-      *
-      * Backed by an opaque `Long`: a single 64-bit word stores up to 64 distinct flag bits, so testing,
-      * combining, and equality are all O(1) and allocate nothing. Each public modifier (`Flag.Inline`,
-      * `Flag.Private`, ...) has a unique bit; `Flags` is the union of zero or more such bits.
-      *
-      * **Construction.** `Flags.empty` is the empty set. `Flags(flag, rest*)` constructs a set from one or
-      * more `Flag` values. `flags1.union(flags2)` is the union of two sets. The underlying bits are exposed only
-      * via `private[kyo]` accessors (`bits`, `Flags.fromBits`) for the internal unpicklers and snapshot
-      * writer; user code should not depend on a specific bit layout because the layout is not stable across
-      * kyo-tasty versions.
-      *
-      * **Querying.** `flags.contains(flag)` tests membership. `flags.isEmpty` returns true for the empty
-      * set. `flags.show` renders a human-readable representation (`"Flags(Inline, Private)"`).
-      *
-      * **Equality.** Reference / value equality on the underlying `Long`; `CanEqual[Flags, Flags]` is
-      * provided so `==` works without an import.
-      */
-    opaque type Flags = Long
+                /** Union of two flag sets. */
+                def union(other: Flags): Flags = flags | other
 
-    object Flags:
-        /** The empty flag set (no modifiers). */
-        val empty: Flags = 0L
+                /** The raw bitmask. Used by the internal snapshot writer and any other kyo-internal
+                  * code that must persist the flag set; not part of the public API.
+                  */
+                private[kyo] def bits: Long = flags
 
-        /** Combine one or more flags into a `Flags` value. */
-        def apply(head: Flag, rest: Flag*): Flags =
-            var b = head.bit
-            rest.foreach(f => b |= f.bit)
-            b
-        end apply
+                /** True when no flag bits are set. Equivalent to `flags == Flags.empty`. */
+                def isEmpty: Boolean = flags == 0L
 
-        /** Construct a `Flags` directly from its underlying bitmask. For use by kyo-internal
-          * unpicklers and snapshot reader/writer that need to materialise an accumulated mask.
-          */
-        private[kyo] def fromBits(bits: Long): Flags = bits
-
-        /** Reference equality on the underlying Long; safe because Flags is a pure bitmask. */
-        given CanEqual[Flags, Flags] = CanEqual.canEqualAny
-    end Flags
-
-    /** Public operations on [[Flags]]. Defined at `Tasty` scope so they are in implicit scope
-      * for any code that already references `Tasty.Flags`, mirroring how nested opaque-type
-      * extensions are surfaced in this file.
-      */
-    extension (flags: Flags)
-        /** True when `flag`'s bit is set in this flag set. */
-        def contains(flag: Flag): Boolean = (flags & flag.bit) != 0L
-
-        /** Union of two flag sets. */
-        def union(other: Flags): Flags = flags | other
-
-        /** The raw bitmask. Used by the internal snapshot writer and any other kyo-internal
-          * code that must persist the flag set; not part of the public API.
-          */
-        private[kyo] def bits: Long = flags
-
-        /** True when no flag bits are set. Equivalent to `flags == Flags.empty`. */
-        def isEmpty: Boolean = flags == 0L
-
-        /** Human-readable representation: `Flags.empty.show == "Flags()"`. */
-        @scala.annotation.targetName("flagsShow")
-        def show: String =
-            val sb       = new java.lang.StringBuilder("Flags(")
-            var firstOne = true
-            var i        = 0
-            while i < Flag.values.length do
-                val f = Flag.values(i)
-                if (flags & f.bit) != 0L then
-                    if firstOne then firstOne = false
-                    else discard(sb.append(", "))
-                    discard(sb.append(f.toString))
-                end if
-                i += 1
-            end while
-            sb.append(')').toString
-        end show
-    end extension
+                /** Human-readable representation: `Flags.empty.show == "Flags()"`. */
+                @scala.annotation.targetName("flagsShow")
+                def show: String =
+                    val sb       = new java.lang.StringBuilder("Flags(")
+                    var firstOne = true
+                    var i        = 0
+                    while i < Flag.values.length do
+                        val f = Flag.values(i)
+                        if (flags & f.bit) != 0L then
+                            if firstOne then firstOne = false
+                            else discard(sb.append(", "))
+                            discard(sb.append(f.toString))
+                        end if
+                        i += 1
+                    end while
+                    sb.append(')').toString
+                end show
+            end extension
+        end Flags
+    end FlagSets
+    export FlagSets.Flags
 
     /** A single modifier flag declared on a `Symbol`.
       *
@@ -4268,7 +4282,7 @@ object Tasty:
                             case _ => nextAcc
                     end if
             val parts = go(rootSymbol, 0, Nil)
-            (parts.mkString("."): Name)
+            Name(parts.mkString("."))
         end computeFullName
 
         /** Return the immediate owner of `symbol`, one level up in the enclosing hierarchy.

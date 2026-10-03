@@ -45,7 +45,7 @@ object MediaType:
 
     object Parameter:
         given Schema[Parameter] =
-            Schema.derivedVia((name: String, value: String) => checkedParameter(name, value)(using Frame.internal))
+            Schema.derivedVia((name: String, value: String) => checkedParameter(name, value))
 
     /** A media type from its parts, or the violation: a part that is not a token, or a name given twice. */
     def init(mainType: String, subType: String, parameters: (String, String)*)(using
@@ -85,7 +85,7 @@ object MediaType:
 
     given Schema[MediaType] =
         Schema.derivedVia((mainType: String, subType: String, parameters: Chunk[Parameter]) =>
-            checked(mainType, subType, parameters.map(p => (p.name, p.value)))(using Frame.internal)
+            checked(mainType, subType, parameters.map(p => (p.name, p.value)))
         )
 
     private def checked(mainType: String, subType: String, parameters: Chunk[(String, String)])(using

@@ -64,9 +64,9 @@ Offsets everywhere are UTF-16 code-unit offsets into `text`; line/column mapping
 
 ### Neutral result and wire types
 
-The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:173-231`). `AsMessage[A] = Schema[A]` is the kyo-schema wire codec alias (`Compiler.scala:156-159`), so a result type carries a `Schema` and rides the kyo-aeron `Topic` transport directly, whose `publish` and `stream` take `Schema[A]`. `Uri` is an opaque type over `String` with a `given Schema[Uri]`, derived by `transform` over the `String` schema, that keeps it opaque through serialization (`Compiler.scala:161-170`).
+The result ADTs (`Span`, `Severity`, `Diagnostic`, `Completion` + `Completion.Kind`, `Hover`, `Signature` + `Signature.Param`, `SymbolInfo` + `SymbolInfo.Kind`, `CompilerError`) all `derive CanEqual, Compiler.AsMessage` (`Compiler.scala:178-236`). `AsMessage[A] = Schema[A]` is the kyo-schema wire codec alias (`Compiler.scala:156-159`), so a result type carries a `Schema` and rides the kyo-aeron `Topic` transport directly, whose `publish` and `stream` take `Schema[A]`. `Uri` is an opaque type over `String` with a `given Schema[Uri]`, derived by `transform` over the `String` schema, that keeps it opaque through serialization (`Compiler.scala:161-175`). It is declared in the object `Uris` and exported into `Compiler`: declared in `Compiler`'s own template it would make `String` and `Uri` the same type there, and every result type's schema derivation would be refused at its first `String` field.
 
-`CompilerError` has two leaves: `InitializationFailed(message)` (a backend that could not start) and `Fatal(message)` (an op-level failure surfaced in-band), `Compiler.scala:228-231`.
+`CompilerError` has two leaves: `InitializationFailed(message)` (a backend that could not start) and `Fatal(message)` (an op-level failure surfaced in-band), `Compiler.scala:233-236`.
 
 ---
 

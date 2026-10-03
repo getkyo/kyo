@@ -7,9 +7,9 @@ import kyo.Schema.*
 // Shared format-agnostic codec test fixtures: local schema types, the token-based
 // TestWriter/TestReader pair, and the round-trip helper. Kept in kyo-schema test scope so
 // suites in the format modules and kyo-schema-tests can reuse them via test->test.
-// Because this file's name is outside the Frame macro's Test/Spec allowlist, top-level
-// givens must pass `Frame.internal` explicitly; helpers instead propagate the caller's
-// Frame via a using parameter.
+// Because this file's name is outside the Frame macro's Test/Spec allowlist, no Frame can be
+// derived here, as in a library in package kyo: helpers propagate the caller's Frame via a
+// using parameter.
 
 // --- Local test types ---
 
@@ -56,7 +56,7 @@ given transformMapDenySchema: Schema[TransformMapDeny] = Schema[TransformMapDeny
 // collapsed the Map to a single entry keyed by the enclosing field name.
 case class TransformMapRenameAll(fullName: String, tags: Map[String, Int]) derives CanEqual
 given transformMapRenameAllSchema: Schema[TransformMapRenameAll] =
-    Schema[TransformMapRenameAll].renameAllFields(Schema.NameCase.CamelCase)(using Frame.internal)
+    Schema[TransformMapRenameAll].renameAllFields(Schema.NameCase.CamelCase)
 
 // --- The same field-transform-plus-Map regression, on a richer MIXED product (a scalar, an
 // optional scalar, and a list, alongside the Map field) so the transform-aware guard alignment
@@ -86,14 +86,14 @@ given transformMixedDenySchema: Schema[TransformMixedDeny] = Schema[TransformMix
 // helpers, which thread the pin directly onto the writer/reader themselves. ---
 
 case class PinOnlyPerson(name: String, age: Int) derives CanEqual
-given pinOnlyPersonSchema: Schema[PinOnlyPerson] = Schema[PinOnlyPerson].fieldId(_.age)(42)(using Frame.internal)
+given pinOnlyPersonSchema: Schema[PinOnlyPerson] = Schema[PinOnlyPerson].fieldId(_.age)(42)
 
 // --- Nested field-id pins: the pin lives on a NESTED schema, embedded as a product field or inside a
 // container element, rather than on the schema passed to encode/decode directly. Neither the
 // outer product nor the container carries a transform of its own. ---
 
 case class PinOnlyInner(x: Int, y: String) derives CanEqual
-given pinOnlyInnerSchema: Schema[PinOnlyInner] = Schema[PinOnlyInner].fieldId(_.x)(77)(using Frame.internal)
+given pinOnlyInnerSchema: Schema[PinOnlyInner] = Schema[PinOnlyInner].fieldId(_.x)(77)
 
 case class PinOnlyOuter(label: String, inner: PinOnlyInner) derives CanEqual, Schema
 
@@ -110,7 +110,7 @@ case class PinOnlyMapHolder(entries: Map[String, PinOnlyInner]) derives CanEqual
 
 case class PinAndRenameInner(x: Int, y: String) derives CanEqual
 given pinAndRenameInnerSchema: Schema[PinAndRenameInner] =
-    Schema[PinAndRenameInner].fieldId(_.x)(88)(using Frame.internal).rename("y", "y_renamed")
+    Schema[PinAndRenameInner].fieldId(_.x)(88).rename("y", "y_renamed")
 
 case class PinAndRenameOuter(label: String, inner: PinAndRenameInner) derives CanEqual, Schema
 
@@ -122,10 +122,10 @@ case class PinAndRenameOuter(label: String, inner: PinAndRenameInner) derives Ca
 // schema's override map for the rest of the outer write. ---
 
 case class PinOrderInner(x: Int, y: String) derives CanEqual
-given pinOrderInnerSchema: Schema[PinOrderInner] = Schema[PinOrderInner].fieldId(_.x)(501)(using Frame.internal)
+given pinOrderInnerSchema: Schema[PinOrderInner] = Schema[PinOrderInner].fieldId(_.x)(501)
 
 case class PinOrderOuter(first: String, inner: PinOrderInner, last: Int) derives CanEqual
-given pinOrderOuterSchema: Schema[PinOrderOuter] = Schema[PinOrderOuter].fieldId(_.last)(777)(using Frame.internal)
+given pinOrderOuterSchema: Schema[PinOrderOuter] = Schema[PinOrderOuter].fieldId(_.last)(777)
 
 // --- Token-based Writer/Reader for testing ---
 
@@ -154,7 +154,9 @@ enum Token derives CanEqual:
     case DurationVal(value: java.time.Duration)
 end Token
 
-class TestWriter extends Writer:
+class TestWriter()(using site: Frame) extends Writer:
+    override def frame: Frame = site
+
     val tokens = scala.collection.mutable.ListBuffer[Token]()
 
     def objectStart(name: String, size: Int): Unit           = tokens += Token.ObjectStart(name, size)
@@ -418,3 +420,147 @@ object CodecTestHelper:
         writer.resultTokens
     end encode
 end CodecTestHelper
+
+// --- Wire pin fixtures: one value per wire shape, encoded by every format suite ---
+
+case class WCInner(x: Int, label: String) derives CanEqual, Schema
+
+case class WCRecord(name: String, age: Int, active: Boolean, score: Double, tags: Chunk[String], inner: WCInner)
+    derives CanEqual, Schema
+
+case class WCRenamed(@kyo.schema.rename("user_name") userName: String, @kyo.schema.alias("town") homeCity: String)
+    derives CanEqual, Schema
+
+case class WCCased(firstName: String, @kyo.schema.rename("ID") userId: Int) derives CanEqual
+given wcCasedSchema: Schema[WCCased] = Schema[WCCased].renameAllFields(Schema.NameCase.SnakeCase)
+
+case class WCAddress(street: String, zipCode: String) derives CanEqual, Schema
+case class WCPerson(name: String, address: WCAddress) derives CanEqual
+given wcPersonSchema: Schema[WCPerson] = Schema[WCPerson].flatten
+
+case class WCAddressRenamed(@kyo.schema.rename("ZIP") zipCode: String, cityName: String) derives CanEqual, Schema
+case class WCPersonCased(fullName: String, homeAddress: WCAddressRenamed) derives CanEqual
+given wcPersonCasedSchema: Schema[WCPersonCased] =
+    Schema[WCPersonCased].flatten.renameAllFields(Schema.NameCase.SnakeCase)
+
+sealed trait WCShape derives CanEqual, Schema
+case class WCCircle(radius: Double) extends WCShape derives CanEqual
+case class WCSquare(side: Int)      extends WCShape derives CanEqual
+case object WCEmpty                 extends WCShape
+
+object WCShapes:
+    val discriminated: Schema[WCShape] = Schema[WCShape].discriminator("type")
+    val adjacent: Schema[WCShape]      = Schema[WCShape].adjacent("t", "c")
+    val tupleTagged: Schema[WCShape]   = Schema[WCShape].tupleTagged
+    val tupleFlat: Schema[WCShape]     = Schema[WCShape].tupleFlat
+    val untagged: Schema[WCShape]      = Schema[WCShape].untagged
+    val snake: Schema[WCShape]         =
+        Schema[WCShape].discriminator("type").renameAllVariants(Schema.NameCase.SnakeCase)
+            .variantAlias("wc_circle", "round")
+end WCShapes
+
+@kyo.schema.discriminator("kind")
+sealed trait WCEvent derives CanEqual, Schema
+@kyo.schema.rename("opened")
+case class WCOpened(id: Int)                 extends WCEvent derives CanEqual
+case class WCClosed(id: Int, reason: String) extends WCEvent derives CanEqual
+
+object WCId:
+    opaque type Type = String
+
+    def apply(value: String): Type = value
+
+    extension (id: Type) def value: String = id
+
+    given Schema[Type]         = Schema.stringSchema.transform[Type](apply)(_.value)
+    given CanEqual[Type, Type] = CanEqual.derived
+end WCId
+
+case class WCMaps(
+    byName: Map[String, Int],
+    byInt: Map[Int, String],
+    byLong: Map[Long, Boolean],
+    byChar: Map[Char, Int],
+    byRecord: Map[WCInner, Int],
+    byId: Map[WCId.Type, Int]
+) derives CanEqual, Schema
+
+case class WCMapByName(m: Map[String, Int]) derives CanEqual, Schema
+case class WCMapByInt(m: Map[Int, String]) derives CanEqual, Schema
+case class WCMapByLong(m: Map[Long, Boolean]) derives CanEqual, Schema
+case class WCMapByChar(m: Map[Char, Int]) derives CanEqual, Schema
+case class WCMapByRecord(m: Map[WCInner, Int]) derives CanEqual, Schema
+case class WCMapById(m: Map[WCId.Type, Int]) derives CanEqual, Schema
+
+case class WCDefaults(name: String, count: Int = 7, label: String = "x", note: Maybe[String] = Absent, size: Maybe[Int] = Present(3))
+    derives CanEqual, Schema
+
+case class WCMaybe(a: Maybe[Int], b: Maybe[String], c: Maybe[WCInner], d: Option[Int]) derives CanEqual, Schema
+
+case class WCShort(s: Short) derives CanEqual, Schema
+case class WCShortWide(s: Int) derives CanEqual, Schema
+case class WCShortFraction(s: Double) derives CanEqual, Schema
+
+object WCMaybes:
+    val omitNone: Schema[WCMaybe] = Schema[WCMaybe].omitNone
+end WCMaybes
+
+@kyo.schema.discriminator("type")
+sealed trait WCNumbered derives CanEqual, Schema
+@kyo.schema.tagNumber(1)
+case class WCNumA(x: Int) extends WCNumbered derives CanEqual
+@kyo.schema.tagNumber(2)
+case class WCNumB(s: String) extends WCNumbered derives CanEqual
+
+sealed trait WCNumberedWrapped derives CanEqual, Schema
+@kyo.schema.tagNumber(7)
+case class WCWrapA(x: Int) extends WCNumberedWrapped derives CanEqual
+@kyo.schema.tagNumber(9)
+case object WCWrapB extends WCNumberedWrapped
+
+@kyo.schema.tagOnly()
+sealed trait WCLevel derives CanEqual, Schema
+case object WCLow extends WCLevel
+@kyo.schema.rename("hi")
+case object WCHigh extends WCLevel
+
+@kyo.schema.discriminator("type")
+sealed trait WCOpen derives CanEqual, Schema
+case class WCKnown(x: Int) extends WCOpen derives CanEqual
+@kyo.schema.catchAll()
+case class WCOther(tag: String, payload: Structure.Value) extends WCOpen derives CanEqual
+
+object WCValues:
+    val record  = WCRecord("Ann", 41, true, 2.5, Chunk("a", "b"), WCInner(3, "in"))
+    val renamed = WCRenamed("ann", "Lisbon")
+    val cased   = WCCased("Ann", 9)
+    val person  = WCPerson("Ann", WCAddress("Main St", "97201"))
+    val personC = WCPersonCased("Ann Lee", WCAddressRenamed("97201", "Portland"))
+    val circle  = WCCircle(1.5)
+    val square  = WCSquare(4)
+    val empty   = WCEmpty
+    val opened  = WCOpened(1)
+    val closed  = WCClosed(2, "done")
+    val maps    = WCMaps(
+        Map("a"             -> 1, "b"   -> 2),
+        Map(1               -> "one", 2 -> "two"),
+        Map(10L             -> true),
+        Map('x'             -> 1),
+        Map(WCInner(1, "k") -> 5),
+        Map(WCId("id1")     -> 7)
+    )
+    val mapByName    = WCMapByName(Map("a" -> 1, "b" -> 2))
+    val mapByInt     = WCMapByInt(Map(1 -> "one", 2 -> "two"))
+    val mapByLong    = WCMapByLong(Map(10L -> true))
+    val mapByChar    = WCMapByChar(Map('x' -> 1))
+    val mapByRecord  = WCMapByRecord(Map(WCInner(1, "k") -> 5))
+    val mapById      = WCMapById(Map(WCId("id1") -> 7, WCId("id2") -> 8))
+    val defaultsAll  = WCDefaults("d")
+    val defaultsSet  = WCDefaults("d", 1, "y", Present("n"), Absent)
+    val maybePresent = WCMaybe(Present(1), Present("s"), Present(WCInner(2, "c")), Some(4))
+    val maybeAbsent  = WCMaybe(Absent, Absent, Absent, None)
+    val other        = WCOther(
+        "zzz",
+        Structure.Value.Record(Chunk("type" -> Structure.Value.Str("zzz"), "y" -> Structure.Value.Integer(1)))
+    )
+end WCValues
