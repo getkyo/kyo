@@ -20,7 +20,7 @@ import java.nio.charset.StandardCharsets
   *   [[kyo.Schema]] for the type-driven serialization entry point
   */
 abstract class Codec:
-    def newWriter(): Codec.Writer
+    def newWriter()(using Frame): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 
     /** Reads one value of `A` from `input` and requires the whole of it to have been consumed.
@@ -81,6 +81,31 @@ object Codec:
         }
     end readFully
 
+    /** The kind of a value as every reader reports it in a `TypeMismatchException`.
+      *
+      * Each format maps its own tokens onto these (an Ion struct, a MsgPack map and a JSON object are all `Object`), so a value of the
+      * wrong kind fails with the same text whichever format read it, and whether it was read directly or from a captured tree.
+      */
+    private[kyo] enum Kind derives CanEqual:
+        case Object, Array, String, Number, Boolean, Null, Bytes, Timestamp, Duration
+
+        def show: java.lang.String =
+            this match
+                case Object    => "object"
+                case Array     => "array"
+                case String    => "string"
+                case Number    => "number"
+                case Boolean   => "boolean"
+                case Null      => "null"
+                case Bytes     => "bytes"
+                case Timestamp => "timestamp"
+                case Duration  => "duration"
+    end Kind
+
+    /** A value of kind `actual` where one of kind `expected` was required. */
+    private[kyo] def kindMismatch(expected: Kind, actual: Kind)(using Frame): TypeMismatchException =
+        TypeMismatchException(Seq.empty, expected.show, actual.show)
+
     abstract class Reader:
         /** The source location where this Reader was constructed.
           *
@@ -107,6 +132,12 @@ object Codec:
         private[kyo] def schemaTransformOverrides: List[Schema[?]]               = _schemaTransformOverrides
         private[kyo] def schemaTransformOverrides_=(next: List[Schema[?]]): Unit =
             _schemaTransformOverrides = next
+
+        /** Whether the field name this reader last parsed is a Scala field name rather than a wire key. A positional wire (`tupleFlat`)
+          * carries no names, so its reader presents each element under the field's declared name, and the transform layer must take it
+          * as is instead of translating it as a wire key (a renamed field's declared name reads as renamed away).
+          */
+        private[kyo] def presentsSourceFieldNames: Boolean = false
 
         /** Fails unless everything left after the decoded root value is insignificant.
           *
@@ -225,6 +256,25 @@ object Codec:
           */
         def lastFieldName(): String
 
+        /** Whether [[matchField]] compares the key [[fieldParse]] last parsed as its own name bytes, allocating nothing, while
+          * [[lastFieldName]] allocates the name. A transform layer then finds which of its names a key is by matching, and leaves a key
+          * that is none of them unnamed. A key reported by number (Protobuf, a MsgPack integer key) is matched through its field id, so
+          * it is not one, nor is a key the reader already holds as a String.
+          */
+        private[kyo] def matchesKeyBytes: Boolean = false
+
+        /** The field number of the key [[fieldParse]] last parsed, for a key reported by number (Protobuf, a MsgPack integer key),
+          * or -1 for a key reported by name. [[matchField]] matches such a key through the schema's field numbers, so a transform layer
+          * takes it by number instead of naming it.
+          */
+        private[kyo] def lastFieldNumber: Int = -1
+
+        /** Whether an optional field missing from the input is absent, whatever its default. True for a format with no null, where
+          * an absent field is written by leaving it out (Protobuf's explicit presence); elsewhere a missing field takes its default,
+          * and an absent one whose default is present is written as null.
+          */
+        private[kyo] def missingOptionalIsAbsent: Boolean = false
+
         /** Release this reader back to its pool. Default is no-op. */
         def release(): Unit = ()
 
@@ -300,6 +350,11 @@ object Codec:
       *   [[kyo.Codec]] for the factory that pairs a Writer with a Reader
       */
     abstract class Writer:
+
+        /** The source location of the encode call this Writer serves, as [[Reader.frame]] is for a decode: a failure raised while
+          * writing, such as a schema's configuration failure, carries it.
+          */
+        def frame: Frame
 
         private var _schemaTransformOverrides: List[Schema[?]] = Nil
 
@@ -410,6 +465,19 @@ object Codec:
           * make the Tuple, TupleFlat, and Untagged sum representations available with that codec.
           */
         def canWriteTopLevelNonObject: Boolean = false
+
+        /** Whether this codec's reader can read back any value this writer wrote without the value's schema, because the reader is a
+          * [[Codec.IntrospectingReader]]. Self-describing codecs (Json, Yaml, Ion, MsgPack, Bson) return true. A field-number-driven
+          * binary codec (Protobuf) leaves the default false, so a schema transform that regroups values on decode, such as `flatten`,
+          * raises [[TransformUnsupportedException]] before writing rather than producing bytes it cannot read. Positive opt-in.
+          */
+        def isSelfDescribing: Boolean = false
+
+        /** Whether the record being written must keep every field, because its fields are read back by position (a `tupleFlat`
+          * payload): an absent optional field is written as null and a configured omit policy does not apply, where both would
+          * otherwise leave the field off and shift every later position.
+          */
+        private[kyo] def writesEveryField: Boolean = false
 
         /** The public codec name, used in user-facing error messages such as [[RepresentationUnsupportedException]].
           *

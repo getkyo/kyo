@@ -31,6 +31,12 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(record.dict("userName") == "Alice")
         }
 
+        "a renamed field keeps its declaration position on the wire" in {
+            val schema = Schema[MTUser].rename("name", "userName").drop("ssn")
+            val wire   = schema.encodeString[Json](user)
+            assert(wire == """{"userName":"Alice","age":30,"email":"alice@example.com"}""", wire)
+        }
+
         "select fields from a type" in {
             val m   = Schema[MTUser].select("name", "age")
             val got = m.focus(_.name).get(user)
@@ -153,6 +159,25 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(m.focus(_.age).tag =:= Tag[Int])
             assert(m.focus(_.email).tag =:= Tag[String])
             assert(m.focus(_.ssn).tag =:= Tag[String])
+        }
+
+        "a field renamed away and back keeps its own name on every surface that resolves a rename" in {
+            val m = Schema[MTUser].rename("name", "userName").rename("userName", "name").drop("ssn")
+            assert(m.encodeString[Json](user) == """{"name":"Alice","age":30,"email":"alice@example.com"}""")
+            assert(m.decodeString[Json]("""{"name":"Alice","age":30,"email":"alice@example.com"}""").map(_.name) ==
+                Result.succeed("Alice"))
+            assert(m.toRecord(user).dict("name") == "Alice")
+            assert(m.fieldIdNameOverrides.keySet == Set("name"))
+        }
+
+        "a rename chain names the field by its last name in the JSON Schema" in {
+            val m = Schema[MTUser].rename("name", "userName").rename("userName", "displayName")
+            Json.jsonSchema[MTUser](using m) match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.properties.map(_._1).toSet == Set("displayName", "age", "email", "ssn"))
+                    assert(obj.required.toSet == Set("displayName", "age", "email", "ssn"))
+                case other => fail(s"expected an object schema, got $other")
+            end match
         }
 
         // --- add (6 tests) ---
@@ -603,9 +628,10 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             assert(result.age == 30)
         }
 
-        "fieldId with non-positive id throws SchemaException" in {
+        "fieldId with non-positive id throws SchemaException at the first encode" in {
+            val schema = Schema[MTUser].fieldId(_.name)(0)
             try
-                Schema[MTUser].fieldId(_.name)(0)
+                discard(schema.encode[Protobuf](MTUser("a", 1, "b", "c")))
                 fail("Expected an exception for non-positive fieldId, but none was thrown")
             catch
                 case _: SchemaException => succeed("SchemaException was thrown for a non-positive fieldId; catching it is the verification")
@@ -2629,14 +2655,13 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 assert(addressStreetId != addressCityId)
             }
 
-            "Schema.fieldId rejects non-positive IDs" in {
-                intercept[TransformFailedException] {
-                    Schema[FIDPerson].fieldId(_.name)(0)
+            "Schema.fieldId rejects non-positive IDs at the first encode" in {
+                Seq(0, -1).foreach { id =>
+                    val rejected = intercept[TransformFailedException] {
+                        Schema[FIDPerson].fieldId(_.name)(id).encode[Protobuf](FIDPerson("Bob", 25, "bob@example.com"))
+                    }
+                    assert(rejected.detail == s"Field ID must be positive, got $id")
                 }
-                intercept[TransformFailedException] {
-                    Schema[FIDPerson].fieldId(_.name)(-1)
-                }
-                ()
             }
 
             "JSON schema round-trip works correctly" in {

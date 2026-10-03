@@ -63,6 +63,29 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         backendLeaves(skipCell)(scenario)
 
+    /** Like [[eachBackend]], but each leaf is judged by its progress instead of the module's per-leaf time budget.
+      *
+      * The scenario reports every unit of work it completes through the [[ProgressWatchdog.Progress]] it receives. The leaf has no time limit:
+      * it fails only when units stop completing while the watch itself keeps running on time, and the failure carries the state of
+      * every live driver. A slow host, a throttled process, or a long load therefore cannot fail it, and a wedged driver still does. Use it for
+      * a leaf whose question is "does this load wedge the transport", where any wall-clock budget is either too tight for a loaded host or too
+      * loose to be a useful detector.
+      */
+    def eachBackendWatched(
+        scenario: (Transport, ProgressWatchdog.Progress) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+    )(using Frame): Unit =
+        TestBackends.all.foreach { entry =>
+            s"[${entry.name}]".timeout(Duration.Infinity) in {
+                if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
+                else
+                    Abort.recover[ProgressWatchdog.Stalled](stalled => fail(stalled.message)) {
+                        ProgressWatchdog.run(10.seconds, 6) { progress =>
+                            Scope.run(withTransport(entry)(transport => scenario(transport, progress)))
+                        }
+                    }
+            }
+        }
+
     private def backendLeaves(skipCell: String => Maybe[String])(
         scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =

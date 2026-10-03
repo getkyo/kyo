@@ -236,10 +236,7 @@ final private[kyo] class HttpClientBackend private (
     def connectWith[A](url: HttpUrl, connectTimeout: Duration, tlsConfig: HttpTlsConfig)(
         f: HttpConnection => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        Sync.Unsafe.defer {
-            val fiber = connect(url, connectTimeout, tlsConfig)
-            fiber.safe.use(f)
-        }
+        owningConnect(connect(url, connectTimeout, tlsConfig), pool.discard)(_.safe.use(f))
 
     /** Safe wrapper for send, bridges the unsafe fiber with `f`. Used by tests. `maxResponseLength` defaults to the same buffered-response
       * cap as [[HttpClientConfig.maxResponseLength]].
@@ -835,34 +832,39 @@ final private[kyo] class HttpClientBackend private (
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        val host     = url.host
-        val port     = url.port
-        val ssl      = url.ssl
         val (eh, ep) = hostPort(url)
-
-        val netConfig    = NetConfigTranslation.toNetConfig(transportConfig)
-        val connectFiber = Sync.Unsafe.defer {
-            (url.unixSocket, ssl) match
-                case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
-                case (_, true)          =>
-                    NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
-                case _ => transport.connect(host, port, connectTimeout, netConfig)
-        }
-        // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
-        // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer
-        // Async.timeout on the same value raced that timer, so a stalled connect surfaced HttpConnectTimeoutException or the mapped transport
-        // failure nondeterministically. It is also wrong for TLS: Transport.connectTls bounds the TCP phase with connectTimeout and the
-        // handshake with NetTlsConfig.handshakeTimeout, worst case their sum, so an outer connectTimeout timer would preempt the handshake
-        // deadline that is supposed to bound phase two.
-        val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
-        Abort.runWith[kyo.net.NetException](connect) {
-            case Result.Success(connection) =>
-                runWsSessionWith(connection, url, headers, config, clientFilter, autoFilters)(f)
-            case Result.Failure(netEx: kyo.net.NetException) =>
-                Abort.fail(transportConnectFailure(netEx, eh, ep))
-            case Result.Panic(t) => Abort.panic(t)
+        owningConnect(connectTransport(url, connectTimeout), _.close()) { connecting =>
+            Abort.runWith[kyo.net.NetException](connecting.safe.get) {
+                case Result.Success(connection) =>
+                    runWsSessionWith(connection, url, headers, config, clientFilter, autoFilters)(f)
+                case Result.Failure(netEx: kyo.net.NetException) =>
+                    Abort.fail(transportConnectFailure(netEx, eh, ep))
+                case Result.Panic(t) => Abort.panic(t)
+            }
         }
     end connectWebSocket
+
+    /** The transport connect for `url`, plain, TLS or Unix-socket, bounded by `connectTimeout`.
+      *
+      * One deadline, one owner. These connects already take connectTimeout and produce the typed leaf for whichever phase actually missed
+      * it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer Async.timeout on the
+      * same value raced that timer, so a stalled connect surfaced HttpConnectTimeoutException or the mapped transport failure
+      * nondeterministically. It is also wrong for TLS: Transport.connectTls bounds the TCP phase with connectTimeout and the handshake with
+      * NetTlsConfig.handshakeTimeout, worst case their sum, so an outer connectTimeout timer would preempt the handshake deadline that is
+      * supposed to bound phase two.
+      */
+    private def connectTransport(url: HttpUrl, connectTimeout: Duration)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]] =
+        val netConfig = NetConfigTranslation.toNetConfig(transportConfig)
+        (url.unixSocket, url.ssl) match
+            case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
+            case (_, true)          =>
+                NetConfigTranslation.connectTls(transport, url.host, url.port, defaultTlsConfig, connectTimeout, transportConfig)
+            case _ => transport.connect(url.host, url.port, connectTimeout, netConfig)
+        end match
+    end connectTransport
 
     // -- Raw connection support --
 
@@ -893,27 +895,14 @@ final private[kyo] class HttpClientBackend private (
         unsendableField(url.pathWithQuery, hostHeaderValue, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent      =>
-                val netConfig    = NetConfigTranslation.toNetConfig(transportConfig)
-                val connectFiber = Sync.Unsafe.defer {
-                    (url.unixSocket, ssl) match
-                        case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
-                        case (_, true)          =>
-                            NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
-                        case _ => transport.connect(host, port, connectTimeout, netConfig)
-                }
-                // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
-                // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer
-                // Async.timeout on the same value raced that timer, so a stalled connect surfaced HttpConnectTimeoutException or the mapped transport
-                // failure nondeterministically. It is also wrong for TLS: Transport.connectTls bounds the TCP phase with connectTimeout and the
-                // handshake with NetTlsConfig.handshakeTimeout, worst case their sum, so an outer connectTimeout timer would preempt the handshake
-                // deadline that is supposed to bound phase two.
-                val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
-                Abort.runWith[kyo.net.NetException](connect) {
-                    case Result.Success(connection) =>
-                        setupRawConnection(connection, url, method, body, headers, hostHeaderValue)
-                    case Result.Failure(netEx: kyo.net.NetException) =>
-                        Abort.fail(transportConnectFailure(netEx, eh, ep))
-                    case Result.Panic(t) => Abort.panic(t)
+                owningConnectInScope(connectTransport(url, connectTimeout), _.close()) { connecting =>
+                    Abort.runWith[kyo.net.NetException](connecting.safe.get) {
+                        case Result.Success(connection) =>
+                            setupRawConnection(connection, url, method, body, headers, hostHeaderValue)
+                        case Result.Failure(netEx: kyo.net.NetException) =>
+                            Abort.fail(transportConnectFailure(netEx, eh, ep))
+                        case Result.Panic(t) => Abort.panic(t)
+                    }
                 }
         end match
     end connectRaw
@@ -934,17 +923,7 @@ final private[kyo] class HttpClientBackend private (
         // Create Http1ClientConnection and send the request in an unsafe block.
         // Capture http1 in a var so we can access lastBodySpan after the response.
         var http1: Http1ClientConnection = null
-        // Register the connection release before the request is sent, so any early failure closes the connection when
-        // the enclosing Scope exits: a send failure, or a non-2xx or non-101 status that fails before the successful
-        // handoff. On the success path this same finalizer closes the connection on Scope exit, and close() is
-        // idempotent, so the raw connection wrapper adds no second close.
-        val release =
-            Scope.ensure {
-                Sync.Unsafe.defer {
-                    connection.close()
-                }
-            }
-        val setup = Sync.Unsafe.defer {
+        Sync.Unsafe.defer {
             http1 = Http1ClientConnection.init(
                 connection.inbound,
                 connection.outbound,
@@ -1000,7 +979,6 @@ final private[kyo] class HttpClientBackend private (
                 }
             end if
         }
-        release.andThen(setup)
     end setupRawConnection
 
     /** Run a HttpWebSocket session: upgrade, then read/write/user fibers.
@@ -1019,35 +997,29 @@ final private[kyo] class HttpClientBackend private (
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         val transportStream = new ConnectionBackedStream(connection)
-        Sync.ensure {
-            Sync.Unsafe.defer {
-                connection.close()
+        val autoFilter      =
+            if autoFilters then HttpFilter.Factory.composedClient
+            else HttpFilter.noop
+        val filter = autoFilter.andThen(clientFilter)
+        if filter.eq(HttpFilter.noop) then
+            WebSocketCodec.requestUpgradeWith(transportStream, url, headers, config) { wsStream =>
+                serveWebSocketWith(transportStream, wsStream, config)(f)
             }
-        } {
-            val autoFilter =
-                if autoFilters then HttpFilter.Factory.composedClient
-                else HttpFilter.noop
-            val filter = autoFilter.andThen(clientFilter)
-            if filter.eq(HttpFilter.noop) then
-                WebSocketCodec.requestUpgradeWith(transportStream, url, headers, config) { wsStream =>
-                    serveWebSocketWith(transportStream, wsStream, config)(f)
-                }
-            else
-                val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
-                handleWebSocketFilterResult(
-                    url,
-                    filter[Any, "body" ~ A, HttpException, S](
-                        request,
-                        (filteredReq: HttpRequest[Any]) =>
-                            WebSocketCodec.requestUpgradeWith(transportStream, filteredReq.url, filteredReq.headers, config) { wsStream =>
-                                serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
-                                    HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
-                                }
+        else
+            val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
+            handleWebSocketFilterResult(
+                url,
+                filter[Any, "body" ~ A, HttpException, S](
+                    request,
+                    (filteredReq: HttpRequest[Any]) =>
+                        WebSocketCodec.requestUpgradeWith(transportStream, filteredReq.url, filteredReq.headers, config) { wsStream =>
+                            serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
+                                HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
                             }
-                    ).map(_.fields.body)
-                )
-            end if
-        }
+                        }
+                ).map(_.fields.body)
+            )
+        end if
     end runWsSessionWith
 
     private def handleWebSocketFilterResult[A, S](
@@ -1163,43 +1135,117 @@ final private[kyo] class HttpClientBackend private (
         discard(registry.register(conn)(c => closeUnsafe(c, closingGracePeriod)))
     end trackConn
 
-    /** Runs `use` on the checked-out connection, then returns the connection to the idle pool on success or discards (closes) it on any
-      * failure, panic, or interruption. Exactly one of release/discard runs, chosen by a compare-and-set on `released` so the two are
-      * mutually exclusive even when a success narrowly races an interrupt (a double discard would double-close the transport).
-      *
-      * The outcome cannot be read from `Sync.ensure`'s error argument: a typed `Abort.fail` (a non-2xx `failOnError`, a rejected non-ASCII
-      * redirect, a redirect loop) is handled up-stack, so the request fiber never records a failure and the finalizer always fires with
-      * `Absent` (see the ignored `SyncTest` case "runs finalizer on Abort.fail"). Treating that `Absent` as success would return a
-      * connection left in an unknown state to the keep-alive pool; on the process-global default client, which is never closed, that idle
-      * connection then outlives the request with no close ever requested. So release is driven by the success path reaching `use`'s result,
-      * and the `Sync.ensure` finalizer discards whenever that success path did not run, which also covers a panic or an interrupt.
-      *
-      * Neither branch touches the registry directly; the pool's discard hook calls `registry.remove`, and a released connection stays
-      * registered until it is later closed.
+    /** Releases a connect the caller is leaving: one still in flight is interrupted, so `connect` closes what it completes with as a lost
+      * handoff, and one that already completed has its connection closed by `close`. Exactly one of the two holds, since the interrupt fails
+      * only on a promise that has already completed.
       */
-    private def releasingConn[A](key: HttpAddress, conn: HttpConnection, bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]])(
-        use: => A < (Async & Abort[HttpException])
-    )(using AllowUnsafe, Frame): A < (Async & Abort[HttpException]) =
-        val released = AtomicBoolean.Unsafe.init(false)
-        Sync.ensure { (_: Maybe[Result.Error[Any]]) =>
-            Sync.Unsafe.defer(if released.compareAndSet(false, true) then pool.discard(conn))
-        } {
-            use.map { result =>
+    private def releaseConnect[C, E](connecting: Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
+        val promise = connecting.asInstanceOf[IOPromise[Any, C]]
+        if !promise.interrupt(Result.Panic(Interrupted(summon[Frame]))) then
+            promise.poll() match
+                case Present(Result.Success(c)) => close(c)
+                case _                          => ()
+        end if
+    end releaseConnect
+
+    /** Runs `use` on the connect `open` starts, owning the connection from before the connect until `use` ends: at the end it is closed
+      * with `close`, or released through [[releaseConnect]] when it never arrived.
+      *
+      * The finalizer is installed before `open` runs, and `open` records its connect in the same step that starts it. An interrupt can
+      * land between any two steps of a fiber, including after the connect hands its connection over and before the caller resumes, so a
+      * finalizer installed after the connect or after the handoff has a window in which nothing owns the socket.
+      */
+    private def owningConnect[C, E, A, S](open: AllowUnsafe ?=> Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(
+        use: Fiber.Unsafe[C, Abort[E]] => A < S
+    )(using Frame): A < (S & Sync) =
+        Sync.Unsafe.defer {
+            var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
+            Sync.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))) {
                 Sync.Unsafe.defer {
-                    if released.compareAndSet(false, true) then
-                        bodyOutcome match
-                            case Absent        => pool.release(key, conn)
-                            case Present(done) =>
-                                // Streaming route: the body outlives `use` (lazy stream at headers time), so winning the CAS transfers
-                                // the reuse decision to the body-completion promise; the ensure finalizer cannot discard a still-draining connection. Callback decides once: true => reuse, false => discard.
-                                done.asInstanceOf[IOPromise[Nothing, Boolean]].onComplete { outcome =>
-                                    if outcome == Result.succeed(true) then pool.release(key, conn)
-                                    else pool.discard(conn)
-                                }
-                }.andThen(result)
+                    val started = open
+                    connecting = Present(started)
+                    use(started)
+                }
             }
         }
-    end releasingConn
+
+    /** [[owningConnect]] for a connection that outlives the call: the release is a finalizer of the enclosing `Scope`. */
+    private def owningConnectInScope[C, E, A, S](open: AllowUnsafe ?=> Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(
+        use: Fiber.Unsafe[C, Abort[E]] => A < S
+    )(using Frame): A < (S & Sync & Scope) =
+        Sync.Unsafe.defer {
+            var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
+            Scope.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))).andThen {
+                Sync.Unsafe.defer {
+                    val started = open
+                    connecting = Present(started)
+                    use(started)
+                }
+            }
+        }
+
+    /** One pooled request's hold on its connection and on the in-flight slot a fresh connect reserves, from the step that takes either
+      * until the connection goes back to the pool or is closed. [[end]] is installed as the request's finalizer before anything is taken,
+      * and each take records itself in the same step, for the window [[owningConnect]] describes.
+      *
+      * The connection returns to the pool only from the success path, through [[release]]; [[end]] closes it whenever that path did not run.
+      * The outcome cannot be read from `Sync.ensure`'s error argument: a typed `Abort.fail` (a non-2xx `failOnError`, a rejected non-ASCII
+      * redirect, a redirect loop) is handled up-stack, so the finalizer fires with `Absent` (see the ignored `SyncTest` case "runs finalizer
+      * on Abort.fail"), and treating that as success would pool a connection in an unknown state.
+      *
+      * The fields are written and read only by the request's fiber, its finalizer included. `settled` is atomic because a streaming body
+      * settles the connection from its completion callback.
+      */
+    final private class Lease(key: HttpAddress)(using AllowUnsafe):
+        private val settled                                                               = AtomicBoolean.Unsafe.init(false)
+        private var reserved                                                              = false
+        private var conn: Maybe[HttpConnection]                                           = Absent
+        private var connecting: Maybe[Fiber.Unsafe[HttpConnection, Abort[HttpException]]] = Absent
+
+        def take()(using Frame): Maybe[HttpConnection] =
+            conn = pool.poll(key)
+            conn
+
+        def reserve(): Boolean =
+            reserved = pool.tryReserve(key)
+            reserved
+
+        def connect(url: HttpUrl, config: HttpClientConfig)(using Frame): Fiber.Unsafe[HttpConnection, Abort[HttpException]] =
+            val started = HttpClientBackend.this.connect(url, config.connectTimeout, config.tls)
+            connecting = Present(started)
+            started
+        end connect
+
+        /** Closes a pooled connection that turned out stale, so the lease can take a fresh one. */
+        def dropStale()(using Frame): Unit =
+            conn.foreach(pool.discard)
+            conn = Absent
+
+        /** Returns `c` to the pool once `use` succeeded. A streaming body outlives `use`, so the decision passes to its completion: true
+          * reuses the connection, false closes it.
+          */
+        def release(c: HttpConnection, bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]]): Unit =
+            if settled.compareAndSet(false, true) then
+                bodyOutcome match
+                    case Absent        => pool.release(key, c)
+                    case Present(done) =>
+                        done.asInstanceOf[IOPromise[Nothing, Boolean]].onComplete { outcome =>
+                            if outcome == Result.succeed(true) then pool.release(key, c)
+                            else pool.discard(c)
+                        }
+        end release
+
+        def end()(using Frame): Unit =
+            try
+                if settled.compareAndSet(false, true) then
+                    conn match
+                        case Present(c) => pool.discard(c)
+                        case Absent     => connecting.foreach(releaseConnect(_, pool.discard))
+            finally if reserved then pool.unreserve(key)
+    end Lease
 
     def sendWithConfig[In, Out, A](
         route: HttpRoute[In, Out, Any],
@@ -1335,49 +1381,51 @@ final private[kyo] class HttpClientBackend private (
         val url = request.url
         val key = request.url.address
         RouteUtil.multipartBoundaryForRequest(route, request).map { multipartBoundary =>
-            def send(conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
-                releasingConn(key, conn, bodyOutcome)(responseFiber.safe.use(f))
+            def answer(
+                lease: Lease,
+                conn: HttpConnection,
+                responseFiber: Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]],
+                bodyOutcome: Maybe[Promise.Unsafe[Boolean, Any]]
+            )(using AllowUnsafe): A < (Async & Abort[HttpException]) =
+                responseFiber.safe.use(f).map(result => Sync.Unsafe.defer(lease.release(conn, bodyOutcome)).andThen(result))
 
-            def sendFresh(using AllowUnsafe): A < (Async & Abort[HttpException]) =
-                if pool.tryReserve(key) then
-                    Sync.ensure(Sync.Unsafe.defer(pool.unreserve(key))) {
-                        connect(url, config.connectTimeout, config.tls).safe.use(conn => Sync.Unsafe.defer(send(conn)))
-                    }
+            def send(lease: Lease, conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
+                val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
+                answer(lease, conn, responseFiber, bodyOutcome)
+
+            def sendFresh(lease: Lease)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
+                if lease.reserve() then
+                    lease.connect(url, config).safe.use(conn => Sync.Unsafe.defer(send(lease, conn)))
                 else
                     val (h, p) = hostPort(url)
                     Abort.fail(HttpPoolExhaustedException(h, p, maxConnectionsPerHost, clientFrame))
 
-            def sendReused(conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
+            def sendReused(lease: Lease, conn: HttpConnection)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
                 val (responseFiber, bodyOutcome) = sendViaBackend(conn, route, request, config.maxResponseLength, multipartBoundary)
-                // Set only when the reused connection closed before any response byte; the failure then leaves releasingConn, which
-                // discards the connection, and is answered by the retry.
-                var stale = false
-                Abort.run[HttpException] {
-                    releasingConn(key, conn, bodyOutcome) {
-                        responseFiber.safe.getResult.map { result =>
-                            Sync.Unsafe.defer {
-                                result match
-                                    case Result.Failure(e: HttpConnectionClosedException)
-                                        if e.phase == HttpConnectionClosedException.Phase.BeforeHead &&
-                                            !conn.http1.responseBytesReceived && !pool.isClosed =>
-                                        stale = true
-                                        Abort.fail(e)
-                                    case _ => responseFiber.safe.use(f)
-                            }
-                        }
+                responseFiber.safe.getResult.map { result =>
+                    Sync.Unsafe.defer {
+                        result match
+                            case Result.Failure(e: HttpConnectionClosedException)
+                                if e.phase == HttpConnectionClosedException.Phase.BeforeHead &&
+                                    !conn.http1.responseBytesReceived && !pool.isClosed =>
+                                // The pooled connection closed before any response byte, so the request is sent again on a fresh one.
+                                lease.dropStale()
+                                sendFresh(lease)
+                            case _ => answer(lease, conn, responseFiber, bodyOutcome)
                     }
-                }.map {
-                    case Result.Failure(_) if stale => Sync.Unsafe.defer(sendFresh)
-                    case other                      => Abort.get(other)
                 }
             end sendReused
 
             Sync.Unsafe.defer {
-                pool.poll(key) match
-                    case Present(conn) =>
-                        if replayable(route, request) then sendReused(conn) else send(conn)
-                    case _ => sendFresh
+                val lease = new Lease(key)
+                Sync.ensure(Sync.Unsafe.defer(lease.end())) {
+                    Sync.Unsafe.defer {
+                        lease.take() match
+                            case Present(conn) =>
+                                if replayable(route, request) then sendReused(lease, conn) else send(lease, conn)
+                            case Absent => sendFresh(lease)
+                    }
+                }
             }
         }.asInstanceOf[A < (Async & Abort[HttpException])]
     end poolWithImpl

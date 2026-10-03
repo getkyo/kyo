@@ -96,18 +96,11 @@ jobs:
       # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
       # tree a ci leg on this pole pulls, and minting the key from it would lock out the fuller save for
       # that hash. The ci legs are the writers; every consumer here restores.
-      - uses: actions/cache/restore@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-arm64-
+          os: linux-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25

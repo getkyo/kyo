@@ -173,7 +173,7 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
-    "a graceful close whose output never flushes destroys the socket at peerCloseGrace on the handle's clock, not one tick before" in {
+    "a graceful close whose output never flushes destroys the socket at closeFlushGrace on the handle's clock, not one tick before" in {
         given Frame = Frame.internal
         Clock.withTimeControl { tc =>
             Clock.get.map { clock =>
@@ -183,7 +183,7 @@ class JsIoDriverTest extends kyo.net.Test:
                 // Duplex whose write callback never runs, so `end()` can never emit `finish` and the grace timer is the close's only exit.
                 val socket = neverFlushingSocket()
                 val handle = JsHandle.init(socket, driver, Frame.internal)
-                handle.peerCloseGrace = 30.seconds
+                handle.closeFlushGrace = 30.seconds
                 handle.clock = clock
                 discard(socket.write(buffer(Array[Byte](1))))
                 driver.closeHandle(handle)
