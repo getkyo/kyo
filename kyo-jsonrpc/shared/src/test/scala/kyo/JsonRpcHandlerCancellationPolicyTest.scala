@@ -210,6 +210,71 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         }
     }
 
+    // JVM and Native: the extras encoder holds its thread on a latch to keep the call inside the moment it learns its id, which a
+    // single-threaded runtime cannot do.
+    "a cancel issued as soon as the extras encoder has the id reaches the peer".notJs.notWasm in {
+        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
+        val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
+        val release    = new java.util.concurrent.CountDownLatch(1)
+        val echoOnB    = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+            (req, ctx) =>
+                ctx.cancelled.get.andThen(EchoResp(req.text))
+        }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            val capA = new CapturingTransport(ta)
+            JsonRpcHandler.init(capA, Seq.empty, expectReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(echoOnB), expectReplyConfig).map { _ =>
+                    val implA     = endpointA.unsafe.asInstanceOf[JsonRpcEndpointImpl]
+                    val idEncoder = JsonRpcExtrasEncoder(id =>
+                        Sync.defer {
+                            capturedId.set(Present(id))(using AllowUnsafe.embrace.danger)
+                            release.await()
+                            Absent
+                        }
+                    )
+                    Fiber.initUnscoped(
+                        Abort.run[JsonRpcError | Closed](
+                            endpointA.call[EchoReq, EchoResp]("echo", EchoReq("hello"), idEncoder)
+                        )
+                    ).map { callFib =>
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
+                                case Present(id) =>
+                                    Fiber.initUnscoped(endpointA.cancel(id, Absent)).map { cancelFib =>
+                                        // The cancel has looked the id up once it either gave up on it or recorded its error.
+                                        assertEventually(cancelFib.done.map { done =>
+                                            done || Maybe(implA.callerRegistry.get(id)).exists(
+                                                _.pendingCancelError.get()(using AllowUnsafe.embrace.danger).isDefined
+                                            )
+                                        }).andThen {
+                                            Sync.defer(release.countDown())
+                                                .andThen(cancelFib.get)
+                                                .andThen(flush(endpointA))
+                                                .andThen {
+                                                    val cancelSent = capA.sentList.exists {
+                                                        case JsonRpcNotification(method, _, _) => method == "$/cancelRequest"
+                                                        case _                                 => false
+                                                    }
+                                                    if !cancelSent then fail("the cancel for a call whose id the caller held was dropped")
+                                                    else
+                                                        callFib.get.map {
+                                                            case Result.Failure(e: JsonRpcError) =>
+                                                                assert(e.code == -32800, s"expected -32800, got ${e.code}")
+                                                            case other => fail(s"expected -32800, got $other")
+                                                        }
+                                                    end if
+                                                }
+                                        }
+                                    }
+                                case Absent => fail("id not captured")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     "cancellation without expectReply: no reply is sent on the transport" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
@@ -585,31 +650,41 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
     }
 
     "timeout with expectReply policy sends $/cancelRequest and caller fails with -32800" in {
-        // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
-        val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
-        val neverReturns = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
-            (_, ctx) => ctx.cancelled.get.andThen(EchoResp("cancelled"))
-        }
-        JsonRpcTransport.inMemory.map { (ta, tb) =>
-            val capA                     = new CapturingTransport(ta)
-            val timeoutExpectReplyConfig = JsonRpcHandler.Config(
-                cancellation = Present(cancellationWithReply),
-                requestTimeout = 150.millis
-            )
-            JsonRpcHandler.init(capA, Seq.empty, timeoutExpectReplyConfig).map { endpointA =>
-                JsonRpcHandler.init(tb, Seq(neverReturns), expectReplyConfig).map { _ =>
-                    Abort.run[JsonRpcError | Closed](
-                        endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"))
-                    ).map {
-                        case Result.Failure(e: JsonRpcError) =>
-                            assert(e.code == -32800)
-                            assertEventually(Sync.defer {
-                                capA.sentList.exists {
-                                    case JsonRpcNotification(m, _, _) => m == "$/cancelRequest"
-                                    case _                            => false
+        // A timeout that fires before the request is encoded has no request to cancel and sends nothing, so the clock advances
+        // past requestTimeout only once the peer holds the request.
+        Fiber.Promise.init[Unit, Any].map { received =>
+            val neverReturns = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+                (_, ctx) => received.completeUnitDiscard.andThen(ctx.cancelled.get).andThen(EchoResp("cancelled"))
+            }
+            Clock.withTimeControl { control =>
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val capA                     = new CapturingTransport(ta)
+                    val timeoutExpectReplyConfig = JsonRpcHandler.Config(
+                        cancellation = Present(cancellationWithReply),
+                        requestTimeout = 150.millis
+                    )
+                    JsonRpcHandler.init(capA, Seq.empty, timeoutExpectReplyConfig).map { endpointA =>
+                        JsonRpcHandler.init(tb, Seq(neverReturns), expectReplyConfig).map { _ =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[EchoReq, EchoResp]("echo", EchoReq("x"))
+                                )
+                            ).map { callFib =>
+                                received.get.andThen(control.awaitPendingSleepers(1)).andThen(control.advance(300.millis)).andThen {
+                                    callFib.get.map {
+                                        case Result.Failure(e: JsonRpcError) =>
+                                            assert(e.code == -32800)
+                                            assertEventually(Sync.defer {
+                                                capA.sentList.exists {
+                                                    case JsonRpcNotification(m, _, _) => m == "$/cancelRequest"
+                                                    case _                            => false
+                                                }
+                                            }).andThen(succeed)
+                                        case other => fail(s"expected -32800, got $other")
+                                    }
                                 }
-                            }).andThen(succeed)
-                        case other => fail(s"expected -32800, got $other")
+                            }
+                        }
                     }
                 }
             }

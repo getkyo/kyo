@@ -205,9 +205,9 @@ final private[kyo] class HttpContainerBackend(
       * @param opName
       *   Short operation name used verbatim in error messages (e.g. "checkpoint", "restore").
       */
-    private def withNotSupportedMapping[A](opName: String, ctx: ResourceContext)(
-        v: A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[ContainerException]) =
+    private def withNotSupportedMapping[A, S](opName: String, ctx: ResourceContext)(
+        v: A < (Async & Abort[HttpException] & S)
+    )(using Frame): A < (Async & Abort[ContainerException] & S) =
         Abort.runWith[Closed](meter.run {
             Abort.runWith[HttpException](v) {
                 case Result.Success(a)                                                                      => a
@@ -619,27 +619,74 @@ final private[kyo] class HttpContainerBackend(
     // --- Checkpoint/Restore ---
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val body     = CheckpointCreateRequest(CheckpointID = name)
-        val jsonBody = Json.encode(body)
-        // Podman's docker-compat shim returns 404 for /checkpoints — surface as NotSupported rather than Missing,
-        // since the container itself exists and the resource that's missing is the endpoint.
-        withNotSupportedMapping("checkpoint", ctxContainer(id)) {
-            HttpClient.postText(
-                url(s"/containers/${id.value}/checkpoints"),
-                jsonBody,
-                headers = Seq("Content-Type" -> "application/json")
-            ).unit
-        }
+        if runtimeName == "podman" then checkpointLibpod(id, name)
+        else
+            val body     = CheckpointCreateRequest(CheckpointID = name)
+            val jsonBody = Json.encode(body)
+            // Docker serves checkpoints only with its experimental features on; without them the endpoint is absent, which is
+            // NotSupported rather than Missing, since the container itself exists.
+            withNotSupportedMapping("checkpoint", ctxContainer(id)) {
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/checkpoints"),
+                    jsonBody,
+                    headers = Seq("Content-Type" -> "application/json")
+                ).unit
+            }
+        end if
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withNotSupportedMapping("restore", ctxContainer(id)) {
-            HttpClient.postText(
-                url(s"/containers/${id.value}/start", "checkpoint" -> checkpoint),
-                ""
-            ).unit
-        }
+        if runtimeName == "podman" then restoreLibpod(id, checkpoint)
+        else
+            withNotSupportedMapping("restore", ctxContainer(id)) {
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/start", "checkpoint" -> checkpoint),
+                    ""
+                ).unit
+            }
     end restore
+
+    /** Podman serves checkpoint only on its libpod API, where `export=true` answers with the archive itself. The archive is written where
+      * the shell backend's `podman container checkpoint --export` puts it, so a checkpoint name is the same handle on both backends.
+      */
+    private def checkpointLibpod(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val archive = ContainerBackend.checkpointArchive(name)
+        Scope.run {
+            Abort.runWith[FileSystemException] {
+                FileSystem.host.openWriteChannel(archive, FileSystem.WriteOpen.Create).map { channel =>
+                    withNotSupportedMapping("checkpoint", ctxContainer(id)) {
+                        HttpClient.postStreamBytes(libpodUrl(s"/containers/${id.value}/checkpoint", "export" -> "true"), Span.empty[Byte])
+                            .fold(0L)((offset, bytes) => channel.writeAt(offset, bytes).andThen(offset + bytes.size))
+                    }.map(channel.truncate)
+                }
+            } {
+                case Result.Success(_) => ()
+                case Result.Failure(e) =>
+                    Abort.fail(ContainerOperationException(s"Failed to write the checkpoint archive $archive for ${id.value}", e))
+                case Result.Panic(t) =>
+                    Abort.fail(ContainerBackendException(s"Unexpected error writing the checkpoint archive $archive for ${id.value}", t))
+            }
+        }
+    end checkpointLibpod
+
+    /** The libpod import creates the container from the archive, so the name in the path is ignored; podman's own client sends `import`. */
+    private def restoreLibpod(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val archive = ContainerBackend.checkpointArchive(checkpoint)
+        Abort.runWith[FileSystemException](Path.runReadOnly(archive.readBytes)) {
+            case Result.Success(tar) =>
+                withNotSupportedMapping("restore", ctxContainer(id)) {
+                    HttpClient.postBinary(
+                        libpodUrl("/containers/import/restore", "import" -> "true"),
+                        tar,
+                        headers = Seq("Content-Type" -> "application/x-tar")
+                    ).unit
+                }
+            case Result.Failure(e) =>
+                Abort.fail(ContainerOperationException(s"Failed to read the checkpoint archive $archive to restore ${id.value}", e))
+            case Result.Panic(t) =>
+                Abort.fail(ContainerBackendException(s"Unexpected error reading the checkpoint archive $archive for ${id.value}", t))
+        }
+    end restoreLibpod
 
     // --- Inspection ---
 

@@ -2,6 +2,7 @@ package kyo.net
 
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
@@ -70,15 +71,17 @@ class StartTlsInteropClientTest extends Test:
                 // Pick an ephemeral port then start openssl s_server with minimal flags.
                 // -rev: server reverses each input line and echoes it back.
                 // No -starttls (removed in newer container images), no -no_dhe.
+                // Probed and served on the loopback address the client connects to: with SO_REUSEADDR a wildcard probe can
+                // return a port another process listens on at 127.0.0.1, and the client's connect then reaches that listener.
                 Sync.defer {
-                    val s    = new ServerSocket(0)
+                    val s    = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())
                     val port = s.getLocalPort
                     s.close()
                     val pb = new java.lang.ProcessBuilder(
                         "openssl",
                         "s_server",
                         "-accept",
-                        port.toString,
+                        s"127.0.0.1:$port",
                         "-cert",
                         certPath,
                         "-key",
