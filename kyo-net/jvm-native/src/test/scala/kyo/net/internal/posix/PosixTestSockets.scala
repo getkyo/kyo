@@ -274,6 +274,22 @@ object PosixTestSockets:
         loop(Nil)
     end drainCollect
 
+    /** Writes to the non-blocking `fd` until the kernel refuses more, returning the bytes it accepted while the peer is not reading. How much
+      * that is depends on the kernel (macOS grows a 4 KiB SO_SNDBUF and has taken 128 KiB in one write), so a test that needs its next
+      * write to be Partial fills the socket first rather than sizing a payload to beat the buffers.
+      */
+    def fillUntilFull(fd: Int)(using AllowUnsafe): Long =
+        val chunk = 64 * 1024
+        val buf   = Buffer.alloc[Byte](chunk)
+        @scala.annotation.tailrec
+        def loop(total: Long): Long =
+            val sent = sock.sendNow(fd, buf, chunk.toLong, PosixConstants.MSG_NOSIGNAL).value
+            if sent > 0 then loop(total + sent) else total
+        end loop
+        try loop(0L)
+        finally buf.close()
+    end fillUntilFull
+
     /** Force an RST on `fd` by setting SO_LINGER {l_onoff=1, l_linger=0} then closing.
       *
       * The peer's next recv sees ECONNRESET.
