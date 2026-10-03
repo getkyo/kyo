@@ -2005,9 +2005,10 @@ class ContainerItTest extends BasePodTest:
                         assert(info.repoTags.exists(_.reference.contains("alpine")))
                         assert(info.size > 0)
                     }
-                case Result.Failure(_: ContainerImageMissingException) =>
-                    // Registry may be unreachable (TLS cert, network, etc.)
-                    // Verify the image is at least available locally via ensure
+                // A pull always asks Docker Hub, even for an image already present, so a registry that could not be reached is the one
+                // failure this leaf cannot prevent. Both backends report it as registry-unavailable; a missing image would be a real
+                // fault for alpine:latest, so it fails the leaf below.
+                case Result.Failure(_: ContainerRegistryUnavailableException) =>
                     ensureImage(img).andThen {
                         ContainerImage.inspect(img).map { imgInfo =>
                             assert(imgInfo.repoTags.exists(_.reference.contains("alpine")))
