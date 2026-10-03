@@ -8,6 +8,7 @@ import scala.annotation.publicInBinary
 import scala.annotation.tailrec
 import scala.compiletime.summonInline
 import scala.quoted.*
+import scala.util.control.NonFatal
 
 /** Macro implementations for Focus navigation, `Schema.apply[A]`, and `Schema.derived[A]`.
   *
@@ -372,9 +373,9 @@ import scala.quoted.*
 
     /** The given `Schema[A]` that [[metaApplyImpl]] returns, when one counts.
       *
-      * The enclosure tests are lexical, on the call site's owner chain: it reaches the given's own symbol inside its definition, and
-      * the given's owner anywhere else in the template that defines it. An ambiguous search is reported, since `summon[Schema[A]]`
-      * fails there too.
+      * The enclosure tests are lexical, on the call site's owner chain: it reaches a given of type `Schema[A]` inside that given's
+      * definition, and the found given's owner anywhere else in the template that defines it. An ambiguous search elsewhere is
+      * reported, since `summon[Schema[A]]` fails there too.
       */
     private def givenSchema[A: Type](using Quotes): Option[quotes.reflect.Term] =
         import quotes.reflect.*
@@ -388,6 +389,24 @@ import scala.quoted.*
 
         @tailrec def encloses(definitionOwner: Symbol, site: Symbol): Boolean =
             !site.isNoSymbol && (site.equals(definitionOwner) || encloses(definitionOwner, site.maybeOwner))
+
+        def resultOf(info: TypeRepr): TypeRepr = info match
+            case MethodType(_, _, result) => resultOf(result)
+            case PolyType(_, _, result)   => resultOf(result)
+            case ByNameType(result)       => result
+            case other                    => other
+
+        // Whether an owner of the call site is a given of type Schema[A]. Reading an owner's flags completes it, and an owner whose
+        // type is still being inferred (a local val around the call) then cycles; such an owner is not a given, which always
+        // declares its type.
+        def isSchemaGiven(site: Symbol): Boolean =
+            try
+                site.isTerm && (site.flags.is(Flags.Given) || site.flags.is(Flags.Implicit)) &&
+                    resultOf(site.termRef.widen) <:< TypeRepr.of[Schema[A]]
+            catch case NonFatal(_) => false
+
+        @tailrec def insideOwnGiven(site: Symbol): Boolean =
+            !site.isNoSymbol && (isSchemaGiven(site) || insideOwnGiven(site.maybeOwner))
 
         Implicits.search(TypeRepr.of[Schema[A]]) match
             case success: ImplicitSearchSuccess =>
@@ -413,6 +432,9 @@ import scala.quoted.*
                     )
                 else Some(success.tree)
                 end if
+            // Inside the given's own definition the search sees that given beside A's derived instance; the definition still builds.
+            case ambiguous: AmbiguousImplicits if insideOwnGiven(Symbol.spliceOwner) =>
+                None
             case ambiguous: AmbiguousImplicits =>
                 report.errorAndAbort(s"Schema[${TypeRepr.of[A].show}]: ${ambiguous.explanation}")
             case _ =>
