@@ -13,6 +13,38 @@ class HttpRouteTest extends BaseHttpTest:
     case class NotFoundError(message: String) derives Schema, CanEqual
     case class ValidationError(field: String, message: String) derives Schema, CanEqual
 
+    // A streamed body can end before its framing says it should, or carry framing or content the decoder refuses, and its row says so
+    // with Abort[HttpException]: a consumer that types it as a stream that cannot fail, or a handler with no error type that reads it
+    // without handling the failure, does not compile.
+    "streamed bodies carry their failure on their row" - {
+
+        "the byte stream content type names Abort[HttpException]" in {
+            typeCheckFailure("""val ct: HttpRoute.ContentType[Stream[Span[Byte], Async]] = HttpRoute.ContentType.ByteStream""")
+            typeCheck(
+                """val ct: HttpRoute.ContentType[Stream[Span[Byte], Async & Abort[HttpException]]] = HttpRoute.ContentType.ByteStream"""
+            )
+        }
+
+        "the streams derived from the byte stream name it too" in {
+            typeCheckFailure("""val ct: HttpRoute.ContentType[Stream[HttpRequest.Part, Async]] = HttpRoute.ContentType.MultipartStream""")
+            typeCheck(
+                """val ct: HttpRoute.ContentType[Stream[HttpRequest.Part, Async & Abort[HttpException]]] = HttpRoute.ContentType.MultipartStream"""
+            )
+        }
+
+        "a handler with no error type that reads a streamed body without handling its failure does not compile" in {
+            typeCheckFailure("""
+                val route = HttpRoute.postRaw("u").request(_.bodyStream).response(_.bodyText)
+                val h: HttpHandler[?, ?, Nothing] = route.handler(req => req.fields.body.run.map(_ => HttpResponse.ok("x")))
+            """)
+            typeCheck("""
+                val route = HttpRoute.postRaw("u").request(_.bodyStream).response(_.bodyText)
+                val h: HttpHandler[?, ?, Nothing] =
+                    route.handler(req => Abort.run[HttpException](req.fields.body.run).map(_ => HttpResponse.ok("x")))
+            """)
+        }
+    }
+
     "Path" - {
 
         "capture defaults wireName to empty" in {
