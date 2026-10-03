@@ -1511,7 +1511,7 @@ def kyoSqlDoltLiteOsArchTargets: Seq[String] = Seq(
 // The embedded VERSIONED engine: DoltLite is a SQLite fork that keeps the sqlite3_* API and replaces the storage
 // engine with a content-addressed prolly tree, so one file carries branches, commits, merges and diffs.
 //
-// libdoltlite exports all 32 sqlite3 symbols this driver's bindings call, so the connection, codecs and row
+// libdoltlite exports every sqlite3 symbol this driver's bindings call, so the connection, codecs and row
 // reader are reused rather than rewritten; `kyo-sql-dolt-api` carries the version-control vocabulary it shares
 // with the server backend.
 //
