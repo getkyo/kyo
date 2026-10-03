@@ -16,6 +16,9 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             test(HttpUrl.parse(s"http://127.0.0.1:${server.port}").getOrThrow)
         )
 
+    def withBaseUrl[A, S](base: String)(v: => A < S)(using Frame): A < (S & Abort[HttpUrlParseException]) =
+        Abort.get(HttpClientConfig.BaseUrl.init(base)).map(api => HttpClient.withConfig(_.baseUrl(api))(v))
+
     // ==================== Basic connectivity ====================
 
     "basic connectivity" - {
@@ -432,6 +435,26 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
     // ==================== HTTP integration ====================
 
     "HTTP integration" - {
+
+        "an upgrade answered with a status other than 101 fails with the handshake leaf, naming the url without its query and the status" in {
+            val plain  = HttpHandler.getText("ws/plain") { _ => "no" }
+            val secret = Seq("Secret", "W7").mkString
+            withWsServer(plain) { url =>
+                Kyo.foreach(Chunk(s"ws/plain?token=$secret", "ws/missing")) { path =>
+                    Abort.run[HttpException](HttpClient.webSocket(s"ws://${url.host}:${url.port}/$path")(_ => Kyo.unit))
+                }.map { results =>
+                    val refused = results.map(_.failure.collect { case e: HttpWebSocketHandshakeException => (e.url, e.status) })
+                    assert(
+                        refused == Chunk(
+                            Present((s"ws://${url.host}:${url.port}/ws/plain", 404)),
+                            Present((s"ws://${url.host}:${url.port}/ws/missing", 404))
+                        ),
+                        results.toString
+                    )
+                    assert(!results.toString.contains(secret))
+                }
+            }
+        }
 
         "websocket alongside http handlers" in {
             val httpHandler = HttpHandler.getText("api/hello") { _ => "world" }
@@ -1366,10 +1389,33 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
                 // Set baseUrl to the server URL, then connect with a path-only string.
                 // The bug: webSocket ignores HttpClientConfig, so baseUrl is never applied
                 // and the relative path fails to connect.
-                HttpClient.withConfig(_.baseUrl(s"ws://${url.host}:${url.port}")) {
+                withBaseUrl(s"ws://${url.host}:${url.port}") {
                     HttpClient.webSocket("/ws/echo") { ws =>
                         ws.put(HttpWebSocket.Payload.Text("hello")).andThen {
                             ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text("hello"))))
+                        }
+                    }
+                }
+            }.unit
+        }
+
+        "a path without a leading '/' is refused with baseUrl, not glued onto the base's host" in {
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                withBaseUrl(s"ws://${url.host}:${url.port}") {
+                    Abort.run[HttpException](HttpClient.webSocket("ws/echo")(_ => ())).map {
+                        case Result.Failure(e: HttpUrlParseException) => assert(e.reason == HttpUrlParseException.Reason.Relative)
+                        case other                                    => fail(s"expected a refusal of the relative path, got $other")
+                    }
+                }
+            }.unit
+        }
+
+        "the baseUrl's path prefixes a path-only URL" in {
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                withBaseUrl(s"ws://${url.host}:${url.port}/ws/") {
+                    HttpClient.webSocket("/echo") { ws =>
+                        ws.put(HttpWebSocket.Payload.Text("prefixed")).andThen {
+                            ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text("prefixed"))))
                         }
                     }
                 }

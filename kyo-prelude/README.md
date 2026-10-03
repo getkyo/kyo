@@ -640,11 +640,9 @@ val logged: Aspect[Const[Int], Const[String], Any] =
 def labelOf(n: Int): String < Any =
     logged(n)(i => s"value=$i")
 
-val plain: String < Any = labelOf(7)
+val plain: String < Any   = labelOf(7)
 val withCut: String < Any =
-    logged.let(Aspect.Cut[Const[Int], Const[String], Any](
-        [C] => (input, cont) => cont(input).map(s => s"[LOG] $s")
-    )) {
+    logged.let(Aspect.Cut[Const[Int], Const[String], Any]([C] => (input, cont) => cont(input).map(s => s"[LOG] $s"))) {
         labelOf(7)
     }
 

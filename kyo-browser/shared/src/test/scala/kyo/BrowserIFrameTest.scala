@@ -692,7 +692,7 @@ class BrowserIFrameTest extends BrowserTest:
                 <button id="b">Save</button>
                 <script>document.getElementById('b').addEventListener('click', function(){window.__clicked=true;});</script>
             </body>"""
-            val dataUrl   = "data:text/html;charset=utf-8," + BrowserTest.percentEncode(innerHtml)
+            val dataUrl   = Browser.dataUrl(innerHtml)
             onPage(s"""<body>
                 <iframe id="frame" data-testid="frame" src="${BrowserTest.htmlAttributeEscape(dataUrl)}"></iframe>
             </body>""") {

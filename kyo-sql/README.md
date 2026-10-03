@@ -796,7 +796,7 @@ what a `CREATE TABLE` must use. A trailing `TEXT` is load-bearing: it forces TEX
 | `java.time.Period` | `interval` | ISO-8601 text | `INTERVAL TEXT` |
 | `java.util.UUID` | `uuid` | 36-character string | `UUID TEXT` |
 | `UUID` | `text` | `VARCHAR` | `UUID TEXT` |
-| `java.net.URI`, `java.util.Locale`, `java.util.Currency` | `text` | `VARCHAR` | `TEXT` |
+| `java.net.URI`, `java.util.Locale` | `text` | `VARCHAR` | `TEXT` |
 | `Chunk[Int]`, `Chunk[String]`, `Chunk[JsonText]` | `int4[]`, `text[]`, `jsonb[]` | `JSON` | `JSON TEXT` |
 | `JsonText` | `jsonb` | `JSON` | `JSON TEXT` |
 

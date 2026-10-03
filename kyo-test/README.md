@@ -16,8 +16,8 @@ final case class Db(url: String)
 case class Url(scheme: String, host: String, path: String)
 
 object Bank:
-    def balance(id: Int): Long < (Env[Db] & Sync)              = 0L
-    def deposit(id: Int, cents: Long): Unit < (Env[Db] & Sync) = ()
+    def balance(id: Int): Long < (Env[Db] & Sync)                                          = 0L
+    def deposit(id: Int, cents: Long): Unit < (Env[Db] & Sync)                             = ()
     def withdraw(id: Int, cents: Long): Unit < (Env[Db] & Abort[InsufficientFunds] & Sync) =
         Abort.fail(InsufficientFunds(id))
 end Bank
@@ -303,9 +303,8 @@ A leaf that uses an effect beyond the baseline (`Env` or `Var`) must discharge i
 
 ```scala
 class DbLeafTest extends Test[Env[Db]]:
-    "reads the balance".handle[Env[Db]](
-        [A] => (body: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("jdbc:test"))(body)
-    ) in {
+    "reads the balance"
+        .handle[Env[Db]]([A] => (leaf: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("jdbc:test"))(leaf)) in {
         Bank.balance(1).map(b => assert(b == 0L))
     }
 end DbLeafTest
@@ -317,9 +316,7 @@ Chain `.handle` to peel several effects; each call peels one row down toward the
 class TwoEffectTest extends Test[Var[Int] & Env[Db]]:
     "uses Env then Var"
         .handle[Env[Db]]([A] => (b: A < (Env[Db] & Async & Abort[Any] & Scope)) => Env.run(Db("jdbc:test"))(b))
-        .handle[Var[Int] & Env[Db]](
-            [A] => (b: A < (Var[Int] & Env[Db] & Async & Abort[Any] & Scope)) => Var.run(0)(b)
-        ) in {
+        .handle[Var[Int] & Env[Db]]([A] => (b: A < (Var[Int] & Env[Db] & Async & Abort[Any] & Scope)) => Var.run(0)(b)) in {
         Env.get[Db].andThen(Var.update[Int](_ + 1)).unit
     }
 end TwoEffectTest

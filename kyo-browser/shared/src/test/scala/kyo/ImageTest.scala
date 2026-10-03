@@ -38,14 +38,14 @@ class ImageTest extends BaseBrowserTest:
     // ---- malformed input; typed Result.Failure ----
 
     "Image.fromBase64 raises BrowserDecodingException on malformed input" in {
-        // The malformed input emerges from `Image.fromBase64` as a `Result.Failure[IllegalArgumentException]`. Callers crossing
+        // The malformed input emerges from `Image.fromBase64` as a `Result.Failure` carrying a `Base64.Failure`. Callers crossing
         // the wire boundary translate that to `BrowserDecodingException`; verified directly here so the contract is exercised
         // without needing a live browser tab.
         val malformed                                                   = "not_base64_!!!"
         val translated: Result[BrowserDecodingException, Browser.Image] =
             Browser.Image.fromBase64(malformed) match
                 case Result.Success(img) => Result.succeed(img)
-                case Result.Failure(err) => Result.fail(BrowserDecodingException("Image.fromBase64", err.getMessage))
+                case Result.Failure(err) => Result.fail(BrowserDecodingException("Image.fromBase64", err.message))
                 case Result.Panic(t)     => fail(s"unexpected panic: $t")
         translated match
             case Result.Failure(ex: BrowserDecodingException) => assert(ex.method == "Image.fromBase64")

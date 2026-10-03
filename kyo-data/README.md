@@ -365,18 +365,43 @@ import kyo.*
 val bytes: Span[Byte] = Span.from(IArray[Byte](72, 101, 108, 108, 111))
 val encoded: String   = Base64.encode(bytes)
 
-val decoded: Result[IllegalArgumentException, Span[Byte]] =
+val decoded: Result[Base64.Failure, Span[Byte]] =
     Base64.decode(encoded)
+```
 
-val unsafe: Span[Byte] = Base64.decodeOrThrow(encoded)
+A malformed input is a `Base64.Failure` naming what was found and where: `IllegalCharacter(offset)`, `UnexpectedPadding(offset)`,
+`BadLength(length)`, `DanglingCharacter(dataLength)` or `NonCanonicalTail`; its `message` renders it for a caller's own exception.
+
+`encodeUrl` and `decodeUrl` use the URL and filename safe alphabet (`-` and `_` in place of `+` and `/`) without padding, the form JSON Web Tokens and JSON Web Keys carry. `decodeUrl` accepts only the canonical encoding: it rejects padding, the standard alphabet's `+` and `/`, and nonzero bits after the last byte.
+
+```scala
+import kyo.*
+
+val token: String = Base64.encodeUrl(Span.from(IArray[Byte](-5, -1))) // "-_8"
+
+val bytes: Result[Base64.Failure, Span[Byte]] =
+    Base64.decodeUrl(token)
+```
+
+`Hex` renders bytes as two lowercase digits each and reads either case back. A decode failure is a `Hex.Failure`: `OddLength(length)` or `IllegalCharacter(offset)`, each with a `message`. Neither direction is constant time, so hex is for public values such as a received signature header, not for comparing secrets.
+
+```scala
+import kyo.*
+
+val text: String = Hex.encode(Span.from(IArray[Byte](0, 15, -85, -1))) // "000fabff"
+
+val decoded: Result[Hex.Failure, Span[Byte]] =
+    Hex.decode("000FABFF")
+
+val odd: Result[Hex.Failure, Span[Byte]] =
+    Hex.decode("abc") // Result.fail(Hex.Failure.OddLength(3))
 ```
 
 ### Identifiers and UUIDs
 
-`UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering, inspection, and deterministic name-based derivation.
+`UUID` is an RFC 9562 universally unique identifier (the standard that replaces RFC 4122). It is an opaque 128-bit value with pure operations for strict parsing, URN parsing, byte conversion, rendering and inspection.
 
 ```scala
-import java.nio.charset.StandardCharsets
 import kyo.*
 
 val canonical: Result[UUID.InvalidUUID, UUID] =
@@ -399,17 +424,11 @@ val timestamp: Maybe[Long] = id.unixTimestampMillis
 val empty: UUID = UUID.nil
 val full: UUID  = UUID.max
 val order: Int  = empty.compare(full)
-
-val dns: UUID        = UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").getOrThrow
-val name: Span[Byte] = Span.from("www.example.com".getBytes(StandardCharsets.UTF_8))
-
-val v5: UUID = UUID.v5(dns, name)
-val v8: UUID = UUID.v8Sha256(dns, name)
 ```
 
 `UUID.parse` is strict about canonical `8-4-4-4-12` text: braces, URNs, missing separators, and other layout deviations fail. Use `UUID.parseUrn` for `urn:uuid:<canonical>` input. `UUID.InvalidUUID` is a `KyoException` returned by `UUID.parse`, `UUID.parseUrn`, and `UUID.fromBytes` through `Result`, carrying structured `UUID.InvalidProblem` in its `problem` field.
 
-`UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `UUID.v5` is deterministic RFC version 5 derivation; SHA-1 is used internally because the standard requires it for v5. `UUID.v8Sha256` is Kyo's deterministic SHA-256 version 8 profile. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs.
+`UUID.bytes` and `UUID.fromBytes` use exactly 16 bytes in big-endian network order. `uuid.compare(that)` compares the 128-bit value with unsigned bytewise ordering, and `Ordering[UUID]` delegates to that comparison so sorted collections match RFC 9562 ordering. `unixTimestampMillis` only inspects version 7 UUIDs, returning `Absent` for other versions, and `kyo-data` does not generate random or time-based UUIDs. The name-based constructors, `UUID.v5` (RFC version 5 over SHA-1) and `UUID.v8Sha256` (Kyo's SHA-256 version 8 profile), are extension methods in [kyo-crypto](../kyo-crypto/README.md), which holds the digests they need.
 
 ## Time and scheduling
 
@@ -441,12 +460,12 @@ A `Duration` is a magnitude and is never negative, so subtraction is the one ope
 ```scala
 import kyo.*
 
-val a: Duration                = 5.seconds + 30.seconds          // 35 seconds
-val b: Maybe[Duration]         = 1.hour.minus(30.minutes)        // Present(30 minutes)
-val none: Maybe[Duration]      = 30.minutes.minus(1.hour)        // Absent
-val remaining: Duration        = 30.minutes.minusOrZero(1.hour)  // Zero
-val c: Duration                = 1.second * 60                   // 60 seconds
-val clamped: Duration          = Duration.Infinity + 1.day       // still Infinity
+val a: Duration           = 5.seconds + 30.seconds         // 35 seconds
+val b: Maybe[Duration]    = 1.hour.minus(30.minutes)       // Present(30 minutes)
+val none: Maybe[Duration] = 30.minutes.minus(1.hour)       // Absent
+val remaining: Duration   = 30.minutes.minusOrZero(1.hour) // Zero
+val c: Duration           = 1.second * 60                  // 60 seconds
+val clamped: Duration     = Duration.Infinity + 1.day      // still Infinity
 ```
 
 `Duration` also offers unit accessors (`toNanos`, `toMillis`, `toSeconds`, ...) and conversion to `java.time.Duration` and `scala.concurrent.duration.Duration`.
@@ -458,11 +477,11 @@ For timestamps (a moment, not a span), use `Instant`. It is an opaque wrapper ov
 ```scala
 import kyo.*
 
-val now: Instant     = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
-val later: Instant   = now + 1.hour
-val earlier: Instant = now - 30.minutes
+val now: Instant         = Instant.parse("2024-01-15T10:00:00Z").getOrThrow
+val later: Instant       = now + 1.hour
+val earlier: Instant     = now - 30.minutes
 val gap: Maybe[Duration] = later.minus(earlier) // Present(1 hour 30 minutes)
-val hour: Instant    = now.truncatedTo(Duration.Units.Hours)
+val hour: Instant        = now.truncatedTo(Duration.Units.Hours)
 ```
 
 > **Note:** `instant + Duration.Infinity` returns `Instant.Max` (saturating); `instant - Duration.Infinity` returns `Instant.Min`. Arithmetic does not throw on overflow. The time between two instants follows `Duration`'s subtraction: `later.minus(earlier)` is `Absent` when `earlier` is in fact later, and `minusOrZero` clamps.
@@ -479,7 +498,7 @@ import kyo.*
 val immediate: Schedule = Schedule.immediate
 val never: Schedule     = Schedule.never
 val every5s: Schedule   = Schedule.fixed(5.seconds)
-val backoff: Schedule = Schedule.exponentialBackoff(
+val backoff: Schedule   = Schedule.exponentialBackoff(
     initial = 100.millis,
     factor = 2.0,
     maxBackoff = 10.seconds
@@ -502,10 +521,10 @@ val daily2am: Schedule = Schedule.anchored(1.day, 2.hours)
 // Read the first three delays from a schedule
 def take3(s: Schedule, now: Instant): List[Duration] =
     s.next(now) match
-        case Absent => Nil
+        case Absent            => Nil
         case Present((d1, s1)) =>
             s1.next(now + d1) match
-                case Absent => List(d1)
+                case Absent            => List(d1)
                 case Present((d2, s2)) =>
                     s2.next(now + d1 + d2) match
                         case Absent           => List(d1, d2)
@@ -734,11 +753,11 @@ When code only needs to allocate arrays of `A`, `ShallowTag[A]` is enough. It ho
 ```scala
 import kyo.*
 
-val longs: Array[Long]             = ShallowTag[Long].newArray(4)
-val maybes: Array[Maybe[Int]]      = ShallowTag[Maybe[Int]].newArray(2)
-val none: Array[String]            = ShallowTag[String].emptyArray
-val sameEmpty: Boolean             = none eq ShallowTag[String].newArray(0) // true
-val erased: Class[?]               = ShallowTag[Maybe[Int]].erasedClass
+val longs: Array[Long]        = ShallowTag[Long].newArray(4)
+val maybes: Array[Maybe[Int]] = ShallowTag[Maybe[Int]].newArray(2)
+val none: Array[String]       = ShallowTag[String].emptyArray
+val sameEmpty: Boolean        = none eq ShallowTag[String].newArray(0) // true
+val erased: Class[?]          = ShallowTag[Maybe[Int]].erasedClass
 ```
 
 Zero-length arrays are cached per class, so `emptyArray` and `newArray(0)` allocate at most once per class. On the JVM the cache does not keep classes from unloading.

@@ -4,30 +4,26 @@ import kyo.db.Backend
 
 /** One engine's conformance descriptor: everything [[SqlConformanceTest]] needs to run against a live instance of that engine.
   *
-  * A backend's tests implement one and hand it to [[SqlConformanceTest.backends]]. The battery opens every client through [[backend]],
-  * the engine's own [[kyo.db.Backend]], so it consults no compile-time registry and no runtime discovery: an engine written outside kyo
-  * owes no registration on any platform.
+  * A backend's tests implement one and hand it to [[SqlConformanceTest.backends]]. The battery opens every client through `backend`, the
+  * engine's own [[kyo.db.Backend]], so it consults no compile-time registry and no runtime discovery: an engine written outside kyo owes
+  * no registration on any platform.
   *
   * Capability flags exist so a conformance body branches on a behavior, never on an engine name: a leaf that needs a recursive CTE reads
   * [[supportsRecursiveCte]], and DDL that differs between engines is generated from [[textColumnType]], [[autoIncrementPrimaryKey]], and
   * [[quoteIdent]] rather than from an inline literal. A flag is added only when a conformance body actually branches on it.
   *
+  * The descriptor holds nothing a body could compare against an engine name. `backend` is a constructor parameter, so its `scheme` is out
+  * of reach, and [[label]] is a [[SqlConformanceBackend.Label]], which renders but compares with nothing under strict equality.
+  *
+  * @param backend
+  *   the engine the battery opens every client through
   * @see
   *   [[SqlConformanceBackend.Schema]] the fresh-schema context [[withFreshSchema]] hands back
   */
-abstract class SqlConformanceBackend:
+abstract class SqlConformanceBackend(backend: Backend):
 
-    /** The stable id naming this descriptor, typically its URL scheme. */
-    def id: String
-
-    /** The label naming this backend's conformance leaves, such as the engine's own name. */
-    def label: String
-
-    /** The URL scheme a client opens this backend with, such as `postgres`. */
-    def urlScheme: String
-
-    /** The engine the battery opens every client through. */
-    def backend: Backend
+    /** The label naming this backend's conformance leaves and failure messages, such as the engine's own name. */
+    def label: SqlConformanceBackend.Label
 
     /** Whether this descriptor can be exercised on this host. A server engine answers whether its server can be reached, so a run on a host
       * that cannot serve it leaves it out rather than failing each of its leaves.
@@ -285,6 +281,15 @@ abstract class SqlConformanceBackend:
 end SqlConformanceBackend
 
 object SqlConformanceBackend:
+
+    /** An engine's name as a conformance leaf shows it. It renders in a leaf's name and a failure message, and has no `CanEqual`, so a
+      * body cannot compare it with a name or match it against one: a body branches on a capability flag instead.
+      */
+    opaque type Label = String
+
+    object Label:
+        def apply(name: String): Label = name
+    end Label
 
     /** One engine's spelling of the two session-zone moves the instant leaves make. `west` must land the session exactly three hours west of
       * UTC, since that offset is what those leaves assert the reading did not follow; a named zone or a numeric offset both work.

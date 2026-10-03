@@ -5,8 +5,8 @@ import kyo.*
 /** Base64 decoders for CDP wire payloads.
   *
   * Both helpers translate a malformed Base64 input (which the cross-platform [[kyo.Base64]] decoder reports as [[Result.Failure]] carrying
-  * an [[IllegalArgumentException]]) into a typed [[BrowserDecodingException]] keyed by the originating CDP `method`, so the malformed-wire
-  * path stays inside the typed-error channel rather than escaping as a thrown exception.
+  * a [[kyo.Base64.Failure]]) into a typed [[BrowserDecodingException]] keyed by the originating CDP `method`, so the malformed-wire path
+  * stays inside the typed-error channel rather than escaping as a thrown exception.
   *
   * The helpers live in `kyo.internal` next to the rest of the wire-translation utilities ([[CdpEvalDecoder]]). Exposed as `private[kyo]`
   * so unit tests in `kyo` and `kyo.internal` can exercise the translation without round-tripping through a live CDP connection.
@@ -17,7 +17,7 @@ private[kyo] object CdpBase64Decode:
     def decodeWireBase64(method: String, data: String)(using Frame): Span[Byte] < Abort[BrowserDecodingException] =
         Base64.decode(data) match
             case Result.Success(bytes) => bytes
-            case Result.Failure(err)   => Abort.fail(BrowserDecodingException(method, err.getMessage))
+            case Result.Failure(err)   => Abort.fail(BrowserDecodingException(method, err.message))
             case Result.Panic(t)       => Abort.panic(t)
 
     /** Decodes a CDP screenshot/data Base64 payload into an [[Image]], translating malformed input to a typed [[BrowserDecodingException]]
@@ -26,7 +26,7 @@ private[kyo] object CdpBase64Decode:
     def decodeScreenshotImage(method: String, data: String)(using Frame): Image < Abort[BrowserDecodingException] =
         Image.fromBase64(data) match
             case Result.Success(img) => img
-            case Result.Failure(err) => Abort.fail(BrowserDecodingException(method, err.getMessage))
+            case Result.Failure(err) => Abort.fail(BrowserDecodingException(method, err.message))
             case Result.Panic(t)     => Abort.panic(t)
 
 end CdpBase64Decode

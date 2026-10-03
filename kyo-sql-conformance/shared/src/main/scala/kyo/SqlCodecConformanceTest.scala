@@ -18,7 +18,7 @@ import kyo.Sql.*
   * ==Column types come from the descriptor==
   * Every table's column type is named through [[SqlConformanceBackend.columnType]], keyed by [[SqlConformanceBackend.ColumnType]], so the DDL carries no
   * engine literal and each backend spells the portable kind its own way. The string-backed types (`String`, `java.net.URI`,
-  * `java.util.Locale`, `java.util.Currency`) reuse [[SqlConformanceBackend.textColumnType]] instead.
+  * `java.util.Locale`) reuse [[SqlConformanceBackend.textColumnType]] instead.
   */
 trait SqlCodecConformanceTest extends SqlBackendTest:
 
@@ -515,24 +515,7 @@ trait SqlCodecConformanceTest extends SqlBackendTest:
             yield
                 assert(rows.size == 1, s"expected 1 row, got ${rows.size}")
                 assert(rows.head == LocaleRow(value), s"expected LocaleRow($value), got ${rows.head}")
-        }
-    }
-
-    // ── java.util.Currency ───────────────────────────────────────────────────
-
-    "java.util.Currency round-trip" - {
-        case class CurrencyRow(v: java.util.Currency) derives CanEqual
-
-        val value = java.util.Currency.getInstance("USD")
-
-        forEachBackend() { (backend, client, _) =>
-            for
-                _    <- client.executeRaw(s"CREATE TABLE currencyrow (v ${backend.textColumnType})")
-                _    <- Sql.insert[CurrencyRow].values(CurrencyRow(value)).run
-                rows <- Sql.from[CurrencyRow]("r").run
-            yield
-                assert(rows.size == 1, s"expected 1 row, got ${rows.size}")
-                assert(rows.head == CurrencyRow(value), s"expected CurrencyRow($value), got ${rows.head}")
+                assert(rows.head.v.toLanguageTag == "pt-BR", s"expected pt-BR, got ${rows.head.v.toLanguageTag}")
         }
     }
 

@@ -1,0 +1,4 @@
+source https://www.rfc-editor.org/rfc/rfc4013.txt
+source-sha256 63daa764693815ae8544728099d17a1c46e96b5818f2a399b3ec475ea153a991
+license The memo's own terms, published February 2005 before TLP 5.0 (TLP 5.0 section 2.c leaves documents published before 2015-03-25 under the policy in effect at their publication): "Distribution of this memo is unlimited" (line 20), under the Internet Society copyright (line 24) and BCP 78 as of publication (from line 287, the Full Copyright Statement); the file is whole, unmodified, and keeps its notices
+file rfc4013.txt 63daa764693815ae8544728099d17a1c46e96b5818f2a399b3ec475ea153a991 rfc4013.txt

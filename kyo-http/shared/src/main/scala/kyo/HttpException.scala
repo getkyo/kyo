@@ -267,19 +267,62 @@ case class HttpHandlerException(error: Any)(using Frame)
 sealed abstract class HttpDecodeException(message: String, cause: String | Throwable = "")(using Frame)
     extends HttpException(message, cause)
 
-/** Failed to parse a URL. */
-case class HttpUrlParseException private (url: String, detail: String, cause: String | Throwable)(using Frame)
+/** Text `HttpUrl.parse` or `HttpUrl.resolve` refused, with the RFC 3986 rule it breaks as `reason`. `url` is the input without its query. */
+case class HttpUrlParseException private (url: String, reason: HttpUrlParseException.Reason)(using Frame)
     extends HttpDecodeException(
-        s"""Failed to parse URL: $detail.
+        s"""Failed to parse URL: ${reason.show}.
            |
-           |  Input: $url""".stripMargin,
-        cause
+           |  Input: $url""".stripMargin
     )
 object HttpUrlParseException:
-    def apply(url: String, detail: String)(using Frame): HttpUrlParseException =
-        new HttpUrlParseException(HttpException.stripQuery(url), detail, "")
-    def apply(url: String, cause: Throwable)(using Frame): HttpUrlParseException =
-        new HttpUrlParseException(HttpException.stripQuery(url), cause.getMessage, cause)
+    def apply(url: String, reason: Reason)(using Frame): HttpUrlParseException =
+        new HttpUrlParseException(HttpException.stripQuery(url), reason)
+
+    /** Why a URL was refused. A position is the index in the input of the first character that breaks the rule. */
+    enum Reason derives CanEqual:
+        case Empty
+
+        /** Neither an absolute URL nor a path from the root: a relative reference needs a base (`HttpUrl.resolve`). */
+        case Relative
+
+        /** A path where a URL with a scheme and a host is required, such as a client's `baseUrl`. */
+        case NotAbsolute
+
+        /** The text before `://` is not a scheme: a letter followed by letters, digits, `+`, `-` or `.`. */
+        case InvalidScheme
+
+        /** A scheme kyo-http does not send to, which would otherwise reach the transport as HTTP. */
+        case UnsupportedScheme(scheme: String)
+
+        /** An http(s) URL with no host, which RFC 9110 section 4.2.1 requires a recipient to reject; or a Unix socket URL with no socket path. */
+        case EmptyHost
+
+        /** A character the userinfo, the host or an IP literal cannot hold. */
+        case InvalidAuthority(position: Int)
+
+        /** A port that is not 1 to 5 digits from 0 to 65535. */
+        case InvalidPort(position: Int)
+
+        /** A character no component of a URL allows, such as a space, a control character, `"`, `<`, `>`, `\`, `^`, `` ` ``, `{`, `|` or `}`. */
+        case InvalidCharacter(position: Int)
+
+        /** A `%` that does not start a two-hex-digit escape. */
+        case InvalidPercentEncoding(position: Int)
+
+        private[kyo] def show: String =
+            this match
+                case Empty                     => "URL cannot be empty"
+                case Relative                  => "not an absolute URL or a path starting with '/'"
+                case NotAbsolute               => "a base URL needs a scheme and a host"
+                case InvalidScheme             => "the scheme is not a letter followed by letters, digits, '+', '-' or '.'"
+                case UnsupportedScheme(scheme) =>
+                    s"unsupported URL scheme: '$scheme' (allowed: http, https, ws, wss, http+unix, https+unix)"
+                case EmptyHost                        => "the URL has no host"
+                case InvalidAuthority(position)       => s"the authority has an invalid character at position $position"
+                case InvalidPort(position)            => s"the port at position $position is not a number from 0 to 65535"
+                case InvalidCharacter(position)       => s"the character at position $position is not allowed in a URL"
+                case InvalidPercentEncoding(position) => s"the '%' at position $position does not start a two-hex-digit escape"
+    end Reason
 end HttpUrlParseException
 
 /** A message body could not be decoded because its transfer framing is malformed: a chunk-size line with an embedded

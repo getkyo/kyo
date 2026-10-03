@@ -332,20 +332,30 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions with Eventual
                         Task.Done
                     }
                 )
-                val task = TestTask()
+                val placed = new java.util.concurrent.ConcurrentLinkedQueue[TestTask]()
                 try {
                     s.schedule(spinning)
                     assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
                     // The scan preempts only a task over its slice; the cycle marks the worker Stalled once it is.
                     eventually(assert(s.status().workers.exists(w => (w ne null) && w.isStalled)))
-                    armed.set(true)
-                    val failure =
-                        try { s.schedule(task); None }
-                        catch { case e: StackOverflowError => Some(e) }
-                        finally armed.set(false)
-                    assert(thrown.get() && failure.isDefined, "the scan's failure must reach the caller")
+                    // The scan skips the preemption of a worker the blocking monitor flags blocked, and the monitor flags a spinning
+                    // worker whose thread it sees make no CPU progress, which a starved runner produces. A scan that skipped it
+                    // places the task normally, so the attempt repeats with a fresh task until a scan reaches the preemption.
+                    eventually {
+                        val task = TestTask()
+                        placed.add(task)
+                        armed.set(true)
+                        val failure =
+                            try { s.schedule(task); None }
+                            catch { case e: StackOverflowError => Some(e) }
+                            finally armed.set(false)
+                        assert(thrown.get() && failure.isDefined, "the scan's failure must reach the caller")
+                    }
                 } finally release.countDown()
-                eventually(assert(task.executions == 1, "the task whose placement failed was never placed"))
+                eventually(assert(
+                    placed.stream().allMatch(_.executions == 1),
+                    "every attempted task, the one whose placement failed included, runs exactly once"
+                ))
                 assert(s.placementFallbacks.sum() == 1, "the fallback placement must be counted")
             }
         }

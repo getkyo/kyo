@@ -14,7 +14,6 @@ import kyo.Result
 import kyo.Retry
 import kyo.Scope
 import kyo.Sync
-import kyo.Timeout
 import kyo.discard
 import kyo.kernel.<
 import kyo.test.AssertionFailed
@@ -49,8 +48,8 @@ import scala.concurrent.Future
   * `LeafPool.submit` and the suite awaits the returned promises in INPUT ORDER. The pool drains its bounded channel with `LeafPool.globalK` detached worker fibers, so total
   * concurrent leaf execution is bounded across ALL suites in the process (not per suite). Each leaf runs under a per-leaf `Scope.run`
   * (Scope is fiber-shared, so per-leaf `Scope.run` bounds resource lifetime to leaf end), the per-leaf `Async.timeout` and `Retry`
-  * decorators when present, and an `Abort.run[Throwable]` boundary that routes a thrown `AssertionFailed` / `TestCancelled` / `Timeout`
-  * into a `TestResult`. The ONLY `Future` is produced once, at the sbt edge, by `Fiber#toFuture`.
+  * decorators when present, and an `Abort.run[Throwable]` boundary that routes a thrown `AssertionFailed` / `TestCancelled` or the
+  * leaf's own timeout expiry into a `TestResult`. The ONLY `Future` is produced once, at the sbt edge, by `Fiber#toFuture`.
   *
   * The shared report / reporter / filter types under `kyo.test.*` are reused as-is.
   *
@@ -137,7 +136,12 @@ object TestRunner:
                     TestReport(Chunk.empty)
                 }
             else
-                walkNode(suite, Chunk.empty).map { rawLeaves =>
+                walkNode(suite, Chunk.empty).flatMap { rawLeaves =>
+                    // An empty walk re-reads the first cursor for what registers no leaf: a group, or a registration the platform
+                    // gate compiled out. Either means the suite declared something; only a suite that declared nothing is empty.
+                    if rawLeaves.nonEmpty then (rawLeaves, false)
+                    else probe(suite, Chunk(0)).map((ctx, _, group) => (rawLeaves, !group && !ctx.peekExcluded))
+                }.map { (rawLeaves, declaredNothing) =>
                     // A leaf executes by its name path, so a path registered twice would run one body for both
                     // registrations and never the other. Neither runs; the path fails once, naming the count.
                     val registrations: Map[Chunk[String], Int] =
@@ -159,6 +163,20 @@ object TestRunner:
                         )
                     }
 
+                    // A runner scores a suite by the leaves it reports, and sbt counts a suite that reports none as passed. A suite
+                    // that declares nothing would then pass whenever it is selected, so it fails once, under a path of its own.
+                    val unregistered =
+                        if !declaredNothing then Chunk.empty
+                        else
+                            Chunk((
+                                Chunk("<no leaves>"),
+                                TestResult.Failed(
+                                    s"${suite.getName} declares no leaves, so selecting it would run nothing and report a pass",
+                                    Maybe.empty,
+                                    Duration.Zero
+                                )
+                            ))
+
                     val filtered = applyFilter(allLeaves.filter { case (path, _) => registrations(path) == 1 }, effectiveConfig.filter)
 
                     val ordered = effectiveConfig.randomize match
@@ -171,7 +189,7 @@ object TestRunner:
                     val cursorMap: Map[Chunk[String], Chunk[Int]] =
                         rawLeaves.map { case (path, cursor, _) => path -> cursor }.toMap
 
-                    (ordered, hasFocus, cursorMap, duplicated)
+                    (ordered, hasFocus, cursorMap, duplicated ++ unregistered)
                 }.flatMap { case (ordered, hasFocus, cursorMap, duplicated) =>
                     // Build one submittable leaf-computation per leaf. The reporter callbacks fire INSIDE this
                     // computation (on the pool worker) at REAL leaf start/finish (more accurate than fire-at-fork).
@@ -388,8 +406,8 @@ object TestRunner:
       * terminal `TestResult` is returned directly. Otherwise the buffered baseline body is discharged via [[runRegisteredBody]]: `Retry`
       * wraps the body (it already retries a thrown failure, which the Abort machinery lifts into a retryable `Result.Failure`), and
       * `Async.timeout` wraps the whole retry loop so it bounds the leaf including retries. A thrown `AssertionFailed` / `TestCancelled` on
-      * the no-retry path surfaces as a `Result.Panic`, and an `Async.timeout` expiry surfaces as a `Result.Failure(Timeout)`, both mapped
-      * to the matching `TestResult` at the `Abort.run[Throwable]` boundary.
+      * the no-retry path surfaces as a `Result.Panic`, and the leaf's timeout expiry surfaces as a `Result.Failure(LeafTimedOut)`, both
+      * mapped to the matching `TestResult` at the `Abort.run[Throwable]` boundary.
       */
     private def runLeaf(
         suite: Class[? <: TestBase[?]],
@@ -453,7 +471,7 @@ object TestRunner:
         //     and a raw `throw` is a Panic, so an uncaught thrown assertion would never be retried.
         //   - a `Throwable` abort passes through unchanged; a non-`Throwable` abort is wrapped in `LeafAborted`.
         // Applied at two layers below (the test body, then again around the `aroundLeaf` wrapper). It is idempotent on
-        // Throwable-shaped aborts: Timeout, AssertionFailed, and LeafAborted all take the Throwable arm and re-raise
+        // Throwable-shaped aborts: LeafTimedOut, AssertionFailed, and LeafAborted all take the Throwable arm and re-raise
         // unchanged, so the outer application only ever catches something the `aroundLeaf` hook itself throws.
         def toThrowable(x: Unit < (Async & Abort[Any] & Scope)): Unit < (Async & Abort[Throwable] & Scope) =
             Abort.run[Any](Abort.catching[Throwable](x)).map {
@@ -486,10 +504,12 @@ object TestRunner:
         // Timeout wraps the WHOLE retry loop, so it bounds the leaf including its retries (not each attempt). Keeping the
         // timeout OUTSIDE Retry is also what makes retry-on-throw work: a throw wrapped in `Async.timeout` surfaces as a
         // `Result.Panic` (which Retry would not retry), whereas the un-wrapped body's throw stays a retryable
-        // `Result.Failure`. A genuine timeout expiry raises `Abort[Timeout]`, mapped to TimedOut at the boundary below.
+        // `Result.Failure`. The expiry raises `Abort[LeafTimedOut]`, mapped to TimedOut at the boundary below.
+        // The expiry carries the configured limit on its own type, so the report states the limit rather than the elapsed
+        // time, and a `Timeout` the body raises from its own `Async.timeout` stays the body's failure.
         val timed: Unit < (Async & Abort[Throwable] & Scope) =
             builder.timeout match
-                case Maybe.Present(d) => Async.timeout(d)(retried)
+                case Maybe.Present(d) => Async.timeoutWithError(d, Result.Failure(LeafTimedOut(d)))(retried)
                 case Maybe.Absent     => retried
 
         // Apply the suite's `aroundLeaf` hook from OUTSIDE the timeout, so any setup it performs (a resource
@@ -559,13 +579,14 @@ object TestRunner:
     end runRegisteredBody
 
     /** Convert an `Abort.run[Throwable]` `Result` into a `TestResult`. A thrown `AssertionFailed` / `TestCancelled` arrives as a
-      * `Result.Panic` (raw `throw` in a Kyo computation surfaces as a panic, not a failure); a `Timeout` from `Async.timeout` arrives as a
-      * `Result.Failure`. Any other panic is logged and recorded as a failure (never swallowed).
+      * `Result.Panic` (raw `throw` in a Kyo computation surfaces as a panic, not a failure); the leaf's own timeout expiry arrives as a
+      * `Result.Failure(LeafTimedOut)` carrying the configured limit. Any other panic is logged and recorded as a failure (never
+      * swallowed).
       */
     private def resultToTestResult(result: Result[Throwable, Unit], elapsed: Duration): TestResult =
         result match
             case Result.Success(_)                   => TestResult.Passed(elapsed)
-            case Result.Failure(_: Timeout)          => TestResult.TimedOut(elapsed)
+            case Result.Failure(LeafTimedOut(limit)) => TestResult.TimedOut(limit)
             case Result.Failure(af: AssertionFailed) =>
                 TestResult.Failed(af.diagram, Maybe(af.getCause), elapsed)
             case Result.Failure(tc: TestCancelled) => TestResult.Cancelled(tc.reason, elapsed)
@@ -574,7 +595,7 @@ object TestRunner:
                 panic.exception match
                     case af: AssertionFailed => TestResult.Failed(af.diagram, Maybe(af.getCause), elapsed)
                     case tc: TestCancelled   => TestResult.Cancelled(tc.reason, elapsed)
-                    case _: Timeout          => TestResult.TimedOut(elapsed)
+                    case LeafTimedOut(limit) => TestResult.TimedOut(limit)
                     case t                   =>
                         java.lang.System.err.println(s"[kyo-test] unexpected panic in leaf: $t")
                         TestResult.Failed(describe(t), Maybe(t), elapsed)
@@ -658,5 +679,10 @@ object TestRunner:
 
     private def simpleName(cls: Class[?]): String =
         cls.getSimpleName.stripSuffix("$")
+
+    /** The leaf's own timeout expiring, carrying the configured limit. */
+    private case class LeafTimedOut(limit: Duration)
+        extends RuntimeException(s"the leaf exceeded its ${limit.show} limit")
+        with scala.util.control.NoStackTrace
 
 end TestRunner

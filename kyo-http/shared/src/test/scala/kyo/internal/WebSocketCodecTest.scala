@@ -12,6 +12,8 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
 
     private val Utf8 = StandardCharsets.UTF_8
 
+    private def wsUrl(path: String = "/ws"): HttpUrl = HttpUrl(Present("ws"), "localhost", 80, path, Absent)
+
     /** Mock TransportStream backed by byte arrays for testing WebSocketCodec.
       *
       * Each call to read() returns the entire remaining input as a single-span stream. Writes are captured in an output buffer.
@@ -534,7 +536,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             // so we test the write side only by examining what was written before the read fails.
             val conn = new MockConn(Array.empty[Byte])
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
             }.map { _ =>
                 val written = conn.writtenString
                 assert(written.contains("GET /ws HTTP/1.1"))
@@ -544,15 +546,32 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             }
         }
 
-        "fails on non-101 response" in {
-            val response = "HTTP/1.1 400 Bad Request\r\n\r\n"
-            // A conn that discards writes and serves a 400 response on read
-            val conn = new MockConn(response.getBytes(Utf8)):
-                override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
-            Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
-            }.map { result =>
-                assert(result.isFailure)
+        "a well-formed non-101 status line is the handshake leaf naming the url and the status" in {
+            Kyo.foreach(Chunk("HTTP/1.1 400 Bad Request\r\n\r\n", "HTTP/1.0 403 \r\n\r\n", "HTTP/1.1 200\r\n\r\n")) { response =>
+                val conn = new MockConn(response.getBytes(Utf8)):
+                    override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
+                Abort.run[HttpException] {
+                    WebSocketCodec.requestUpgradeWith(conn, wsUrl("/ws?k=v"), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                }
+            }.map { results =>
+                val refused = results.map(_.failure.collect { case e: HttpWebSocketHandshakeException => (e.url, e.status) })
+                assert(refused == Chunk(400, 403, 200).map(s => Present(("ws://localhost/ws", s))), results.toString)
+            }
+        }
+
+        "an answer that is not an HTTP/1.x status line is a protocol failure" in {
+            Kyo.foreach(Chunk("HTTP/2 400\r\n\r\n", "HTTP/1.1 4x0 Bad\r\n\r\n", "HTTP/1.1 4000 Bad\r\n\r\n", "garbage\r\n\r\n")) {
+                response =>
+                    val conn = new MockConn(response.getBytes(Utf8)):
+                        override def write(data: Span[Byte])(using Frame): Unit < Async = Kyo.unit
+                    Abort.run[HttpException] {
+                        WebSocketCodec.requestUpgradeWith(conn, wsUrl(), HttpHeaders.empty, HttpWebSocket.Config()) { _ => () }
+                    }
+            }.map { results =>
+                assert(
+                    results.map(_.failure.map(_.getClass.getSimpleName)) == Chunk.fill(4)(Present("HttpProtocolException")),
+                    results.toString
+                )
             }
         }
 
@@ -563,7 +582,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val conn    = new MockConn(Array.empty[Byte])
             val headers = HttpHeaders.empty.add("X-Trace", "bar\r\nX-Admin: true")
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), headers, HttpWebSocket.Config()) { _ => () }
             }.map {
                 case Result.Failure(ex: HttpInvalidFieldException) =>
                     assert(ex.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${ex.field}")
@@ -578,7 +597,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val conn    = new MockConn(Array.empty[Byte])
             val headers = HttpHeaders.empty.add("X Trace", "value")
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), headers, HttpWebSocket.Config()) { _ => () }
             }.map {
                 case Result.Failure(ex: HttpInvalidFieldException) =>
                     assert(ex.field == "the name of the header at index 0", s"the failure must name the position, got: ${ex.field}")
@@ -592,7 +611,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         "fails on a CRLF-bearing path without writing the handshake" in {
             val conn = new MockConn(Array.empty[Byte])
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws\r\nX-Admin: true", HttpHeaders.empty, HttpWebSocket.Config()) {
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl("/ws\r\nX-Admin: true"), HttpHeaders.empty, HttpWebSocket.Config()) {
                     _ => ()
                 }
             }.map {
@@ -610,7 +629,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val conn    = new MockConn(Array.empty[Byte])
             val headers = HttpHeaders.empty.add("X-Trace", "café")
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), headers, HttpWebSocket.Config()) { _ => () }
             }.map { _ =>
                 // The read side fails (the mock serves no response); the write side is what this asserts.
                 assert(conn.writtenString.contains("X-Trace: café\r\n"), s"Got: ${conn.writtenString}")
@@ -627,7 +646,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val conn   = new MockConn(Array.empty[Byte])
             val config = HttpWebSocket.Config(subprotocols = Seq("chat\r\nX-Injected: 1"))
             Abort.run[HttpException] {
-                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, config) { _ => () }
+                WebSocketCodec.requestUpgradeWith(conn, wsUrl(), HttpHeaders.empty, config) { _ => () }
             }.map {
                 case Result.Failure(ex: HttpInvalidFieldException) =>
                     assert(conn.written.isEmpty, s"nothing may reach the wire, got: ${conn.writtenString}")

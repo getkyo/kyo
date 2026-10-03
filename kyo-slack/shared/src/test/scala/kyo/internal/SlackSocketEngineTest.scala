@@ -332,6 +332,32 @@ class SlackSocketEngineTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "a frame buffered when inbound closes is delivered even if the loop ends before the residue is published" in {
+        // The loop can observe the closed channel before the closer has published the residue the close removed. The close
+        // here is a raw one whose residue is held back until the loop has either finished or parked on the residue promise.
+        for
+            c         <- conduit
+            engine    <- SlackSocketEngine.initUnscoped(c, url, cfg)
+            delivered <- Channel.init[SlackEnvelope](4)
+            handler = (env: SlackEnvelope) => Abort.run[Closed](delivered.put(env)).andThen(SlackAck.Ack: SlackAck)
+            _       <- engine.inbound.put(eventFrame("E1"))
+            residue <- engine.inbound.close
+            loop    <- Fiber.initUnscoped(Abort.run[SlackException](engine.receiveLoop(handler)))
+            _       <- assertEventually(loop.done.map(done => if done then true else engine.inboundResidue.waiters.map(_ >= 1)))
+            _       <- engine.inboundResidue.complete(Result.succeed(Chunk.from(residue.getOrElse(Seq.empty))))
+            result  <- loop.get
+            envs    <- delivered.drain
+            _       <- engine.closeNow
+        yield
+            assert(residue.map(_.size) == Present(1), s"the close must take the buffered frame as residue, got: $residue")
+            assert(result == Result.succeed(()), s"loop must end cleanly, got: $result")
+            assert(
+                envs.collect { case e: SlackEnvelope.EventsApi => e.meta.envelopeId.value } == Chunk("E1"),
+                s"the residue frame must reach the handler, got: $envs"
+            )
+        end for
+    }
+
     "closeNow tears down the socket and relay observably; second closeNow is a no-op" in {
         for
             c      <- conduit

@@ -177,11 +177,14 @@ sbt '+kyoJS/test'  # Runs JS tests
 sbt '+kyoNative/Test/compile' # Compiles Native code
 ```
 
-Format before submitting. A bare `scalafmtAll` or `scalafmtCheckAll` reaches only the JVM projects, so name all four platform aggregates, as CI does:
+Formatting needs no setup. Outside CI the build formats as it goes: compiling formats a module's Scala sources, and `doctest` formats a README's scala blocks before validating them. The first time sbt loads a clone, it also sets the repository's `core.hooksPath` to `scripts/hooks`, so every push, from the main checkout or any worktree, runs `scripts/format.sh --check --changed` and is blocked if it leaves a file unformatted. A `core.hooksPath` you set to another directory yourself is kept, and sbt warns on load that the format hook is not active; a hook of your own in `.git/hooks` stops running once the build sets the path.
+
+`scripts/format.sh` formats what CI checks: the sources of all four platform aggregates (a bare `scalafmtAll` reaches only the JVM projects), the build definition, and the scala blocks of every README. `--changed` limits it to the files that differ from `origin/main`, and `--check` fails if anything would change:
 ```sh
-sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt
+scripts/format.sh             # format the whole tree
+scripts/format.sh --changed   # format only what this branch changed
 ```
-CI runs this command and fails if it leaves a diff.
+CI runs `scripts/format.sh --check` and fails if it changes a file.
 
 ### Running CI in Your Fork
 
@@ -213,6 +216,7 @@ If you want to contribute a new method or type, feel free to:
 | Subproject        | Use For                                                   |
 | ----------------- | --------------------------------------------------------- |
 | `kyo-data`        | Data structures (`Chunk`, `Maybe`, `Result`, etc.)        |
+| `kyo-crypto`      | Digests, MACs, key derivation, signature verification     |
 | `kyo-prelude`     | Effect types without `Sync` (`Abort`, `Env`, `Var`, etc.) |
 | `kyo-core`        | Methods requiring `Sync`                                  |
 | `kyo-system`      | File system, OS process, and environment methods          |

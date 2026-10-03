@@ -11,7 +11,9 @@ import kyo.SqlConnectionScramFailedException
 import kyo.SqlConnectionScramIterationsTooHighException
 import kyo.SqlDecodeScramFormatException
 import kyo.SqlException
-import kyo.internal.auth.PureHash
+import kyo.crypto.ConstantTime
+import kyo.crypto.Saslprep
+import kyo.internal.crypto.Bytes
 
 /** Which of RFC 5802's three GS2 channel-binding flags the client is entitled to send.
   *
@@ -49,8 +51,8 @@ end ChannelBinding
   * Leaving the three crypto primitives abstract costs one virtual dispatch per call (immaterial versus network latency) and keeps the
   * override points explicit and auditable.
   *
-  * [[ScramSha256Shared]] is the subclass the driver uses; it supplies all three primitives from [[kyo.internal.auth.PureHash]], so the
-  * exchange behaves identically on every platform.
+  * [[ScramSha256Shared]] is the subclass the driver uses; it supplies all three primitives from kyo-crypto, so the exchange behaves
+  * identically on every platform.
   */
 abstract private[kyo] class ScramSha256Base(username: String, clientNonce: String, channelBinding: ChannelBinding):
 
@@ -76,13 +78,19 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
         case ChannelBinding.SupportedButNotOffered | ChannelBinding.NotSupported =>
             b64encode(gs2Header.getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
-    /** The client-first-message-bare (without GS2 header). */
-    private val clientFirstBare: String = s"n=$username,r=$clientNonce"
+    /** The client-first-message-bare (without GS2 header). The name is escaped as RFC 5802 section 5.1 requires: `,` as `=2C` and `=` as
+      * `=3D`, in that order, so an escape sequence is never itself escaped twice.
+      */
+    private val clientFirstBare: String = s"n=${username.replace("=", "=3D").replace(",", "=2C")},r=$clientNonce"
 
     /** The full client-first-message as sent to the server. */
     val clientFirstMessage: String = gs2Header + clientFirstBare
 
     /** Derives the client-final-message from the server's first message.
+      *
+      * The password is salted in its SASLprep form (RFC 5802 section 5.1), which is what the server stored the secret of; when
+      * preparation fails, on an emoji or any code point unassigned in Unicode 3.2, the raw password is salted instead, because the server
+      * stored the raw password's secret in that case and libpq sends the raw password too (`scram_init` in `fe-auth-scram.c`).
       *
       * @param serverFirst
       *   the server-first-message string (e.g. "r=...,s=...,i=...")
@@ -92,20 +100,22 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
       *   Result.Success((clientFinalMessage, serverSignature)) on success, or Result.Failure(SqlException) on failure
       */
     def clientFinalMessage(serverFirst: String, password: String)(using Frame): Result[SqlException, (String, Array[Byte])] =
-        parseServerFirst(serverFirst).map { case (serverNonce, salt, iterations) =>
-            val saltedPassword     = pbkdf2HmacSha256(password.getBytes(java.nio.charset.StandardCharsets.UTF_8), salt, iterations, 32)
-            val clientKey          = hmacSha256(saltedPassword, "Client Key".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            val storedKey          = sha256(clientKey)
-            val clientFinalWoProof = s"c=$cBindingValue,r=$serverNonce"
-            val authMessage        = s"$clientFirstBare,$serverFirst,$clientFinalWoProof"
-            val clientSignature    = hmacSha256(storedKey, authMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            val clientProof        = PureHash.xor(clientKey, clientSignature)
-            val clientFinal        = s"$clientFinalWoProof,p=${b64encode(clientProof)}"
+        parseServerFirst(serverFirst).flatMap { case (serverNonce, salt, iterations) =>
+            val prepared = Saslprep.prepare(password).getOrElse(password)
+            pbkdf2HmacSha256(prepared.getBytes(java.nio.charset.StandardCharsets.UTF_8), salt, iterations, 32).map { saltedPassword =>
+                val clientKey          = hmacSha256(saltedPassword, "Client Key".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val storedKey          = sha256(clientKey)
+                val clientFinalWoProof = s"c=$cBindingValue,r=$serverNonce"
+                val authMessage        = s"$clientFirstBare,$serverFirst,$clientFinalWoProof"
+                val clientSignature    = hmacSha256(storedKey, authMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val clientProof        = Bytes.xor(clientKey, clientSignature)
+                val clientFinal        = s"$clientFinalWoProof,p=${b64encode(clientProof)}"
 
-            val serverKey = hmacSha256(saltedPassword, "Server Key".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            val serverSig = hmacSha256(serverKey, authMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val serverKey = hmacSha256(saltedPassword, "Server Key".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val serverSig = hmacSha256(serverKey, authMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
-            (clientFinal, serverSig)
+                (clientFinal, serverSig)
+            }
         }
 
     /** Verifies the server's final message signature.
@@ -126,7 +136,7 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
             Result.catching[IllegalArgumentException](b64decode(b64sig))
                 .mapFailure(_ => SqlDecodeScramFormatException("v", b64sig))
                 .flatMap { sig =>
-                    if Span.from(sig).constantTimeEquals(Span.from(expectedServerSignature)) then Result.unit
+                    if ConstantTime.isEqualArrays(sig, expectedServerSignature) then Result.unit
                     else Result.fail(SqlConnectionScramFailedException("server signature mismatch"))
                 }
         else
@@ -172,8 +182,12 @@ abstract private[kyo] class ScramSha256Base(username: String, clientNonce: Strin
     /** SHA-256 hash. Implemented by each concrete subclass using its available crypto backend. */
     private[kyo] def sha256(input: Array[Byte]): Array[Byte]
 
-    /** PBKDF2-HMAC-SHA-256 (RFC 2898 §5.2). Implemented by each concrete subclass using its available crypto backend. */
-    private[kyo] def pbkdf2HmacSha256(password: Array[Byte], salt: Array[Byte], iterations: Int, keyLength: Int): Array[Byte]
+    /** PBKDF2-HMAC-SHA-256 (RFC 2898 §5.2), or the module's failure for an argument the derivation refuses. Implemented by each concrete
+      * subclass using its available crypto backend.
+      */
+    private[kyo] def pbkdf2HmacSha256(password: Array[Byte], salt: Array[Byte], iterations: Int, keyLength: Int)(using
+        Frame
+    ): Result[SqlException, Array[Byte]]
 
     private def b64encode(bytes: Array[Byte]): String =
         Base64.getEncoder.encodeToString(bytes)

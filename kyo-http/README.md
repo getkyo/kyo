@@ -174,13 +174,15 @@ val parts = Seq(
 )
 
 val responseText =
-    HttpClient.withConfig(_.baseUrl("https://api.example.com")) {
-        HttpClient.use { client =>
-            client.sendWith(
-                route,
-                HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
-                    .addField("body", parts)
-            )(_.fields.body)
+    Abort.get(HttpClientConfig.BaseUrl.init("https://api.example.com")).map { api =>
+        HttpClient.withConfig(_.baseUrl(api)) {
+            HttpClient.use { client =>
+                client.sendWith(
+                    route,
+                    HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
+                        .addField("body", parts)
+                )(_.fields.body)
+            }
         }
     }
 ```
@@ -192,20 +194,22 @@ Outbound multipart encoding generates one boundary and applies it to both the `C
 Configuration applies to all client calls within a block through `HttpClient.withConfig`. This is useful for setting a common base URL, timeouts, or retry behavior across multiple requests:
 
 ```scala
-HttpClient.withConfig(
-    _.baseUrl("https://api.example.com")
-        .timeout(10.seconds)
-        .connectTimeout(3.seconds)
-) {
-    for
-        // Requests within this block use the base URL and timeouts above
-        users <- HttpClient.getJson[List[User]]("/users")
-        posts <- HttpClient.getJson[List[Post]]("/posts")
-    yield (users, posts)
+Abort.get(HttpClientConfig.BaseUrl.init("https://api.example.com")).map { api =>
+    HttpClient.withConfig(
+        _.baseUrl(api)
+            .timeout(10.seconds)
+            .connectTimeout(3.seconds)
+    ) {
+        for
+            // Requests within this block use the base URL and timeouts above
+            users <- HttpClient.getJson[List[User]]("/users")
+            posts <- HttpClient.getJson[List[Post]]("/posts")
+        yield (users, posts)
+    }
 }
 ```
 
-With a base URL set, requests can use relative paths instead of repeating the full URL.
+With a base URL set, requests can use relative paths instead of repeating the full URL. `HttpClientConfig.BaseUrl.init` checks the base once: a URL without a scheme, or without a host or Unix socket, fails with an `HttpUrlParseException` naming why. The base's path is a prefix, so `/users` under `https://api.example.com/v1` is `https://api.example.com/v1/users`.
 
 `withConfig(f)` (function form) stacks onto the current config; `withConfig(config)` (value form) replaces it entirely. Same name, opposite behavior.
 
@@ -614,7 +618,7 @@ val handler =
     route.handler { req =>
         checkPermission(req).map {
             case false => Abort.fail(Forbidden("insufficient permissions"))
-            case true =>
+            case true  =>
                 findResource(req.fields.id).map {
                     case Absent       => Abort.fail(NotFound("not found"))
                     case Present(res) => HttpResponse.ok(res)
@@ -706,12 +710,14 @@ They can be attached at several levels:
 
 ```scala
 // Reusable policy carried by HttpClientConfig
-HttpClient.withConfig(
-    HttpClientConfig()
-        .baseUrl("https://api.example.com")
-        .filter(HttpFilter.client.bearerAuth("secret-token"))
-) {
-    HttpClient.getText("/users")
+Abort.get(HttpClientConfig.BaseUrl.init("https://api.example.com")).map { api =>
+    HttpClient.withConfig(
+        HttpClientConfig()
+            .baseUrl(api)
+            .filter(HttpFilter.client.bearerAuth("secret-token"))
+    ) {
+        HttpClient.getText("/users")
+    }
 }
 ```
 
@@ -880,7 +886,7 @@ val echo =
 
 Call `ws.close(code, reason)` to initiate a close handshake (defaults to code `1000`). After the connection closes, `put` and `take` fail with `Abort[Closed]`, and `ws.closeReason` returns the code and reason sent by the peer. `HttpWebSocket.Config` tunes the connection: `bufferSize` (channel capacity, default 32), `maxFrameSize` (default 16 MiB), `autoPingInterval` for keep-alive pings, `closeTimeout`, and `subprotocols`. Pass it to either `HttpClient.webSocket(url, headers, config)` or `HttpHandler.webSocket(path, config)`.
 
-WebSocket-specific failures are represented by `HttpWebSocketException`, with `HttpWebSocketHandshakeException` as the public API leaf for handshake failures. Current client non-101 upgrade validation surfaces `HttpProtocolException`, while filter and `Halt` status rejection surfaces `HttpStatusException`.
+WebSocket-specific failures are represented by `HttpWebSocketException`. A server that answers the upgrade with any status other than 101 fails the client with `HttpWebSocketHandshakeException`, carrying the URL (without its query) and that status; an answer that is not an HTTP/1.x status line, or a 101 with a wrong `Sec-WebSocket-Accept` or an unoffered subprotocol, is an `HttpProtocolException`. A client filter or `Halt` that rejects the upgrade surfaces `HttpStatusException`.
 
 Caution: the backend does not close the outbound channel when the peer goes away. If you compose separate sender and receiver fibers, include `ws.onPeerClose` in the race or those fibers hang when the peer closes the connection:
 
@@ -1217,6 +1223,6 @@ Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test
 - [**EventBus**](shared/src/test/scala/demo/EventBus.scala): posts events via form and JSON bodies and streams them back as NDJSON.
 - [**FileLocker**](shared/src/test/scala/demo/FileLocker.scala): multipart upload and binary download with content-disposition and cache-control.
 - [**StaticSite**](shared/src/test/scala/demo/StaticSite.scala): static file server with catch-all paths, caching, HEAD, and path-traversal protection.
-- [**HackerNews**](shared/src/test/scala/demo/HackerNews.scala): proxy over the HN and Algolia APIs with `baseUrl` config and parallel story fetches.
+- [**HackerNews**](shared/src/test/scala/demo/HackerNews.scala): proxy over the HN and Algolia APIs with timeout config, query parameters and parallel story fetches.
 - [**LinkChecker**](shared/src/test/scala/demo/LinkChecker.scala): client-only demo that extracts page links and checks them concurrently with `Async.foreach`.
 - [**WikiSearch**](shared/src/test/scala/demo/WikiSearch.scala): Wikipedia search proxy showing query-param forwarding and response transformation.

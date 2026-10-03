@@ -4,7 +4,7 @@ import kyo.*
 
 /** API Gateway that aggregates weather (Open-Meteo) and currency (Frankfurter) data.
   *
-  * Demonstrates: typed routes with path/query params, parallel external API calls, client config (baseUrl, timeout), server filters,
+  * Demonstrates: typed routes with path/query params, parallel external API calls, client config (timeout), server filters,
   * OpenAPI generation, error handling.
   *
   * Endpoints: GET /weather/:city - current weather GET /rates?base=USD&to=EUR - exchange rates GET /travel/:city?budget=1000&currency=USD -

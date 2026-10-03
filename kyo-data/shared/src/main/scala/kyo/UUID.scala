@@ -1,17 +1,14 @@
 package kyo
 
-import java.nio.charset.StandardCharsets
-import kyo.internal.Sha1
-import kyo.internal.Sha256
-
 /** A universally unique identifier as specified by RFC 9562 (which obsoletes RFC 4122).
   *
   * A UUID is a 128-bit value, stored here as a pair of `Long`s (the most and least significant 64 bits, matching the layout of
   * `java.util.UUID`). The canonical textual form is the lowercase, hyphenated `8-4-4-4-12` grouping of hex digits, for example
   * `550e8400-e29b-41d4-a716-446655440000`.
   *
-  * This type carries only pure value operations: parsing, formatting, byte conversion, and the deterministic name-based constructors
-  * [[UUID.v5]] and [[UUID.v8Sha256]]. Random and time-based generation (v4, v7) is an effectful capability that lives in `kyo-core`.
+  * This type carries only pure value operations: parsing, formatting and byte conversion. The deterministic name-based constructors
+  * `UUID.v5` and `UUID.v8Sha256` are extension methods in kyo-crypto, which holds the digests they need. Random and time-based generation
+  * (v4, v7) is an effectful capability that lives in `kyo-core`.
   */
 opaque type UUID = UUID.Repr
 
@@ -90,8 +87,6 @@ object UUID:
     private val hexDigits: Array[Char] = "0123456789abcdef".toCharArray
 
     private val urnPrefix = "urn:uuid:"
-
-    private val v8Sha256Domain: Array[Byte] = "kyo.uuid.v8.sha256.v1".getBytes(StandardCharsets.UTF_8)
 
     private def hexValue(c: Char): Int =
         if c >= '0' && c <= '9' then c - '0'
@@ -195,63 +190,14 @@ object UUID:
     end fromByteArray
 
     /** Builds a UUID from the first 16 bytes of a name-based hash, stamping the version nibble and the RFC 9562 variant bits. */
-    private def fromHash(hash: Array[Byte], version: Int): UUID =
+    private[kyo] def fromHash(hash: Span[Byte], version: Int): UUID =
         val bytes = new Array[Byte](16)
-        java.lang.System.arraycopy(hash, 0, bytes, 0, 16)
+        // Unsafe: the hash array is only read.
+        java.lang.System.arraycopy(hash.toArrayUnsafe, 0, bytes, 0, 16)
         bytes(6) = ((bytes(6) & 0x0f) | (version << 4)).toByte
         bytes(8) = ((bytes(8) & 0x3f) | 0x80).toByte
         fromByteArray(bytes)
     end fromHash
-
-    private[kyo] def unsignedIntBytes(value: Int): Array[Byte] =
-        Array(
-            (value >>> 24).toByte,
-            (value >>> 16).toByte,
-            (value >>> 8).toByte,
-            value.toByte
-        )
-    end unsignedIntBytes
-
-    /** Deterministically derives a version 5 UUID from a namespace and a name, per RFC 9562's name-based algorithm.
-      *
-      * The result is `SHA-1(namespace.bytes ++ name)`, truncated to 128 bits with the version nibble set to `5` and the variant bits set
-      * to the RFC 9562 variant. Equal `(namespace, name)` pairs always produce the same UUID.
-      *
-      * @param namespace
-      *   the namespace UUID (for example one of the well-known RFC namespaces)
-      * @param name
-      *   the name to derive the UUID from, encoded as bytes
-      * @return
-      *   the deterministic version 5 UUID
-      */
-    def v5(namespace: UUID, name: Span[Byte]): UUID =
-        val input = Seq(namespace.bytes.toArrayUnsafe, name.toArrayUnsafe)
-        fromHash(Sha1.hashChunks(input), version = 5)
-
-    /** Deterministically derives a version 8 UUID from a namespace and a name using the Kyo `v8Sha256` profile.
-      *
-      * The result hashes `u32be(21) ++ UTF8("kyo.uuid.v8.sha256.v1") ++ namespace.bytes ++ u32be(name.length) ++ name`, truncates the
-      * SHA-256 digest to 128 bits, and sets the version nibble to `8` and the variant bits to the RFC 9562 variant. The unsigned 32-bit
-      * lengths use big-endian encoding. A `Span` length is bounded by `Int`, so every accepted name length has an exact representation.
-      * Equal `(namespace, name)` pairs always produce the same UUID.
-      *
-      * @param namespace
-      *   the namespace UUID
-      * @param name
-      *   the name to derive the UUID from, encoded as bytes
-      * @return
-      *   the deterministic version 8 UUID
-      */
-    def v8Sha256(namespace: UUID, name: Span[Byte]): UUID =
-        val input = Seq(
-            unsignedIntBytes(v8Sha256Domain.length),
-            v8Sha256Domain,
-            namespace.bytes.toArrayUnsafe,
-            unsignedIntBytes(name.size),
-            name.toArrayUnsafe
-        )
-        fromHash(Sha256.hashChunks(input), version = 8)
-    end v8Sha256
 
     extension (self: UUID)
 
@@ -292,7 +238,7 @@ object UUID:
             Span.fromUnsafe(arr)
         end bytes
 
-        /** Returns the version nibble (bits 12-15 of the time_hi_and_version field), e.g. `5` for a [[UUID.v5]] value. */
+        /** Returns the version nibble (bits 12-15 of the time_hi_and_version field), e.g. `5` for a value kyo-crypto's `UUID.v5` built. */
         def version: Int = ((self.msb >>> 12) & 0x0fL).toInt
 
         /** Returns the RFC 9562 variant encoded in this UUID's variant bits. */

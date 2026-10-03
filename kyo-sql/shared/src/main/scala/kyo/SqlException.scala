@@ -545,25 +545,65 @@ final case class SqlRequestRsaOaepException(position: String, tag: String, cause
   * encryption step runs on the fiber's carrier. MySQL's own auto-generated keys are 2048-bit with exponent 65537.
   */
 final case class SqlRequestRsaKeyTooLargeException(
-    component: SqlRequestRsaKeyTooLargeException.Component,
+    component: SqlRsaKeyComponent,
     bits: Int,
     limit: Int
 )(using Frame)
     extends SqlRequestException(
         component match
-            case SqlRequestRsaKeyTooLargeException.Component.Modulus =>
+            case SqlRsaKeyComponent.Modulus =>
                 s"RSA modulus is $bits bits, above the driver's ceiling of $limit"
-            case SqlRequestRsaKeyTooLargeException.Component.Exponent =>
+            case SqlRsaKeyComponent.Exponent =>
                 s"RSA public exponent is $bits bits, above the driver's ceiling of $limit"
     )
 
-object SqlRequestRsaKeyTooLargeException:
-    /** Which of the two key components exceeded its ceiling. */
-    enum Component derives CanEqual:
-        case Modulus
-        case Exponent
-    end Component
-end SqlRequestRsaKeyTooLargeException
+/** Which of the two numbers of a MySQL server's RSA public key a key leaf refused: the modulus `n` or the public exponent `e`, in RFC
+  * 8017's names. Every RSA key leaf carries one, so a caller mapping the leaves to its own diagnostics matches on the component rather
+  * than on the message text; the modulus is checked before the exponent, so a key failing both reports the modulus.
+  *
+  * @see
+  *   [[SqlRequestRsaKeyTooLargeException]], [[SqlRequestRsaKeyTooSmallException]] and [[SqlRequestRsaKeyEvenException]], the leaves
+  *   that carry it
+  */
+enum SqlRsaKeyComponent derives CanEqual:
+
+    /** The modulus `n`, whose bit length is the key size. */
+    case Modulus
+
+    /** The public exponent `e`. */
+    case Exponent
+end SqlRsaKeyComponent
+
+/** The MySQL server offered an RSA public key component too small to protect the password.
+  *
+  * The password is encrypted to this key over a connection that is neither encrypted nor authenticated, so a modulus a passive observer can
+  * factor, or a public exponent of 1 (which makes the encryption the identity) or 0 (a constant), hands the password to whoever reads the
+  * wire. For the modulus `measured` and `minimum` are bit lengths; for the exponent they are the values, the minimum being 3 as RFC 8017
+  * section 3.1 requires.
+  */
+final case class SqlRequestRsaKeyTooSmallException(
+    component: SqlRsaKeyComponent,
+    measured: BigInt,
+    minimum: BigInt
+)(using Frame)
+    extends SqlRequestException(
+        component match
+            case SqlRsaKeyComponent.Modulus =>
+                s"RSA modulus is $measured bits, below the driver's floor of $minimum"
+            case SqlRsaKeyComponent.Exponent =>
+                s"RSA public exponent is $measured, below the minimum of $minimum"
+    )
+
+/** The MySQL server offered an RSA public key whose modulus or public exponent is even, which no RSA key has (RFC 8017 section 3.1): the
+  * key is not a product of two primes with an exponent invertible modulo their totient, so it is a misconfiguration or a tampered packet
+  * rather than a key.
+  */
+final case class SqlRequestRsaKeyEvenException(component: SqlRsaKeyComponent)(using Frame)
+    extends SqlRequestException(
+        component match
+            case SqlRsaKeyComponent.Modulus  => "RSA modulus is even, which no RSA key has"
+            case SqlRsaKeyComponent.Exponent => "RSA public exponent is even, which no RSA key has"
+    )
 
 /** An advisory lock on `key` could not be acquired. `timeout` is the wait budget the caller asked for, absent when the caller asked to wait
   * indefinitely.
