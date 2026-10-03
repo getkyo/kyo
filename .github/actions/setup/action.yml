@@ -1,7 +1,7 @@
 name: setup
 description: >-
-  Provision a kyo build job: JDK + sbt (coursier), the coursier and kyo-browser
-  caches under one key namespace, and conditional Node, native libraries,
+  Provision a kyo build job: JDK + sbt (coursier), the restored coursier and
+  kyo-browser caches, and conditional Node, native libraries,
   rootless podman (Linux), and the Windows build environment. Each conditional
   step is derived from os and target alone; the caller passes no provisioning
   flags. Checkout is the caller's responsibility.
@@ -17,9 +17,12 @@ runs:
   steps:
     # Every target runs the pinned Coursier setup bundle under Node 24. JVM also needs Node for
     # the kyo-test-sbt-publish scripted suite's real Scala.js test binary.
+    # package-manager-cache off: setup-node saves an npm cache on its own once a package.json names a
+    # package manager, and only .github/actions/caches may write caches.
     - uses: actions/setup-node@v7.0.0
       with:
         node-version: '24'
+        package-manager-cache: false
 
     # jsdom for the DOM-backed Scala.js/Wasm unit tests (kyo-ui DomTestEnv); loaded lazily via
     # require, so only suites that install the DOM need it. JS and Wasm only: the helper lives in
@@ -30,27 +33,12 @@ runs:
       shell: bash
       run: npm install --no-save --no-fund --no-audit jsdom@^30
 
-    - uses: actions/cache@v6
-      env:
-        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    # Restore only. The caller saves after its test step, through the same action, because only a push to
+    # main may write and it must write even when a test failed.
+    - uses: ./.github/actions/caches
       with:
-        path: |
-          ~/.cache/coursier
-          ~/Library/Caches/Coursier
-          ~/AppData/Local/Coursier/Cache
-          ~/.sbt
-          ~/.ivy2/cache
-        key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-        restore-keys: deps-${{ inputs.os }}-
-
-    - uses: actions/cache@v6
-      with:
-        path: |
-          ~/.cache/kyo-browser
-          ~/Library/Caches/kyo-browser
-          ~/AppData/Local/kyo-browser
-        key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
-        restore-keys: kyo-browser-${{ inputs.os }}-
+        os: ${{ inputs.os }}
+        mode: restore
 
     - name: Add supplementary swap (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
