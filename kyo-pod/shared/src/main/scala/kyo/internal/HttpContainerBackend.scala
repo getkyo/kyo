@@ -124,8 +124,7 @@ final private[kyo] class HttpContainerBackend(
                                         // treat as permanent, so it takes an actual absence claim in the body to reach it. Which status
                                         // a daemon picks for a failing registry is not something kyo-pod can rely on, so the body is
                                         // what decides here.
-                                        if HttpContainerBackend.bodyNamesRegistryFault(e.body) &&
-                                            !HttpContainerBackend.claimsAbsence(e.body)
+                                        if HttpContainerBackend.bodyNamesServerError(e.body) && !HttpContainerBackend.claimsAbsence(e.body)
                                         then
                                             Abort.fail(ContainerRegistryUnavailableException(
                                                 ctx.describe,
@@ -2927,18 +2926,17 @@ private[kyo] object HttpContainerBackend:
       * registry fault classified that way lands in the bucket nothing retries.
       */
     private[kyo] def isRegistryUnavailable(httpStatus: Int, body: Maybe[String]): Boolean =
-        httpStatus >= 500 || bodyNamesRegistryFault(body)
+        httpStatus >= 500 || bodyNamesServerError(body)
 
-    /** True when the body quotes a server-side status the daemon proxies verbatim from the registry, or reports that its connection to
-      * the registry failed.
+    /** True when the body quotes a server-side status, which the daemon proxies verbatim from the registry.
       *
       * Separate from [[isRegistryUnavailable]] because the status-code half is not usable everywhere: by the time a response has been
       * mapped to a canonical status, the wire status has already been consumed, and only the body still carries the registry's own answer.
       */
-    private[kyo] def bodyNamesRegistryFault(body: Maybe[String]): Boolean =
+    private[kyo] def bodyNamesServerError(body: Maybe[String]): Boolean =
         body.exists { b =>
             val lower = b.toLowerCase
-            DaemonErrorPhrases.ServerError.exists(lower.contains) || DaemonErrorPhrases.RegistryUnreachable.exists(lower.contains)
+            DaemonErrorPhrases.ServerError.exists(lower.contains)
         }
 
     /** True when the body itself claims the resource is absent, in the vocabulary both daemons use.

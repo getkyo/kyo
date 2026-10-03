@@ -314,50 +314,6 @@ class ShellBackendTest extends kyo.BasePodTest:
             val ex = classify("Error: initializing source docker://private/app:1: unauthorized: authentication required")
             assert(ex.isInstanceOf[kyo.ContainerAuthException], s"expected an auth failure, got $ex")
         }
-
-        "a connection to the registry that failed is a registry fault, not a missing image" in {
-            val transport = Seq(
-                "read tcp 10.1.0.4:51234->104.18.123.25:443: read: connection reset by peer",
-                "dial tcp 104.18.123.25:443: i/o timeout",
-                "net/http: TLS handshake timeout",
-                "dial tcp: lookup registry-1.docker.io on 127.0.0.53:53: no such host"
-            )
-            val classes = transport.map { cause =>
-                classify(
-                    "Error: initializing source docker://alpine:latest: pinging container registry registry-1.docker.io: " +
-                        s"Get \"https://registry-1.docker.io/v2/\": $cause"
-                )
-            }
-            assert(
-                classes.forall(_.isInstanceOf[kyo.ContainerRegistryUnavailableException]),
-                s"expected every failed connection to read as a registry fault, got $classes"
-            )
-        }
-    }
-
-    /** The docker CLI prints a failed pull as the daemon's own message, with no status of its own; the HTTP backend types the same
-      * failure from the daemon's 5xx, so both backends must agree that a registry connection that failed is the transient case.
-      */
-    "mapError on a failed docker pull" - {
-        val backend = new ShellBackend("docker")
-        val ctx     = ResourceContext.Image("alpine:latest")
-
-        def classify(output: String)(using Frame): kyo.ContainerException =
-            backend.mapError(output, ctx, Seq("pull", "alpine:latest"))
-
-        // The shape the daemon gave on PR #2064's linux-x64 JVM run, through the docker CLI.
-        "a reset connection to the token service is a registry fault" in {
-            val ex = classify(
-                "Error response from daemon: Get \"https://auth.docker.io/token?scope=repository%3Alibrary%2Falpine%3Apull" +
-                    "&service=registry.docker.io\": read tcp 172.17.0.2:41234->3.94.224.37:443: read: connection reset by peer"
-            )
-            assert(ex.isInstanceOf[kyo.ContainerRegistryUnavailableException], s"expected a registry-unavailable failure, got $ex")
-        }
-
-        "an image the registry answered for is still a missing image" in {
-            val ex = classify("Error response from daemon: manifest for alpine:nope not found: manifest unknown: manifest unknown")
-            assert(ex.isInstanceOf[kyo.ContainerImageMissingException], s"expected a missing image, got $ex")
-        }
     }
 
 end ShellBackendTest
