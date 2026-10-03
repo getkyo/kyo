@@ -138,7 +138,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
 
             Scope.run {
                 withServer(redirect, seen) { url =>
-                    HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                         HttpClient.init().map { httpClient =>
                             val request = HttpRequest
                                 .postRaw(HttpUrl(url.scheme, url.host, url.port, "/multipart-start", Absent))
@@ -420,7 +420,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(startEp, targetEp) { url =>
                 var called = false
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.initUnscoped().map { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/start", Absent))
                         hc.sendWith(startRoute, request) { resp =>
@@ -673,7 +673,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.initUnscoped(maxConnectionsPerHost = 2).map { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
                         // Make 5 sequential requests — pool should reuse connections
@@ -762,7 +762,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val response = "HTTP/1.1 302 Found\r\nLocation: http://münchen.de/\r\nContent-Length: 0\r\n\r\n"
         Scope.run {
             withRawPeer(response) { port =>
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.use { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
                         Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {
@@ -784,7 +784,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val response = "HTTP/1.1 302 Found\r\nLocation: /café\r\nContent-Length: 0\r\n\r\n"
         Scope.run {
             withRawPeer(response) { port =>
-                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                HttpClient.withConfig(HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)) {
                     HttpClient.use { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
                         Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {

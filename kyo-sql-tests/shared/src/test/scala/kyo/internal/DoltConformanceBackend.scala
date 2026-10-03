@@ -197,7 +197,7 @@ final class DoltConformanceBackend extends ContainerConformanceBackend(new DoltB
 
     def provision[A, S](f: SqlConformanceBackend.Schema => A < S)(using
         Frame
-    ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+    ): A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         // Scope kyo-pod's podman/docker HttpClient to the leaf: the ambient client's idle pool accumulates a unix
         // socket per container call and trips the fd leak check.
         HttpClient.init().flatMap(scoped => HttpClient.let(scoped)(withFreshSchemaBody(f)))

@@ -241,7 +241,7 @@ final class MysqlConformanceBackend extends ContainerConformanceBackend(new Mysq
 
     def provision[A, S](f: SqlConformanceBackend.Schema => A < S)(using
         Frame
-    ): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+    ): A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         // Scope kyo-pod's podman/docker HttpClient to the leaf. Without this, the ambient process-shared
         // HttpClient's 60-second idle-connection pool accumulates one unix socket per (mappedPort, wait,
         // remove) call and trips the end-of-run file-descriptor leak check on Linux CI.

@@ -162,27 +162,28 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
-            Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
-                serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
-                    f1.get.map { resp1 =>
-                        // resp1's body is still in flight (no terminal sent). Keep a live partial chunk on the wire so a
-                        // stale decoder would be engaged.
-                        Sync.Unsafe.defer(discard(serverConn1.outbound.offer(spanOf("6\r\nch")))).andThen {
-                            // Serve the second request on whichever connection carries it: a bug reuses poisoned conn1,
-                            // correct opens conn2.
-                            Fiber.init(serveOnce(serverConn1, Seq(plainHeaders, plainBody))).map { _ =>
-                                Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
-                                    Abort.run[HttpException](backend.sendWithConfig(plainRoute, plainReq, config)(r => r)).map {
-                                        case Result.Success(resp2) =>
-                                            assert(
-                                                resp2.fields.body == plainBody,
-                                                s"second request received another response's bytes: '${resp2.fields.body}'"
-                                            )
-                                        case other =>
-                                            fail(
-                                                s"second request must succeed with its own body while a streaming body is in flight, got: $other"
-                                            )
+            Abort.get(HttpClientConfig().timeout(60.seconds)).map { config =>
+                Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
+                    serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
+                        f1.get.map { resp1 =>
+                            // resp1's body is still in flight (no terminal sent). Keep a live partial chunk on the wire so a
+                            // stale decoder would be engaged.
+                            Sync.Unsafe.defer(discard(serverConn1.outbound.offer(spanOf("6\r\nch")))).andThen {
+                                // Serve the second request on whichever connection carries it: a bug reuses poisoned conn1,
+                                // correct opens conn2.
+                                Fiber.init(serveOnce(serverConn1, Seq(plainHeaders, plainBody))).map { _ =>
+                                    Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
+                                        Abort.run[HttpException](backend.sendWithConfig(plainRoute, plainReq, config)(r => r)).map {
+                                            case Result.Success(resp2) =>
+                                                assert(
+                                                    resp2.fields.body == plainBody,
+                                                    s"second request received another response's bytes: '${resp2.fields.body}'"
+                                                )
+                                            case other =>
+                                                fail(
+                                                    s"second request must succeed with its own body while a streaming body is in flight, got: $other"
+                                                )
+                                        }
                                     }
                                 }
                             }
@@ -198,19 +199,20 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
-            Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
-                serveOnce(serverConn1, Seq(streamHeaders, chunk1, chunk2AndEnd)).andThen {
-                    f1.get.map { resp1 =>
-                        resp1.fields.body.run.map { chunks =>
-                            assert(chunks.foldLeft("")(_ + spanToString(_)) == "chunk1chunk2")
-                            Fiber.init(serveOnce(serverConn1, Seq(plainHeaders, plainBody))).map { _ =>
-                                backend.sendWithConfig(plainRoute, plainReq, config)(r => r).map { resp2 =>
-                                    assert(resp2.fields.body == plainBody)
-                                    assert(
-                                        transport.connectCount == 1,
-                                        "the drained connection must be pooled and reused, not replaced"
-                                    )
+            Abort.get(HttpClientConfig().timeout(60.seconds)).map { config =>
+                Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
+                    serveOnce(serverConn1, Seq(streamHeaders, chunk1, chunk2AndEnd)).andThen {
+                        f1.get.map { resp1 =>
+                            resp1.fields.body.run.map { chunks =>
+                                assert(chunks.foldLeft("")(_ + spanToString(_)) == "chunk1chunk2")
+                                Fiber.init(serveOnce(serverConn1, Seq(plainHeaders, plainBody))).map { _ =>
+                                    backend.sendWithConfig(plainRoute, plainReq, config)(r => r).map { resp2 =>
+                                        assert(resp2.fields.body == plainBody)
+                                        assert(
+                                            transport.connectCount == 1,
+                                            "the drained connection must be pooled and reused, not replaced"
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -226,35 +228,36 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
-            Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
-                serveOnce(serverConn1, streamHeaders +: Seq.fill(backlogChunks)(chunk1)).andThen {
-                    f1.get.map { resp1 =>
-                        Latch.init(1).map { firstChunk =>
-                            Latch.init(1).map { holdConsumer =>
-                                Fiber.init(resp1.fields.body.foreachChunk(_ => firstChunk.release.andThen(holdConsumer.await))).map {
-                                    consumer =>
-                                        firstChunk.await.andThen {
-                                            // The consumer holds after its first chunk, so the decoder is parked on a put against a full
-                                            // channel and no terminal chunk is coming. Interrupting closes that channel under the parked
-                                            // put, so the discard is forced rather than racing the finalizer against the next delivery.
-                                            consumer.interrupt.unit.andThen {
-                                                clientConn1.onClosing.safe.get.andThen {
-                                                    Sync.Unsafe.defer(clientConn1.isOpen).map { open =>
-                                                        assert(!open, "a tainted streaming connection must be closed, not pooled")
-                                                        Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
-                                                            backend.sendWithConfig(plainRoute, plainReq, config)(r => r).map { resp2 =>
-                                                                assert(resp2.fields.body == plainBody)
-                                                                assert(
-                                                                    transport.connectCount == 2,
-                                                                    "the request after a discard must open a fresh connection"
-                                                                )
+            Abort.get(HttpClientConfig().timeout(60.seconds)).map { config =>
+                Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
+                    serveOnce(serverConn1, streamHeaders +: Seq.fill(backlogChunks)(chunk1)).andThen {
+                        f1.get.map { resp1 =>
+                            Latch.init(1).map { firstChunk =>
+                                Latch.init(1).map { holdConsumer =>
+                                    Fiber.init(resp1.fields.body.foreachChunk(_ => firstChunk.release.andThen(holdConsumer.await))).map {
+                                        consumer =>
+                                            firstChunk.await.andThen {
+                                                // The consumer holds after its first chunk, so the decoder is parked on a put against a full
+                                                // channel and no terminal chunk is coming. Interrupting closes that channel under the parked
+                                                // put, so the discard is forced rather than racing the finalizer against the next delivery.
+                                                consumer.interrupt.unit.andThen {
+                                                    clientConn1.onClosing.safe.get.andThen {
+                                                        Sync.Unsafe.defer(clientConn1.isOpen).map { open =>
+                                                            assert(!open, "a tainted streaming connection must be closed, not pooled")
+                                                            Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
+                                                                backend.sendWithConfig(plainRoute, plainReq, config)(r => r).map { resp2 =>
+                                                                    assert(resp2.fields.body == plainBody)
+                                                                    assert(
+                                                                        transport.connectCount == 2,
+                                                                        "the request after a discard must open a fresh connection"
+                                                                    )
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                        }
+                                    }
                                 }
                             }
                         }

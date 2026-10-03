@@ -111,6 +111,8 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
   * @see
   *   [[kyo.HttpInvalidFieldException]] A field name is not a token, or a field carries a control character
   * @see
+  *   [[kyo.HttpCookieException]] A cookie breaks the RFC 6265 grammar
+  * @see
   *   [[kyo.HttpStatusException]] Non-success status code when the response body can't be decoded
   */
 sealed abstract class HttpRequestException(message: String, cause: String | Throwable = "")(using Frame)
@@ -195,6 +197,26 @@ case class HttpInvalidFieldException private[kyo] (field: String)(using Frame)
            |  header line as two. Remove the offending characters before sending.""".stripMargin
     )
 
+/** A cookie whose name, encoded value, Domain or Path breaks the RFC 6265 section 4.1.1 grammar, refused before it reaches a `Cookie` or
+  * `Set-Cookie` header.
+  *
+  * The grammar defines no escape, so there is nothing to encode such a cookie to: a ';' in a value would write another cookie pair or another
+  * attribute, and a CR or LF would end the header. A caller holding content that may not qualify tests it with
+  * [[kyo.HttpHeaders.isValidCookieName]], [[kyo.HttpHeaders.isValidCookieValue]] and [[kyo.HttpHeaders.isValidCookieAttribute]], or
+  * encodes it into an opaque token, base64 being the usual choice.
+  *
+  * `part` names the offending element (for example "the value of cookie 'session'") but never carries its value, which is usually a
+  * credential, and never quotes back a name that is not a token.
+  */
+case class HttpCookieException private[kyo] (part: String)(using Frame)
+    extends HttpRequestException(
+        s"""Cannot write $part: it breaks the RFC 6265 section 4.1.1 cookie grammar.
+           |
+           |  A cookie name must be a token, and a cookie value must carry no control,
+           |  whitespace, '"', ',', ';' or '\\'. A Domain or Path must carry no control
+           |  and no ';'. Encode arbitrary content, base64 being the usual choice.""".stripMargin
+    )
+
 /** Non-success status code when the response body can't be decoded. */
 case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
     extends HttpRequestException(
@@ -215,6 +237,8 @@ end HttpStatusException
   * @see
   *   [[kyo.HttpBindException]] Server failed to bind to a port
   * @see
+  *   [[kyo.HttpRouteException]] A route the server cannot serve
+  * @see
   *   [[kyo.HttpHandlerException]] Unhandled error from a route handler
   */
 sealed abstract class HttpServerException(message: String, cause: String | Throwable = "")(using Frame)
@@ -228,6 +252,11 @@ case class HttpBindException(host: String, port: Int, cause: Throwable)(using Fr
            |  Is another process already using port $port?""".stripMargin,
         cause
     )
+
+/** A route a server cannot serve, refused when the server starts. `route` is the method and path pattern, and `detail` is the rule it breaks.
+  */
+case class HttpRouteException private[kyo] (route: String, detail: String)(using Frame)
+    extends HttpServerException(s"Cannot serve route $route: $detail")
 
 /** Unhandled error from a route handler. */
 case class HttpHandlerException(error: Any)(using Frame)
@@ -247,6 +276,10 @@ case class HttpHandlerException(error: Any)(using Frame)
   *
   * @see
   *   [[kyo.HttpUrlParseException]] Failed to parse a URL
+  * @see
+  *   [[kyo.HttpConfigException]] A configuration limit refused a value
+  * @see
+  *   [[kyo.HttpInvalidStatusException]] A status code outside 100 to 599
   * @see
   *   [[kyo.HttpPathDecodeException]] Failed to decode a path capture
   * @see
@@ -324,6 +357,16 @@ object HttpUrlParseException:
                 case InvalidPercentEncoding(position) => s"the '%' at position $position does not start a two-hex-digit escape"
     end Reason
 end HttpUrlParseException
+
+/** A configuration value kyo-http refused: a limit of [[HttpClientConfig]], [[HttpTransportConfig]] or [[HttpClient.init]]. `setting` names
+  * it, `value` is what was given, and `rule` is what it must be.
+  */
+case class HttpConfigException private[kyo] (setting: String, value: String, rule: String)(using Frame)
+    extends HttpDecodeException(s"Invalid $setting: $value. It must be $rule.")
+
+/** A status code outside 100 to 599, refused by [[HttpStatus.init]]. */
+case class HttpInvalidStatusException private[kyo] (code: Int)(using Frame)
+    extends HttpDecodeException(s"Invalid HTTP status code: $code. It must be between 100 and 599.")
 
 /** A message body could not be decoded because its transfer framing is malformed: a chunk-size line with an embedded
   * CR or LF, a bare-LF line ending, an invalid chunk size, or a missing CRLF after chunk data. Accepting such framing

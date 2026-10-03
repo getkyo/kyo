@@ -264,12 +264,44 @@ private[kyo] object Http1StreamContext:
     /** Pre-cached status line bytes for common HTTP status codes. Avoids Int.toString and string concat allocations on every response. */
     val statusLineCache: Array[Array[Byte]] =
         val arr = new Array[Array[Byte]](600)
-        for code <- Seq(100, 101, 200, 201, 202, 204, 301, 302, 303, 304, 307, 308,
-                400, 401, 403, 404, 405, 408, 409, 410, 411, 413, 414, 415,
-                417, 418, 422, 429, 500, 501, 502, 503, 504)
+        for status <- Seq(
+                HttpStatus.Continue,
+                HttpStatus.SwitchingProtocols,
+                HttpStatus.OK,
+                HttpStatus.Created,
+                HttpStatus.Accepted,
+                HttpStatus.NoContent,
+                HttpStatus.MovedPermanently,
+                HttpStatus.Found,
+                HttpStatus.SeeOther,
+                HttpStatus.NotModified,
+                HttpStatus.TemporaryRedirect,
+                HttpStatus.PermanentRedirect,
+                HttpStatus.BadRequest,
+                HttpStatus.Unauthorized,
+                HttpStatus.Forbidden,
+                HttpStatus.NotFound,
+                HttpStatus.MethodNotAllowed,
+                HttpStatus.RequestTimeout,
+                HttpStatus.Conflict,
+                HttpStatus.Gone,
+                HttpStatus.LengthRequired,
+                HttpStatus.PayloadTooLarge,
+                HttpStatus.URITooLong,
+                HttpStatus.UnsupportedMediaType,
+                HttpStatus.ExpectationFailed,
+                HttpStatus.ImATeapot,
+                HttpStatus.UnprocessableEntity,
+                HttpStatus.TooManyRequests,
+                HttpStatus.InternalServerError,
+                HttpStatus.NotImplemented,
+                HttpStatus.BadGateway,
+                HttpStatus.ServiceUnavailable,
+                HttpStatus.GatewayTimeout
+            )
         do
-            val line = s"HTTP/1.1 $code ${reasonPhrase(HttpStatus(code))}\r\n"
-            arr(code) = line.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+            val line = s"HTTP/1.1 ${status.code} ${reasonPhrase(status)}\r\n"
+            arr(status.code) = line.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
         end for
         arr
     end statusLineCache

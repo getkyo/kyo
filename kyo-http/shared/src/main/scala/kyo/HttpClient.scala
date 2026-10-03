@@ -13,7 +13,8 @@ import kyo.internal.transport.NetConfigTranslation
   * The active client and its configuration live in fiber-local storage via `Local`. All companion-object methods (`getJson`, `postJson`,
   * etc.) use a shared default client. To scope a custom client or configuration to a block of code:
   *   - `HttpClient.let(client) { ... }`: install a specific client instance for the duration
-  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`: transform the config (stacks with the current config)
+  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`: transform the config (stacks with the current config); a refused limit
+  *     aborts with an [[kyo.HttpConfigException]]
   *   - `HttpClient.withConfig(config) { ... }`: replace the config entirely (discards current config)
   *   - `HttpClient.withFilter(filter) { ... }`: add a scoped client filter for outgoing requests
   *   - `HttpClient.withoutFilters { ... }`: clear configured client filters for a nested scope
@@ -133,10 +134,20 @@ object HttpClient:
     def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((f(client), config))(v) }
 
-    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config,      * `withConfig(_.timeout(5.seconds)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both timeout and retry set.
+    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config, so
+      * `withConfig(_.followRedirects(false)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both set.
       */
     def withConfig[A, S](f: HttpClientConfig => HttpClientConfig)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((client, f(config)))(v) }
+
+    /** Like the function overload, for a transform through a setter that checks its value, such as `_.timeout(10.seconds)`. A refused value
+      * fails the computation with the [[kyo.HttpConfigException]] naming it, before `v` runs.
+      */
+    @scala.annotation.targetName("withCheckedConfig")
+    def withConfig[A, S](f: HttpClientConfig => Result[HttpConfigException, HttpClientConfig])(v: A < S)(using
+        Frame
+    ): A < (S & Abort[HttpConfigException]) =
+        local.use { (client, config) => Abort.get(f(config)).map(checked => local.let((client, checked))(v)) }
 
     /** Replaces the config entirely for all `HttpClient` calls within the given computation. Unlike the function overload, this does not
       * stack, it discards the current config.
@@ -169,13 +180,15 @@ object HttpClient:
       * It is a construction-time setting because the connection pool is built once and shared across all requests; a per-request override could not
       * rebuild a pooled transport. The transport itself is process-shared across every client and server using the same settings, so closing a
       * client closes its pool and connections but never the transport.
+      *
+      * Fails with [[kyo.HttpConfigException]] when `maxConnectionsPerHost` is not positive or `idleConnectionTimeout` is zero.
       */
     def init(
         maxConnectionsPerHost: Int = 100,
         idleConnectionTimeout: Duration = 60.seconds,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
-    )(using Frame): HttpClient < (Async & Scope) =
+    )(using Frame): HttpClient < (Async & Scope & Abort[HttpConfigException]) =
         Scope.acquireRelease(initUnscoped(
             maxConnectionsPerHost,
             idleConnectionTimeout,
@@ -185,19 +198,24 @@ object HttpClient:
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
       * unless you need manual control. See [[init]] for the meaning of `transportConfig`.
+      *
+      * Fails with [[kyo.HttpConfigException]] when `maxConnectionsPerHost` is not positive or `idleConnectionTimeout` is zero.
       */
     def initUnscoped(
         maxConnectionsPerHost: Int = 100,
         idleConnectionTimeout: Duration = 60.seconds,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
-    )(using frame: Frame): HttpClient < Sync =
-        require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
-        require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
-        Sync.Unsafe.defer {
-            val transport = kyo.net.NetPlatform.transport
-            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
-        }
+    )(using frame: Frame): HttpClient < (Sync & Abort[HttpConfigException]) =
+        if maxConnectionsPerHost <= 0 then
+            Abort.fail(HttpConfigException("maxConnectionsPerHost", maxConnectionsPerHost.toString, "one or more"))
+        else if idleConnectionTimeout <= Duration.Zero then
+            Abort.fail(HttpConfigException("idleConnectionTimeout", idleConnectionTimeout.show, "positive"))
+        else
+            Sync.Unsafe.defer {
+                val transport = kyo.net.NetPlatform.transport
+                initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
+            }
     end initUnscoped
 
     // ==================== JSON methods ====================
@@ -809,7 +827,7 @@ object HttpClient:
                 clientConfig.baseUrl.fold(url)(base => HttpUrl.underBase(base.url, url)),
                 headers,
                 config,
-                clientConfig.connectTimeout,
+                clientConfig.connectTimeout.duration,
                 clientConfig.clientFilter,
                 clientConfig.autoFilters
             )(f)
@@ -829,7 +847,7 @@ object HttpClient:
     )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
         local.use { (client, clientConfig) =>
             resolveUrl(url).map(parsed =>
-                client.connectRaw(parsed, method, body, resolveHeaders(headers), clientConfig.connectTimeout)
+                client.connectRaw(parsed, method, body, resolveHeaders(headers), clientConfig.connectTimeout.duration)
             )
         }
 

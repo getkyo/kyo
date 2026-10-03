@@ -9,8 +9,9 @@ import scala.annotation.tailrec
   * `Redirect` (3xx), `ClientError` (4xx), and `ServerError` (5xx) — plus a `Custom` case for non-standard codes. All standard cases are
   * exported to the companion object so they can be referenced directly as `HttpStatus.OK`, `HttpStatus.NotFound`, etc.
   *
-  * Use `HttpStatus(code)` to resolve an integer to its known enum case, or wrap it in `Custom` when no standard case matches. Use
-  * `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
+  * Use `HttpStatus(code)` with a literal to resolve it to its known enum case, or a `Custom` when no standard case matches; the literal is
+  * checked at compile time. A code known only at runtime goes through `HttpStatus.init(code)`, which refuses one outside 100 to 599 with an
+  * [[kyo.HttpInvalidStatusException]]. Use `HttpStatus.resolve(code)` when you want to express absence rather than fall back to `Custom`.
   *
   * The classification predicates (`isSuccess`, `isClientError`, etc.) are useful for writing retry policies and filter conditions without
   * matching on concrete cases.
@@ -115,19 +116,32 @@ object HttpStatus:
         case _   => Absent
     end standard
 
-    /** Resolve an HTTP status code. Returns the known enum case if one exists, otherwise wraps in `Custom`. */
-    def apply(code: Int): HttpStatus =
-        require(code >= 100 && code <= 599, s"Invalid HTTP status code: $code")
-        standard(code) match
-            case Present(s) => s
-            case Absent     => Custom(code)
-    end apply
+    /** The status for a literal `code`: the standard case if one exists, otherwise a `Custom`.
+      *
+      * The code is checked at compile time, so a literal outside 100 to 599 does not compile. An argument that is not a constant does not
+      * compile either ("Cannot reduce `inline if`"): a code known only at runtime goes through [[init]].
+      */
+    inline def apply(inline code: Int): HttpStatus =
+        inline if code < 100 || code > 599 then compiletime.error("HttpStatus code must be between 100 and 599")
+        else fromValidCode(code)
+
+    /** The status for `code`, or the [[kyo.HttpInvalidStatusException]] refusing a code outside 100 to 599. */
+    def init(code: Int)(using Frame): Result[HttpInvalidStatusException, HttpStatus] =
+        if code < 100 || code > 599 then Result.fail(HttpInvalidStatusException(code))
+        else Result.succeed(fromValidCode(code))
 
     def resolve(code: Int): Maybe[HttpStatus] =
         standard(code)
 
-    /** Status code not covered by the standard enums. */
-    final case class Custom(override val code: Int) extends HttpStatus(code)
+    private def fromValidCode(code: Int): HttpStatus =
+        standard(code) match
+            case Present(s) => s
+            case Absent     => Custom(code)
+
+    /** Status code not covered by the standard enums. Built only through `apply` and `init`, so it never holds a code outside 100 to 599
+      * or one a standard case covers.
+      */
+    final case class Custom private[HttpStatus] (override val code: Int) extends HttpStatus(code)
 
     // Exported by name. A wildcard emits one forwarder per member in an order the compiler does not
     // fix, so two clean builds of identical sources produce different artifacts. The enums are large

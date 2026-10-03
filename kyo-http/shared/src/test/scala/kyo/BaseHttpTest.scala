@@ -12,7 +12,7 @@ abstract class BaseHttpTest extends kyo.test.Test[Any]:
     def initTrustAllClient(
         maxConnectionsPerHost: Int = 100,
         idleConnectionTimeout: Duration = 60.seconds
-    )(using Frame): HttpClient < (Async & Scope) =
+    )(using Frame): HttpClient < (Async & Scope & Abort[HttpConfigException]) =
         HttpClient.init(maxConnectionsPerHost, idleConnectionTimeout, HttpTlsConfig(trustAll = true))
 
     /** Polls until `condition` holds, giving up after a bound that only exists so a broken subject fails instead of spinning forever. The

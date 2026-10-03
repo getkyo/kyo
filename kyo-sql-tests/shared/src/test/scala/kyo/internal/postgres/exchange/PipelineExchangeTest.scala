@@ -22,7 +22,9 @@ class PipelineExchangeTest extends SqlContainerTest:
     /** Runs a block with a single SqlClient connected to the Postgres container. */
     private def withPg[A, S](
         f: SqlClient => A < (S & Async & Abort[SqlException] & DB)
-    )(using Frame): A < (S & Async & Scope & Abort[SqlException] & Abort[SqlConnectionException] & Abort[ContainerException]) =
+    )(using
+        Frame
+    ): A < (S & Async & Scope & Abort[SqlException] & Abort[SqlConnectionException] & Abort[ContainerException | HttpConfigException]) =
         SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
             val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
             SqlClient.init(url).flatMap { client =>

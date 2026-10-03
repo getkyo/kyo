@@ -1314,7 +1314,7 @@ The page reconnects on its own. A dropped or refused socket is retried under cap
 import UI.*
 import kyo.*
 
-val server: Unit < (Async & Scope & Abort[HttpBindException]) =
+val server: Unit < (Async & Scope & Abort[HttpBindException | HttpRouteException]) =
     for
         counter <- Signal.initRef(0)
         page = div(

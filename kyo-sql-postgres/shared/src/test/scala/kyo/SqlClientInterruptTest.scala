@@ -131,7 +131,7 @@ class SqlClientInterruptTest extends SqlContainerTest:
       */
     private def containerUrl[A](appName: String)(f: String => A < (Async & Abort[SqlException] & Scope))(using
         Frame
-    ): A < (Async & Abort[SqlException | ContainerException] & Scope) =
+    ): A < (Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         val cfg = ContainerPredef.Postgres.Config.default
         HttpClient.init().flatMap { httpClient =>
             HttpClient.let(httpClient) {

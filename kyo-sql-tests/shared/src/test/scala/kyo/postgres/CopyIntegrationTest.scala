@@ -43,7 +43,7 @@ class CopyIntegrationTest extends SqlContainerTest:
       */
     private def withPg[A, S](
         f: PostgresClient => A < (S & Async & Abort[SqlException])
-    )(using Frame): A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+    )(using Frame): A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
             val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
             PostgresClient.initWith(url)(f)

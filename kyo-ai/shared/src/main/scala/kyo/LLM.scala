@@ -685,29 +685,31 @@ object LLM:
                     // fiber boundary and is re-raised below, so a typed leaf stays typed and only the deadline
                     // itself uses the error channel.
                     Abort.run[AIGenException] {
-                        HttpClient.withConfig(_.timeout(config.timeout)) {
-                            Abort.run[Closed] {
-                                config.provider
-                                    .completion(config, context, allTools, Present(resultSchema))
-                                    .handle(
-                                        // One retry policy for both backend families. A raw HttpException is
-                                        // classified into the module's typed leaves BEFORE the retry clause
-                                        // sees it, so the clause names AITransientException alone: transport
-                                        // blips, transient outages, and throttles retry; auth failures,
-                                        // timeouts, and rejected requests surface without retry. Command
-                                        // harnesses classify into the same leaves. A throttle's Retry-After
-                                        // is waited out, under the deadline, before the schedule's backoff.
-                                        Abort.recover[HttpException](e =>
-                                            Abort.fail(Completion.classifyHttp(config, e))
-                                        )(_),
-                                        config.meter.run,
-                                        Completion.awaitRetryAfter(config.timeout)(_),
-                                        Retry[AITransientException](config.retrySchedule)(_)
-                                    )
-                            }.map {
-                                case Result.Success(r) => r
-                                case Result.Failure(_) => Abort.panic(AIMeterClosedException())
-                                case Result.Panic(ex)  => Abort.panic(ex)
+                        Abort.recover[HttpConfigException](e => Abort.fail(Completion.classifyHttp(config, e))) {
+                            HttpClient.withConfig(_.timeout(config.timeout)) {
+                                Abort.run[Closed] {
+                                    config.provider
+                                        .completion(config, context, allTools, Present(resultSchema))
+                                        .handle(
+                                            // One retry policy for both backend families. A raw HttpException is
+                                            // classified into the module's typed leaves BEFORE the retry clause
+                                            // sees it, so the clause names AITransientException alone: transport
+                                            // blips, transient outages, and throttles retry; auth failures,
+                                            // timeouts, and rejected requests surface without retry. Command
+                                            // harnesses classify into the same leaves. A throttle's Retry-After
+                                            // is waited out, under the deadline, before the schedule's backoff.
+                                            Abort.recover[HttpException](e =>
+                                                Abort.fail(Completion.classifyHttp(config, e))
+                                            )(_),
+                                            config.meter.run,
+                                            Completion.awaitRetryAfter(config.timeout)(_),
+                                            Retry[AITransientException](config.retrySchedule)(_)
+                                        )
+                                }.map {
+                                    case Result.Success(r) => r
+                                    case Result.Failure(_) => Abort.panic(AIMeterClosedException())
+                                    case Result.Panic(ex)  => Abort.panic(ex)
+                                }
                             }
                         }
                     }

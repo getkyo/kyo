@@ -227,7 +227,24 @@ private[kyo] object HttpRouter:
         HttpHandler.wrapHeaders(handler, headers)
     end wrapWithCors
 
-    def apply(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[HttpServerConfig.Cors]): HttpRouter =
+    /** The router for `endpointSeq`, or the [[kyo.HttpRouteException]] naming a route whose `Capture.Rest` is not its last segment. */
+    def init(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[HttpServerConfig.Cors])(using
+        Frame
+    ): Result[HttpRouteException, HttpRouter] =
+        Maybe.fromOption(endpointSeq.find { ep =>
+            val segments = pathToSegments(ep.route.request.path)
+            val restIdx  = segments.indexOf(Segment.Rest)
+            restIdx >= 0 && restIdx < segments.size - 1
+        }) match
+            case Present(ep) =>
+                Result.fail(HttpRouteException(
+                    s"${ep.route.method.name} ${ep.route.request.path.show}",
+                    "Rest capture must be the last segment in a path"
+                ))
+            case Absent => Result.succeed(build(endpointSeq, cors))
+    end init
+
+    private def build(endpointSeq: Seq[HttpHandler[?, ?, ?]], cors: Maybe[HttpServerConfig.Cors]): HttpRouter =
         val handlers = cors match
             case Present(c) => endpointSeq.map(wrapWithCors(_, c))
             case Absent     => endpointSeq
@@ -236,16 +253,7 @@ private[kyo] object HttpRouter:
             new HttpRouter(Span(emptyNode), Span.empty, Span.empty, Span.empty, Span.empty, Span.empty, cors)
         else
             val root = new MutableNode()
-            handlers.foreach { ep =>
-                val segments = pathToSegments(ep.route.request.path)
-                val restIdx  = segments.indexOf(Segment.Rest)
-                if restIdx >= 0 && restIdx < segments.size - 1 then
-                    throw new IllegalArgumentException(
-                        s"Rest capture must be the last segment in a path, but found trailing segments in route: ${ep.route.method} ${ep.route.request.path}"
-                    )
-                end if
-                insert(root, segments, ep.route.method, ep)
-            }
+            handlers.foreach(ep => insert(root, pathToSegments(ep.route.request.path), ep.route.method, ep))
 
             val (nodeCount, epCount) = countNodes(root)
 
@@ -268,7 +276,7 @@ private[kyo] object HttpRouter:
                 cors
             )
         end if
-    end apply
+    end build
 
     // ==================== Node ====================
 

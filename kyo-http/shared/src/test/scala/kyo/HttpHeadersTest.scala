@@ -190,40 +190,45 @@ class HttpHeadersTest extends BaseHttpTest:
     }
 
     "addCookie" - {
+        def added(result: Result[HttpCookieException, HttpHeaders])(using Frame, kyo.test.AssertScope): HttpHeaders =
+            result match
+                case Result.Success(h) => h
+                case other             => fail(s"expected the cookie to be added, got $other")
+
         "serializes simple cookie" in {
-            val h = HttpHeaders.empty.addCookie("session", HttpCookie("abc123"))
+            val h = added(HttpHeaders.empty.addCookie("session", HttpCookie("abc123")))
             assert(h.get("Set-Cookie") == Present("session=abc123"))
         }
 
         "serializes cookie with maxAge" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("val").maxAge(1.hours))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("val").maxAge(1.hours)))
             val v = h.get("Set-Cookie")
             assert(v.exists(_.contains("id=val")))
             assert(v.exists(_.contains("Max-Age=3600")))
         }
 
         "serializes cookie with domain" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").domain("example.com"))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v").domain("example.com")))
             assert(h.get("Set-Cookie").exists(_.contains("Domain=example.com")))
         }
 
         "serializes cookie with path" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").path("/api"))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v").path("/api")))
             assert(h.get("Set-Cookie").exists(_.contains("Path=/api")))
         }
 
         "serializes secure flag" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").secure(true))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v").secure(true)))
             assert(h.get("Set-Cookie").exists(_.contains("Secure")))
         }
 
         "serializes httpOnly flag" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").httpOnly(true))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v").httpOnly(true)))
             assert(h.get("Set-Cookie").exists(_.contains("HttpOnly")))
         }
 
         "serializes sameSite" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v").sameSite(HttpCookie.SameSite.Strict))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v").sameSite(HttpCookie.SameSite.Strict)))
             assert(h.get("Set-Cookie").exists(_.contains("SameSite=Strict")))
         }
 
@@ -235,7 +240,7 @@ class HttpHeadersTest extends BaseHttpTest:
                 .secure(true)
                 .httpOnly(true)
                 .sameSite(HttpCookie.SameSite.Lax)
-            val h = HttpHeaders.empty.addCookie("session", cookie)
+            val h = added(HttpHeaders.empty.addCookie("session", cookie))
             val v = h.get("Set-Cookie").get
             assert(v.contains("session=token"))
             assert(v.contains("Max-Age=86400"))
@@ -247,7 +252,7 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "omits unset attributes" in {
-            val h = HttpHeaders.empty.addCookie("id", HttpCookie("v"))
+            val h = added(HttpHeaders.empty.addCookie("id", HttpCookie("v")))
             val v = h.get("Set-Cookie").get
             assert(v == "id=v")
             assert(!v.contains("Max-Age"))
@@ -259,14 +264,12 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "string value shorthand" in {
-            val h = HttpHeaders.empty.addCookie("name", "value")
+            val h = added(HttpHeaders.empty.addCookie("name", "value"))
             assert(h.get("Set-Cookie") == Present("name=value"))
         }
 
         "multiple Set-Cookie headers" in {
-            val h = HttpHeaders.empty
-                .addCookie("a", "1")
-                .addCookie("b", "2")
+            val h   = added(HttpHeaders.empty.addCookie("a", "1").flatMap(_.addCookie("b", "2")))
             val all = h.getAll("Set-Cookie")
             assert(all.length == 2)
             assert(all(0) == "a=1")
@@ -274,7 +277,7 @@ class HttpHeadersTest extends BaseHttpTest:
         }
 
         "serializes Int cookie value" in {
-            val h = HttpHeaders.empty.addCookie("count", HttpCookie(42))
+            val h = added(HttpHeaders.empty.addCookie("count", HttpCookie(42)))
             assert(h.get("Set-Cookie") == Present("count=42"))
         }
     }

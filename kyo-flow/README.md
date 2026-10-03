@@ -440,11 +440,11 @@ Subflow fields are assembled into the returned record, so a parent that embedded
 
 ```scala
 // In-memory store, for development
-val serverDev: HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+val serverDev: HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
     Flow.runServer(fulfilmentFlow, shippingFlow)
 
 // Durable store, for production
-val serverProd: HttpServer < (Async & Scope & Abort[HttpBindException | FlowDefinitionException | FlowStoreException]) =
+val serverProd: HttpServer < (Async & Scope & Abort[HttpBindException | HttpRouteException | FlowDefinitionException | FlowStoreException]) =
     FlowStore.initMemory.map(store => Flow.runServer(store, fulfilmentFlow, shippingFlow))
 ```
 

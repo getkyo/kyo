@@ -65,12 +65,14 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
         internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
             .map(request => this(request))
 
-    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    /** Encode a successful response to wire format using RouteUtil callbacks, failing with [[HttpCookieException]] on a cookie field the
+      * RFC 6265 grammar refuses.
+      */
     final private[kyo] def encodeResponse[A, S](response: HttpResponse[Out])(
         onEmpty: (HttpStatus, HttpHeaders) => A < S,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S,
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A < S
-    )(using Frame): A < (S & Sync) =
+    )(using Frame): A < (S & Sync & Abort[HttpCookieException]) =
         internal.server.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
 
     /** Try to encode a typed error via the route's error mappings. */

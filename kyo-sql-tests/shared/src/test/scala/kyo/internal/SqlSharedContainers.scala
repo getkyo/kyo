@@ -69,7 +69,7 @@ object SqlSharedContainers:
     def withFreshSchema[A, S](backend: Backend)(f: SchemaCtx => A < S)(using
         Frame
     )
-        : A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+        : A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         backend match
             case Backend.Postgres => withFreshPgSchema(f)
             case Backend.MySQL    => withFreshMysqlSchema(f)
@@ -77,7 +77,7 @@ object SqlSharedContainers:
     private def withFreshPgSchema[A, S](f: SchemaCtx => A < S)(using
         Frame
     )
-        : A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+        : A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         // Scope kyo-pod's podman/docker HttpClient to the leaf. Without this, the ambient process-shared
         // HttpClient's 60-second idle-connection pool accumulates one unix socket per (mappedPort, wait,
         // remove) call and trips the end-of-run file-descriptor leak check on Linux CI.
@@ -130,7 +130,7 @@ object SqlSharedContainers:
     private def withFreshMysqlSchema[A, S](f: SchemaCtx => A < S)(using
         Frame
     )
-        : A < (S & Async & Abort[SqlException | ContainerException] & Scope) =
+        : A < (S & Async & Abort[SqlException | ContainerException | HttpConfigException] & Scope) =
         HttpClient.init().flatMap(scopedClient => HttpClient.let(scopedClient)(withFreshMysqlSchemaBody(f)))
 
     private def withFreshMysqlSchemaBody[A, S](f: SchemaCtx => A < S)(using

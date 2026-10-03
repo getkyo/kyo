@@ -209,7 +209,7 @@ private[kyo] object UnsafeServerDispatch:
         lazy val parser: Http1Parser = new Http1Parser(
             inbound,
             builder,
-            maxHeaderSize = config.transportConfig.maxHeaderSize,
+            maxHeaderSize = config.transportConfig.maxHeaderSize.value,
             onRequestParsed = (request, bodySpan) =>
                 // Cancel idle timer — a request has arrived
                 cancelIdleTimer()
@@ -716,7 +716,13 @@ private[kyo] object UnsafeServerDispatch:
         // Abort.run[Any] rather than the precise E | Halt: E is abstract here and has no ConcreteTag.
         Abort.run[Any](handlerComputation).map {
             case Result.Success(response) =>
-                endpoint.encodeResponse(response)(
+                // A cookie field the RFC 6265 grammar refuses fails closed the way an unwritable header does in
+                // Http1StreamContext.respond: logged, and a bare 500 goes out in place of the handler's response.
+                Abort.recover[HttpCookieException](refused =>
+                    Log.error(s"UnsafeServerDispatch: ${refused.getMessage}, responding 500").andThen(
+                        Sync.Unsafe.defer(writeInternalError(streamCtx))
+                    )
+                )(endpoint.encodeResponse(response)(
                     onEmpty = (status, hdrs) =>
                         Sync.Unsafe.defer {
                             // The Content-Length: 0 head fully frames the response: no body, and no chunked last-chunk
@@ -767,7 +773,7 @@ private[kyo] object UnsafeServerDispatch:
                                             Sync.Unsafe.defer(writer.finish())
                                 }
                             }
-                )
+                ))
             case Result.Failure(error) =>
                 error match
                     case halt: HttpResponse.Halt =>
