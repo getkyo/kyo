@@ -1,0 +1,1228 @@
+[
+  {
+    "header": "audio/basic\n",
+    "expected": {
+      "c_type": "audio",
+      "c_subtype": "basic",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/postscript \n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "postscript",
+      "attributes": null
+    }
+  },
+  {
+    "header": "image/ jpeg\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "jpeg",
+      "attributes": null
+    }
+  },
+  {
+    "header": " message / rfc822\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "rfc822",
+      "attributes": null
+    }
+  },
+  {
+    "header": "inline\n",
+    "expected": {
+      "c_type": "inline",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": " text/plain; charset =us-ascii (Plain text)\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain; charset= \"us-ascii\"\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain; charset =ISO-8859-1\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "ISO-8859-1"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/foo; charset= bar\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "foo",
+      "attributes": [
+        [
+          "charset",
+          "bar"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " text /plain; charset=\"iso-8859-1\"; format=flowed\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "iso-8859-1"
+        ],
+        [
+          "format",
+          "flowed"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/pgp-signature; x-mac-type=70674453;\n    name=PGP.sig\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "pgp-signature",
+      "attributes": [
+        [
+          "x-mac-type",
+          "70674453"
+        ],
+        [
+          "name",
+          "PGP.sig"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/mixed; boundary=gc0p4Jq0M2Yt08j34c0p\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "gc0p4Jq0M2Yt08j34c0p"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/mixed; boundary=gc0pJq0M:08jU534c0p\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "gc0pJq0M:08jU534c0p"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/mixed; boundary=\"gc0pJq0M:08jU534c0p\"\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "gc0pJq0M:08jU534c0p"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/mixed; boundary=\"simple boundary\"\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "simple boundary"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/mixed; boundary=\"foo\n bar\"\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "foo bar"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/alternative; boundary=boundary42\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "alternative",
+      "attributes": [
+        [
+          "boundary",
+          "boundary42"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " multipart/mixed;\n     boundary=\"---- main boundary ----\"\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "mixed",
+      "attributes": [
+        [
+          "boundary",
+          "---- main boundary ----"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/alternative; boundary=42\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "alternative",
+      "attributes": [
+        [
+          "boundary",
+          "42"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/partial; id=\"ABC@host.com\";\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "partial",
+      "attributes": [
+        [
+          "id",
+          "ABC@host.com"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/parallel;boundary=unique-boundary-2\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "parallel",
+      "attributes": [
+        [
+          "boundary",
+          "unique-boundary-2"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body; name=\"BodyFormats.ps\";\n   site=\"thumper.bellcore.com\"; mode=\"image\";\n  access-type=ANON-FTP; directory=\"pub\";\n  expiration=\"Fri, 14 Jun 1991 19:13:14 -0400 (EDT)\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "name",
+          "BodyFormats.ps"
+        ],
+        [
+          "site",
+          "thumper.bellcore.com"
+        ],
+        [
+          "mode",
+          "image"
+        ],
+        [
+          "access-type",
+          "ANON-FTP"
+        ],
+        [
+          "directory",
+          "pub"
+        ],
+        [
+          "expiration",
+          "Fri, 14 Jun 1991 19:13:14 -0400 (EDT)"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body; access-type=local-file;\n   name=\"/u/nsb/writing/rfcs/RFC-MIME.ps\";\n    site=\"thumper.bellcore.com\";\n  expiration=\"Fri, 14 Jun 1991 19:13:14 -0400 (EDT)\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "access-type",
+          "local-file"
+        ],
+        [
+          "name",
+          "/u/nsb/writing/rfcs/RFC-MIME.ps"
+        ],
+        [
+          "site",
+          "thumper.bellcore.com"
+        ],
+        [
+          "expiration",
+          "Fri, 14 Jun 1991 19:13:14 -0400 (EDT)"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body;\n    access-type=mail-server\n     server=\"listserv@bogus.bitnet\";\n     expiration=\"Fri, 14 Jun 1991 19:13:14 -0400 (EDT)\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "access-type",
+          "mail-server"
+        ],
+        [
+          "server",
+          "listserv@bogus.bitnet"
+        ],
+        [
+          "expiration",
+          "Fri, 14 Jun 1991 19:13:14 -0400 (EDT)"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "Message/Partial; number=2; total=3;\n     id=\"oc=jpbe0M2Yt4s@thumper.bellcore.com\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "partial",
+      "attributes": [
+        [
+          "number",
+          "2"
+        ],
+        [
+          "total",
+          "3"
+        ],
+        [
+          "id",
+          "oc=jpbe0M2Yt4s@thumper.bellcore.com"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "multipart/signed; micalg=pgp-sha1; protocol=\"application/pgp-signature\";\n   boundary=\"=-J1qXPoyGtE2XNN5N6Z6j\"\n",
+    "expected": {
+      "c_type": "multipart",
+      "c_subtype": "signed",
+      "attributes": [
+        [
+          "micalg",
+          "pgp-sha1"
+        ],
+        [
+          "protocol",
+          "application/pgp-signature"
+        ],
+        [
+          "boundary",
+          "=-J1qXPoyGtE2XNN5N6Z6j"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body;\n    access-type=local-file;\n     name=\"/u/nsb/Me.jpeg\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "access-type",
+          "local-file"
+        ],
+        [
+          "name",
+          "/u/nsb/Me.jpeg"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body; access-type=URL;\n    URL*0=\"ftp://\";\n    URL*1=\"cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "access-type",
+          "URL"
+        ],
+        [
+          "url",
+          "ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/external-body; access-type=URL;\n     URL=\"ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar\"\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "external-body",
+      "attributes": [
+        [
+          "access-type",
+          "URL"
+        ],
+        [
+          "url",
+          "ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/x-stuff;\n     title*=us-ascii'en-us'This%20is%20%2A%2A%2Afun%2A%2A%2A\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "x-stuff",
+      "attributes": [
+        [
+          "title-language",
+          "en-us"
+        ],
+        [
+          "title",
+          "This is ***fun***"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/x-stuff\n   title*0*=us-ascii'en'This%20is%20even%20more%20\n   title*1*=%2A%2A%2Afun%2A%2A%2A%20\n   title*2=\"isn't it!\"\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "x-stuff",
+      "attributes": [
+        [
+          "title-language",
+          "en"
+        ],
+        [
+          "title",
+          "This is even more ***fun*** isn't it!"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/pdf\n   filename*0*=iso-8859-1'es'%D1and%FA\n   filename*1*=iso-8859-1'%20r%E1pido\n   filename*2*=\"iso-8859-1' (versi%F3n \\'99 \\\"oficial\\\").pdf\"\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "pdf",
+      "attributes": [
+        [
+          "filename-language",
+          "es"
+        ],
+        [
+          "filename",
+          "Ñandú rápido (versión '99 \"oficial\").pdf"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " image/png;\n   name=\"=?utf-8?q?=E3=83=8F=E3=83=AD=E3=83=BC=E3=83=BB=E3=83=AF=E3=83=BC=E3=83=AB=E3=83=89?=.png\"\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "png",
+      "attributes": [
+        [
+          "name",
+          "ハロー・ワールド.png"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " image/gif;\n   name==?iso-8859-6?b?5dHNyMcgyMfk2cfk5Q==?=.gif\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "gif",
+      "attributes": [
+        [
+          "name",
+          "مرحبا بالعالم.gif"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "image/jpeg;\n   name=\"=?iso-8859-1?B?4Q==?= =?utf-8?B?w6k=?= =?iso-8859-1?q?=ED?=.jpeg\"\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "jpeg",
+      "attributes": [
+        [
+          "name",
+          "á é í.jpeg"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "image/jpeg;\n   name==?iso-8859-1?B?4Q==?= =?utf-8?B?w6k=?= =?iso-8859-1?q?=ED?=.jpeg\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "jpeg",
+      "attributes": [
+        [
+          "name",
+          "áéí.jpeg"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "image/gif;\n   name==?iso-8859-6?b?5dHNyMcgyMfk2cfk5S5naWY=?=\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "gif",
+      "attributes": [
+        [
+          "name",
+          "مرحبا بالعالم.gif"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " image/gif;\n   name=\"=?iso-8859-6?b?5dHNyMcgyMfk2cfk5S5naWY=?=\"\n",
+    "expected": {
+      "c_type": "image",
+      "c_subtype": "gif",
+      "attributes": [
+        [
+          "name",
+          "مرحبا بالعالم.gif"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " inline; filename=\"  best \\\"file\\\" ever with \\\\ escaped ' stuff.  \"\n",
+    "expected": {
+      "c_type": "inline",
+      "c_subtype": null,
+      "attributes": [
+        [
+          "filename",
+          "  best \"file\" ever with \\ escaped ' stuff.  "
+        ]
+      ]
+    }
+  },
+  {
+    "header": "test/\n",
+    "expected": {
+      "c_type": "test",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": "/invalid\n",
+    "expected": null
+  },
+  {
+    "header": "/\n",
+    "expected": null
+  },
+  {
+    "header": ";\n",
+    "expected": null
+  },
+  {
+    "header": "/ ; name=value\n",
+    "expected": null
+  },
+  {
+    "header": "text/plain;\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/plain;;\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/plain ;;;;; = ;; name=\"value\"\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "name",
+          "value"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "=\n",
+    "expected": {
+      "c_type": "=",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": "name=value\n",
+    "expected": {
+      "c_type": "name=value",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/plain; name=  \n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": null
+    }
+  },
+  {
+    "header": "a/b; = \n",
+    "expected": {
+      "c_type": "a",
+      "c_subtype": "b",
+      "attributes": null
+    }
+  },
+  {
+    "header": "a/b; = \n \n",
+    "expected": {
+      "c_type": "a",
+      "c_subtype": "b",
+      "attributes": null
+    }
+  },
+  {
+    "header": "a/b; =value\n",
+    "expected": {
+      "c_type": "a",
+      "c_subtype": "b",
+      "attributes": null
+    }
+  },
+  {
+    "header": "test/test; =\"value\"\n",
+    "expected": {
+      "c_type": "test",
+      "c_subtype": "test",
+      "attributes": null
+    }
+  },
+  {
+    "header": "á/é; á=é\n",
+    "expected": {
+      "c_type": "á",
+      "c_subtype": "é",
+      "attributes": [
+        [
+          "á",
+          "é"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "inva/lid; name=\"   \n",
+    "expected": {
+      "c_type": "inva",
+      "c_subtype": "lid",
+      "attributes": [
+        [
+          "name",
+          "   "
+        ]
+      ]
+    }
+  },
+  {
+    "header": "inva/lid; name=\"   \n    \n",
+    "expected": {
+      "c_type": "inva",
+      "c_subtype": "lid",
+      "attributes": [
+        [
+          "name",
+          "       "
+        ]
+      ]
+    }
+  },
+  {
+    "header": "inva/lid; name=\"   \n    \"; test=test\n",
+    "expected": {
+      "c_type": "inva",
+      "c_subtype": "lid",
+      "attributes": [
+        [
+          "name",
+          "       "
+        ],
+        [
+          "test",
+          "test"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "name=value\n",
+    "expected": {
+      "c_type": "name=value",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": "test/encoded; key4*=us-ascii''foo; key*9999=ba%; key2*0=a; key3*0*=us-ascii'en'xyz; key*0=\"f\u0000oo\"; key2*1*=b%25; key3*1=plop%; key*1=baz; *=test; =test2;\n",
+    "expected": {
+      "c_type": "test",
+      "c_subtype": "encoded",
+      "attributes": [
+        [
+          "key4",
+          "foo"
+        ],
+        [
+          "key2",
+          "ab%"
+        ],
+        [
+          "key3-language",
+          "en"
+        ],
+        [
+          "key3",
+          "xyzplop%"
+        ],
+        [
+          "key",
+          "f\u0000oobazba%"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain; name*=\"iso-8859-1''HasenundFr%F6sche.txt\"\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "name",
+          "HasenundFrösche.txt"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "malicious/attempt; 1*2*=a; 3**=b; 4***=c; *5**6*=d;*****7*8*=e; 9*10*11*12*13*14=f; 15*x***fff*===g;1 * 999999999999999999 *= h; 18 *=*=*=*=*==i;\n",
+    "expected": {
+      "c_type": "malicious",
+      "c_subtype": "attempt",
+      "attributes": [
+        [
+          "3",
+          "b"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "15",
+          "==g"
+        ],
+        [
+          "1",
+          "ha"
+        ],
+        [
+          "18",
+          "*=*=*=*==i"
+        ],
+        [
+          "7",
+          "e"
+        ],
+        [
+          "9",
+          "f"
+        ]
+      ]
+    }
+  },
+  {
+    "header": ";charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": " ;charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": "/\n",
+    "expected": null
+  },
+  {
+    "header": "/;charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": "/ ;charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": "text/\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": null,
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": null,
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/ ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": null,
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "/plain\n",
+    "expected": null
+  },
+  {
+    "header": "/plain;charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": "/plain ;charset=us-ascii\n",
+    "expected": null
+  },
+  {
+    "header": "text/plain\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/plain;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain/format\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain/format",
+      "attributes": null
+    }
+  },
+  {
+    "header": "text/plain/format;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain/format",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "text/plain/format ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain/format",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/ld+json\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "ld+json",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/ld+json;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "ld+json",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/ld+json ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "ld+json",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/x-magic-cap-package-1.0\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "x-magic-cap-package-1.0",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/x-magic-cap-package-1.0;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "x-magic-cap-package-1.0",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/x-magic-cap-package-1.0 ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "x-magic-cap-package-1.0",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/pro_eng\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "pro_eng",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/pro_eng;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "pro_eng",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/pro_eng ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "pro_eng",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/wordperfect6.1\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "wordperfect6.1",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/wordperfect6.1;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "wordperfect6.1",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/wordperfect6.1 ;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "wordperfect6.1",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/vnd.openxmlformats-officedocument.wordprocessingml.template\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "attributes": null
+    }
+  },
+  {
+    "header": "application/vnd.openxmlformats-officedocument.wordprocessingml.template;charset=us-ascii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "application/vnd.openxmlformats-officedocument.wordprocessingml.template ;charset=us-asii\n",
+    "expected": {
+      "c_type": "application",
+      "c_subtype": "vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "attributes": [
+        [
+          "charset",
+          "us-asii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "(hello) text (plain) / (world) plain (eod)\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": null
+    }
+  },
+  {
+    "header": "(hello) text (plain) / (world) plain (eod);charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "(hello) text (plain) / (world) plain (eod); charset=us-ascii\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "message/rfc822\r\n\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "rfc822",
+      "attributes": null
+    }
+  },
+  {
+    "header": " \t\r message/rfc822 \t\r\n\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "rfc822",
+      "attributes": null
+    }
+  },
+  {
+    "header": " \t\r message/rfc822 \t ;charset=us-ascii\r\n\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "rfc822",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": " \t\r message/rfc822 \t ; charset=us-ascii\r\n",
+    "expected": {
+      "c_type": "message",
+      "c_subtype": "rfc822",
+      "attributes": [
+        [
+          "charset",
+          "us-ascii"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "attachment;\r\n\tfilename=\"=?utf-8?Q?Auftragsbest=C3=A4tigung_Xxxxx_Xxxxxx_XXXXXXXXXX=2EPD?=\r\n =?utf-8?Q?F?=\"\r\n",
+    "expected": {
+      "c_type": "attachment",
+      "c_subtype": null,
+      "attributes": [
+        [
+          "filename",
+          "Auftragsbestätigung Xxxxx Xxxxxx XXXXXXXXXX.PDF"
+        ]
+      ]
+    }
+  },
+  {
+    "header": "\n text/plain\r\n",
+    "expected": {
+      "c_type": "text",
+      "c_subtype": "plain"
+    }
+  }
+]

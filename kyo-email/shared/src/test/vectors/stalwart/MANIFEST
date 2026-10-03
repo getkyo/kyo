@@ -1,0 +1,45 @@
+# Header field test vectors and RFC test messages of Stalwart mail-parser, https://github.com/stalwartlabs/mail-parser at commit
+# 4eba485d9450c757b2f3ec29c44663740cff0afe, copied byte for byte with curl on 2026-09-27, each from the source URL followed by its
+# path. The build verifies each file against its SHA-256 and fails on a mismatch, a missing file or an unlisted one
+# (project/VendoredFiles.scala).
+#
+# Each vector is {"header": <a field body after the name and colon, with its line end>, "expected": <Stalwart's reading>}: another
+# parser's reading, compared with the module's, never taken as truth. Every vector was read before vendoring; they are synthetic
+# (test phrases, RFC 2047 and RFC 5322 examples, example domains). One subject names a reservation number and no person.
+# content_type.json: 103 Content-Type and Content-Disposition field bodies, read whole before vendoring: RFC 2045, 2046, 2183 and
+# 2231 examples, parser edge cases, and synthetic file names. Vector 101 is a file name taken from an order confirmation with the
+# names already replaced by X ("Auftragsbestatigung Xxxxx Xxxxxx XXXXXXXXXX.PDF"); it names no person and is kept.
+# date.json: 40 Date field bodies, read whole: RFC 5322 examples and synthetic dates; vector 28 is the date part of a Received
+# trace from a real message (a Google SMTP id, no person, no address), kept.
+# id.json: 11 message-id field bodies, read whole: RFC 5322 examples and synthetic ids.
+# rfc-NNN.eml: the ten messages of resources/eml/rfc/NNN.eml, renamed with the rfc- prefix, read whole: RFC 2046, 2049 and 8621
+# examples and synthetic messages. rfc-002.eml is the well-known fabricated "Map of Argentina" test message, a parody naming public
+# officials with deliberate misspellings (fi1ename, mai1host); it is not correspondence and is kept. Stalwart's JSON readings of
+# them (NNN.json, NNN.crlf.json) are not vendored: the tests compare with mime4j instead.
+# Excluded: resources/address.json. Its vectors 60 and 61 are names of real people taken from the Enron mail corpus, which is real
+# correspondence; a vendored file is never edited, so the whole file is left out.
+#
+# The build reads no subdirectory, so LICENSES/Apache-2.0.txt and LICENSES/MIT.txt are vendored as LICENSE-Apache-2.0.txt and
+# LICENSE-MIT.txt.
+#
+# Licence: Cargo.toml says license = "Apache-2.0 OR MIT", with both texts beside this file; README.md: "Copyright (C) 2020,
+# Stalwart Labs LLC". The repository has no NOTICE file. The files are used under the Apache-2.0 election, every condition of which
+# the files here meet; upstream's MIT text carries no copyright line of its own for MIT's notice condition to refer to.
+source https://raw.githubusercontent.com/stalwartlabs/mail-parser/4eba485d9450c757b2f3ec29c44663740cff0afe/
+license Apache-2.0 (elected from Apache-2.0 OR MIT)
+file content_type.json a87e90e349f911a45209d0860893ac864fc608087ad910219f4d921cefa9d614 resources/content_type.json
+file date.json a41ff3e3678edfb75ecb0a2fcece6aeef39caf4b0eace27eaf1a21efc9283e40 resources/date.json
+file id.json 95fc707b0047bdc81592065686bd982b5b72f5bd8ab71db11fd07111d0da4bd6 resources/id.json
+file unstructured.json afcb3b4b6864910810106d77d03c59ae73ed33995eebde4fd8c7fc1792a53cb0 resources/unstructured.json
+file LICENSE-Apache-2.0.txt a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2 LICENSES/Apache-2.0.txt
+file LICENSE-MIT.txt 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3 LICENSES/MIT.txt
+file rfc-000.eml c2584d07757b16b4f7d035dcc57d8d65f11e9e55ae43a868df3428415c4a5f7f resources/eml/rfc/000.eml
+file rfc-001.eml 8aaf8745405811a6431cf0ab764541f177bfcda21b536bbc158faefbb312767c resources/eml/rfc/001.eml
+file rfc-002.eml 714c3cd342f6177bd62d04262b8792f06d2717f48df910fd6405b0e6ded576e5 resources/eml/rfc/002.eml
+file rfc-003.eml 7a15c2eebb893e2677cbb98bf89b44ef794b1b75ca73eda310ae9a0fdb1e7c90 resources/eml/rfc/003.eml
+file rfc-004.eml e25ebb5c13ab9a8ccaea6a5a0a6c6f5c54ce11070b0fe15ea9605716cb1a01e7 resources/eml/rfc/004.eml
+file rfc-005.eml 007dddf14a5816fb66e8a18c2b1191d81ae5e900e88bb75e906933ed3a1986f7 resources/eml/rfc/005.eml
+file rfc-006.eml 03105c63475d087ff12a88fa64501802202407c5b17b24e9f99d5afe68ef9945 resources/eml/rfc/006.eml
+file rfc-007.eml e49702bdbc0e5d0345c680eff836924327050bebabc2f11335a9a98c9081c5f4 resources/eml/rfc/007.eml
+file rfc-008.eml af961f1635d25015388258d7a83f4a5bdab0980b4c0745e2bff1f3b0e65751d6 resources/eml/rfc/008.eml
+file rfc-009.eml 6ecf0b0cf3f10c95af68d8bff5e11dba5ac381e29b4fe68ddbf0b0be44e32e7f resources/eml/rfc/009.eml

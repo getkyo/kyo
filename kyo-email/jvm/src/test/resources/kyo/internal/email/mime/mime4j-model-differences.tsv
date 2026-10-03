@@ -1,0 +1,199 @@
+# Differences between kyo-email's model and one built from Apache James mime4j 0.8.15's DOM by the same classification rules,
+# over the vendored CPython, Stalwart, mime4j and Thunderbird messages. Kept by hand:
+# EmailMessageReferenceTest prints, in this format, each row missing here and each row here that no longer occurs.
+# Columns, tab-separated: message, aspect, the module's value, the reference's value, reason.
+# Backslash, tab, CR and LF in a value are written as \\, \t, \r and \n, and any other control character as \uXXXX.
+# Reasons, each the first rule of EmailMessageReference.classify that holds:
+#   EncapsulatedMessageRewritten: a message/rfc822 part: mime4j parses it and the reference takes the message DefaultMessageWriter writes back, which is not the octets as they arrived; the module keeps those octets
+#   CommentAsDisplayName: an address with no display name is followed by a comment, which the module takes as the name (the RFC 822 form, RFC 5322 appendix A.1.2's reading of it); mime4j drops comments
+#   DuplicateAddressFields: the message has more than one To or Cc field; the module concatenates them as RFC 5322 section 4.5.3 says, mime4j takes the first
+#   ObsoleteZoneName: the date's zone is one of the eight North American names, which RFC 5322 section 4.3 gives offsets; the module applies them, mime4j reads them as UTC
+#   BoundaryTrailingWhiteSpace: a boundary parameter ends in white space, which the module removes before matching (RFC 2046 section 5.1.1), so lines mime4j reads as text are delimiters
+#   Rfc2231ContentType: a Content-Type field holds a parameter in RFC 2231's form (name*=), the boundary or charset among them; the module reads it, mime4j does not
+#   BoundaryReused: two nested multiparts declare the same boundary, which RFC 2046 section 5.1 forbids a composer; the innermost open one owns its delimiters in the module, mime4j splits them otherwise
+#   OuterDelimiterInsidePart: a part of an inner multipart holds a line starting with an enclosing multipart's delimiter, which RFC 2046 section 5.1 forbids a composer; the module ends the inner multiparts there (RFC 2046 section 5.1.2), mime4j reads the line as text
+#   MultipartWithoutDelimiter: a multipart has no boundary parameter, or none of its delimiters occurs; the module keeps it as one attachment of its declared type holding its body, mime4j as an empty multipart or as text
+#   NonHeaderLineEndsSection: a header section holds a line with no field name before its empty line; the module ends the section there and that line starts the body (RFC 5322 section 3.6.8), mime4j reads later lines as fields or drops lines
+#   UnpaddedFinalQuantum: a base64 part ends with two or three characters and no padding; the module decodes the octets they hold, mime4j drops them
+cpython/msg_01.txt	from	bbb@ddd.com [John X. Doe]	bbb@ddd.com	CommentAsDisplayName
+cpython/msg_02.txt	attachment 2	message/rfc822 [] 235 octets #b46dc1b2: Message: 1\nContent-Type: text/plain; cha	message/rfc822 [] 244 octets #d17f12f5: Message: 1\r\nContent-Type: text/plain; ch	EncapsulatedMessageRewritten
+cpython/msg_02.txt	attachment 3	message/rfc822 [] 209 octets #5c6ea290: Message: 2\nDate: Fri, 20 Apr 2001 20:16:	message/rfc822 [] 217 octets #853c92b2: Message: 2\r\nDate: Fri, 20 Apr 2001 20:16	EncapsulatedMessageRewritten
+cpython/msg_02.txt	attachment 4	message/rfc822 [] 235 octets #ca5ea70b: Message: 3\nDate: Fri, 20 Apr 2001 20:16:	message/rfc822 [] 244 octets #12c3029a: Message: 3\r\nDate: Fri, 20 Apr 2001 20:16	EncapsulatedMessageRewritten
+cpython/msg_02.txt	attachment 5	message/rfc822 [] 235 octets #4f29d2e6: Message: 4\nDate: Fri, 20 Apr 2001 20:16:	message/rfc822 [] 244 octets #3869bcf9: Message: 4\r\nDate: Fri, 20 Apr 2001 20:16	EncapsulatedMessageRewritten
+cpython/msg_02.txt	attachment 6	message/rfc822 [] 237 octets #8e7763eb: Message: 5\nDate: Fri, 20 Apr 2001 20:16:	message/rfc822 [] 246 octets #e2c148c2: Message: 5\r\nDate: Fri, 20 Apr 2001 20:16	EncapsulatedMessageRewritten
+cpython/msg_03.txt	from	bbb@ddd.com [John X. Doe]	bbb@ddd.com	CommentAsDisplayName
+cpython/msg_04.txt	from	barry@python.org [Barry A. Warsaw]	barry@python.org	CommentAsDisplayName
+cpython/msg_05.txt	attachment 2	message/rfc822 [] 43 octets #094a657d: From: nobody@python.org\n\nYadda yadda yad	message/rfc822 [] 45 octets #479c8237: From: nobody@python.org\r\n\r\nYadda yadda y	EncapsulatedMessageRewritten
+cpython/msg_06.txt	attachment 1	message/rfc822 [] 481 octets #3fc09d5a: MIME-Version: 1.0\nContent-Type: text/pla	message/rfc822 [] 496 octets #08eb731f: MIME-Version: 1.0\r\nContent-Type: text/pl	EncapsulatedMessageRewritten
+cpython/msg_06.txt	from	barry@python.org [Barry A. Warsaw]	barry@python.org	CommentAsDisplayName
+cpython/msg_11.txt	attachment 1	message/rfc822 [] 63 octets #18fcb596: Subject: An enclosed message\n\nHere is th	message/rfc822 [] 65 octets #b6a50d9c: Subject: An enclosed message\r\n\r\nHere is 	EncapsulatedMessageRewritten
+cpython/msg_14.txt	from	bbb@ddd.com [John X. Doe]	bbb@ddd.com	CommentAsDisplayName
+cpython/msg_15.txt	attachment 1	image/gif [] 21 octets #52325fda: J\u0089\u009E­é¨½ç[jÇºáéÜ¡×\u009Dr\u0016«	text/plain [] 20 octets #a2d10f2e: Some removed test.\r\n	BoundaryReused
+cpython/msg_15.txt	attachment 2	<absent>	text/html [] 107 octets #453e064c: <HTML>\r\n<HEAD>\r\n<TITLE>Some removed HTML	BoundaryReused
+cpython/msg_15.txt	html	98 chars: <HTML>\n<HEAD>\n<TITLE>Some removed HTML</TITLE>\n</HEAD>\n<BODY	<absent>	BoundaryReused
+cpython/msg_15.txt	text	Some removed test.\n		BoundaryReused
+cpython/msg_17.txt	attachment 1	81 chars: multipart/mixed [] 109 octets #4827fb59: Hi there,\n\nThis is 	<absent>	MultipartWithoutDelimiter
+cpython/msg_19.txt	text	757 chars: Send Ppp mailing list submissions to\n\tppp@zzz.org\n\nTo subscr	706 chars: To subscribe or unsubscribe via the World Wide Web, visit\n\th	NonHeaderLineEndsSection
+cpython/msg_20.txt	cc	ccc@zzz.org, ddd@zzz.org, eee@zzz.org	ccc@zzz.org	DuplicateAddressFields
+cpython/msg_20.txt	from	bbb@ddd.com [John X. Doe]	bbb@ddd.com	CommentAsDisplayName
+cpython/msg_27.txt	from	aperson@dom.ain [Anne P. Erson]	aperson@dom.ain	CommentAsDisplayName
+cpython/msg_27.txt	to	bperson@dom.ain [Barney P. Erson]	bperson@dom.ain	CommentAsDisplayName
+cpython/msg_28.txt	attachment 1	message/rfc822 [] 96 octets #151e30b6: Content-Type: text/plain; charset=us-asc	message/rfc822 [] 101 octets #3e91045b: Content-Type: text/plain; charset=us-asc	EncapsulatedMessageRewritten
+cpython/msg_28.txt	attachment 2	message/rfc822 [] 96 octets #151e30d5: Content-Type: text/plain; charset=us-asc	message/rfc822 [] 101 octets #3e91047a: Content-Type: text/plain; charset=us-asc	EncapsulatedMessageRewritten
+cpython/msg_29.txt	from	bbb@ddd.com [John X. Doe]	bbb@ddd.com	CommentAsDisplayName
+cpython/msg_30.txt	attachment 1	message/rfc822 [] 96 octets #151e30b6: Content-Type: text/plain; charset=us-asc	message/rfc822 [] 101 octets #3e91045b: Content-Type: text/plain; charset=us-asc	EncapsulatedMessageRewritten
+cpython/msg_30.txt	attachment 2	message/rfc822 [] 96 octets #151e30d5: Content-Type: text/plain; charset=us-asc	message/rfc822 [] 101 octets #3e91047a: Content-Type: text/plain; charset=us-asc	EncapsulatedMessageRewritten
+cpython/msg_31.txt	attachment 1	81 chars: multipart/mixed [] 109 octets #2245a0e6: --BOUNDARY\nContent-	<absent>	MultipartWithoutDelimiter
+cpython/msg_33.txt	attachment 1	text/plain [] 7 octets #389cde44: part 2\n	<absent>	Rfc2231ContentType
+cpython/msg_33.txt	text	part 1\n	263 chars: \n--EeQfGwPcQSOJBaQU\nContent-Type: text/plain; charset*=ansi-	Rfc2231ContentType
+cpython/msg_34.txt	attachment 1	message/rfc822 [] 56 octets #0081bf3b: From: cperson@dom.ain\nTo: dperson@dom.ai	message/rfc822 [] 59 octets #4e5cebb6: From: cperson@dom.ain\r\nTo: dperson@dom.a	EncapsulatedMessageRewritten
+cpython/msg_35.txt	text	counter to RFC 5322, there's no separating newline here\n		NonHeaderLineEndsSection
+cpython/msg_38.txt	attachment 1	text/plain [] 4 octets #003bd8aa: and 	text/plain [] 0 octets #00000001: 	OuterDelimiterInsidePart
+cpython/msg_38.txt	attachment 2	text/plain [] 1677 octets #a1191a21: but puts them at the start of a line! An	text/plain [] 1556 octets #8ec41d1f: ------- =_aaaaaaaaaa1--\n\nand this one, w	OuterDelimiterInsidePart
+cpython/msg_39.txt	attachment 1	application/octet-stream [] 2 octets #00000f79: ]u	application/octet-stream [] 0 octets #00000001: 	BoundaryReused
+cpython/msg_39.txt	attachment 2	application/octet-stream [] 2 octets #00000f79: ]u	application/octet-stream [] 0 octets #00000001: 	BoundaryReused
+cpython/msg_39.txt	attachment 3	application/octet-stream [] 2 octets #00000f79: ]u	text/plain [] 50 octets #dab8e9e8: --\nIt's never too late to have a happy c	BoundaryReused
+cpython/msg_39.txt	attachment 4	application/octet-stream [] 2 octets #00000f79: ]u	<absent>	BoundaryReused
+cpython/msg_39.txt	attachment 5	application/octet-stream [] 2 octets #00000f79: ]u	<absent>	BoundaryReused
+cpython/msg_39.txt	attachment 6	application/octet-stream [] 2 octets #00000f79: ]u	<absent>	BoundaryReused
+cpython/msg_39.txt	attachment 7	text/plain [] 50 octets #dab8e9e8: --\nIt's never too late to have a happy c	<absent>	BoundaryReused
+cpython/msg_41.txt	attachment 1	multipart/alternative [] 15 octets #99242898: Blah blah blah\n	<absent>	MultipartWithoutDelimiter
+cpython/msg_41.txt	text		Blah blah blah\n	MultipartWithoutDelimiter
+cpython/msg_42.txt	attachment 1	message/rfc822 [] 102 octets #721b9f8f: From: webmaster@python.org\nTo: zzz@examp	message/rfc822 [] 108 octets #be243e14: From: webmaster@python.org\r\nTo: zzz@exam	EncapsulatedMessageRewritten
+cpython/msg_44.txt	from	barry@python.org [Barry A. Warsaw]	barry@python.org	CommentAsDisplayName
+cpython/msg_46.txt	attachment 1	message/rfc822 [] 375 octets #7e38fd88: Return-path: <sender@example.net>\nMessag	message/rfc822 [] 385 octets #ec5a4690: Return-path: <sender@example.net>\r\nMessa	EncapsulatedMessageRewritten
+cpython/msg_47.txt	attachment 1	text/html [] 37 octets #2560fb49: <html><body><p>baz</p></body></html>\n	text/html [] 0 octets #00000001: 	NonHeaderLineEndsSection
+cpython/msg_47.txt	text	bar\n		NonHeaderLineEndsSection
+stalwart/rfc-000.eml	attachment 3	image/jpeg [] 22 octets #3d94cea8: m«\u001Eë\u0087§r\u0087^v)\u009A\u0081çZµ¨(zÈ^­	image/jpeg [] 21 octets #af67e5a5: m«\u001Eë\u0087§r\u0087^v)\u009A\u0081çZµ¨(zÈ^	UnpaddedFinalQuantum
+stalwart/rfc-000.eml	attachment 5	message/rfc822 [] 223 octets #a6fc1dd2: From: (mailbox in US-ASCII)\nTo: (address	message/rfc822 [] 242 octets #783ce507: From: (mailbox in US-ASCII)\r\nTo: (addres	EncapsulatedMessageRewritten
+stalwart/rfc-002.eml	attachment 1	81 chars: message/rfc822 [] 1979 octets #b7238083: Return-Path: <presi	81 chars: message/rfc822 [] 2011 octets #58c1e06d: Return-Path: <presi	EncapsulatedMessageRewritten
+stalwart/rfc-004.eml	attachment 1	message/rfc822 [] 100 octets #a942e42a: From: someone-else\nDate: Fri, 26 Mar 199	message/rfc822 [] 104 octets #c9eb542a: From: someone-else\r\nDate: Fri, 26 Mar 19	EncapsulatedMessageRewritten
+stalwart/rfc-004.eml	attachment 2	message/rfc822 [] 125 octets #852cea6b: From: someone-else-again\nDate: Fri, 26 M	message/rfc822 [] 129 octets #49fff36f: From: someone-else-again\r\nDate: Fri, 26 	EncapsulatedMessageRewritten
+stalwart/rfc-007.eml	attachment 8	message/rfc822 [] 13 octets #e8c38c51: Subject: J\n\nJ	message/rfc822 [] 15 octets #c63b1f17: Subject: J\r\n\r\nJ	EncapsulatedMessageRewritten
+stalwart/rfc-009.eml	attachment 1	message/rfc822 [] 121 octets #c8acd16e: From: Someone Else\nSubject: Hello, this 	message/rfc822 [] 124 octets #4ea8b4f7: From: Someone Else\r\nSubject: Hello, this	EncapsulatedMessageRewritten
+mime4j/bad-newlines-multiple-parts-base64.msg	attachment 1	message/rfc822 [] 336 octets #806d0ba1: Content-Type: multipart/mixed; boundary=	message/rfc822 [] 345 octets #7bcab808: Content-Type: multipart/mixed; boundary=	EncapsulatedMessageRewritten
+mime4j/base64encoded-rfc822message-nested.msg	attachment 1	message/rfc822 [] 276 octets #ca330047: MIME-Version: 1.0\r\nSubject: a simple rfc	message/rfc822 [] 274 octets #c556a12a: MIME-Version: 1.0\r\nSubject: a simple rfc	EncapsulatedMessageRewritten
+mime4j/basic-plain-very-long-lines.msg	date	887219460	887197860	ObsoleteZoneName
+mime4j/basic-plain-with-bad-header-separator.msg	date	887219460	887197860	ObsoleteZoneName
+mime4j/basic-plain-with-bad-header-separator.msg	text	172 chars: This is a very simple message with a simple body but the sep	This results in a bogus header.\n	NonHeaderLineEndsSection
+mime4j/basic-plain.msg	date	887219460	887197860	ObsoleteZoneName
+mime4j/malformedHeader-nocrlfcrlf.msg	text	101 chars: This is an invalid header\nAnotherHeader: is this an header o	Body text\n	NonHeaderLineEndsSection
+mime4j/malformedHeader-noheader.msg	text	90 chars: This is a simple message not having headers.\nThe whole text 		NonHeaderLineEndsSection
+mime4j/malformedHeaderStartsBody-nocrlfcrlf.msg	text	101 chars: This is an invalid header\nAnotherHeader: is this an header o	Body text\n	NonHeaderLineEndsSection
+mime4j/malformedHeaderStartsBody-noheader.msg	text	90 chars: This is a simple message not having headers.\nThe whole text 		NonHeaderLineEndsSection
+mime4j/missing-boundary.msg	attachment 1	multipart/alternative [] 7 octets #48db407a: AAA\r\n\r\n	<absent>	MultipartWithoutDelimiter
+mime4j/missing-inner-boundary.msg	attachment 1	multipart/alternative [] 5 octets #0567521d: AAA\r\n	<absent>	MultipartWithoutDelimiter
+mime4j/multipartdigestnestedemptyparts.msg	attachment 1	message/rfc822 [] 356 octets #0f85a719: Return-Path: something@example.com\r\nDate	message/rfc822 [] 358 octets #493fb636: Return-Path: something@example.com\r\nDate	EncapsulatedMessageRewritten
+mime4j/multipartnestedemptyparts.msg	attachment 1	message/rfc822 [] 356 octets #0f85a719: Return-Path: something@example.com\r\nDate	message/rfc822 [] 358 octets #493fb636: Return-Path: something@example.com\r\nDate	EncapsulatedMessageRewritten
+mime4j/obsolete.msg	text	Invalìd-Header: this is not valid.\nHeaderWithWSP \t  \t:\t\tvalue.\n\nbody\n	body\n	NonHeaderLineEndsSection
+mime4j/very-long-boundary.msg	attachment 1	text/plain [] 102 octets #6e254c22: The above line is similar to the boundar	<absent>	BoundaryTrailingWhiteSpace
+mime4j/very-long-boundary.msg	attachment 2	text/plain [] 8 octets #6e27d977: epilogue	<absent>	BoundaryTrailingWhiteSpace
+mime4j/very-long-boundary.msg	text	Text body	812 chars: Text body\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOPR	BoundaryTrailingWhiteSpace
+mime4j/very-very-long-boundary.msg	attachment 1	text/plain [] 102 octets #6e254c22: The above line is similar to the boundar	<absent>	BoundaryTrailingWhiteSpace
+mime4j/very-very-long-boundary.msg	attachment 2	text/plain [] 8 octets #6e27d977: epilogue	<absent>	BoundaryTrailingWhiteSpace
+mime4j/very-very-long-boundary.msg	text	Text body	7112 chars: Text body\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOPR	BoundaryTrailingWhiteSpace
+mime4j/weird-boundary.msg	attachment 1	text/plain [] 102 octets #6e254c22: The above line is similar to the boundar	<absent>	BoundaryTrailingWhiteSpace
+mime4j/weird-boundary.msg	attachment 2	text/plain [] 8 octets #6e27d977: epilogue	<absent>	BoundaryTrailingWhiteSpace
+mime4j/weird-boundary.msg	text	Text body	182 chars: Text body\n--0123456789abcdefghijklmnopqrstuvwxyzABCDEFLMNOPR	BoundaryTrailingWhiteSpace
+thunderbird/badly-folded-headers.eml	date		1523707290	NonHeaderLineEndsSection
+thunderbird/badly-folded-headers.eml	from		sender@example.com	NonHeaderLineEndsSection
+thunderbird/badly-folded-headers.eml	subject		83 chars: Badly     folded       headers,     one   line with   space 	NonHeaderLineEndsSection
+thunderbird/badly-folded-headers.eml	text	270 chars: From - Sat Apr 14 14:01:30 2018\nDate: Sat, 14 Apr 2018 14:01	Here's our body\n	NonHeaderLineEndsSection
+thunderbird/badly-folded-headers.eml	to		recipient@example.com [Recipient  with  spaces]	NonHeaderLineEndsSection
+thunderbird/bug132340	attachment 1	<absent>	text/plain [] 40 octets #f0d82d3d: This is a plain-text part to match on.\r\n	NonHeaderLineEndsSection
+thunderbird/bug132340	attachment 2	<absent>	application/x-javascript [] 24 octets #7e832deb: dump("Hello, World!");\r\n	NonHeaderLineEndsSection
+thunderbird/bug132340	date		1224403200	NonHeaderLineEndsSection
+thunderbird/bug132340	from		me@example.net [Me]	NonHeaderLineEndsSection
+thunderbird/bug132340	messageId		foo.12345@bar	NonHeaderLineEndsSection
+thunderbird/bug132340	subject		Test message	NonHeaderLineEndsSection
+thunderbird/bug132340	text	634 chars: From - Sat Jun 11 17:26:54 2009\nMessage-ID: <foo.12345@bar>\n	Semi case-insensitivity sucks. Match on "base 64 text"	NonHeaderLineEndsSection
+thunderbird/bug132340	to		you@example.org [You]	NonHeaderLineEndsSection
+thunderbird/bug505221	attachment 1	<absent>	message/rfc822 [] 943 octets #be6f2b5b: From: <sys admin>\r\nTo: <dd@ee.invalid>\r\n	NonHeaderLineEndsSection
+thunderbird/bug505221	date		1228834142	NonHeaderLineEndsSection
+thunderbird/bug505221	from		aaa bbb	NonHeaderLineEndsSection
+thunderbird/bug505221	html	<absent>	236 chars: <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN	NonHeaderLineEndsSection
+thunderbird/bug505221	subject		xxx	NonHeaderLineEndsSection
+thunderbird/bug505221	text	1885 chars: From - Mon Jan 1 00:00:00 1965\nX-Mozilla-Status: 0001\nX-Mozi		NonHeaderLineEndsSection
+thunderbird/bug505221	to		aaa@bb.invalid	NonHeaderLineEndsSection
+thunderbird/bug513543	attachment 1	<absent>	text/plain [] 5 octets #0739c21e: abc\r\n	NonHeaderLineEndsSection
+thunderbird/bug513543	attachment 2	<absent>	text/plain [] 0 octets #00000001: 	NonHeaderLineEndsSection
+thunderbird/bug513543	date		1235399098	NonHeaderLineEndsSection
+thunderbird/bug513543	from		def@a.org	NonHeaderLineEndsSection
+thunderbird/bug513543	html	<absent>	115 chars: \n<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//	NonHeaderLineEndsSection
+thunderbird/bug513543	messageId		20090223142458.B361A1347C@60xx.ttt.net	NonHeaderLineEndsSection
+thunderbird/bug513543	subject		zzz	NonHeaderLineEndsSection
+thunderbird/bug513543	text	1597 chars: From - Tue Feb 24 09:09:10 2009\nX-Account-Key: account4\nX-UI		NonHeaderLineEndsSection
+thunderbird/bug513543	to		abc@xyc.com	NonHeaderLineEndsSection
+thunderbird/external-attach-test	attachment 1	<absent>	90 chars: application/pdf [check.pdf] 122 octets #a4f1c970: GIF89a\r\u0000\r\u0000	NonHeaderLineEndsSection
+thunderbird/external-attach-test	date		1251332339	NonHeaderLineEndsSection
+thunderbird/external-attach-test	from		xxx@example.com [Foo Bar]	NonHeaderLineEndsSection
+thunderbird/external-attach-test	html	<absent>	2462 chars: <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//E	NonHeaderLineEndsSection
+thunderbird/external-attach-test	messageId		876TY.5030709@example.com	NonHeaderLineEndsSection
+thunderbird/external-attach-test	subject		external attach test	NonHeaderLineEndsSection
+thunderbird/external-attach-test	text	3449 chars: From - Fri Aug 26 16:47:38 2008\nX-Identity-Key: id2\nMessage-		NonHeaderLineEndsSection
+thunderbird/external-attach-test	to		asfd@asdf	NonHeaderLineEndsSection
+thunderbird/image-attach-test	attachment 1	<absent>	84 chars: image/gif [check.gif] 122 octets #a4f1c970: GIF89a\r\u0000\r\u0000\u0083\u0000\u0000\u0000\u0000\u0000	NonHeaderLineEndsSection
+thunderbird/image-attach-test	date		1251245939	NonHeaderLineEndsSection
+thunderbird/image-attach-test	from		xxx@example.com [Foo Bar]	NonHeaderLineEndsSection
+thunderbird/image-attach-test	html	<absent>	2462 chars: <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//E	NonHeaderLineEndsSection
+thunderbird/image-attach-test	messageId		4A947F73.5030709@example.com	NonHeaderLineEndsSection
+thunderbird/image-attach-test	subject		image attach test	NonHeaderLineEndsSection
+thunderbird/image-attach-test	text	3423 chars: From - Fri May 20 16:47:38 2008\nMessage-ID: <4A947F73.503070		NonHeaderLineEndsSection
+thunderbird/image-attach-test	to		asfd@asdf	NonHeaderLineEndsSection
+thunderbird/mail-without-from	subject		mail with no from	NonHeaderLineEndsSection
+thunderbird/mail-without-from	text	173 chars: From - Sun Apr 26 21:30:59 2015\nSubject: mail with no from\nT	This mail has no from address.\n\n	NonHeaderLineEndsSection
+thunderbird/mail-without-from	to		from@foo.invalid	NonHeaderLineEndsSection
+thunderbird/mbox_mboxrd	from		author@example.com [Author]	NonHeaderLineEndsSection
+thunderbird/mbox_mboxrd	subject		Sample message 1	NonHeaderLineEndsSection
+thunderbird/mbox_mboxrd	text	376 chars: From MAILER-DAEMON Fri Jul  8 12:08:34 2011\nFrom: Author <au	233 chars: This is the body.\n>From (should be escaped).\nThere are 3 lin	NonHeaderLineEndsSection
+thunderbird/mbox_mboxrd	to		recipient@example.com [Recipient]	NonHeaderLineEndsSection
+thunderbird/mbox_modern	date		1535111747	NonHeaderLineEndsSection
+thunderbird/mbox_modern	from		author@example.com [Author]	NonHeaderLineEndsSection
+thunderbird/mbox_modern	subject		Sample message 1	NonHeaderLineEndsSection
+thunderbird/mbox_modern	text	553 chars: From - Fri Aug 24 11:55:47 2018\nFrom: Author <author@example	384 chars: Later versions of Thunderbird quote things by prefixing\na sp	NonHeaderLineEndsSection
+thunderbird/mbox_modern	to		recipient@example.com [Recipient]	NonHeaderLineEndsSection
+thunderbird/mbox_unquoted	date		1124731208	NonHeaderLineEndsSection
+thunderbird/mbox_unquoted	from		author@example.com [Author]	NonHeaderLineEndsSection
+thunderbird/mbox_unquoted	subject		Sample message 1	NonHeaderLineEndsSection
+thunderbird/mbox_unquoted	text	462 chars: From \nFrom: Author <author@example.com>\nTo: Recipient <recip	319 chars: Earlier versions of Thunderbird don't seem to quote things l	NonHeaderLineEndsSection
+thunderbird/mbox_unquoted	to		recipient@example.com [Recipient]	NonHeaderLineEndsSection
+thunderbird/multipart-complex2	attachment 10	text/plain [] 0 octets #00000001: 	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 11	text/html [] 54 octets #9bbcc8be: <html><body>No harm in making another.</	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 2	text/plain [] 0 octets #00000001: 	text/plain [] 426 octets #e48b1442: --bound\r\n\r\n--boundar\r\n\r\n--boundary\r\nCont	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 3	text/plain [] 0 octets #00000001: 	text/html [] 54 octets #9bbcc8be: <html><body>No harm in making another.</	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 4	text/plain [] 0 octets #00000001: 	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 5	application/pdf [] 61 octets #703a6cf8: A choice between a PDF and an octet stre	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 6	text/plain [] 0 octets #00000001: 	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 7	text/plain [] 29 octets #596ba7f3: This is the correct answer.\r\n	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 8	text/plain [] 0 octets #00000001: 	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-complex2	attachment 9	text/plain [] 43 octets #737c5c32: One last attempt at confusing the parser	<absent>	OuterDelimiterInsidePart
+thunderbird/multipart-message-2.eml	attachment 1	100 chars: message/rfc822 [attached-message.eml] 527 octets #31482839: 	100 chars: message/rfc822 [attached-message.eml] 527 octets #aa2593b9: 	EncapsulatedMessageRewritten
+thunderbird/multipart-message-4.eml	attachment 1	101 chars: message/rfc822 [attached-message.eml] 1038 octets #55f106f7:	101 chars: message/rfc822 [attached-message.eml] 1040 octets #6a3fd7d4:	EncapsulatedMessageRewritten
+thunderbird/multipartmalt-detach	attachment 1	<absent>	text/plain [head_update.txt] 15 octets #0f695169: head_update.txt	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	attachment 2	<absent>	text/plain [smurf_update_neu.txt] 20 octets #d115479b: smurf_update_neu.txt	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	date		1156869728	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	from		ef@hg.de [abc]	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	html	<absent>	350 chars: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//E	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	messageId		xxxyy@zzz	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	subject		detach test	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	text	1477 chars: From \nX-Account-Key: account1\nX-UIDL: 0397aedc0eee3923434887	plain body	NonHeaderLineEndsSection
+thunderbird/multipartmalt-detach	to		ef@hg.de [abc]	NonHeaderLineEndsSection
+thunderbird/not-really-base64.eml	text	��@rۚ�\\�jǺ�;���Z�{^�	��@rۚ�\\�jǺ�;���Z�{^	UnpaddedFinalQuantum
+thunderbird/reply-filter-testmail	date		1391943403	NonHeaderLineEndsSection
+thunderbird/reply-filter-testmail	from		someone@example.com	NonHeaderLineEndsSection
+thunderbird/reply-filter-testmail	messageId		52F75EEB.9080701@example.com	NonHeaderLineEndsSection
+thunderbird/reply-filter-testmail	subject		reply filter test	NonHeaderLineEndsSection
+thunderbird/reply-filter-testmail	text	877 chars: From - Sun Feb 09 12:56:43 2014\nX-Mozilla-Status: 0001\nX-Moz	testing!\n\n	NonHeaderLineEndsSection
+thunderbird/reply-filter-testmail	to		from@FOO.invalid	NonHeaderLineEndsSection
+thunderbird/template-latin1	date		1453665452	NonHeaderLineEndsSection
+thunderbird/template-latin1	from		example@example.com [Some User]	NonHeaderLineEndsSection
+thunderbird/template-latin1	html	<absent>	198 chars: <html>\n  <head>\n    <meta content="text/html; charset=window	NonHeaderLineEndsSection
+thunderbird/template-latin1	messageId		8fd7dc38-5b3b-c1a3-2003-4d33dd1c70bf@example.com	NonHeaderLineEndsSection
+thunderbird/template-latin1	subject		latin1 template åäö	NonHeaderLineEndsSection
+thunderbird/template-latin1	text	983 chars: From - Sun 24 Jan 2016 21:57:32\nX-Mozilla-Status: 0000\nX-Moz		NonHeaderLineEndsSection
+thunderbird/template-utf8	date		1453579603	NonHeaderLineEndsSection
+thunderbird/template-utf8	from		example@example.com [Some User]	NonHeaderLineEndsSection
+thunderbird/template-utf8	html	<absent>	209 chars: <html>\n  <head>\n\n    <meta http-equiv="content-type" content	NonHeaderLineEndsSection
+thunderbird/template-utf8	messageId		ee022a93-1fbf-7086-24c7-a61939ea52ce@example.com	NonHeaderLineEndsSection
+thunderbird/template-utf8	subject		utf-8 test	NonHeaderLineEndsSection
+thunderbird/template-utf8	text	959 chars: From - Sat 23 Jan 2016 22:06:43 +0200\nX-Mozilla-Status: 0000		NonHeaderLineEndsSection
