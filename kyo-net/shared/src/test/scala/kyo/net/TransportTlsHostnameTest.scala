@@ -4,7 +4,7 @@ import kyo.*
 
 /** Cross-backend, cross-TLS-implementation connect-time hostname-verification guarantees for the public [[Transport]] surface, over the full
   * backend x TLS-impl matrix via [[eachBackendTls]]. A verifying client (the default `hostnameVerification = true`, not `trustAll`) accepts a
-  * server whose certificate name matches the connect host, fails closed when it has no reference identity (RFC 9525 6.1), and rejects a
+  * server whose certificate name matches the `sniHostname`, or the connect host when none is set, fails closed when it has no reference identity (RFC 9525 6.1), and rejects a
   * name-mismatched certificate. Each cell pins its TLS implementation, so the identity decision is asserted on every implementation, not just the
   * platform default.
   */
@@ -96,6 +96,51 @@ class TransportTlsHostnameTest extends Test:
                     }
                 }
             }
+    }
+
+    "sniHostname is the reference identity when set, in place of the connect host" - {
+
+        "a certificate naming the sniHostname is accepted over a connect host it does not cover" - eachBackendTls {
+            (transport, serverTls, clientTls) =>
+                // The wronghost.example cert does not cover 127.0.0.1, so only a client checking the SNI name, not the connect host, accepts it.
+                TlsTestCertShared.writeWrongHostPems.map { case (wrongCert, wrongKey) =>
+                    val srv = NetTlsConfig(
+                        certChainPath = Present(wrongCert),
+                        privateKeyPath = Present(wrongKey),
+                        tlsProvider = serverTls.tlsProvider
+                    )
+                    val cli = NetTlsConfig(
+                        caCertPath = Present(wrongCert),
+                        sniHostname = Present("wronghost.example"),
+                        tlsProvider = clientTls.tlsProvider
+                    )
+                    transport.listenTls("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
+                        Scope.ensure(Sync.defer(listener.close())).andThen {
+                            Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, cli).safe.get).map {
+                                outcome =>
+                                    outcome.foreach(conn => conn.close())
+                                    listener.close()
+                                    assert(outcome.isSuccess, s"a certificate for the sniHostname must be accepted, got $outcome")
+                            }
+                        }
+                    }
+                }
+        }
+
+        "a certificate covering the connect host but not the sniHostname is refused" - eachBackendTls {
+            (transport, serverTls, clientTls) =>
+                // The harness cert covers 127.0.0.1 and localhost, never other.example, so checking the connect host would wrongly accept it.
+                val cli = verifyingClient(serverTls, clientTls).copy(sniHostname = Present("other.example"))
+                transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, cli).safe.get).map { outcome =>
+                            outcome.foreach(conn => conn.close())
+                            listener.close()
+                            assert(outcome.isFailure, s"a certificate not naming the sniHostname must be refused, got $outcome")
+                        }
+                    }
+                }
+        }
     }
 
 end TransportTlsHostnameTest

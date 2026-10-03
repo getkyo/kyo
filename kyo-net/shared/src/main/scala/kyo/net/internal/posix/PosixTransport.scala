@@ -265,7 +265,16 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        connectResolving(host, port, nodelay = true, tls = Present((tls, host)), connectTimeout = connectTimeout, config = config)
+        // The engine host is both the SNI name sent and the reference identity the server certificate is checked against, so an
+        // `sniHostname` replaces the connect host for both, as the JDK and Node clients do.
+        connectResolving(
+            host,
+            port,
+            nodelay = true,
+            tls = Present((tls, tls.sniHostname.getOrElse(host))),
+            connectTimeout = connectTimeout,
+            config = config
+        )
     end connectTls
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
