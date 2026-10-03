@@ -1291,6 +1291,13 @@ final private[net] class PollerIoDriver private[posix] (
         // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
         deregisterFds(handle, fdClosing = false)
 
+    /** A listener handle owns a read buffer like any socket handle, and nothing but this close releases it. */
+    override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        try
+            cancel(handle)
+            handle.requestClose()
+        finally closeFd()
+
     /** Claim this handle's fd close (the one-shot [[PosixHandle.claimFdClose]]) and, if won, shut it down immediately and install the deferred
       * real `close(fd)` as [[PosixHandle.fdCloseSink]] -- the shared claim-then-defer dance every abrupt (non-`close_notify`) close path on
       * this driver runs BEFORE calling `PosixHandle.close` / `requestClose` for the handle. Winning the claim proves the fd is still owned by

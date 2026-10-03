@@ -396,6 +396,20 @@ class PollerIoDriverTest extends Test:
             driver.close()
             succeed
         }
+
+        "closeListener releases the listener handle's resources along with its fd" in {
+            assumePoller()
+            withDriver { driver =>
+                val fd = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                assert(fd >= 0)
+                val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                val closed = Promise.Unsafe.init[Unit, Any]()
+                driver.closeListener(handle, () => sock.close(fd).onComplete(_ => closed.completeDiscard(Result.succeed(()))))
+                closed.safe.get.andThen {
+                    assert(handle.isClosing(), "the listener's handle (its read buffer) was never released")
+                }
+            }
+        }
     }
 
     "PollerIoDriver allocation seams" - {
