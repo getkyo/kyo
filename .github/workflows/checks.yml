@@ -6,7 +6,7 @@ name: checks
 # also shares one checkout, one JDK and sbt install, and one coursier cache.
 #
 # Steps run cheapest first, so a formatting or lint error surfaces in ~3 minutes instead of
-# after the ~42 minute doctest step. The cost is that those cheap checks are serial with
+# after the doctest step (~36 minutes on main, where it compiles every module). The cost is that those cheap checks are serial with
 # each other, which only pays while the queue wait dominates the work. On an uncontended
 # pool, three parallel jobs would be the better shape.
 on:
@@ -80,6 +80,15 @@ jobs:
         if: steps.workflow-changes.outputs.changed == 'true'
         uses: rhysd/actionlint@v1.7.12
 
+      # A pull request runs on its merge ref, whose first parent is the main commit the change merges onto. The doctest and scaladoc
+      # steps validate only what the diff against it reaches (`testKyo --phase`), so a pull request compiles the modules it can
+      # affect rather than the whole build. A push to main validates everything.
+      - name: Merge base
+        id: base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+
       # --- then formatting (~3m) ---
       # Same key namespace as .github/actions/setup, rather than coursier/cache-action's own. That action
       # mints a cache entry per job name, each around 1.6 GB and each holding the same coursier tree the
@@ -136,7 +145,7 @@ jobs:
             exit 1
           fi
 
-      # --- then the expensive one (~42m) ---
+      # --- then the expensive one (~36m on main) ---
       # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
       # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.
       - name: Install liburing (Linux)
@@ -168,7 +177,13 @@ jobs:
             doctest-${{ runner.os }}-${{ runner.arch }}-
 
       - name: README doctests
-        run: sbt doctest
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            sbt "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
+          else
+            sbt doctest
+          fi
 
       # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
       # ref, readable by nothing but re-runs of the same PR, so it would cost upload time for no
@@ -192,7 +207,13 @@ jobs:
       # `kyoNative / update` cannot resolve the aggregate's own dependencies, so a Native row would fail
       # on that rather than on a link.
       - name: Scaladoc links
-        run: sbt kyoJVM/doc
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            sbt "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
+          else
+            sbt kyoJVM/doc
+          fi
 
       # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
       # both the Scala.js and Scala Native linkers keep the first class on the classpath and drop the rest.
@@ -201,7 +222,50 @@ jobs:
       # and Wasm rows compile every module of their platform from nothing, 67 to 74 min together on
       # ubuntu-24.04-arm, more than half of this job. A name declared only in `js`, `js-wasm`, `native` or
       # `wasm` sources is therefore not checked in CI.
+      #
+      # Main checks every project and records each one's classes in an index keyed by its commit. A pull
+      # request restores the newest index and compiles only the projects that differ between that index's
+      # commit and this tree, reading every other project's classes from the index. Planning against the
+      # index's commit rather than the merge base keeps that exact whichever main commit the index is from.
+      # With no index, or a commit this clone cannot fetch, the check compiles everything.
+      - name: Restore class-name index
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            target/classnames-index.tsv
+            target/classnames-index.sha
+          key: classnames-index-${{ runner.os }}-${{ runner.arch }}-${{ steps.base.outputs.sha }}
+          restore-keys: |
+            classnames-index-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Class names
+        shell: bash
         run: |
           sbt 'checkClassNames --self-test'
-          sbt 'checkClassNames JVM'
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            sbt 'checkClassNames JVM --write-index target/classnames-index.tsv'
+            git rev-parse HEAD > target/classnames-index.sha
+            exit 0
+          fi
+          indexed="$(cat target/classnames-index.sha 2>/dev/null || true)"
+          if [ -n "$indexed" ] && { git cat-file -e "$indexed^{commit}" 2>/dev/null || git fetch -q origin "$indexed"; }; then
+            sbt "testKyo --dry-run --plan-file target/classnames-plan $indexed JVM"
+            if [ ! -s target/classnames-plan ]; then
+              echo "No JVM project differs from $indexed; no class can have changed."
+              exit 0
+            fi
+            sbt "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
+          else
+            echo "No usable class-name index; checking every project."
+            sbt 'checkClassNames JVM'
+          fi
+
+      - name: Save class-name index
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target/classnames-index.tsv
+            target/classnames-index.sha
+          key: classnames-index-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}

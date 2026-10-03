@@ -48,22 +48,70 @@ jobs:
       JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
       JVM_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
+      # Full history: a pull request diffs against the main commit its merge ref is built on.
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/release-setup
+      # An artifact is built from a module's main sources and the build, so a pull request probes only
+      # the modules whose main side its diff reaches (`testKyo --phase publish`): the changed modules and
+      # their dependents, or every module when the build itself changed. A test or README change probes
+      # nothing. Each step below takes this plan; without one (a push in a fork) every step runs whole.
+      - name: Select modules
+        id: plan
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo "scoped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="$(git rev-parse HEAD^1)"
+          sbt -Dplatform=JVM \
+            "testKyo --phase publish --dry-run --plan-file target/publish-plan-jvm $base JVM" \
+            "testKyo --phase publish --dry-run --plan-file target/publish-plan-js $base JS"
+          {
+            echo "scoped=true"
+            echo "jvm=$(paste -sd' ' target/publish-plan-jvm)"
+            echo "js=$(paste -sd' ' target/publish-plan-js)"
+          } >> "$GITHUB_OUTPUT"
       # What a producer job runs. publishLocal compiles this host's natives as a side effect but never
       # invokes ffiCompileAll, which is what decides whether every module's vendored dependency was
       # staged. A module added without its staging step passes publishLocal and kills every producer.
+      # On a scoped run each command below takes the plan as arguments; unscoped, it takes none and covers every module.
       - name: Compile every module's natives (producer path)
-        run: sbt -Dplatform=JVM ffiCompileAll
+        if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
+        shell: bash
+        env:
+          PLAN: ${{ steps.plan.outputs.jvm }}
+        run: sbt -Dplatform=JVM "ffiCompileAll${PLAN:+ $PLAN}"
       - name: Build publishable artifacts (JVM)
-        run: sbt -Dplatform=JVM +publishLocal
+        if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
+        shell: bash
+        env:
+          PLAN: ${{ steps.plan.outputs.jvm }}
+        run: |
+          if [ -n "$PLAN" ]; then
+            sbt -Dplatform=JVM "testKyo --phase publish --modules ${PLAN// /,} JVM"
+          else
+            sbt -Dplatform=JVM +publishLocal
+          fi
       # The half of the publish job's guard a single host can answer: completeness needs every
       # producer's artifacts pooled, so the full ffiPackagingCheckAll cannot pass on a pull request.
       # This half catches a native filed under a platform it is not for.
       - name: FFI native packaging guard, every module (formats only)
+        if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != '' || steps.plan.outputs.js != ''
+        shell: bash
+        env:
+          SCOPED: ${{ steps.plan.outputs.scoped }}
+          JVM_PLAN: ${{ steps.plan.outputs.jvm }}
+          JS_PLAN: ${{ steps.plan.outputs.js }}
         run: |
-          sbt -Dplatform=JVM ffiPackagingFormatCheckAll
-          sbt -Dplatform=JS  ffiPackagingFormatCheckAll
+          if [ "$SCOPED" != true ] || [ -n "$JVM_PLAN" ]; then
+            sbt -Dplatform=JVM "ffiPackagingFormatCheckAll${JVM_PLAN:+ $JVM_PLAN}"
+          fi
+          if [ "$SCOPED" != true ] || [ -n "$JS_PLAN" ]; then
+            sbt -Dplatform=JS "ffiPackagingFormatCheckAll${JS_PLAN:+ $JS_PLAN}"
+          fi
       # The darwin producer cross-builds by prefixing ffiCompileAll with a build-level append, and no
       # pull request runs that producer: release.yml triggers only on a main push, a tag, or a
       # `/release` comment, and the comment path runs main's copy of the workflow rather than the
@@ -72,4 +120,8 @@ jobs:
       # whatever the target. The define is inert and only makes the append observable. Runs last so
       # nothing above consumes natives built with it.
       - name: Cross-build command shape (producer path)
-        run: sbt -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' ffiCompileAll
+        if: steps.plan.outputs.scoped != 'true' || steps.plan.outputs.jvm != ''
+        shell: bash
+        env:
+          PLAN: ${{ steps.plan.outputs.jvm }}
+        run: sbt -Dplatform=JVM 'set ThisBuild / ffiCFlags ++= Seq("-DKYO_FFI_PROBE=1")' "ffiCompileAll${PLAN:+ $PLAN}"
