@@ -116,6 +116,41 @@ class SchemaExceptionPathTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a failure names each segment by the key the input holds" - {
+
+        "a field cased by a naming convention" in {
+            val result = Schema[SEPCamel].renameAllFields(Schema.NameCase.SnakeCase).decodeString[Json]("""{"app_id":1}""")
+            assert(result == Result.fail(TypeMismatchException(List("app_id"), "string", "number")), result.toString)
+        }
+
+        "a field of a flattened record, at the parent level" in {
+            val result = Schema[SEPPerson].flatten.decodeString[Json]("""{"name":"a","zip":"x","city":"c"}""")
+            assert(result == Result.fail(TypeMismatchException(List("zip"), "number", "string")), result.toString)
+        }
+
+        "a flattened record's own rename, kept under the parent's convention" in {
+            val schema = Schema[SEPCasedPerson].flatten.renameAllFields(Schema.NameCase.SnakeCase)
+            val result = schema.decodeString[Json]("""{"full_name":"a","ZIP":"x","city_name":"c"}""")
+            assert(result == Result.fail(TypeMismatchException(List("ZIP"), "number", "string")), result.toString)
+        }
+
+        "a missing field of a flattened record, at the parent level" in {
+            val result = Schema[SEPPerson].flatten.decodeString[Json]("""{"name":"a","city":"c"}""")
+            assert(result == Result.fail(MissingFieldException(Nil, "zip")), result.toString)
+        }
+
+        "a field of a record held under a renamed field" in {
+            val result = Json.decode[SEPRenamedHolder]("""{"in":{"s":"x"},"s":1}""")
+            assert(result == Result.fail(TypeMismatchException(List("in", "s"), "number", "string")), result.toString)
+        }
+
+        "a nested field named like a renamed parent field keeps its own key" in {
+            val schema = Schema[SEPRenamedHolder].rename("s", "outer_s")
+            val result = schema.decodeString[Json]("""{"in":{"s":"x"},"outer_s":1}""")
+            assert(result == Result.fail(TypeMismatchException(List("in", "s"), "number", "string")), result.toString)
+        }
+    }
+
     "input cut off before its end fails with the same exception type in JSON as in Protobuf" in {
         val bytes                                                  = Protobuf.encode(SEPUser(1, "abcdef"))
         def kind(result: Result[DecodeException, SEPUser]): String =
@@ -138,6 +173,12 @@ class SchemaExceptionPathTest extends kyo.test.Test[Any]:
 end SchemaExceptionPathTest
 
 case class SEPShort(s: Short) derives CanEqual, Schema
+case class SEPAddress(zip: Int, city: String) derives CanEqual, Schema
+case class SEPPerson(name: String, address: SEPAddress) derives CanEqual, Schema
+case class SEPCasedAddress(@rename("ZIP") zip: Int, cityName: String) derives CanEqual, Schema
+case class SEPCasedPerson(fullName: String, homeAddress: SEPCasedAddress) derives CanEqual, Schema
+case class SEPInnerInt(s: Int) derives CanEqual, Schema
+case class SEPRenamedHolder(@rename("in") inner: SEPInnerInt, s: Int) derives CanEqual, Schema
 case class SEPShortHolder(inner: SEPShort) derives CanEqual, Schema
 
 case class SEPHello(@rename("app_id") appId: String) derives CanEqual, Schema
