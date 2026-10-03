@@ -58,19 +58,22 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
         pathCaptures: Dict[String, String],
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
-        body: Stream[Span[Byte], Async],
+        body: Stream[Span[Byte], Async & Abort[HttpException]],
+        maxPartSize: Int,
         path: String,
         method: HttpMethod
     )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
-        internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, path, Present(method))
+        internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, maxPartSize, path, Present(method))
             .map(request => this(request))
 
-    /** Encode a successful response to wire format using RouteUtil callbacks. */
+    /** Encode a successful response to wire format using RouteUtil callbacks, failing with [[HttpCookieException]] on a cookie field the
+      * RFC 6265 grammar refuses.
+      */
     final private[kyo] def encodeResponse[A, S](response: HttpResponse[Out])(
         onEmpty: (HttpStatus, HttpHeaders) => A < S,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A < S,
-        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async]) => A < S
-    )(using Frame): A < (S & Sync) =
+        onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S
+    )(using Frame): A < (S & Sync & Abort[HttpCookieException]) =
         internal.server.RouteUtil.encodeResponse(route, response)(onEmpty, onBuffered, onStreaming)
 
     /** Try to encode a typed error via the route's error mappings. */
@@ -326,8 +329,8 @@ object HttpHandler:
         Frame,
         Tag[Emit[Chunk[HttpSseEvent[V]]]]
     )(
-        f: HttpRequest[Any] => Stream[HttpSseEvent[V], Async] < Async
-    ): HttpHandler[Any, "body" ~ Stream[HttpSseEvent[V], Async], Nothing] =
+        f: HttpRequest[Any] => Stream[HttpSseEvent[V], Async & Abort[HttpException]] < Async
+    ): HttpHandler[Any, "body" ~ Stream[HttpSseEvent[V], Async & Abort[HttpException]], Nothing] =
         val route = HttpRoute.getRaw(path).response(_.bodySseJson[V])
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getSseJson
@@ -336,8 +339,8 @@ object HttpHandler:
         Frame,
         Tag[Emit[Chunk[HttpSseEvent[String]]]]
     )(
-        f: HttpRequest[Any] => Stream[HttpSseEvent[String], Async] < Async
-    ): HttpHandler[Any, "body" ~ Stream[HttpSseEvent[String], Async], Nothing] =
+        f: HttpRequest[Any] => Stream[HttpSseEvent[String], Async & Abort[HttpException]] < Async
+    ): HttpHandler[Any, "body" ~ Stream[HttpSseEvent[String], Async & Abort[HttpException]], Nothing] =
         val route = HttpRoute.getRaw(path).response(_.bodySseText)
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getSseText
@@ -346,8 +349,8 @@ object HttpHandler:
         Frame,
         Tag[Emit[Chunk[V]]]
     )(
-        f: HttpRequest[Any] => Stream[V, Async] < Async
-    ): HttpHandler[Any, "body" ~ Stream[V, Async], Nothing] =
+        f: HttpRequest[Any] => Stream[V, Async & Abort[HttpException]] < Async
+    ): HttpHandler[Any, "body" ~ Stream[V, Async & Abort[HttpException]], Nothing] =
         val route = HttpRoute.getRaw(path).response(_.bodyNdjson[V])
         route.handler(req => f(req).map(stream => HttpResponse.ok.addField("body", stream)))
     end getNdJson

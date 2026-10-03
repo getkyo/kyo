@@ -265,7 +265,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val rawRoute = HttpRoute.getRaw("").response(_.bodyText)
@@ -292,7 +292,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
                         val rawRoute  = HttpRoute.getRaw("").response(_.bodyText)
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, rawRoute, HttpRequest(HttpMethod.OPTIONS, parsedUrl))(identity)
@@ -377,7 +377,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, Duration.Infinity, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(
@@ -699,7 +699,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             val route   = HttpRoute.getRaw("pooled").response(_.bodyText)
             val handler = route.handler(_ => HttpResponse.ok("pooled-ok"))
             withUnixServer(handler) { (server, sockPath) =>
-                HttpClient.init(maxConnectionsPerHost = 4).map { httpClient =>
+                HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(4)).map { httpClient =>
                     HttpClient.let(httpClient) {
                         val url = mkUrl(sockPath, "/pooled")
                         Kyo.foreach(1 to 8) { _ =>
@@ -721,8 +721,8 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             val handler = route.handler(_ => HttpResponse.ok("shared-ok"))
             withUnixServer(handler) { (server, sockPath) =>
                 val backend = internal.HttpTestPlatformBackend.client
-                HttpClient.init(maxConnectionsPerHost = 2).map { client1 =>
-                    HttpClient.init(maxConnectionsPerHost = 2).map { client2 =>
+                HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { client1 =>
+                    HttpClient.init(maxConnectionsPerHost = HttpClient.PoolSize(2)).map { client2 =>
                         val url    = mkUrl(sockPath, "/shared")
                         val fiber1 = Fiber.initUnscoped(
                             HttpClient.let(client1) {

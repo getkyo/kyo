@@ -17,15 +17,21 @@ object ByteStream:
     /** Read from src until delimiter is found.
       *
       * Passes (bytesBeforeDelimiter, remainingStream) to f. The delimiter bytes are consumed and not included in the result. If the stream
-      * ends before the delimiter is found, fails with HttpConnectionClosedException. If more than maxSize bytes are accumulated before the
-      * delimiter, fails with HttpProtocolException.
+      * ends before the delimiter is found, fails with HttpConnectionClosedException in the phase `endedIn`, which the caller names because
+      * it knows whether the bytes owed were a message head or a body. If more than maxSize bytes are accumulated before the delimiter,
+      * fails with HttpProtocolException.
       */
-    inline def readUntilWith[A, S](src: Stream[Span[Byte], Async], delimiter: Array[Byte], maxSize: Int)(
+    inline def readUntilWith[A, S](
+        endedIn: HttpConnectionClosedException.Phase,
+        src: Stream[Span[Byte], Async],
+        delimiter: Array[Byte],
+        maxSize: Int
+    )(
         inline f: (Span[Byte], Stream[Span[Byte], Async]) => A < S
     )(using inline frame: Frame): A < (S & Async & Abort[HttpException]) =
         Loop(src, Span.empty[Byte]) { (stream, buffer) =>
             stream.splitAt(1).map { (chunk, rest) =>
-                if chunk.isEmpty then Abort.fail(HttpConnectionClosedException())
+                if chunk.isEmpty then Abort.fail(HttpConnectionClosedException(endedIn))
                 else
                     val span     = chunk(0)
                     val combined = if buffer.isEmpty then span else Span.concat(buffer, span)
@@ -51,17 +57,17 @@ object ByteStream:
 
     /** Read exactly n bytes from src.
       *
-      * Passes (nBytes, remainingStream) to f. If the stream ends before n bytes are available, fails with HttpConnectionClosedException.
-      * Calls f immediately with (empty, src) if n <= 0.
+      * Passes (nBytes, remainingStream) to f. If the stream ends before n bytes are available, fails with HttpConnectionClosedException in
+      * the phase `endedIn`. Calls f immediately with (empty, src) if n <= 0.
       */
-    inline def readExactWith[A, S](src: Stream[Span[Byte], Async], n: Int)(
+    inline def readExactWith[A, S](endedIn: HttpConnectionClosedException.Phase, src: Stream[Span[Byte], Async], n: Int)(
         inline f: (Span[Byte], Stream[Span[Byte], Async]) => A < S
     )(using inline frame: Frame): A < (S & Async & Abort[HttpException]) =
         if n <= 0 then f(Span.empty[Byte], src)
         else
             Loop(src, Chunk.empty[Span[Byte]], 0) { (stream, chunks, count) =>
                 stream.splitAt(1).map { (chunk, rest) =>
-                    if chunk.isEmpty then Abort.fail(HttpConnectionClosedException())
+                    if chunk.isEmpty then Abort.fail(HttpConnectionClosedException(endedIn))
                     else
                         val span     = chunk(0)
                         val take     = math.min(span.size, n - count)
@@ -86,10 +92,10 @@ object ByteStream:
       * Passes (lineBytes, remainingStream) to f where lineBytes does not include the CRLF. Delegates to readUntilWith with the CRLF
       * delimiter.
       */
-    inline def readLineWith[A, S](src: Stream[Span[Byte], Async], maxSize: Int = 8192)(
+    inline def readLineWith[A, S](endedIn: HttpConnectionClosedException.Phase, src: Stream[Span[Byte], Async], maxSize: Int = 8192)(
         inline f: (Span[Byte], Stream[Span[Byte], Async]) => A < S
     )(using inline frame: Frame): A < (S & Async & Abort[HttpException]) =
-        readUntilWith(src, CRLF, maxSize)(f)
+        readUntilWith(endedIn, src, CRLF, maxSize)(f)
 
     /** Find the first occurrence of needle in haystack. Returns -1 if not found.
       *

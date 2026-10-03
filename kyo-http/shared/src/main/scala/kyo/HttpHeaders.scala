@@ -496,22 +496,21 @@ object HttpHeaders:
             loop(0)
         end responseCookie
 
-        /** Adds a Set-Cookie header for a response cookie.
+        /** These headers with a Set-Cookie header for a response cookie, or the [[kyo.HttpCookieException]] refusing it.
           *
-          * Raises an `IllegalArgumentException` when the name, the encoded value, or the Domain or Path attribute violates the RFC 6265
-          * section 4.1.1 grammar, since a value carrying a ';' would write cookie ATTRIBUTES rather than data and the grammar offers no
-          * escape to encode it as data instead. A caller holding content that may not qualify (anything user-derived) tests it first with
-          * [[HttpHeaders.isValidCookieName]], [[HttpHeaders.isValidCookieValue]] and [[HttpHeaders.isValidCookieAttribute]], or encodes it
-          * into an opaque token, base64 being the usual choice.
+          * The name, the encoded value, and the Domain and Path attributes must follow the RFC 6265 section 4.1.1 grammar, since a value
+          * carrying a ';' would write cookie ATTRIBUTES rather than data and the grammar offers no escape to encode it as data instead. A
+          * caller holding content that may not qualify (anything user-derived) tests it first with [[HttpHeaders.isValidCookieName]],
+          * [[HttpHeaders.isValidCookieValue]] and [[HttpHeaders.isValidCookieAttribute]], or encodes it into an opaque token, base64 being
+          * the usual choice.
           */
-        def addCookie[A](name: String, cookie: HttpCookie[A]): HttpHeaders =
-            self.add("Set-Cookie", HttpHeaders.serializeCookie(name, cookie))
+        def addCookie[A](name: String, cookie: HttpCookie[A])(using Frame): Result[HttpCookieException, HttpHeaders] =
+            HttpHeaders.serializeCookie(name, cookie).map(self.add("Set-Cookie", _))
 
-        /** Adds a Set-Cookie header with a simple string value.
-          *
-          * Raises on a name or value outside the RFC 6265 section 4.1.1 grammar; see the overload above.
+        /** These headers with a Set-Cookie header carrying a simple string value, or the [[kyo.HttpCookieException]] refusing it; see the
+          * overload above.
           */
-        def addCookie(name: String, value: String)(using HttpCodec[String]): HttpHeaders =
+        def addCookie(name: String, value: String)(using HttpCodec[String], Frame): Result[HttpCookieException, HttpHeaders] =
             addCookie(name, HttpCookie(value))
 
     end extension
@@ -646,53 +645,39 @@ object HttpHeaders:
         loop(0)
     end isValidCookieAttribute
 
-    /** Renders a cookie as a Set-Cookie field value, refusing any part that would change the header's structure.
+    /** Renders a cookie as a Set-Cookie field value, or the [[kyo.HttpCookieException]] naming the part that would change the header's
+      * structure.
       *
-      * Every part is checked against its RFC 6265 section 4.1.1 grammar and a violation raises, because there is no correct alternative:
-      * the grammar defines no escape mechanism, so a ';' in a value cannot be represented as data. Encoding one anyway would invent a
-      * convention no client undoes, trading an injection for silent corruption of the value. Rejecting is the same answer, for the same
-      * reason, that `GrowableByteBuffer.writeAscii` gives to a char it cannot encode.
-      *
-      * A raise rather than a typed failure because reaching it is a defect in the calling code, not a bad message from a peer: a cookie
-      * value is an opaque token the application chooses. An application that needs to carry arbitrary text (a display name, anything
-      * user-supplied) encodes it deliberately, base64 being the usual choice, so that both ends agree on how to read it back. Callers
-      * holding content that may not qualify can test it first with [[isValidCookieName]], [[isValidCookieValue]] and
-      * [[isValidCookieAttribute]] and take their own path.
+      * Every part is checked against its RFC 6265 section 4.1.1 grammar and a violation is refused, because there is no correct
+      * alternative: the grammar defines no escape mechanism, so a ';' in a value cannot be represented as data. Encoding one anyway would
+      * invent a convention no client undoes, trading an injection for silent corruption of the value.
       */
-    private[kyo] def serializeCookie[A](name: String, cookie: HttpCookie[A]): String =
-        require(
-            isValidCookieName(name),
-            s"cookie name must be a token per RFC 6265 section 4.1.1 (no controls, whitespace, or separators); got: $name"
-        )
-        val encoded = cookie.codec.encode(cookie.value)
-        require(
-            isValidCookieValue(encoded),
-            s"cookie value must be cookie-octets per RFC 6265 section 4.1.1 (no controls, whitespace, ';', ',', '\"' or '\\\\'); got: $encoded"
-        )
-        val sb = new StringBuilder(name.size + 80)
-        discard(sb.append(name).append('=').append(encoded))
-        cookie.maxAge match
-            case Present(d) => discard(sb.append("; Max-Age=").append(d.toSeconds))
-            case Absent     =>
-        cookie.domain match
-            case Present(d) =>
-                require(isValidCookieAttribute(d), s"cookie Domain must not carry a control character or ';'; got: $d")
-                discard(sb.append("; Domain=").append(d))
-            case Absent =>
-        end match
-        cookie.path match
-            case Present(p) =>
-                require(isValidCookieAttribute(p), s"cookie Path must not carry a control character or ';'; got: $p")
-                discard(sb.append("; Path=").append(p))
-            case Absent =>
-        end match
-        if cookie.secure then discard(sb.append("; Secure"))
-        if cookie.httpOnly then discard(sb.append("; HttpOnly"))
-        cookie.sameSite match
-            case Present(s) => discard(sb.append("; SameSite=").append(s))
-            case Absent     =>
-        sb.toString
-    end serializeCookie
+    private[kyo] def serializeCookie[A](name: String, cookie: HttpCookie[A])(using Frame): Result[HttpCookieException, String] =
+        renderCookie(name, cookie) match
+            case refused: HttpCookieException => Result.fail(refused)
+            case rendered: String             => Result.succeed(rendered)
+
+    /** [[serializeCookie]] without the `Result`, for a caller already inside a match on the outcome. */
+    private[kyo] def renderCookie[A](name: String, cookie: HttpCookie[A])(using Frame): HttpCookieException | String =
+        if !isValidCookieName(name) then HttpCookieException("the name of a cookie")
+        else
+            val encoded = cookie.codec.encode(cookie.value)
+            if !isValidCookieValue(encoded) then HttpCookieException(s"the value of cookie '$name'")
+            else if cookie.domain.exists(!isValidCookieAttribute(_)) then HttpCookieException(s"the Domain of cookie '$name'")
+            else if cookie.path.exists(!isValidCookieAttribute(_)) then HttpCookieException(s"the Path of cookie '$name'")
+            else
+                val sb = new StringBuilder(name.size + 80)
+                discard(sb.append(name).append('=').append(encoded))
+                cookie.maxAge.foreach(d => discard(sb.append("; Max-Age=").append(d.toSeconds)))
+                cookie.domain.foreach(d => discard(sb.append("; Domain=").append(d)))
+                cookie.path.foreach(p => discard(sb.append("; Path=").append(p)))
+                if cookie.secure then discard(sb.append("; Secure"))
+                if cookie.httpOnly then discard(sb.append("; HttpOnly"))
+                cookie.sameSite.foreach(s => discard(sb.append("; SameSite=").append(s)))
+                sb.toString
+            end if
+        end if
+    end renderCookie
 
     @tailrec private def skipWhitespace(s: String, pos: Int): Int =
         if pos < s.length && s.charAt(pos) == ' ' then skipWhitespace(s, pos + 1)

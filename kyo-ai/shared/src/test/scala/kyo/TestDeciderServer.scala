@@ -23,8 +23,12 @@ final class TestDeciderServer private (
         scripts.updateAndGet(_.append(TestDeciderServer.Scripted.Body(body))).unit
 
     /** Enqueues a non-2xx status with a body and response headers, returned by the next call. */
-    def enqueueStatus(code: Int, body: String, headers: Seq[(String, String)] = Seq.empty)(using Frame): Unit < Async =
-        scripts.updateAndGet(_.append(TestDeciderServer.Scripted.Status(code, body, headers))).unit
+    def enqueueStatus(code: Int, body: String, headers: Seq[(String, String)] = Seq.empty)(using
+        Frame
+    ): Unit < (Async & Abort[HttpInvalidStatusException]) =
+        Abort.get(HttpStatus.init(code)).map { status =>
+            scripts.updateAndGet(_.append(TestDeciderServer.Scripted.Status(status, body, headers))).unit
+        }
 
     /** Enqueues a request the server never answers, driving a client-side timeout. */
     def enqueueNeverRespond(using Frame): Unit < Async =
@@ -40,12 +44,12 @@ object TestDeciderServer:
 
     enum Scripted derives CanEqual:
         case Body(json: String)
-        case Status(code: Int, json: String, headers: Seq[(String, String)])
+        case Status(status: HttpStatus, json: String, headers: Seq[(String, String)])
         case Never
     end Scripted
 
     /** Binds the server on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. */
-    def run[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
+    def run[A, S](f: TestDeciderServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException | HttpRouteException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[String])
@@ -61,8 +65,8 @@ object TestDeciderServer:
         HttpRoute.postRaw("v1/systemone").request(_.bodyText).response(_.bodyText).handler { req =>
             received.getAndUpdate(_.append(req.fields.body)).andThen {
                 popNext(scripts).map {
-                    case Present(Scripted.Status(code, body, headers)) =>
-                        headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
+                    case Present(Scripted.Status(status, body, headers)) =>
+                        headers.foldLeft(HttpResponse(status))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
                     case Present(Scripted.Never)   => Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
                     case Present(Scripted.Body(b)) => HttpResponse.ok(b)
                     case Absent                    => defaultAnswer(req.fields.body)

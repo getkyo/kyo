@@ -98,8 +98,8 @@ object ContainerPredef:
             def check(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
                 // The probe blocks inside the container until the service answers, so the exec must outlast the
                 // caller's ambient HttpClient timeout (often the 5s default; predef fixtures are reused beyond kyo-pod).
-                // Give it its own budget-covering timeout; the shell backend ignores the HttpClient config.
-                HttpClient.withConfig(_.timeout(budget + 15.seconds)) {
+                // Raise it to cover the budget; the shell backend ignores the HttpClient config.
+                HttpClient.withConfig(c => c.timeout(c.timeout.max(budget + 15.seconds))) {
                     readinessAttempt(
                         () => Abort.run[ContainerException](container.exec(cmd)),
                         () => Abort.run[ContainerException](container.state),

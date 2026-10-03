@@ -101,11 +101,65 @@ class HttpStatusTest extends BaseHttpTest:
         }
 
         "Custom status predicates based on code range" in {
-            assert(HttpStatus.Custom(150).isInformational)
-            assert(HttpStatus.Custom(250).isSuccess)
-            assert(HttpStatus.Custom(350).isRedirect)
-            assert(HttpStatus.Custom(450).isClientError)
-            assert(HttpStatus.Custom(550).isServerError)
+            assert(HttpStatus(150).isInformational)
+            assert(HttpStatus(250).isSuccess)
+            assert(HttpStatus(350).isRedirect)
+            assert(HttpStatus(450).isClientError)
+            assert(HttpStatus(550).isServerError)
+        }
+    }
+
+    "message rules" - {
+        "forbidsContent holds for every 1xx, 204 and 304 and nothing next to them" in {
+            assert(!HttpStatus.forbidsContent(99))
+            assert(HttpStatus.Continue.forbidsContent)
+            assert(HttpStatus.SwitchingProtocols.forbidsContent)
+            assert(HttpStatus(199).forbidsContent)
+            assert(!HttpStatus.OK.forbidsContent)
+            assert(!HttpStatus.NonAuthoritativeInfo.forbidsContent)
+            assert(HttpStatus.NoContent.forbidsContent)
+            assert(!HttpStatus.ResetContent.forbidsContent)
+            assert(!HttpStatus.SeeOther.forbidsContent)
+            assert(HttpStatus.NotModified.forbidsContent)
+            assert(!HttpStatus.UseProxy.forbidsContent)
+            assert(!HttpStatus.InternalServerError.forbidsContent)
+        }
+
+        "isInterim holds for every 1xx but 101" in {
+            assert(!HttpStatus.isInterim(99))
+            assert(HttpStatus.Continue.isInterim)
+            assert(!HttpStatus.SwitchingProtocols.isInterim)
+            assert(HttpStatus.Processing.isInterim)
+            assert(HttpStatus(199).isInterim)
+            assert(!HttpStatus.OK.isInterim)
+        }
+
+        "acceptsUpgrade holds for 101 and every 2xx" in {
+            assert(!HttpStatus.Continue.acceptsUpgrade)
+            assert(HttpStatus.SwitchingProtocols.acceptsUpgrade)
+            assert(!HttpStatus.Processing.acceptsUpgrade)
+            assert(!HttpStatus(199).acceptsUpgrade)
+            assert(HttpStatus.OK.acceptsUpgrade)
+            assert(HttpStatus(299).acceptsUpgrade)
+            assert(!HttpStatus.MultipleChoices.acceptsUpgrade)
+            assert(!HttpStatus.BadRequest.acceptsUpgrade)
+        }
+
+        "a Custom status follows the rules of its code" in {
+            assert(HttpStatus(150).isInstanceOf[HttpStatus.Custom])
+            assert(HttpStatus(150).forbidsContent)
+            assert(HttpStatus(150).isInterim)
+            assert(HttpStatus(250).isInstanceOf[HttpStatus.Custom])
+            assert(HttpStatus(250).acceptsUpgrade)
+            assert(!HttpStatus(250).forbidsContent)
+        }
+
+        "isValid holds from 100 to 599" in {
+            assert(!HttpStatus.isValid(99))
+            assert(HttpStatus.isValid(100))
+            assert(HttpStatus.isValid(599))
+            assert(!HttpStatus.isValid(600))
+            assert(!HttpStatus.isValid(0))
         }
     }
 
@@ -126,16 +180,33 @@ class HttpStatusTest extends BaseHttpTest:
             end match
         }
 
-        "rejects code below 100" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpStatus(99)
-            }
+        "a literal outside 100 to 599 does not compile" in {
+            typeCheckFailure("HttpStatus(99)")
+            typeCheckFailure("HttpStatus(600)")
         }
 
-        "rejects code above 599" in {
-            interceptThrown[IllegalArgumentException] {
-                HttpStatus(600)
-            }
+        "a runtime code goes through init, not apply" in {
+            typeCheckFailure("val code = 404; HttpStatus(code)")
+        }
+
+        "a Custom status cannot be built outside HttpStatus" in {
+            typeCheckFailure("HttpStatus.Custom(999)")
+            typeCheckFailure("HttpStatus(299).asInstanceOf[HttpStatus.Custom].copy(code = 999)")
+        }
+    }
+
+    "init" - {
+        "resolves a runtime code to the same status as the literal" in {
+            val codes = Chunk(100, 200, 299, 404, 599)
+            assert(codes.map(HttpStatus.init(_).map(_.code)) == codes.map(Result.succeed(_)))
+            assert(HttpStatus.init(404) == Result.succeed(HttpStatus.NotFound))
+        }
+
+        "refuses a code outside 100 to 599 at the caller's frame" in {
+            val (refused, here) = (HttpStatus.init(600), summon[Frame])
+            assert(refused.failure.map(_.code) == Present(600))
+            assert(refused.failure.map(_.frame.position.lineNumber) == Present(here.position.lineNumber))
+            assert(HttpStatus.init(99).failure.map(_.code) == Present(99))
         }
 
         "accepts boundary codes" in {
@@ -166,21 +237,18 @@ class HttpStatusTest extends BaseHttpTest:
     }
 
     "Custom" - {
-        "stores arbitrary code" in {
-            val c = HttpStatus.Custom(299)
-            assert(c.code == 299)
+        "stores a non-standard code" in {
+            assert(HttpStatus(299).code == 299)
         }
 
         "equality" in {
-            assert(HttpStatus.Custom(299) == HttpStatus.Custom(299))
-            assert(HttpStatus.Custom(299) != HttpStatus.Custom(300))
+            assert(HttpStatus(299) == HttpStatus(299))
+            assert(HttpStatus(299) != HttpStatus(300))
         }
 
-        "not equal to standard status with same code" in {
-            // Custom(200) is a different instance than Success.OK
-            val custom200 = HttpStatus.Custom(200)
-            // apply returns the standard enum, not Custom
-            assert(HttpStatus(200) != custom200)
+        "a standard code never resolves to Custom" in {
+            assert(HttpStatus(200) == HttpStatus.OK)
+            assert(!HttpStatus.init(200).exists(_.isInstanceOf[HttpStatus.Custom]))
         }
     }
 
@@ -213,12 +281,14 @@ class HttpStatusTest extends BaseHttpTest:
                 500, 502, 503
             )
             standardCodes.foreach { code =>
-                val status = HttpStatus(code)
-                assert(status.code == code, s"HttpStatus($code) should resolve to code $code")
-                assert(
-                    !status.isInstanceOf[HttpStatus.Custom],
-                    s"HttpStatus($code) should be a named enum value, not Custom"
-                )
+                HttpStatus.init(code) match
+                    case Result.Success(status) =>
+                        assert(status.code == code, s"HttpStatus($code) should resolve to code $code")
+                        assert(
+                            !status.isInstanceOf[HttpStatus.Custom],
+                            s"HttpStatus($code) should be a named enum value, not Custom"
+                        )
+                    case other => fail(s"HttpStatus.init($code) should succeed, got $other")
             }
             ()
         }
