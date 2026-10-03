@@ -3839,7 +3839,8 @@ lazy val `kyo-slack` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-slack"))
-        .dependsOn(`kyo-http`, `kyo-schema-json`)
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`)
+        .dependsOn(`kyo-pod` % "test->compile")
         .withKyoTest
         .settings(
             `kyo-settings`
