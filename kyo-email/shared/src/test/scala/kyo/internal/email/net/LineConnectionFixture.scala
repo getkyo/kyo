@@ -54,29 +54,37 @@ object LineConnectionFixture:
         Frame
     ): Int < (Async & Scope & Abort[NetException]) =
         AtomicRef.initWith(Chunk.empty[Connection]) { accepted =>
-            Clock.use { clock =>
-                // Unsafe: kyo-net's listen is unsafe-tier; its accept callback is synchronous, so each handler is spawned on a fiber of
-                // its own, which does not inherit the caller's clock.
-                Sync.Unsafe.defer {
-                    def accept(conn: Connection): Unit =
-                        discard(accepted.unsafe.updateAndGet(_.append(conn)))
-                        discard(Fiber.Unsafe.init(
-                            Clock.let(clock)(LineConnection.wrap(conn, "127.0.0.1", 0).map(line => Abort.run[Failure](handler(line)).unit))
-                        ))
-                    end accept
-                    tls match
-                        case Present(config) => NetPlatform.transport.listenTls("127.0.0.1", 0, 128, config)(accept)
-                        case Absent          => NetPlatform.transport.listen("127.0.0.1", 0, 128)(accept)
+            AtomicRef.initWith(Chunk.empty[LineConnection]) { lines =>
+                Clock.use { clock =>
+                    // Unsafe: kyo-net's listen is unsafe-tier; its accept callback is synchronous, so each handler is spawned on a fiber
+                    // of its own, which does not inherit the caller's clock.
+                    Sync.Unsafe.defer {
+                        def accept(conn: Connection): Unit =
+                            discard(accepted.unsafe.updateAndGet(_.append(conn)))
+                            discard(Fiber.Unsafe.init(
+                                Clock.let(clock)(LineConnection.wrap(conn, "127.0.0.1", 0).map { line =>
+                                    lines.updateAndGet(_.append(line)).andThen(Abort.run[Failure](handler(line)).unit)
+                                })
+                            ))
+                        end accept
+                        tls match
+                            case Present(config) => NetPlatform.transport.listenTls("127.0.0.1", 0, 128, config)(accept)
+                            case Absent          => NetPlatform.transport.listen("127.0.0.1", 0, 128)(accept)
+                    }
+                }.map(_.safe).map(_.get).map { listener =>
+                    // A leaf that connects to the port after the scope expects a refusal, and close returns before the descriptor is
+                    // released, so the finalizer waits for `released`. Node releases the listener only once every accepted connection has
+                    // ended, so each one is closed first: the accepted connection, and the line's current one, which a STARTTLS upgrade
+                    // replaced with the TLS connection.
+                    // Unsafe: closing the listener and the accepted connections is unsafe-tier; close is idempotent.
+                    Scope.ensure(
+                        Sync.Unsafe.defer {
+                            listener.close()
+                            accepted.unsafe.get().foreach(conn => conn.close())
+                        }.andThen(lines.get.map(Kyo.foreachDiscard(_)(_.close)))
+                            .andThen(Sync.Unsafe.defer(listener.released.safe).map(_.get))
+                    ).andThen(listener.port)
                 }
-            }.map(_.safe).map(_.get).map { listener =>
-                // Unsafe: closing the listener and the accepted connections is unsafe-tier; close is idempotent. A leaf that connects to
-                // the port after the scope expects a refusal, and close returns before the descriptor is released, so the finalizer waits
-                // for `released`; the accepted connections close first, since Node releases the listener only once they have ended.
-                Scope.ensure(Sync.Unsafe.defer {
-                    listener.close()
-                    accepted.unsafe.get().foreach(conn => conn.close())
-                    listener.released.safe
-                }.map(_.get)).andThen(listener.port)
             }
         }
     end listen
