@@ -1,4 +1,5 @@
-# Format: doctestFormat rewrites the fence into the .scalafmt.conf style without compiling; doctest then validates it.
+# Format: doctestFormat rewrites the parseable fence into the .scalafmt.conf style without compiling, and leaves the unparseable
+# and noformat fences as written; doctest then validates them.
 > doctestFormat
 $ must-mirror README.md expected/README.md
 > doctest

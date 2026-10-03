@@ -298,7 +298,12 @@ object TestKyo {
         allRefs: Seq[ProjectRef],
         extracted: Extracted
     ): Option[Set[String]] = {
-        val changedFiles = diffFiles(a.baseRef)
+        val changedFiles = diffFiles(a.baseRef) match {
+            case Some(files) => files
+            case None        =>
+                log(s"could not diff against ${a.baseRef}, running all modules")
+                return None
+        }
         if (changedFiles.isEmpty) {
             log(s"no changed files vs ${a.baseRef}, skipping tests")
             return Some(Set.empty)
@@ -519,12 +524,18 @@ object TestKyo {
         }
     }
 
-    private def diffFiles(baseRef: String): Seq[String] =
-        try Seq("git", "diff", "--name-only", baseRef).!!.trim.split("\n").filter(_.nonEmpty).toSeq
+    /** The files changed vs baseRef, or None when git cannot say, which must run everything rather than nothing.
+      *
+      * `-z` separates paths with NUL and never quotes them. Splitting the default output on "\n" left a
+      * trailing "\r" on every path on Windows, where `!!` joins output lines with the platform separator,
+      * and a "\r" is not a legal file name character there.
+      */
+    private def diffFiles(baseRef: String): Option[Seq[String]] =
+        try Some(Seq("git", "diff", "--name-only", "-z", baseRef).!!.split('\u0000').map(_.trim).filter(_.nonEmpty).toSeq)
         catch {
             case e: Exception =>
                 log(s"Failed to run git diff: ${e.getMessage}")
-                Seq.empty
+                None
         }
 
     // project/ (the meta-build, plugins, this command) and .github/ (CI workflows) are genuinely
