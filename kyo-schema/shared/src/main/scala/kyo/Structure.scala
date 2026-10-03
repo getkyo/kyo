@@ -180,6 +180,25 @@ object Structure:
         case String, Boolean, Unit
     end PrimitiveKind
 
+    /** How a mapping is written: `Object`, an object whose field names are the keys, or `Pairs`, a sequence of records holding a `key`
+      * and a `value`.
+      *
+      * The schema that builds a [[Type.Mapping]] chooses its form, and every format and schema generator reads it from there. A key
+      * whose schema is a string defaults to `Object`; any key can be written as `Pairs` through `Schema.mapAsPairs`,
+      * `Schema.dictAsPairs` or `Schema.orderedDictAsPairs`.
+      */
+    enum MapForm derives CanEqual, Schema:
+        case Object, Pairs
+    end MapForm
+
+    object MapForm:
+        /** The form a key implies: `Object` for a key whose structure is a string, `Pairs` for any other. */
+        def of(keyType: Type): MapForm =
+            keyType match
+                case p: Type.Primitive if p.kind == PrimitiveKind.String => Object
+                case _                                                   => Pairs
+    end MapForm
+
     object Type:
         /** A case class or tuple: named fields with individual types.
           *
@@ -293,13 +312,23 @@ object Structure:
           *   the key element type
           * @param valueType
           *   the value element type
+          * @param form
+          *   how the schema that built it writes the mapping: an object keyed by the key's string, or a sequence of key and value
+          *   pairs
           */
         case class Mapping(
             name: String,
             tag: Tag[Any],
             keyType: Structure.Type,
-            valueType: Structure.Type
+            valueType: Structure.Type,
+            form: MapForm
         ) extends Type
+
+        object Mapping:
+            /** A mapping in the form its key implies, [[MapForm.of]]. */
+            def apply(name: String, tag: Tag[Any], keyType: Structure.Type, valueType: Structure.Type): Mapping =
+                Mapping(name, tag, keyType, valueType, MapForm.of(keyType))
+        end Mapping
 
         /** An optional value type (Option or Maybe).
           *
@@ -342,12 +371,12 @@ object Structure:
                 va.size == vb.size && va.zip(vb).forall { (v1, v2) =>
                     v1.name == v2.name && compatible(v1.variantType, v2.variantType)
                 }
-            case (Primitive(_, ta), Primitive(_, tb))           => ta =:= tb
-            case (Collection(_, _, ea), Collection(_, _, eb))   => compatible(ea, eb)
-            case (Optional(_, _, ia), Optional(_, _, ib))       => compatible(ia, ib)
-            case (Mapping(_, _, ka, va), Mapping(_, _, kb, vb)) => compatible(ka, kb) && compatible(va, vb)
-            case (Open(ta), Open(tb))                           => ta =:= tb
-            case _                                              => false
+            case (Primitive(_, ta), Primitive(_, tb))                   => ta =:= tb
+            case (Collection(_, _, ea), Collection(_, _, eb))           => compatible(ea, eb)
+            case (Optional(_, _, ia), Optional(_, _, ib))               => compatible(ia, ib)
+            case (Mapping(_, _, ka, va, fa), Mapping(_, _, kb, vb, fb)) => fa == fb && compatible(ka, kb) && compatible(va, vb)
+            case (Open(ta), Open(tb))                                   => ta =:= tb
+            case _                                                      => false
 
         /** Walk all nodes depth-first. */
         def fold[R](tpe: Type)(init: R)(f: (R, Type) => R): R =
@@ -357,7 +386,7 @@ object Structure:
                 case Sum(_, _, _, variants, _, _) => variants.foldLeft(acc)((r, v) => fold(v.variantType)(r)(f))
                 case Collection(_, _, elem)       => fold(elem)(acc)(f)
                 case Optional(_, _, inner)        => fold(inner)(acc)(f)
-                case Mapping(_, _, k, v)          => fold(v)(fold(k)(acc)(f))(f)
+                case Mapping(_, _, k, v, _)       => fold(v)(fold(k)(acc)(f))(f)
                 case _: Primitive                 => acc
                 case _: Open                      => acc
             end match

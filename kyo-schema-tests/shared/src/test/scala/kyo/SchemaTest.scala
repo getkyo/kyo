@@ -2240,6 +2240,14 @@ class SchemaTest extends kyo.test.Test[Any]:
             assertUnknownField(result, "firstName")
         }
 
+        "a parent's rename does not reach a nested record's field of the same name" in {
+            val schema = Schema[MTRenamedCityHolder].rename("city", "town")
+            val value  = MTRenamedCityHolder("x", MTAddress("a", "b", "c"))
+            val wire   = schema.encodeString[Json](value)
+            assert(wire == """{"town":"x","home":{"street":"a","city":"b","zip":"c"}}""", wire)
+            assert(schema.decodeString[Json](wire) == Result.succeed(value))
+        }
+
         "field-case wire names are accepted and unrelated fields are rejected" in {
             val schema = Schema[StrictFieldCase]
                 .renameAllFields(Schema.NameCase.SnakeCase)
@@ -2669,13 +2677,12 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
     }
 
-    // The wire form of a mapping field belongs to the bound given, not to the declared key type: the
-    // object-form and array-form givens of Dict, OrderedDict, and Map each declare a byte-identical
-    // structure, so an injected empty value chosen from the key type is a guess. These four leaves
-    // bind the array form for a String key, the binding no key-type guess can serve (getkyo/kyo#1748).
+    // The wire form of a mapping field belongs to the bound given, not to the declared key type, so an
+    // injected empty value chosen from the key type is a guess. These leaves bind the array form for a
+    // String key, the binding no key-type guess can serve (getkyo/kyo#1748).
 
     "empty String-key Dict bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
         val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
         val out                                    = schema.encodeString[Json](value)
@@ -2687,10 +2694,10 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     // A mapping's framing is part of what the bound given encodes, so a transform, which materializes
     // the value into a Structure.Value tree and replays it, has to replay the framing it was given. It
-    // cannot re-derive it: a map node carries none and the two givens declare the same structure.
+    // cannot re-derive it from the entries: a map node carries no framing.
 
     "a non-empty String-key Dict bound to the array-form given keeps the array wire form under a transform" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
         val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out                                    = schema.encodeString[Json](value)
@@ -2705,12 +2712,12 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     // Not an omit-policy defect: any transform replays the tree, so a rename reaches the same path.
     "a rename keeps a String-key Dict's array wire form" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema[MTStringDictRecord].rename(_.name, "who")
         val value                                  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out                                    = schema.encodeString[Json](value)
         assert(
-            out == """{"tags":[{"key":"x","value":1}],"count":7,"who":"alice"}""",
+            out == """{"who":"alice","tags":[{"key":"x","value":1}],"count":7}""",
             s"the bound given's array wire form must survive a rename: $out"
         )
         val back = schema.decodeString[Json](out).getOrThrow
@@ -2722,13 +2729,13 @@ class SchemaTest extends kyo.test.Test[Any]:
         val schema = Schema[MTStringDictRecord].rename(_.name, "who")
         val value  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
         val out    = schema.encodeString[Json](value)
-        assert(out == """{"tags":{"x":1},"count":7,"who":"alice"}""", s"the object form is the default given's form: $out")
+        assert(out == """{"who":"alice","tags":{"x":1},"count":7}""", s"the object form is the default given's form: $out")
         val back = schema.decodeString[Json](out).getOrThrow
         assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
     }
 
     "a non-empty String-key Map bound to the array-form given keeps the array wire form under a transform" in {
-        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
         val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
         val value                                 = MTStringMapRecord("alice", Map("x" -> 1), 7)
         val out                                   = schema.encodeString[Json](value)
@@ -2741,7 +2748,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "empty String-key OrderedDict bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[OrderedDict[String, Int]] = Schema.orderedDictSchema[String, Int]
+        given arrayForm: Schema[OrderedDict[String, Int]] = Schema.orderedDictAsPairs[String, Int]
         val schema                                        = Schema.derived[MTOrderedDictRecord].omitEmptyCollections
         val value                                         = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
         val out                                           = schema.encodeString[Json](value)
@@ -2752,7 +2759,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "empty String-key Map bound to the array-form given round-trips under omitEmptyCollections" in {
-        given arrayForm: Schema[Map[String, Int]] = Schema.mapSchema[String, Int]
+        given arrayForm: Schema[Map[String, Int]] = Schema.mapAsPairs[String, Int]
         val schema                                = Schema.derived[MTStringMapRecord].omitEmptyCollections
         val value                                 = MTStringMapRecord("alice", Map.empty[String, Int], 7)
         val out                                   = schema.encodeString[Json](value)
@@ -2762,7 +2769,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "per-field .omit(_.f).whenEmpty round-trips a String-key Dict bound to the array-form given" in {
-        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictAsPairs[String, Int]
         val schema                                 = Schema[MTStringDictRecord].omit(_.tags).whenEmpty
         val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
         val out                                    = schema.encodeString[Json](value)
@@ -3019,10 +3026,12 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(result == Result.succeed("hello"), s"Non-destructive probe must decode String 'hello', got $result")
     }
 
-    "union member naming via reused variantNames rejects a non-member name at the builder call site" in {
-        val s      = summon[Schema[Int | String]]
-        val result = Result.catching[SchemaException](s.variantNames("Nope" -> "x"))
-        assert(result.isFailure, s"variantNames with unknown member must fail; got $result")
+    "union member naming via reused variantNames rejects a non-member name at the first encode" in {
+        val s      = summon[Schema[Int | String]].variantNames("Nope" -> "x")
+        val result = Result.catching[UnknownVariantException](s.encodeString[Json](1))
+        result match
+            case Result.Failure(e) => assert(e.variantName == "Nope")
+            case other             => fail(s"variantNames with unknown member must fail; got $other")
     }
 
     "nominal untagged sum keeps first-declared-wins decode while type unions probe all members" in {
@@ -3596,11 +3605,11 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(schema.decodeString[Json](json) == Result.succeed(value))
         }
 
-        "an intermediate sealed abstract class delegates to its own sum instead of a zero-field product" in {
+        "an intermediate sealed abstract class adds its cases as variants instead of becoming a zero-field product" in {
             val schema        = Schema.derived[SCCTop]
             val value: SCCTop = SCCTop.Mid.Concrete(5)
             val json          = schema.encodeString[Json](value)
-            assert(json == """{"Mid":{"Concrete":{"n":5}}}""", s"wire: $json")
+            assert(json == """{"Concrete":{"n":5}}""", s"wire: $json")
             assert(schema.decodeString[Json](json) == Result.succeed(value))
         }
 
@@ -3719,6 +3728,15 @@ class SchemaTest extends kyo.test.Test[Any]:
         "the constructed type is inferred from the constructor with no expected type to pin it" in {
             val schema: Schema[DVPort] = Schema.derivedVia(DVPort.make)
             assert(schema.encodeString[Json](DVPort.make(80).toMaybe.get) == """{"value":80}""")
+        }
+
+        "a constructor's rejection carries the decoding caller's Frame, not the given's" in {
+            Json.decode[DVSpan]("""{"lo":2,"hi":1}""") match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    e.rejection match
+                        case leaf: DVInvalidSpan => assert(leaf.frame == e.frame, s"rejected at ${leaf.frame}, decoded at ${e.frame}")
+                        case other               => fail(s"expected the constructor's own failure, got $other")
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
         }
 
         "a derivedVia type nested as a field decodes through its constructor, not around it" in {
@@ -3854,7 +3872,91 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a record declared in the scope of an opaque type over String keeps its annotations when derived outside the scope" in {
+        import OSHolderSchemas.given
+        val value = OSHolder.Labelled("a", 1)
+        assert(Json.encode(value) == """{"the_label":"a","count":1}""")
+        assert(Json.decode[OSHolder.Labelled]("""{"the_label":"a","count":1}""") == Result.succeed(value))
+    }
+
+    "a schema builder takes no Frame" - {
+        import SBFGivens.given
+
+        "every builder builds a given where no Frame can be derived, and the schema round-trips" in {
+            val account = SBFAccount("Ada", "Lovelace")
+            assert(Json.encode(account) == """{"first_name":"Ada","last_name":"Lovelace"}""")
+            assert(Json.decode[SBFAccount]("""{"given_name":"Ada","last_name":"Lovelace"}""") == Result.succeed(account))
+            val order = SBFOrder(3, "ab1", Chunk("x"))
+            assert(Json.decode[SBFOrder](Json.encode(order)) == Result.succeed(order))
+            assert(Json.decode[SBFOrder]("""{"count":3,"sku":"ab1","tags":["x"]}""") == Result.succeed(order))
+            assert(Protobuf.decode[SBFOrder](Protobuf.encode(order)) == Result.succeed(order))
+            assert(Json.decode[SBFShape]("""{"type":"round","radius":2}""") == Result.succeed(SBFCircle(2)))
+            Seq[SBFShape](SBFCircle(2), SBFSquare(1)).foreach(s => assert(Json.decode[SBFShape](Json.encode(s)) == Result.succeed(s)))
+            Seq[SBFPoint](SBFFlat(1), SBFSpace(1, 2)).foreach(p => assert(Json.decode[SBFPoint](Json.encode(p)) == Result.succeed(p)))
+            Seq[SBFCoin](SBFHeads(), SBFTails()).foreach(c => assert(Json.decode[SBFCoin](Json.encode(c)) == Result.succeed(c)))
+            assert(Json.decode[SBFPage]("""{"label":"a"}""") == Result.succeed(SBFPage(10, "a")))
+        }
+
+        "a misconfigured builder fails at the first decode that reaches it, with that call's Frame and the builder that caused it" in {
+            val decodeSite = summon[Frame]
+            Json.decode[SBFHolder]("""{"clash":{"type":"side","n":1}}""")(using summon[Json], summon[Schema[SBFHolder]], decodeSite) match
+                case Result.Panic(e: VariantNameCollisionException) =>
+                    assert(e.wireName == "side")
+                    assert(e.variants == Chunk("SBFLeft", "SBFRight"))
+                    assert(e.frame == decodeSite, s"raised at ${e.frame}, decoded at $decodeSite")
+                    assert(e.getMessage.contains("variantNames"), e.getMessage)
+                case other => fail(s"expected a VariantNameCollisionException, got $other")
+            end match
+        }
+
+        "a misconfigured builder fails at the first encode that reaches it, with that call's Frame" in {
+            val encodeSite = summon[Frame]
+            Result.catching[VariantNameCollisionException](
+                Json.encode(SBFHolder(SBFLeft(1)))(using summon[Schema[SBFHolder]], encodeSite, summon[Json])
+            ) match
+                case Result.Failure(e) =>
+                    assert(e.wireName == "side")
+                    assert(e.variants == Chunk("SBFLeft", "SBFRight"))
+                    assert(e.frame == encodeSite, s"raised at ${e.frame}, encoded at $encodeSite")
+                    assert(e.getMessage.contains("variantNames"), e.getMessage)
+                case other => fail(s"expected a VariantNameCollisionException, got $other")
+            end match
+        }
+
+        "a field transformer that refuses its input fails the decode with the decode call's Frame and the field's path, never a throw" in {
+            assert(Json.decode[SBFLine]("""{"sku":"ab1","quantity":2}""").map(_.sku.value) == Result.succeed("ab1"))
+            val decodeSite = summon[Frame]
+            Json.decode[SBFLine]("""{"sku":"a b","quantity":2}""")(using summon[Json], summon[Schema[SBFLine]], decodeSite) match
+                case Result.Failure(e: ConstructorRejectedException) =>
+                    assert(e.path == Seq("sku"))
+                    assert(e.frame == decodeSite, s"decoded at $decodeSite, reported at ${e.frame}")
+                    e.rejection match
+                        case leaf: SBFInvalidSku =>
+                            assert(leaf.text == "a b")
+                            assert(leaf.frame == decodeSite, s"decoded at $decodeSite, rejected at ${leaf.frame}")
+                        case other => fail(s"expected the constructor's own failure, got $other")
+                    end match
+                case other => fail(s"expected a ConstructorRejectedException, got $other")
+            end match
+        }
+
+        "a failed check carries the validate call's Frame" in {
+            def validated(order: SBFOrder)(using site: Frame) = (site, summon[Schema[SBFOrder]].validate(order))
+            val (validateSite, failures)                      = validated(SBFOrder(200, "zz", Chunk.empty))
+            assert(failures.map(_.message).toSet == Set("count is at most 100", "code is not zz"))
+            failures.foreach(f => assert(f.frame == validateSite, s"failed at ${f.frame}, validated at $validateSite"))
+        }
+    }
+
 end SchemaTest
+
+object OSHolder:
+    opaque type Code = String
+    final case class Labelled(@kyo.schema.rename("the_label") label: String, count: Int) derives CanEqual
+end OSHolder
+
+object OSHolderSchemas:
+    given Schema[OSHolder.Labelled] = Schema.derived[OSHolder.Labelled]
 
 sealed abstract case class DVPort private (value: Int) derives CanEqual
 object DVPort:
@@ -3866,6 +3968,16 @@ object DVPort:
 end DVPort
 
 case class DVPortTwin(value: Int) derives CanEqual
+
+sealed abstract case class DVSpan private (lo: Int, hi: Int) derives CanEqual
+object DVSpan:
+    def init(lo: Int, hi: Int)(using Frame): Result[DVInvalidSpan, DVSpan] =
+        if lo <= hi then Result.succeed(new DVSpan(lo, hi) {}) else Result.fail(DVInvalidSpan())
+
+    given Schema[DVSpan] = Schema.derivedVia((lo: Int, hi: Int) => init(lo, hi))
+end DVSpan
+
+final class DVInvalidSpan(using Frame) extends KyoException("a span's low end is not above its high end")
 
 case class DVListener(name: String, port: DVPort) derives CanEqual, Schema
 
@@ -3975,6 +4087,7 @@ case class Cart(items: Chunk[String], note: Maybe[String]) derives Schema, CanEq
 
 case class StrictPerson(id: Int, name: String) derives CanEqual, Schema
 case class StrictRename(firstName: String, lastName: String) derives CanEqual, Schema
+case class MTRenamedCityHolder(city: String, home: MTAddress) derives CanEqual, Schema
 case class StrictFieldCase(firstName: String, lastName: String) derives CanEqual, Schema
 case class StrictInner(value: Int) derives CanEqual, Schema
 case class StrictOuter(name: String, inner: StrictInner) derives CanEqual, Schema

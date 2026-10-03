@@ -26,174 +26,188 @@ object Drag:
 
     // --- Public values ---
 
-    /** Canonical exact media type used by drag transfer values.
-      *
-      * Values contain one concrete RFC-token-like main type and subtype separated by `/`. Parsing
-      * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
-      * Other controls and Unicode whitespace are rejected by token validation.
-      * Wildcards, parameters, non-ASCII characters, and additional separators are rejected.
-      *
-      * The opaque representation is the canonical string itself, so carrying a media type adds no
-      * wrapper allocation.
-      *
-      * @see [[MediaType.parse]] for validated construction
-      * @see [[MediaTypePattern]] for target acceptance patterns
-      */
-    opaque type MediaType = String
+    // In an object of its own: in the template declaring `opaque type MediaType = String` a Tag for String is refused, which
+    // every schema derived in Drag needs.
+    object MediaTypes:
+        /** Canonical exact media type used by drag transfer values.
+          *
+          * Values contain one concrete RFC-token-like main type and subtype separated by `/`. Parsing
+          * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
+          * Other controls and Unicode whitespace are rejected by token validation.
+          * Wildcards, parameters, non-ASCII characters, and additional separators are rejected.
+          *
+          * The opaque representation is the canonical string itself, so carrying a media type adds no
+          * wrapper allocation.
+          *
+          * @see [[MediaType.parse]] for validated construction
+          * @see [[MediaTypePattern]] for target acceptance patterns
+          */
+        opaque type MediaType = String
 
-    object MediaType:
+        object MediaType:
 
-        /** Parses and normalizes an exact media type. */
-        def parse(value: String): Maybe[MediaType] =
-            if value == null then Absent
-            else
-                val trimmed = trimOptionalWhitespace(value)
-                if isExactMediaType(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
-                else Absent
-            end if
-        end parse
+            /** Parses and normalizes an exact media type. */
+            def parse(value: String): Maybe[MediaType] =
+                if value == null then Absent
+                else
+                    val trimmed = trimOptionalWhitespace(value)
+                    if isExactMediaType(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
+                    else Absent
+                end if
+            end parse
 
-        extension (self: MediaType)
-            /** Returns the canonical media type string. */
-            def render: String = self
+            extension (self: MediaType)
+                /** Returns the canonical media type string. */
+                def render: String = self
 
-        /** Scalar string schema that validates and normalizes decoded media types. */
-        given Schema[MediaType] = Schema.init[MediaType](
-            writeFn = (value, writer) => writer.string(value.render),
-            readFn = reader =>
-                val raw = reader.string()
-                kyo.internal.constructedOrThrow(
-                    parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
-                    "Drag.MediaType"
-                )(using reader.frame)
-            ,
-            structure = Structure.Type.Primitive(
-                Structure.PrimitiveKind.String,
-                Tag.derive[MediaType].asInstanceOf[Tag[Any]]
-            )
-        )
-
-        given CanEqual[MediaType, MediaType] = CanEqual.derived
-
-        /** Object-shaped schema for maps whose keys are validated exact media types. */
-        given mapSchema[V](using valueSchema0: => Schema[V]): Schema[Map[MediaType, V]] =
-            lazy val valueSchema = valueSchema0
-            Schema.init[Map[MediaType, V]](
-                writeFn = (value, writer) =>
-                    writer.mapStart(value.size)
-                    value.iterator.zipWithIndex.foreach { case ((mediaType, item), index) =>
-                        writer.field(mediaType.render, index)
-                        valueSchema.serializeWrite(item, writer)
-                    }
-                    writer.mapEnd()
-                ,
+            /** Scalar string schema that validates and normalizes decoded media types. */
+            given Schema[MediaType] = Schema.init[MediaType](
+                writeFn = (value, writer) => writer.string(value.render),
                 readFn = reader =>
-                    discard(reader.mapStart())
-                    val builder = Map.newBuilder[MediaType, V]
-                    val seen    = scala.collection.mutable.Set.empty[MediaType]
-                    var count   = 1
-                    while reader.hasNextEntry() do
-                        reader.checkCollectionSize(count)
-                        val raw       = reader.field()
-                        val mediaType = kyo.internal.constructedOrThrow(
-                            parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
-                            "Drag.MediaType"
-                        )(using reader.frame)
-                        if seen.contains(mediaType) then
-                            kyo.internal.constructedOrThrow(
-                                Result.fail(s"duplicate canonical media type: ${mediaType.render}"),
-                                "Drag.MediaType"
-                            )(using reader.frame)
-                        end if
-                        seen += mediaType
-                        builder += mediaType -> valueSchema.serializeRead(reader)
-                        count += 1
-                    end while
-                    reader.mapEnd()
-                    builder.result()
+                    val raw = reader.string()
+                    kyo.internal.constructedOrThrow(
+                        parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
+                        "Drag.MediaType"
+                    )(using reader.frame)
                 ,
-                absentDefaultValue = Maybe(Map.empty[MediaType, V]),
-                structure = Structure.Type.Mapping(
-                    "Map",
-                    Tag[Any],
-                    summon[Schema[MediaType]].structure,
-                    valueSchema.structure
+                structure = Structure.Type.Primitive(
+                    Structure.PrimitiveKind.String,
+                    Tag.derive[MediaType].asInstanceOf[Tag[Any]]
                 )
             )
-        end mapSchema
 
-    end MediaType
+            given CanEqual[MediaType, MediaType] = CanEqual.derived
 
-    /** Canonical exact or main-type wildcard accepted by a drag target.
-      *
-      * Exact patterns share [[MediaType]] grammar. Wildcards have one concrete main token followed
-      * by a slash and asterisk. Global wildcards and partial subtype wildcards are rejected. Parsing
-      * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
-      * Other controls and Unicode whitespace are rejected by token validation.
-      *
-      * The opaque representation is the canonical string itself. Matching compares that string
-      * directly and does not allocate substrings or wrapper values.
-      *
-      * @see [[MediaTypePattern.parse]] for validated construction
-      * @see [[MediaTypePattern.matches]] for exact and wildcard matching
-      */
-    opaque type MediaTypePattern = String
+            /** Object-shaped schema for maps whose keys are validated exact media types. */
+            given mapSchema[V](using valueSchema0: => Schema[V]): Schema[Map[MediaType, V]] =
+                lazy val valueSchema = valueSchema0
+                Schema.init[Map[MediaType, V]](
+                    writeFn = (value, writer) =>
+                        writer.mapStart(value.size)
+                        value.iterator.zipWithIndex.foreach { case ((mediaType, item), index) =>
+                            writer.field(mediaType.render, index)
+                            valueSchema.serializeWrite(item, writer)
+                        }
+                        writer.mapEnd()
+                    ,
+                    readFn = reader =>
+                        discard(reader.mapStart())
+                        val builder = Map.newBuilder[MediaType, V]
+                        val seen    = scala.collection.mutable.Set.empty[MediaType]
+                        var count   = 1
+                        while reader.hasNextEntry() do
+                            reader.checkCollectionSize(count)
+                            val raw       = reader.field()
+                            val mediaType = kyo.internal.constructedOrThrow(
+                                parse(raw).toResult(Result.fail(s"invalid media type: $raw")),
+                                "Drag.MediaType"
+                            )(using reader.frame)
+                            if seen.contains(mediaType) then
+                                kyo.internal.constructedOrThrow(
+                                    Result.fail(s"duplicate canonical media type: ${mediaType.render}"),
+                                    "Drag.MediaType"
+                                )(using reader.frame)
+                            end if
+                            seen += mediaType
+                            builder += mediaType -> valueSchema.serializeRead(reader)
+                            count += 1
+                        end while
+                        reader.mapEnd()
+                        builder.result()
+                    ,
+                    absentDefaultValue = Maybe(Map.empty[MediaType, V]),
+                    structure = Structure.Type.Mapping(
+                        "Map",
+                        Tag[Any],
+                        summon[Schema[MediaType]].structure,
+                        valueSchema.structure
+                    )
+                )
+            end mapSchema
 
-    object MediaTypePattern:
+        end MediaType
 
-        /** Parses and normalizes an exact media type or concrete main-type wildcard. */
-        def parse(value: String): Maybe[MediaTypePattern] =
-            if value == null then Absent
-            else
-                val trimmed = trimOptionalWhitespace(value)
-                if isMediaTypePattern(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
-                else Absent
-            end if
-        end parse
+        private[Drag] val sortableMediaType: MediaType = "application/x-kyo-sortable"
+        private[Drag] val uriMediaType: MediaType      = "text/uri-list"
+    end MediaTypes
+    export MediaTypes.MediaType
 
-        /** Creates an exact pattern from an already validated media type. */
-        def exact(value: MediaType): MediaTypePattern = value.render
+    // In an object of its own, as MediaTypes is.
+    object MediaTypePatterns:
+        /** Canonical exact or main-type wildcard accepted by a drag target.
+          *
+          * Exact patterns share [[MediaType]] grammar. Wildcards have one concrete main token followed
+          * by a slash and asterisk. Global wildcards and partial subtype wildcards are rejected. Parsing
+          * removes only surrounding HTTP optional whitespace (space and horizontal tab) and applies locale-independent lowercase normalization.
+          * Other controls and Unicode whitespace are rejected by token validation.
+          *
+          * The opaque representation is the canonical string itself. Matching compares that string
+          * directly and does not allocate substrings or wrapper values.
+          *
+          * @see [[MediaTypePattern.parse]] for validated construction
+          * @see [[MediaTypePattern.matches]] for exact and wildcard matching
+          */
+        opaque type MediaTypePattern = String
 
-        extension (self: MediaTypePattern)
-            /** Returns the canonical pattern string. */
-            def render: String = self
+        object MediaTypePattern:
 
-            /** Tests whether this exact or wildcard pattern accepts a media type. */
-            def matches(value: MediaType): Boolean =
-                val mediaType = value.render
-                if self.endsWith("/*") then
-                    val mainLength = self.length - 2
-                    if mediaType.length <= mainLength || mediaType.charAt(mainLength) != '/' then false
-                    else
-                        var index = 0
-                        while index < mainLength && self.charAt(index) == mediaType.charAt(index) do
-                            index += 1
-                        index == mainLength
-                    end if
-                else self == mediaType
+            /** Parses and normalizes an exact media type or concrete main-type wildcard. */
+            def parse(value: String): Maybe[MediaTypePattern] =
+                if value == null then Absent
+                else
+                    val trimmed = trimOptionalWhitespace(value)
+                    if isMediaTypePattern(trimmed) then Present(trimmed.toLowerCase(Locale.ROOT))
+                    else Absent
                 end if
-            end matches
-        end extension
+            end parse
 
-        /** Scalar string schema that validates and normalizes decoded patterns. */
-        given Schema[MediaTypePattern] = Schema.init[MediaTypePattern](
-            writeFn = (value, writer) => writer.string(value.render),
-            readFn = reader =>
-                val raw = reader.string()
-                kyo.internal.constructedOrThrow(
-                    parse(raw).toResult(Result.fail(s"invalid media type pattern: $raw")),
-                    "Drag.MediaTypePattern"
-                )(using reader.frame)
-            ,
-            structure = Structure.Type.Primitive(
-                Structure.PrimitiveKind.String,
-                Tag.derive[MediaTypePattern].asInstanceOf[Tag[Any]]
+            /** Creates an exact pattern from an already validated media type. */
+            def exact(value: MediaType): MediaTypePattern = value.render
+
+            extension (self: MediaTypePattern)
+                /** Returns the canonical pattern string. */
+                def render: String = self
+
+                /** Tests whether this exact or wildcard pattern accepts a media type. */
+                def matches(value: MediaType): Boolean =
+                    val mediaType = value.render
+                    if self.endsWith("/*") then
+                        val mainLength = self.length - 2
+                        if mediaType.length <= mainLength || mediaType.charAt(mainLength) != '/' then false
+                        else
+                            var index = 0
+                            while index < mainLength && self.charAt(index) == mediaType.charAt(index) do
+                                index += 1
+                            index == mainLength
+                        end if
+                    else self == mediaType
+                    end if
+                end matches
+            end extension
+
+            /** Scalar string schema that validates and normalizes decoded patterns. */
+            given Schema[MediaTypePattern] = Schema.init[MediaTypePattern](
+                writeFn = (value, writer) => writer.string(value.render),
+                readFn = reader =>
+                    val raw = reader.string()
+                    kyo.internal.constructedOrThrow(
+                        parse(raw).toResult(Result.fail(s"invalid media type pattern: $raw")),
+                        "Drag.MediaTypePattern"
+                    )(using reader.frame)
+                ,
+                structure = Structure.Type.Primitive(
+                    Structure.PrimitiveKind.String,
+                    Tag.derive[MediaTypePattern].asInstanceOf[Tag[Any]]
+                )
             )
-        )
 
-        given CanEqual[MediaTypePattern, MediaTypePattern] = CanEqual.derived
+            given CanEqual[MediaTypePattern, MediaTypePattern] = CanEqual.derived
 
-    end MediaTypePattern
+        end MediaTypePattern
+    end MediaTypePatterns
+    export MediaTypePatterns.MediaTypePattern
+    import MediaTypes.sortableMediaType
+    import MediaTypes.uriMediaType
 
     /** Operation requested for a drag transfer. */
     enum Operation derives CanEqual, Schema:
@@ -510,15 +524,11 @@ object Drag:
 
     // --- Internal matching ---
 
-    private val sortableMediaType: MediaType = "application/x-kyo-sortable"
-
     /** True when the acceptance rules admit the reserved sortable payload; sensor runtimes use this
       * to route drops as semantic sort moves instead of plain drops.
       */
     private[kyo] def acceptsSortablePayload(accept: Accept): Boolean =
         accept.mediaTypes.contains(MediaTypePattern.exact(sortableMediaType))
-
-    private val uriMediaType: MediaType = "text/uri-list"
 
     private def accepts(accept: Accept, item: Item): Boolean =
         item match

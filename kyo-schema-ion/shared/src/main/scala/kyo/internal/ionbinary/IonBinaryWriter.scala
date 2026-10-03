@@ -6,10 +6,13 @@ import kyo.*
 import kyo.Codec.Writer
 import scala.annotation.tailrec
 
-final class IonBinaryWriter private (private val config: Ion.Config) extends Writer:
+final class IonBinaryWriter private (private val config: Ion.Config)(using site: Frame) extends Writer:
     import IonBinaryFormat.*
 
+    override def frame: kyo.Frame = site
+
     override def canWriteTopLevelNonObject: Boolean = true
+    override def isSelfDescribing: Boolean          = true
     override def canWriteAnnotations: Boolean       = config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit
     override def codecName: String                  = CodecName
 
@@ -292,10 +295,10 @@ final class IonBinaryWriter private (private val config: Ion.Config) extends Wri
         value.getClass.getName.stripSuffix("$")
 
     private def invalid(message: String): Nothing =
-        throw SchemaNotSerializableException(message)(using kyo.Frame.internal)
+        throw SchemaNotSerializableException(message)(using site)
     end invalid
 
 end IonBinaryWriter
 
 object IonBinaryWriter:
-    def apply(config: Ion.Config = Ion.Config.Default): IonBinaryWriter = new IonBinaryWriter(config)
+    def apply(config: Ion.Config = Ion.Config.Default)(using Frame): IonBinaryWriter = new IonBinaryWriter(config)

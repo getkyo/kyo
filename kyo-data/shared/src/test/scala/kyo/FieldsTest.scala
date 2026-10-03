@@ -14,6 +14,7 @@ end OpaqueFields
 case class Person(name: String, age: Int)
 case class Point(x: Int, y: Int)
 case class Wrapper[A](value: A, label: String)
+case class WrapperWithDefault[A](value: A, label: String = "none")
 
 class FieldsTest extends kyo.test.Test[Any]:
 
@@ -75,6 +76,12 @@ class FieldsTest extends kyo.test.Test[Any]:
     "case class: generic case class" in {
         val names = Fields.names[Wrapper[Int]]
         assert(names == Set("value", "label"))
+    }
+
+    "case class: a generic case class's default value" in {
+        val fs                                      = Fields.fields[WrapperWithDefault[Int]]
+        val expected: List[(String, Maybe[String])] = List("value" -> Maybe.empty, "label" -> Maybe("none"))
+        assert(fs.map(f => f.name -> f.default.map(_.toString)) == expected)
     }
 
     "case class: generic Have resolves parameterized type" in {
