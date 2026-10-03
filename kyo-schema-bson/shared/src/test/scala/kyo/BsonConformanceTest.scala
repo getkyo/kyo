@@ -343,6 +343,26 @@ class BsonConformanceTest extends kyo.test.Test[Any]:
             val value = BsonDecimal(BigDecimal(1), BigInt(Long.MinValue) - 1)
             discard(intercept[SchemaNotSerializableException](Bson.encode(value)))
         }
+
+        "a value BSON cannot hold fails with the encode call's Frame" in {
+            val encodeSite = summon[Frame]
+            val value      = BsonDecimal(BigDecimal(1), BigInt(Long.MaxValue) + 1)
+            val ex         = intercept[SchemaNotSerializableException](
+                Bson.encode(value)(using summon[Schema[BsonDecimal]], summon[Bson], encodeSite)
+            )
+            assert(ex.detail.contains("cannot be represented as BSON int64"), ex.detail)
+            assert(ex.frame == encodeSite, s"raised at ${ex.frame}, encoded at $encodeSite")
+        }
+
+        "a decimal BSON cannot hold fails with the encode call's Frame" in {
+            val encodeSite = summon[Frame]
+            val value      = BsonDecimalOnly(BigDecimal(BigInt("1" * 35)))
+            val ex         = intercept[SchemaNotSerializableException](
+                Bson.encode(value)(using summon[Schema[BsonDecimalOnly]], summon[Bson], encodeSite)
+            )
+            assert(ex.detail.contains("cannot be represented exactly as BSON Decimal128"), ex.detail)
+            assert(ex.frame == encodeSite, s"raised at ${ex.frame}, encoded at $encodeSite")
+        }
     }
 
     "limits and structure" - {

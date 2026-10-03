@@ -114,9 +114,8 @@ private[kyo] object McpContentSchema:
             var name: String                                 = ""
             var description: Maybe[String]                   = Absent
             var resourceLinkMimeType: Maybe[McpMimeType]     = Absent
-            val n                                            = reader.objectStart()
-            var i                                            = 0
-            while i < n do
+            discard(reader.objectStart())
+            while reader.hasNextField() do
                 reader.fieldParse()
                 if reader.matchField("type".getBytes("UTF-8")) then
                     typeTag = reader.string()
@@ -141,7 +140,6 @@ private[kyo] object McpContentSchema:
                 else
                     reader.skip()
                 end if
-                i += 1
             end while
             reader.objectEnd()
             typeTag match
@@ -295,9 +293,8 @@ private[kyo] object McpContentSchema:
             var mimeType: Maybe[McpMimeType] = Absent
             var text: String                 = ""
             var blob: String                 = ""
-            val n                            = reader.objectStart()
-            var i                            = 0
-            while i < n do
+            discard(reader.objectStart())
+            while reader.hasNextField() do
                 reader.fieldParse()
                 if reader.matchField("type".getBytes("UTF-8")) then
                     typeTag = reader.string()
@@ -312,7 +309,6 @@ private[kyo] object McpContentSchema:
                 else
                     reader.skip()
                 end if
-                i += 1
             end while
             reader.objectEnd()
             typeTag match

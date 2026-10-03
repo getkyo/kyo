@@ -37,6 +37,8 @@ final private[kyo] class YamlEventReader private (private val inner: YamlReader)
     override def matchField(nameBytes: Array[Byte]): Boolean =
         inner.matchField(nameBytes)
 
+    override private[kyo] def matchesKeyBytes: Boolean = inner.matchesKeyBytes
+
     override def lastFieldName(): String =
         inner.lastFieldName()
 

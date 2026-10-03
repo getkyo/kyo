@@ -179,6 +179,105 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "shutdown" - {
+        // A scheduler stops its regulators, then its timer executor is shut down, which interrupts a probe still sleeping.
+
+        // The bug reports logged while `f` runs whose message names `regulator`'s class.
+        def bugsOf(regulator: String)(f: => Unit): List[String] = {
+            val reports = new java.util.concurrent.ConcurrentLinkedQueue[String]
+            val handler = new java.util.logging.Handler {
+                def publish(r: java.util.logging.LogRecord): Unit =
+                    Option(r.getThrown()).map(_.getMessage()).filter(_.startsWith(regulator)).foreach(reports.add(_): Unit)
+                def flush(): Unit = ()
+                def close(): Unit = ()
+            }
+            val logger = java.util.logging.Logger.getLogger("kyo.scheduler")
+            logger.addHandler(handler)
+            try f
+            finally logger.removeHandler(handler)
+            List.from(reports.toArray(Array.empty[String]))
+        }
+
+        "an interrupt after the regulator has stopped is its shutdown, not a bug" in {
+            val exec       = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+            val sleeping   = new java.util.concurrent.CountDownLatch(1)
+            var probe      = null: SleepingProbe
+            var terminated = false
+            val bugs       = bugsOf("SleepingProbe") {
+                probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
+                assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                probe.stop()
+                exec.shutdownNow(): Unit
+                terminated = exec.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            assert(terminated, "the timer executor did not terminate")
+            assert(probe.interrupted.get(), "the shutdown did not interrupt the sleeping probe")
+            assert(bugs.isEmpty, s"the shutdown was reported as a bug: $bugs")
+        }
+
+        "an interrupt while the regulator runs is still a bug" in {
+            val exec     = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+            val sleeping = new java.util.concurrent.CountDownLatch(1)
+            try {
+                var probe = null: SleepingProbe
+                val bugs  = bugsOf("SleepingProbe") {
+                    probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
+                    assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                    probe.thread.interrupt()
+                    // The report is logged on the timer thread; a no-op run behind it on the same thread waits for it.
+                    exec.submit((() => ()): Runnable).get(30, java.util.concurrent.TimeUnit.SECONDS): Unit
+                    probe.stop()
+                }
+                assert(probe.interrupted.get(), "the probe was not interrupted")
+                assert(bugs == List("SleepingProbe regulator's probe collection has failed."), s"got: $bugs")
+            } finally exec.shutdownNow(): Unit
+        }
+    }
+
+    // The regulator schedules its probe from its own constructor, so on a loaded host the first probe can run before a subclass body is
+    // initialized. This timer makes that order certain: scheduling the first task returns only once that task's first run has begun.
+    private def probeFirstTimer(exec: java.util.concurrent.ScheduledExecutorService): kyo.scheduler.InternalTimer = {
+        val timer = kyo.scheduler.InternalTimer(exec)
+        val first = new java.util.concurrent.atomic.AtomicBoolean(true)
+        new kyo.scheduler.InternalTimer {
+            def schedule(interval: Duration)(f: => Unit) =
+                if (!first.compareAndSet(true, false)) timer.schedule(interval)(f)
+                else {
+                    val started = new java.util.concurrent.CountDownLatch(1)
+                    val task    = timer.schedule(interval) { started.countDown(); f }
+                    assert(started.await(30, java.util.concurrent.TimeUnit.SECONDS), "the first scheduled task never ran")
+                    task
+                }
+            def scheduleOnce(delay: Duration)(f: => Unit) = timer.scheduleOnce(delay)(f)
+        }
+    }
+
+    // A member class, not a local one: Scala 2 names a local class `SleepingProbe$1`, and the regulator's reports carry the simple name.
+    // Its state is constructor parameters, which are assigned before the regulator's constructor schedules the first probe; a body field
+    // is still null when that probe runs.
+    final private class SleepingProbe(
+        timer: kyo.scheduler.InternalTimer,
+        sleeping: java.util.concurrent.CountDownLatch,
+        val interrupted: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false),
+        sleeper: java.util.concurrent.atomic.AtomicReference[Thread] = new java.util.concurrent.atomic.AtomicReference[Thread](null),
+        first: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(true)
+    ) extends Regulator(() => 0d, timer, Config(10, 1.millis, 1.hour, 200, 100, 0.8, 1.3)) {
+        def thread: Thread = sleeper.get()
+        // Only the first probe sleeps, so the timer thread is free again once it is interrupted.
+        def probe(): Unit =
+            if (first.compareAndSet(true, false)) {
+                sleeper.set(Thread.currentThread())
+                sleeping.countDown()
+                try Thread.sleep(60000)
+                catch {
+                    case ex: InterruptedException =>
+                        interrupted.set(true)
+                        throw ex
+                }
+            }
+        def update(diff: Int): Unit = ()
+    }
+
     trait Context {
 
         val timer                 = TestTimer()

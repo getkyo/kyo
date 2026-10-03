@@ -410,6 +410,14 @@ object Clock:
           */
         def awaitPendingSleepers(count: Int): Unit < Async
 
+        /** Suspends until a sleep armed for exactly `duration` is registered and not yet triggered.
+          *
+          * A count fence cannot tell which sleeper it saw: a timeout, a pool's idle timer or any other sleep on the same clock satisfies it
+          * before the one a test waits for is armed, and an `advance` taken then fires nothing for that one. Fencing on the duration waits for
+          * the sleeper itself, whatever else shares the clock.
+          */
+        def awaitPendingSleeper(duration: Duration): Unit < Async
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -433,24 +441,25 @@ object Clock:
                             new Unsafe with TimeControl:
                                 @volatile var current = Instant.Epoch
 
-                                case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
+                                case class Task(deadline: Instant, duration: Duration) extends IOPromise[Nothing, Unit < Any]
                                 val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
-                                // Test seam: a waiter installed by awaitPendingSleepers, completed by the next sleep enqueue.
-                                // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick.
-                                var armWaiter: Maybe[IOPromise[Nothing, Unit < Any]] = Maybe.empty
+                                // Test seam: waiters installed by the pending-sleeper fences, each completed by the next sleep enqueue.
+                                // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick. A list, so two fences
+                                // waiting at once both wake.
+                                var armWaiters: Chunk[IOPromise[Nothing, Unit < Any]] = Chunk.empty
 
                                 def now()(using AllowUnsafe) = current
 
                                 def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
                                 def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
-                                    val task     = new Task(current + duration)
+                                    val task     = new Task(current + duration, duration)
                                     val toSignal =
                                         queue.synchronized {
                                             queue.enqueue(task)
-                                            val w = armWaiter
-                                            armWaiter = Maybe.empty
+                                            val w = armWaiters
+                                            armWaiters = Chunk.empty
                                             w
                                         }
                                     toSignal.foreach(_.completeDiscard(Result.succeed(())))
@@ -458,13 +467,20 @@ object Clock:
                                 end sleep
 
                                 def awaitPendingSleepers(count: Int): Unit < Async =
+                                    awaitPending(pending => pending.count(!_.done()) >= count)
+
+                                def awaitPendingSleeper(duration: Duration): Unit < Async =
+                                    awaitPending(pending => pending.exists(task => !task.done() && task.duration == duration))
+
+                                // Re-checks after every sleep enqueue until `satisfied` holds for the queue.
+                                def awaitPending(satisfied: PriorityQueue[Task] => Boolean): Unit < Async =
                                     Loop.foreach {
                                         val waiter: Maybe[IOPromise[Nothing, Unit < Any]] =
                                             queue.synchronized {
-                                                if queue.count(!_.done()) >= count then Maybe.empty
+                                                if satisfied(queue) then Maybe.empty
                                                 else
                                                     val w = new IOPromise[Nothing, Unit < Any]()
-                                                    armWaiter = Present(w)
+                                                    armWaiters = armWaiters.append(w)
                                                     Present(w)
                                             }
                                         waiter match

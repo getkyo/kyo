@@ -332,7 +332,7 @@ private[kyo] object NavigationWatcher:
                                 )
                             else postSettleBarrier(postSettleWindow).andThen(Loop.done(()))
                             end if
-                        case SettleStatus.Pending(urlHint) =>
+                        case SettleStatus.Pending(urlHint, _) =>
                             Clock.nowMonotonic.map { now =>
                                 if now >= deadline then
                                     onPendingDeadline(expectedDifferentFrom, settle, urlHint, throwOnFailure, postSettleWindow)
@@ -393,8 +393,10 @@ private[kyo] object NavigationWatcher:
         /** `Settle.Load` reprobe came back Ready with a 4xx/5xx response and the caller asked for HTTP-status enforcement. */
         final case class AbortHttpError(navUrl: String, status: Int) extends PendingDecision
 
-        /** `NetworkIdle` reprobe with `Settle.Load` semantics still says Pending — neither network idle nor `load` ever fired. */
-        final case class AbortLoadEventNeverFired(urlHint: String) extends PendingDecision
+        /** `NetworkIdle` reprobe with `Settle.Load` semantics still says Pending: neither network idle nor `load` ever fired. `progress`
+          * is how far the document got, from that reprobe.
+          */
+        final case class AbortLoadEventNeverFired(urlHint: String, progress: Maybe[DocumentProgress]) extends PendingDecision
 
         /** Non-NetworkIdle settle modes (`Load`, `DomContentLoaded`, future variants): the deadline hit and there is no fallback
           * loosening to try. The mode itself timed out.
@@ -434,11 +436,11 @@ private[kyo] object NavigationWatcher:
                         else
                             PendingDecision.DegradeToLoad
                         end if
-                    case Present(SettleStatus.Pending(_)) =>
-                        PendingDecision.AbortLoadEventNeverFired(urlHint)
+                    case Present(SettleStatus.Pending(_, progress)) =>
+                        PendingDecision.AbortLoadEventNeverFired(urlHint, Present(progress))
                     case Absent =>
                         // Caller violated the contract: NetworkIdle must come with a Present load probe. Fail closed.
-                        PendingDecision.AbortLoadEventNeverFired(urlHint)
+                        PendingDecision.AbortLoadEventNeverFired(urlHint, Absent)
             case _ =>
                 PendingDecision.AbortSettleTimeout(urlHint, settle)
     end decidePending
@@ -467,10 +469,10 @@ private[kyo] object NavigationWatcher:
                 Abort.fail(BrowserNavigationTransportFailedException(navUrl))
             case PendingDecision.AbortHttpError(navUrl, status) =>
                 Abort.fail(BrowserNavigationFailedException(navUrl, s"HTTP $status"))
-            case PendingDecision.AbortLoadEventNeverFired(urlHint) =>
+            case PendingDecision.AbortLoadEventNeverFired(urlHint, progress) =>
                 Abort.fail(BrowserNavigationFailedException(
                     urlHint,
-                    "settle timeout after NetworkIdle (load event also never fired)"
+                    "settle timeout after NetworkIdle (load event also never fired)" + progress.fold("")(p => s": ${p.describe}")
                 ))
             case PendingDecision.AbortSettleTimeout(urlHint, settle) =>
                 Abort.fail(BrowserNavigationFailedException(urlHint, s"settle timeout after ${settle}"))
@@ -486,9 +488,40 @@ private[kyo] object NavigationWatcher:
 
     sealed private[internal] trait SettleStatus derives CanEqual
     private[internal] object SettleStatus:
-        final case class Ready(url: String, status: Int) extends SettleStatus
-        final case class Pending(urlHint: String)        extends SettleStatus
+        final case class Ready(url: String, status: Int)                      extends SettleStatus
+        final case class Pending(urlHint: String, progress: DocumentProgress) extends SettleStatus
     end SettleStatus
+
+    /** How far a document that has not settled got: its `readyState`, and when its response started, its response ended and it became
+      * interactive, each counted from the navigation's start and absent until reached.
+      *
+      * It separates the two places a page load can stall: a response that never finished is the server's or the transport's, and a
+      * finished response that never became interactive or fired `load` is the browser's.
+      */
+    final private[internal] case class DocumentProgress(
+        readyState: String,
+        responseStart: Maybe[Duration],
+        responseEnd: Maybe[Duration],
+        domInteractive: Maybe[Duration]
+    ) derives CanEqual:
+        def describe: String =
+            val response = (responseStart, responseEnd) match
+                case (_, Present(end))   => s"response finished at ${end.toMillis} ms"
+                case (Present(start), _) => s"response started at ${start.toMillis} ms and never finished"
+                case _                   => "no response started"
+            val interactive = (responseEnd, domInteractive) match
+                case (_, Present(at)) => s", interactive at ${at.toMillis} ms"
+                case (Present(_), _)  => ", document never interactive"
+                case _                => ""
+            s"readyState=$readyState, $response$interactive"
+        end describe
+    end DocumentProgress
+
+    private[internal] object DocumentProgress:
+        /** A PerformanceNavigationTiming mark in milliseconds, which reads 0 until the browser reaches it. */
+        private[NavigationWatcher] def mark(millis: Double): Maybe[Duration] =
+            if millis > 0 then Present(Math.round(millis * 1000).micros) else Absent
+    end DocumentProgress
 
     /** Installs a JS-level fetch/XHR tracker so `NetworkIdle` settle mode has something to observe. Re-uses the shape of
       * `Browser.waitForNetworkIdle`'s tracker so the two are compatible when a caller mixes them.
@@ -541,18 +574,26 @@ private[kyo] object NavigationWatcher:
                 const now = performance.now();
                 idleOk = pending === 0 && last > 0 && (now - last) >= $idleMs;
             }
-            // HTTP status from primary navigation entry; 0 if unavailable (data: URLs, file: URLs).
-            let status = 0;
+            // HTTP status and timing marks from the primary navigation entry; 0 if unavailable (data: URLs, file: URLs).
+            let status = 0, responseStart = 0, responseEnd = 0, domInteractive = 0;
             try {
                 const entries = performance.getEntriesByType('navigation');
-                if (entries && entries.length > 0 && typeof entries[0].responseStatus === 'number') {
-                    status = entries[0].responseStatus;
+                if (entries && entries.length > 0) {
+                    const nav = entries[0];
+                    if (typeof nav.responseStatus === 'number') status = nav.responseStatus;
+                    responseStart = nav.responseStart || 0;
+                    responseEnd = nav.responseEnd || 0;
+                    domInteractive = nav.domInteractive || 0;
                 }
             } catch (e) { status = 0; }
             return JSON.stringify({
                 ready: rsOk && idleOk,
                 url: location.href,
-                status: status
+                status: status,
+                readyState: rs,
+                responseStart: responseStart,
+                responseEnd: responseEnd,
+                domInteractive: domInteractive
             });
         })()"""
     end buildSettleStateJs
@@ -573,7 +614,16 @@ private[kyo] object NavigationWatcher:
         Json.decode[NavigationSettleState](raw) match
             case Result.Success(s) =>
                 if s.ready then SettleStatus.Ready(s.url, s.status)
-                else SettleStatus.Pending(s.url)
+                else
+                    SettleStatus.Pending(
+                        s.url,
+                        DocumentProgress(
+                            s.readyState,
+                            DocumentProgress.mark(s.responseStart),
+                            DocumentProgress.mark(s.responseEnd),
+                            DocumentProgress.mark(s.domInteractive)
+                        )
+                    )
             case Result.Failure(err) =>
                 Abort.fail(
                     BrowserProtocolErrorException("NavigationWatcher.decodeSettleState", s"settle wire decode failed: ${err.getMessage}")

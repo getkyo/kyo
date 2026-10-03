@@ -19,6 +19,13 @@ set -uo pipefail
 #      (tcp/timeWait/ephemeral). Diagnoses a WSAENOBUFS (error 10055) connect failure, which no memory
 #      or CPU field predicts. Windows-only: the other poles have ranges too large to exhaust.
 #   5) proc_top - top 3 commands by aggregate RSS, for "whose memory is it" when the box overcommits.
+#   6) Runner liveness - the GitHub runner's own processes with their state (GitHub Actions, not Windows).
+#
+# Kernel log: on Linux, kernel messages logged after the monitor starts stream into the log as
+# "[ci-mon-kern]" lines the moment the kernel emits them, filtered to the ones that explain a dying
+# machine (hung tasks, lockups, OOM kills, io_uring, BUG/WARNING/Oops and their call traces). A runner
+# that loses contact with GitHub leaves a log that just stops, and the kernel's last word comes
+# seconds before; a per-interval sample would miss it.
 #
 # Disk watch: the per-interval line always carries diskFreeMB. When free disk first drops below
 # CI_MON_DISK_WARN_MB (and again below CI_MON_DISK_CRIT_MB) the monitor prints a one-shot
@@ -68,7 +75,13 @@ disk_attribution() {
 disk_warned=0
 disk_critted=0
 
+kern_pid=""
+kern_reader=""
+kern_sudo=""
+
 report() {
+    [ -n "$kern_pid" ] && kill "$kern_pid" 2>/dev/null
+    [ -n "$kern_reader" ] && $kern_sudo kill "$kern_reader" 2>/dev/null
     [ "$disk_warned" = "1" ] && disk_attribution "$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')"
     [ "$MON_SRC" = "proc" ] || return 0
     local oom
@@ -294,19 +307,81 @@ commit_headline() {
     printf 'commitMB=%s commitLimitMB=%s nonpagedMB=%s' "${committed:-?}" "${limit:-?}" "${pool:-?}"
 }
 
+# Runner liveness: the GitHub runner's processes with pid and state, e.g. "runner=[Runner.Listener:812/Ssl Runner.Worker:2290/Sl]".
+# When the runner loses contact with GitHub the log just stops, and the last samples are the only record of whether these were
+# alive, gone (`runner=[none]`), or in uninterruptible sleep (state D) on the kernel. Not on Windows, where MSYS `ps` does not
+# list native processes.
+runner_headline() {
+    [ "${GITHUB_ACTIONS:-}" = "true" ] || return 0
+    case "$OS" in
+        MINGW* | MSYS* | CYGWIN*) return 0 ;;
+    esac
+    command -v ps >/dev/null 2>&1 || return 0
+    local rows
+    rows=$(ps -eo pid=,stat=,comm= 2>/dev/null | awk '
+        { cmd = $3; sub(/.*\//, "", cmd) }
+        cmd == "Runner.Listener" || cmd == "Runner.Worker" { printf "%s%s:%s/%s", sep, cmd, $1, $2; sep = " " }')
+    printf 'runner=[%s]' "${rows:-none}"
+}
+
+# Kernel log filter: keeps the lines that explain a dying machine, plus the 40 lines after each, which carry its call trace, and
+# drops the rest (on a runner, mostly container network churn). Capped so a flood cannot bury the build output. `exec` makes the
+# awk itself the process the monitor kills on stop. The match is on a lowercased copy because mawk, Ubuntu's awk, has no
+# case-insensitive mode.
+kern_filter() {
+    exec awk '
+        {
+            l = tolower($0)
+            hit = l ~ /blocked for more than|hung_task|soft lockup|hard lockup|rcu.*stall|out of memory|oom-kill|killed process|io_uring|bug:|warning: cpu|oops|kernel panic|call trace|segfault|general protection/
+            if (hit) after = 40
+            else if (after > 0) after--
+            else next
+            if (shown < 500) { print "[ci-mon-kern] " $0; shown++ }
+            else if (!capped) { print "[ci-mon-kern] 500-line cap reached, later kernel lines dropped"; capped = 1 }
+            fflush()
+        }'
+}
+
+# Starts the kernel log stream. `--follow-new` (util-linux 2.36) prints only what is logged from now on, so nothing re-reads the
+# buffer. Where the kernel restricts its log (Ubuntu runners), the reader runs under passwordless sudo. The stop kills the reader
+# as well as the filter: a reader left alone waits for its next write to fail, and a quiet kernel never gives it one.
+kern_follow() {
+    [ "$MON_SRC" = "proc" ] || return 0
+    command -v dmesg >/dev/null 2>&1 || return 0
+    if ! dmesg --help 2>&1 | grep -q -- '--follow-new'; then
+        log "kernel log off: dmesg has no --follow-new"
+        return 0
+    fi
+    if ! dmesg >/dev/null 2>&1; then
+        if sudo -n dmesg >/dev/null 2>&1; then
+            kern_sudo="sudo -n"
+        else
+            log "kernel log off: not readable"
+            return 0
+        fi
+    fi
+    $kern_sudo dmesg --follow-new --time-format iso 2>/dev/null | kern_filter &
+    kern_pid=$!
+    # The pipeline's first process: dmesg, or the sudo that relays the stop signal to it.
+    kern_reader=$(jobs -p %%)
+    log "kernel log on${kern_sudo:+ (sudo)}"
+}
+
 ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
 log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none} diskWarnMB=$DISK_WARN_MB diskCritMB=$DISK_CRIT_MB diskAbortMB=${DISK_ABORT_MB:-off}"
+kern_follow
 while true; do
     os="$(os_headline)"
     tasks="$(tasks_headline)"
     sock="$(sockets_headline)"
     commit="$(commit_headline)"
     top="$(proc_top)"
+    runner="$(runner_headline)"
     sc="$(sched_snapshot)"
     free_mb=$(df -Pm . 2>/dev/null | awk 'NR==2{print $4}')
     disk_check "$free_mb"
     crit=""
     [ "$disk_critted" = "1" ] && crit=" DISK-CRIT"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${commit:+ $commit}${top:+ $top}${sc:+ $sc}${crit}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${tasks:+ $tasks}${sock:+ $sock}${commit:+ $commit}${top:+ $top}${runner:+ $runner}${sc:+ $sc}${crit}"
     sleep "$INTERVAL"
 done

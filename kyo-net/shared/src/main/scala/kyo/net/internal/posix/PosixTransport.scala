@@ -265,7 +265,16 @@ final private[net] class PosixTransport private[posix] (
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
-        connectResolving(host, port, nodelay = true, tls = Present((tls, host)), connectTimeout = connectTimeout, config = config)
+        // The engine host is both the SNI name sent and the reference identity the server certificate is checked against, so an
+        // `sniHostname` replaces the connect host for both, as the JDK and Node clients do.
+        connectResolving(
+            host,
+            port,
+            nodelay = true,
+            tls = Present((tls, tls.sniHostname.getOrElse(host))),
+            connectTimeout = connectTimeout,
+            config = config
+        )
     end connectTls
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
@@ -1033,9 +1042,9 @@ final private[net] class PosixTransport private[posix] (
         val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent, createdAt = listener.createdAt)
 
         // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
-        // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
-        // activeFds entries while the fd is still open, so a recycled fd number never trips over stale accept state) and then closes the fd.
-        // On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
+        // for the driver's model. On the readiness drivers `closeListener` fails the parked accept, queues the fd's deregistration as closing
+        // (the close itself removes the kernel interest, so no EV_DELETE runs alongside it; the poll carrier's removal is id-guarded against a
+        // recycled number) and closes the fd. On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
         // this carrier first would let the fd number recycle (typically to the very next listener) before the queued arm preps its SQE, and
         // that ghost arm would then accept on the NEW socket with THIS listener's promise and handler, stealing one connection per close.
         // The shutdown wakes a blocked/armed accept so it observes the close deterministically on every platform (close() alone does not
@@ -1049,12 +1058,17 @@ final private[net] class PosixTransport private[posix] (
                 driver.closeListener(
                     handle,
                     () =>
-                        // The release completes after the fd close on this same carrier, which on io_uring is the reap carrier behind
-                        // the engine FIFO: the descriptor is gone by the time the promise is observed.
-                        try
-                            discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
-                            discard(sockets.close(listener.serverFd))
-                        finally listener.releasedPromise.completeDiscard(Result.succeed(()))
+                        // `close` is a blocking call that may return on another thread, so the release completes from its completion: the
+                        // descriptor is gone by the time the promise is observed.
+                        def release(): Unit = listener.releasedPromise.completeDiscard(Result.succeed(()))
+                        try discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
+                        finally
+                            try sockets.close(listener.serverFd).onComplete(_ => release())
+                            catch
+                                case ex: Throwable =>
+                                    release()
+                                    throw ex
+                        end try
                 )
             end try
         }

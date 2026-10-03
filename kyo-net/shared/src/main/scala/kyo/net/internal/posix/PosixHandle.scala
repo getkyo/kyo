@@ -38,6 +38,8 @@ final private[net] class PosixHandle private (
     // (see markDeferredFdClose / consumeDeferredFdClose), so the later closeNow that owes the real close(fd) can still run it despite
     // claimFdClose already being spent.
     deferredFdClose: AtomicBoolean.Unsafe,
+    // Orders close(fd) after the poller's withdrawal of the fd (see FdWithdrawal).
+    fdWithdrawal: AtomicRef.Unsafe[PosixHandle.FdWithdrawal],
     // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
     // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
     guard: HandleGuard,
@@ -201,6 +203,37 @@ final private[net] class PosixHandle private (
       * (nothing was deferred, or another discharge already consumed it).
       */
     private[posix] def consumeDeferredFdClose()(using AllowUnsafe): Boolean = deferredFdClose.compareAndSet(true, false)
+
+    /** Start withdrawing this handle's fds from a poller ahead of closing them. From here on no registration of the handle may reach the
+      * kernel, and [[runAfterFdWithdrawal]] holds the close until [[completeFdWithdrawal]].
+      */
+    private[posix] def beginFdWithdrawal()(using AllowUnsafe): Unit =
+        discard(fdWithdrawal.compareAndSet(PosixHandle.FdWithdrawal.Open, PosixHandle.FdWithdrawal.Withdrawing(Absent)))
+
+    private[posix] def fdWithdrawalBegun(using AllowUnsafe): Boolean = fdWithdrawal.get() != PosixHandle.FdWithdrawal.Open
+
+    /** Run `close` now, or once the withdrawal begun by [[beginFdWithdrawal]] completes. */
+    @scala.annotation.tailrec
+    final private[posix] def runAfterFdWithdrawal(close: () => Unit)(using AllowUnsafe): Unit =
+        fdWithdrawal.get() match
+            case current @ PosixHandle.FdWithdrawal.Withdrawing(waiting) =>
+                val next = waiting match
+                    case Absent           => close
+                    case Present(earlier) =>
+                        () =>
+                            try earlier()
+                            finally close()
+                if !fdWithdrawal.compareAndSet(current, PosixHandle.FdWithdrawal.Withdrawing(Present(next))) then
+                    runAfterFdWithdrawal(close)
+            case _ => close()
+        end match
+    end runAfterFdWithdrawal
+
+    /** Mark the poller's withdrawal of this handle's fds as applied and run any close held for it. Idempotent. */
+    private[posix] def completeFdWithdrawal()(using AllowUnsafe): Unit =
+        fdWithdrawal.getAndSet(PosixHandle.FdWithdrawal.Withdrawn) match
+            case PosixHandle.FdWithdrawal.Withdrawing(Present(close)) => close()
+            case _                                                    => ()
 
     /** How the TLS engine's `free()` is run when the handle's resources are released (see [[PosixHandle.freeResources]]). The driver installs
       * its `submitEngineOp` here in `closeHandle` so the engine free is enqueued on the per-driver engine FIFO and therefore serialized AFTER
@@ -627,6 +660,18 @@ private[net] object PosixHandle:
       */
     final val WriteTailLowWater = WriteTailHighWater / 2
 
+    /** Where a poller stands in withdrawing a handle's fds ahead of their close.
+      *
+      * XNU's close(2) can spin in the kernel forever when a kevent EV_ADD for the same fd runs concurrently on another thread, so on a poller
+      * the close must wait until the poll carrier, which applies every registration in order, has applied the fd's closing deregister.
+      * `Withdrawing` carries the close that arrived first. A handle no poller withdraws stays `Open` and closes at once.
+      */
+    private[posix] enum FdWithdrawal derives CanEqual:
+        case Open
+        case Withdrawing(waiting: Maybe[() => Unit])
+        case Withdrawn
+    end FdWithdrawal
+
     /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
       * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
       * different carriers; this one state, swung by CAS, gives them mutual exclusion. Two separate `@volatile` slots with an independent
@@ -673,6 +718,7 @@ private[net] object PosixHandle:
             connectTarget,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
+            fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
@@ -693,6 +739,7 @@ private[net] object PosixHandle:
             Absent,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
+            fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
@@ -817,7 +864,7 @@ private[net] object PosixHandle:
                 given Frame = Frame.internal
                 Log.live.unsafe.debug(s"fd=${h.readFd} handle=${h.id} close(fd) deferred past the $holder hold")
             }
-            closeFd()
+            h.runAfterFdWithdrawal(closeFd)
         }
         h.fdCloseSink = Absent
     end freeResources

@@ -113,8 +113,9 @@ abstract private[kyo] class IoDriver[Handle]:
     def onInboundClosedDuringRead(handle: Handle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit = ()
 
     /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
-      * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state
-      * synchronously) cancels and then closes the fd immediately, today's behavior. The io_uring driver overrides this to run the whole
+      * `handle` can ever run against a RECYCLED fd number. The default cancels and then closes the fd immediately. The poller overrides it to
+      * withdraw the fd as closing and run `closeFd` only once its poll carrier has applied that withdrawal, so no interest change for it
+      * reaches the kernel alongside the close. The io_uring driver overrides this to run the whole
       * teardown on its reap carrier BEHIND any accept arm still queued on the engine FIFO: that arm preps its SQE while the fd still names
       * the listener's socket, the prepped SQEs are flushed, and only then does `closeFd` release the fd number for reuse. Without that
       * sequencing, a queued arm outlives the fd close, preps an accept against whatever socket RECYCLED the number (typically the next
