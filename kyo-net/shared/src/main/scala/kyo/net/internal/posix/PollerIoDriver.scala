@@ -1095,6 +1095,7 @@ final private[net] class PollerIoDriver private[posix] (
       * queued after it runs.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
+        handle.queueWrite(data.size)
         submitEngineOp { () =>
             // A failed acquire means the handle was closed before this op got a turn (or this op was stranded and force-discharged by a
             // terminal sweep): silently skip the write rather than touching the (possibly freed) engine/buffers. The caller already saw
@@ -1104,10 +1105,12 @@ final private[net] class PollerIoDriver private[posix] (
                     // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then
                     // send as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the
                     // io_uring driver; the inline send + writability re-arm below are the poller's send mechanism.
-                    discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    try discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    finally handle.landQueuedWrite(data.size)
                     flushPending(handle)
                 finally discard(handle.endWrite())
                 end try
+            else handle.landQueuedWrite(data.size)
             end if
         }
         // The pump always sees Done; the actual send runs on the FIFO worker carrier after engine ops complete.
