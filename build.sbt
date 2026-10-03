@@ -515,6 +515,7 @@ lazy val kyoJVM: Project = project
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
+        `kyo-teams`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
         `kyo-i18n`.jvm,
@@ -610,6 +611,7 @@ lazy val kyoJS = project
         `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
+        `kyo-teams`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
         `kyo-i18n`.js,
@@ -694,6 +696,7 @@ lazy val kyoNative = project
         `kyo-stats-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
+        `kyo-teams`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
         `kyo-i18n`.native,
@@ -776,6 +779,7 @@ lazy val kyoWasm = project
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
+        `kyo-teams`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
         `kyo-i18n`.wasm,
@@ -3847,6 +3851,36 @@ lazy val `kyo-slack` =
         .withKyoTest
         .settings(
             `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-teams` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-teams"))
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-crypto`, `kyo-charset`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                TestVectorsGen.generate(
+                    baseDirectory.value / ".." / "shared" / "src" / "test" / "vectors",
+                    (Test / sourceManaged).value,
+                    "kyo",
+                    "TeamsVectors"
+                )
+            }.taskValue
         )
         .jvmSettings(
             mimaCheck(false)
