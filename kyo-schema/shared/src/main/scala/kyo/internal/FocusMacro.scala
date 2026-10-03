@@ -1223,11 +1223,13 @@ import scala.util.control.NonFatal
             if stringIndex >= 0 then stringIndex
             else fieldTypes.indexWhere(t => t.dealias =:= TypeRepr.of[Int] || t.dealias =:= TypeRepr.of[Long])
         if fieldTypes.isEmpty || fieldTypes.size > 2 || (fieldTypes.size == 2 && tagIndex < 0) then unfit()
-        def build(values: Expr[Chunk[Structure.Value]]): Expr[Any] =
+        def build(values: Expr[Chunk[Structure.Value]], frame: Expr[Frame]): Expr[Any] =
             val args = fieldTypes.zipWithIndex.map { (fieldType, idx) =>
                 fieldType.asType match
                     case '[ft] =>
-                        '{ kyo.internal.readCaptured(scala.compiletime.summonInline[Schema[ft]], $values(${ Expr(idx) })) }.asTerm
+                        '{
+                            kyo.internal.readCaptured(scala.compiletime.summonInline[Schema[ft]], $values(${ Expr(idx) }))(using $frame)
+                        }.asTerm
             }
             val ctor    = Select(New(Inferred(childType)), child.primaryConstructor)
             val applied = childType match
@@ -1238,9 +1240,16 @@ import scala.util.control.NonFatal
         // Built with reflection rather than a nested splice: `build` holds this macro's Quotes, which a splice's own scope rejects.
         val construct = Lambda(
             Symbol.spliceOwner,
-            MethodType(List("values"))(_ => List(TypeRepr.of[kyo.Chunk[kyo.Structure.Value]]), _ => TypeRepr.of[Any]),
-            (owner, params) => build(params.head.asInstanceOf[Term].asExprOf[kyo.Chunk[kyo.Structure.Value]]).asTerm.changeOwner(owner)
-        ).asExprOf[kyo.Chunk[kyo.Structure.Value] => Any]
+            MethodType(List("values", "frame"))(
+                _ => List(TypeRepr.of[kyo.Chunk[kyo.Structure.Value]], TypeRepr.of[Frame]),
+                _ => TypeRepr.of[Any]
+            ),
+            (owner, params) =>
+                build(
+                    params(0).asInstanceOf[Term].asExprOf[kyo.Chunk[kyo.Structure.Value]],
+                    params(1).asInstanceOf[Term].asExprOf[Frame]
+                ).asTerm.changeOwner(owner)
+        ).asExprOf[(kyo.Chunk[kyo.Structure.Value], Frame) => Any]
         '{
             kyo.internal.CatchAll(
                 ${ Expr(childName) },

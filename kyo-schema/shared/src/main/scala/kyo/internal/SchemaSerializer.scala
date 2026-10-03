@@ -788,11 +788,11 @@ private[kyo] object SchemaSerializer:
         slots: (Int, Int),
         tag: Maybe[Structure.Value],
         payload: Maybe[Structure.Value]
-    ): Any =
+    )(using frame: Frame): Any =
         val values = Array.fill[Structure.Value](catchAll.arity)(Structure.Value.Null)
         tag.foreach(t => values(slots._1) = t)
         payload.foreach(p => values(slots._2) = p)
-        catchAll.construct(Chunk.from(values))
+        catchAll.construct(Chunk.from(values), frame)
     end buildCatchAll
 
     /** Decode for a sum with a catch-all variant. The value is captured whole: the catch-all receives it, so it has to be read before

@@ -246,7 +246,31 @@ class SchemaCatchAllTest extends kyo.test.Test[Any]:
             case other             => fail(s"expected TransformFailedException, got $other")
     }
 
+    "a catch-all field whose schema refuses the captured input fails with the decode call's Frame" in {
+        assert(Json.decode[SCAToken]("""{"Mystery":"abc"}""") == Result.succeed(SCATokenOther("Mystery", SCAWord("abc"))))
+        val decodeSite = summon[Frame]
+        Json.decode[SCAToken]("""{"Mystery":"a b"}""")(using summon[Json], summon[Schema[SCAToken]], decodeSite) match
+            case Result.Failure(e: ConstructorRejectedException) =>
+                assert(e.typeName == "SCAWord")
+                assert(e.frame == decodeSite, s"rejected at ${e.frame}, decoded at $decodeSite")
+            case other => fail(s"expected a ConstructorRejectedException, got $other")
+        end match
+    }
+
 end SchemaCatchAllTest
+
+final case class SCAWord(text: String) derives CanEqual
+
+object SCAWord:
+    given Schema[SCAWord] =
+        Schema.stringSchema.transformVia((text: String) =>
+            if text.forall(_.isLetter) then Result.succeed(SCAWord(text)) else Result.fail(s"not a word: $text")
+        )(_.text)
+end SCAWord
+
+sealed trait SCAToken derives CanEqual, Schema
+case class SCATokenKnown(n: Int)                                 extends SCAToken derives CanEqual
+@catchAll() case class SCATokenOther(tag: String, word: SCAWord) extends SCAToken derives CanEqual
 
 object SCALengthTag extends Transformer.Full[String]:
     def write(value: String, writer: Codec.Writer): Unit = writer.int(value.length)

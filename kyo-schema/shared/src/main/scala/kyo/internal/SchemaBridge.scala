@@ -151,7 +151,8 @@ def readPairSideAt[A](s: Schema[A], r: Reader, index: Int, side: String): A =
   * which `VariantTags` checks against the field's type. Which field takes the tag and which the unmatched input depends on the
   * representation
   * (`SchemaSerializer.catchAllSlots`), so one carrier serves every representation the variant's shape fits. `construct` builds the
-  * variant from one captured value per field, in declaration order, each read through the field's own schema. `onFailure` also
+  * variant from one captured value per field, in declaration order, each read through the field's own schema with the Frame of the
+  * decode that captured it. `onFailure` also
   * routes a known tag whose variant fails to decode to it. Public in `kyo.internal` because the sum derivation emits it at the
   * user's site.
   */
@@ -160,12 +161,12 @@ final case class CatchAll(
     arity: Int,
     tagIndex: Int,
     onFailure: Boolean,
-    construct: kyo.Chunk[kyo.Structure.Value] => Any
+    construct: (kyo.Chunk[kyo.Structure.Value], Frame) => Any
 )
 
-// Reads one field of a catch-all variant from the value the sum captured, through the field's own schema.
-def readCaptured[A](s: Schema[A], value: kyo.Structure.Value): A =
-    s.serializeRead(new StructureValueReader(value)(using Frame.internal))
+// Reads a value back from what a reader captured, through its own schema, with the Frame of the decode that captured it.
+def readCaptured[A](s: Schema[A], value: kyo.Structure.Value)(using Frame): A =
+    s.serializeRead(new StructureValueReader(value))
 
 inline def absentDefaultSeed[A](inline s: Schema[A]): A =
     s.absentDefaultValue match
