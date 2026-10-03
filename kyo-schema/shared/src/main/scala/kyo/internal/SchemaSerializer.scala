@@ -12,7 +12,154 @@ import scala.annotation.tailrec
   */
 private[kyo] object SchemaSerializer:
 
-    final private case class SyntheticField(name: String, value: () => Structure.Value)
+    final private[internal] case class SyntheticField(name: String, value: () => Structure.Value)
+
+    /** What `readWithTransforms` consults for every record a schema reads, and `writeWithTransforms` for the fields it writes as null,
+      * computed from the schema's slots once, on first use.
+      * Rebuilding these per record cost about 14 KB per decode for a record with one renamed field, against about 200 bytes for a
+      * plain record, and on Scala Native the garbage grew the heap past a 16 GB cap for a hundred thousand records.
+      */
+    final private[kyo] class ReadTables[A] private[internal] (
+        private[internal] val layout: WireLayout,
+        private[internal] val droppedIndices: Map[Int, Field[?, ?]],
+        private[internal] val syntheticFields: List[SyntheticField],
+        private[internal] val fieldReadOverrides: Map[WireKey.Key, (String, Schema.FieldTransform[A])],
+        private[internal] val renamesFields: Boolean,
+        private[internal] val absentWrittenAsNull: Chunk[String],
+        private[internal] val sourceIndex: Map[String, Int],
+        private[internal] val idIndex: Map[Int, Int],
+        private[internal] val probeNames: Array[String],
+        private[internal] val probeBytes: Array[Array[Byte]]
+    ):
+        private[internal] def unchanged: Boolean =
+            layout.fieldReverse.isEmpty && layout.renamedAway.isEmpty && droppedIndices.isEmpty && syntheticFields.isEmpty &&
+                fieldReadOverrides.isEmpty
+
+        // Bit i is set iff field index i is dropped; indices of 64 and above have no bit (see the 64-field macro limit).
+        private[internal] val droppedMask: Long =
+            droppedIndices.keysIterator.foldLeft(0L)((m, idx) => if idx >= 0 && idx < 64 then m | (1L << idx) else m)
+    end ReadTables
+
+    // What a record read through a TransformAwareReader tracks to inject the fields the wire lacks: the configured values and the
+    // flattened fields still to inject, the source fields read from the wire (a bit per field index) so a field that had a value is
+    // not injected, and the flat keys captured per flattened field. List, not Chunk: the pending fields are drained head to tail.
+    final private class Injection(var pendingSynthetic: List[SyntheticField]):
+        var pendingFlattened: List[(String, Structure.Value)]                                                 = Nil
+        var flattenedPrepared: Boolean                                                                        = false
+        var seenMask: Long                                                                                    = 0L
+        var seenWide: scala.collection.mutable.BitSet                                                         = null
+        var flattenedValues: scala.collection.mutable.LinkedHashMap[String, Chunk[(String, Structure.Value)]] = null
+    end Injection
+
+    private[kyo] def readTables[A](schema: Schema[A]): ReadTables[A] =
+        val layout = schema.wireLayout
+        // The number a field-id codec holds a field under: its pin, or the hash of its wire key.
+        def fieldNumber(source: String): Int = layout.fieldIds.getOrElse(source, CodecMacro.fieldId(source))
+
+        // omitDefaultedNames: WhenEmpty-configured fields (per-field or schema-wide) whose missing
+        // wire slot must decode to the typed empty value via synthetic field injection.
+        // WhenNone fields are excluded: Option/Maybe is already seeded None by the macro.
+        // Type guard: only Collection/Mapping fields qualify. An empty product also materializes
+        // as an empty Record on encode; without this guard, a product field that had all its own
+        // fields omitted would be added here and synthetic-injected as an empty value on decode,
+        // which is wrong. Symmetric with the encode-side isEmptyOmittableCollection gate.
+        val omitDefaultedNames: Set[String] =
+            schema.sourceFields.iterator.filter(isCollectionOrMapTag).map(_.name).filter { name =>
+                val perField = schema.omitPolicies.collectFirst { case (n, p) if n == name => p }
+                perField match
+                    case Some(Schema.OmitPolicy.WhenEmpty)   => true
+                    case Some(Schema.OmitPolicy.WhenNone)    => false
+                    case Some(Schema.OmitPolicy.When(_))     => false
+                    case Some(Schema.OmitPolicy.WhenDefault) => false
+                    case None                                => schema.omitEmptyCollectionsAll
+                end match
+            }.toSet
+
+        val droppedIndices =
+            if schema.droppedFields.isEmpty then Map.empty[Int, Field[?, ?]]
+            else
+                schema.sourceFields.zipWithIndex.flatMap { (field, idx) =>
+                    if schema.droppedFields.contains(field.name) then Some(idx -> field)
+                    else None
+                }.toMap
+
+        def materializeDefault(fieldDefault: Schema.FieldDefault): Structure.Value =
+            val writer = StructureValueWriter()
+            fieldDefault.writeDefault(fieldDefault.supplier(), writer)
+            writer.getResult
+        end materializeDefault
+
+        val defaultByName   = schema.fieldDefaults.toMap
+        val syntheticFields =
+            schema.sourceFields.flatMap { field =>
+                if schema.droppedFields.contains(field.name) then None
+                else
+                    defaultByName.get(field.name) match
+                        case Some(fieldDefault) =>
+                            Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
+                        case None if omitDefaultedNames.contains(field.name) =>
+                            if isMappingTag(field) then
+                                Some(SyntheticField(field.name, () => emptyMappingWireValue))
+                            else
+                                val zero = zeroForField(field)
+                                if zero == null then None
+                                else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
+                        case None =>
+                            None
+                    end match
+            }.toList
+
+        // Build the read-override lookup keyed by BOTH the source field name AND its numeric field id,
+        // as disjoint WireKey namespaces. A self-describing codec reports the field by name, Protobuf by
+        // its numeric id, so fieldParse() probes both wire forms. Each entry carries the SOURCE field name
+        // alongside the transform so fieldParse() can rewrite _translatedField to the source name when the
+        // match was via the id key.
+        val fieldReadOverrides: Map[WireKey.Key, (String, Schema.FieldTransform[A])] =
+            if schema.fieldTransforms.isEmpty then Map.empty
+            else
+                schema.fieldTransforms.iterator.collect {
+                    case (name, t) if t.read.isDefined =>
+                        Iterator[(WireKey.Key, (String, Schema.FieldTransform[A]))](
+                            WireKey.name(name)            -> (name, t),
+                            WireKey.id(fieldNumber(name)) -> (name, t)
+                        )
+                }.flatten.toMap
+
+        // The generated read body names a failing or missing field by its source name; the wire carries it under the renamed or
+        // convention-cased key. A sum's renames do not reach its variants' fields, so only a product's names are rewritten.
+        val renamesFields = (layout.renamedAway.nonEmpty || schema.variantNaming.fieldCase.nonEmpty) &&
+            (schema.structure match
+                case _: Structure.Type.Product => true
+                case _                         => false)
+
+        val idIndex = schema.sourceFields.iterator.map(f => fieldNumber(f.name)).zipWithIndex.toMap
+
+        // Every wire key whose name the wrapper acts on: a translated key, a renamed-away source name, a flat key, a source name, and
+        // a source field's id in decimal (a read override and the seen set also match a key by id). A key a reader reports that is
+        // none of these is passed through without being turned into a String.
+        val probeNames = Chunk.from(
+            layout.fieldReverse.keys ++ layout.renamedAway ++ schema.sourceFields.map(_.name) ++ layout.flatReverse.keys ++
+                layout.ownKeys ++ idIndex.keys.map(_.toString)
+        ).distinct.toArray
+        // A field with a configured default: the write leaves out an absent optional field, which would read back as that default.
+        // Written as null it reads back absent whatever the default is, so the default's supplier is not run to tell.
+        val absentWrittenAsNull = Chunk.from(schema.fieldDefaults).collect {
+            case (name, _) if !schema.droppedFields.contains(name) => name
+        }
+
+        new ReadTables(
+            layout,
+            droppedIndices,
+            syntheticFields,
+            fieldReadOverrides,
+            renamesFields,
+            absentWrittenAsNull,
+            schema.sourceFields.iterator.map(_.name).zipWithIndex.toMap,
+            idIndex,
+            probeNames,
+            probeNames.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        )
+    end readTables
 
     /** Decode-time lookup key that keeps the field-name namespace and the numeric field-id namespace
       * disjoint. A self-describing codec reports a field by name; a binary codec (Protobuf) reports it
@@ -22,7 +169,7 @@ private[kyo] object SchemaSerializer:
       * disjoint slots even when their textual forms coincide. `ByFieldId` is opaque over `Int` (field ids
       * fit in `Int`); it boxes only on the id side and only at lookup, a short-lived non-escaping box.
       */
-    private object WireKey:
+    private[internal] object WireKey:
         opaque type ByName    = String
         opaque type ByFieldId = Int
         type Key              = ByName | ByFieldId
@@ -42,6 +189,23 @@ private[kyo] object SchemaSerializer:
       * `DiscriminatorReader.matchField` uses this for its numeric-tag fallback for the same reason:
       * a plain field name must classify as a name without constructing a `NumberFormatException`.
       */
+    /** Whether `name` is the UTF-8 text `bytes` holds. The generated read body probes every field's name in turn, so an ASCII name is
+      * compared byte by byte rather than decoded into a String per probe.
+      */
+    private def sameName(name: String, bytes: Array[Byte]): Boolean =
+        @tailrec def ascii(i: Int): Boolean =
+            if i == bytes.length then true
+            else
+                val c = name.charAt(i)
+                if c >= 0x80 || bytes(i) < 0 then name == new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+                else c == bytes(i) && ascii(i + 1)
+        if name.length != bytes.length then
+            // a non-ASCII name's UTF-8 form is longer than its chars, so only then can the lengths differ and the names agree
+            !name.forall(_ < 0x80) && name == new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+        else ascii(0)
+        end if
+    end sameName
+
     private def wireFieldId(token: String): Int =
         if token.isEmpty then -1
         else
@@ -139,8 +303,10 @@ private[kyo] object SchemaSerializer:
                 val _ = writer.withFieldIdOverrides(fieldIdOverrides)
         end if
 
-        if schema.flattenLayout.nonEmpty && !writer.isSelfDescribing then
+        val layout = schema.wireLayout
+        if layout.flattens && !writer.isSelfDescribing then
             throw TransformUnsupportedException(writer.codecName, "flatten")
+        if layout.flatSum.nonEmpty then discard(layout.flatSumKeys)
 
         val selected     = selectRepresentation(schema, writer)
         val structWriter = StructureValueWriter(Maybe(writer), selected == Schema.UnionRepresentation.TupleFlat)
@@ -151,12 +317,6 @@ private[kyo] object SchemaSerializer:
         schema.rawSerializeWrite(value, structWriter)
         val original = structWriter.getResult
 
-        // Rename resolution, hoisted so both the field-transform application below and the
-        // wire-shape hint (topShape) share one computation. resolvedRenames is schema-level
-        // (independent of the captured value), so computing it once here is safe regardless of
-        // whether schema.structure turns out to be a Product or something else.
-        val resolvedRenames: Map[String, String] = Schema.resolvedRenames(schema.sourceFields.map(_.name), schema.renamedFields).toMap
-
         // Field names carrying a write-direction transform: their materialized value is produced by
         // the user-supplied transform, not by the field's own declared type, so the shape hint below
         // must not apply the declared type to them (a transform is free to change the wire shape,
@@ -165,7 +325,7 @@ private[kyo] object SchemaSerializer:
             schema.fieldTransforms.collect { case (name, t) if t.write.isDefined => name }.toSet
 
         // Shape hint for writeStructureValue: this schema's own product shape with each source
-        // field's wire (post-rename) name substituted for its declared name, so a renamed field's
+        // field's wire key substituted for its declared name, so a renamed or cased field's
         // value keeps its original declared type available for the Map/object wire-shape decision.
         // Dropped fields stay keyed under their original (never-emitted) name, which is harmless: the
         // replay never looks up a name absent from the transformed tree. Transform-overridden fields
@@ -176,7 +336,7 @@ private[kyo] object SchemaSerializer:
             case p: Structure.Type.Product =>
                 Maybe(p.copy(fields =
                     p.fields.filterNot(f => transformOverrideNames.contains(f.name))
-                        .map(f => f.copy(name = resolvedRenames.getOrElse(f.name, f.name)))
+                        .map(f => f.copy(name = layout.wireOf(f.name)))
                 ))
             case _ =>
                 Maybe.empty
@@ -240,36 +400,47 @@ private[kyo] object SchemaSerializer:
 
         val transformed = original match
             case Structure.Value.Record(_) =>
-                val originalFields = baseFields
                 schema.structure match
                     case _: Structure.Type.Product =>
                         // Field-level transforms (drop/rename/computed/convention) apply only to a product's
                         // own fields. For a sum schema the materialized Record is a single-field wrapper whose
                         // key is the variant name, not a data field; that key is governed by the variant-naming
-                        // layer and must not be run through applyFieldConvention here.
+                        // layer and must not be cased here.
 
-                        // Transform original fields in declaration order: drop, rename in place, and omit
-                        // empty/absent configured fields (keyed off the SOURCE name, before applyFieldConvention).
-                        // A renamed field keeps its position: tupleFlat reads the payload by position.
+                        // A field the base write left out was absent; one whose configured default is not absent is written
+                        // as null in its declared position, since left out it would read back as the default.
+                        val absentAsNull   = schema.readTables.absentWrittenAsNull
+                        val originalFields =
+                            if absentAsNull.isEmpty then baseFields
+                            else
+                                val missing = absentAsNull.filterNot(name => baseFields.exists(_._1 == name))
+                                if missing.isEmpty then baseFields
+                                else
+                                    val position = schema.sourceFields.map(_.name).zipWithIndex.toMap
+                                    (baseFields ++ Chunk.from(missing).map(_ -> Structure.Value.Null))
+                                        .sortBy((name, _) => position.getOrElse(name, Int.MaxValue))
+                                end if
+
+                        // Transform original fields in declaration order: drop, key each by its wire key, and omit
+                        // empty/absent configured fields (keyed off the SOURCE name). A renamed field keeps its
+                        // position: tupleFlat reads the payload by position.
                         val transformedFields = originalFields.flatMap { (name, reflValue) =>
                             if schema.droppedFields.contains(name) then
                                 Chunk.empty
                             else if !writer.writesEveryField && omitField(schema, name, reflValue, sourceValueOf(name, reflValue)) then
                                 Chunk.empty // omitted: empty/absent under an effective omit policy
                             else
-                                Chunk((resolvedRenames.getOrElse(name, name), reflValue))
+                                Chunk((layout.wireOf(name), reflValue))
                         }
 
                         // Add computed fields
                         val computedFieldValues = schema.computedFields.map { (name, compute) =>
-                            (name, anyToStructureValue(compute(value)))
+                            (layout.wireOf(name), anyToStructureValue(compute(value)))
                         }
 
-                        val allFields =
-                            flattenFields(schema, value, transformedFields ++ computedFieldValues)
-                        Structure.Value.Record(applyFieldConvention(schema, resolvedRenames.values.toSet, allFields))
+                        Structure.Value.Record(flattenFields(schema, value, transformedFields ++ computedFieldValues))
                     case _ =>
-                        Structure.Value.Record(originalFields)
+                        Structure.Value.Record(baseFields)
                 end match
             case other =>
                 other
@@ -742,6 +913,28 @@ private[kyo] object SchemaSerializer:
       *
       * For case objects (variant value is an empty Record), produces: `Record([("type", Str("Active"))])`
       */
+    /** Refuses a variant written with a key that a discriminator also writes beside the variant's fields: a field there would be
+      * overwritten by the tag on write and taken for it on read. A catch-all variant, and a variant that is itself a sum with one, is
+      * exempt: it holds the input it was read from, the tag key included, and the tag written in its place is the one that holds (see
+      * `flattenWithDiscriminator`). A derived `@discriminator` sum is checked at compile time as well; this check covers a tag key a
+      * builder sets and a variant laid out by its own given.
+      */
+    private[kyo] def checkTagKeys(schema: Schema[?], tagKeys: Chunk[String])(using Frame): Unit =
+        val names = Schema.variantScalaNames(schema.structure)
+        schema.variantSchemas.zipWithIndex.foreach { (variantSchema, idx) =>
+            val name    = names.lift(idx).getOrElse(idx.toString)
+            val variant = variantSchema()
+            if !schema.catchAll.exists(_.variant == name) && variant.catchAll.isEmpty then
+                val written =
+                    if WireLayout.isSum(variant) then WireLayout.sumFixedKeys(variant).map(key => key -> key)
+                    else variant.wireLayout.slots.collect { case slot if !slot.flattened => slot.wire -> slot.source }
+                written.foreach { (key, field) =>
+                    if tagKeys.contains(key) then throw FieldNameCollisionException(key, Chunk("<discriminator>", s"$name.$field"))
+                }
+            end if
+        }
+    end checkTagKeys
+
     private def flattenWithDiscriminator(
         value: Structure.Value,
         discField: String,
@@ -931,33 +1124,6 @@ private[kyo] object SchemaSerializer:
                 .getOrElse(scalaName)
     end namedVariantWire
 
-    /** Rewrites field-name keys by the renameAll-fields convention. A field already moved
-      * by an explicit `rename` (its target name is in `renamedTargetNames`) keeps its
-      * renamed key; only un-renamed source fields are convention-mapped. Collision among
-      * convention-derived keys raises `FieldNameCollisionException` (first-serialize).
-      */
-    private def applyFieldConvention[A](
-        schema: Schema[A],
-        renamedTargetNames: Set[String],
-        fields: Chunk[(String, Structure.Value)]
-    )(using Frame): Chunk[(String, Structure.Value)] =
-        schema.variantNaming.fieldCase match
-            case Maybe.Present(nc) =>
-                val fn     = NameCaseConversion.convert(nc)
-                val mapped = fields.map { (name, v) =>
-                    if renamedTargetNames.contains(name) then (name, name, v)
-                    else (fn(name), name, v)
-                }
-                val byWire = mapped.groupBy(_._1)
-                byWire.foreach { (wire, group) =>
-                    if group.size > 1 then
-                        throw FieldNameCollisionException(wire, Chunk.from(group.map(_._2).distinct.sorted))
-                }
-                mapped.map((wire, _, v) => (wire, v))
-            case _ =>
-                fields
-    end applyFieldConvention
-
     /** Threads a schema's field-id overrides onto a field-id-aware reader, mirroring what `Protobuf.decode`
       * does for its own entry point. `readFrom` calls this once for the outermost schema passed to
       * `Schema.decode[C]`; `Schema.init`'s `serializeRead` override also calls this directly for every
@@ -1040,40 +1206,36 @@ private[kyo] object SchemaSerializer:
                 val _ = reader.withFieldIdOverrides(fieldIdOverrides)
         end if
 
-        val resolvedRenames = Schema.resolvedRenames(schema.sourceFields.map(_.name), schema.renamedFields)
-        val forwardMap      = resolvedRenames.toMap
-
-        // renameReverse: final external name -> original source field name (for renamed fields only)
-        val renameReverse: Map[String, String] = resolvedRenames.map((source, wire) => wire -> source).toMap
-
-        // Merge field-convention + field-alias reverse entries from the SEPARATE naming
-        // slot, AFTER the rename-derived entries (rename wins). The convention maps each
-        // un-renamed source field's wire name back to the source; aliases map each alias
-        // back to the source whose effective wire name is the alias target.
-        val reverseMap: Map[String, String] = renameReverse ++ fieldNamingReverse(schema, renameReverse)
+        val tables = schema.readTables
+        val layout = tables.layout
         // Flat keys are captured as Structure values, which only an introspecting reader can produce. A reader without that
         // capability sees the flattened schema as unflattened: the nested form decodes, and no encoder writes the flat form to it.
-        val flattenLayout = reader match
-            case _: Codec.IntrospectingReader => schema.flattenLayout
-            case _                            => Maybe.empty
+        val flattened = layout.flattens &&
+            (reader match
+                case _: Codec.IntrospectingReader => true
+                case _                            => false)
+        if flattened && layout.flatSum.nonEmpty then discard(layout.flatSumKeys)
         // A flattened sum reads the whole parent record, the parent's own keys included, so the record is captured once and both the
         // parent's fields and the sum read from the captured value. A wrapper-object sum is the exception: it takes its one key as the
         // variant name, so it reads the record without the keys the parent's fields own.
         val captured: Maybe[(String, Schema[?], Structure.Value)] =
-            (flattenLayout.flatMap(_.sumParent), reader) match
-                case (Maybe.Present((parent, child)), introspecting: Codec.IntrospectingReader) =>
-                    Maybe((parent, child, introspecting.readStructure()))
-                case _ => Maybe.empty
+            if !flattened then Maybe.empty
+            else
+                layout.flatSum match
+                    case Maybe.Present(WireLayout.FlatSum(parent, child)) =>
+                        reader match
+                            case introspecting: Codec.IntrospectingReader => Maybe((parent, child, introspecting.readStructure()))
+                            case _                                        => Maybe.empty
+                    case _ => Maybe.empty
         val sumInput: Maybe[(String, Structure.Value)] =
             captured.map { (parent, child, whole) =>
                 (child.representation, whole) match
                     case (Schema.UnionRepresentation.External, Structure.Value.Record(fields)) =>
-                        val fieldCase = schema.variantNaming.fieldCase.map(NameCaseConversion.convert)
-                        val owned     =
+                        val owned =
                             Chunk.from(schema.sourceFields.map(_.name) ++ schema.computedFields.map(_._1)).filterNot(_ == parent)
-                                .flatMap(name => Chunk(name) ++ fieldCase.map(convert => convert(name)).toChunk).toSet ++
-                                reverseMap.filter(_._2 != parent).keySet ++
-                                flattenLayout.map(_.readMap.keySet).getOrElse(Set.empty)
+                                .flatMap(name => Chunk(name, layout.wireOf(name))).toSet ++
+                                layout.fieldReverse.filter(_._2 != parent).keySet ++
+                                layout.flatReverse.keySet
                         (parent, Structure.Value.Record(fields.filterNot((key, _) => owned.contains(key))))
                     case _ => (parent, whole)
             }
@@ -1081,131 +1243,26 @@ private[kyo] object SchemaSerializer:
             case Maybe.Present((_, _, whole)) => new StructureValueReader(whole)(using reader.frame)
             case _                            => reader
 
-        // renamedSources: original field names that have been renamed away (no longer valid in JSON)
-        val renamedSources: Set[String] = forwardMap.keySet
-
-        // omitDefaultedNames: WhenEmpty-configured fields (per-field or schema-wide) whose missing
-        // wire slot must decode to the typed empty value via synthetic field injection.
-        // WhenNone fields are excluded: Option/Maybe is already seeded None by the macro.
-        // Type guard: only Collection/Mapping fields qualify. An empty product also materializes
-        // as an empty Record on encode; without this guard, a product field that had all its own
-        // fields omitted would be added here and synthetic-injected as an empty value on decode,
-        // which is wrong. Symmetric with the encode-side isEmptyOmittableCollection gate.
-        val omitDefaultedNames: Set[String] =
-            schema.sourceFields.iterator.filter(isCollectionOrMapTag).map(_.name).filter { name =>
-                val perField = schema.omitPolicies.collectFirst { case (n, p) if n == name => p }
-                perField match
-                    case Some(Schema.OmitPolicy.WhenEmpty)   => true
-                    case Some(Schema.OmitPolicy.WhenNone)    => false
-                    case Some(Schema.OmitPolicy.When(_))     => false
-                    case Some(Schema.OmitPolicy.WhenDefault) => false
-                    case None                                => schema.omitEmptyCollectionsAll
-                end match
-            }.toSet
-
-        val droppedIndices =
-            if schema.droppedFields.isEmpty then Map.empty[Int, Field[?, ?]]
-            else
-                schema.sourceFields.zipWithIndex.flatMap { (field, idx) =>
-                    if schema.droppedFields.contains(field.name) then Some(idx -> field)
-                    else None
-                }.toMap
-
-        def materializeDefault(fieldDefault: Schema.FieldDefault): Structure.Value =
-            val writer = StructureValueWriter()
-            fieldDefault.writeDefault(fieldDefault.supplier(), writer)
-            writer.getResult
-        end materializeDefault
-
-        val defaultByName   = schema.fieldDefaults.toMap
-        val syntheticFields =
-            schema.sourceFields.flatMap { field =>
-                if schema.droppedFields.contains(field.name) then None
-                else
-                    defaultByName.get(field.name) match
-                        case Some(fieldDefault) =>
-                            Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
-                        case None if omitDefaultedNames.contains(field.name) =>
-                            if isMappingTag(field) then
-                                Some(SyntheticField(field.name, () => emptyMappingWireValue))
-                            else
-                                val zero = zeroForField(field)
-                                if zero == null then None
-                                else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
-                        case None =>
-                            None
-                    end match
-            }.toList
-
-        // Build the read-override lookup keyed by BOTH the source field name AND its numeric field id,
-        // as disjoint WireKey namespaces. A self-describing codec reports the field by name, Protobuf by
-        // its numeric id, so fieldParse() probes both wire forms. Each entry carries the SOURCE field name
-        // alongside the transform so fieldParse() can rewrite _translatedField to the source name when the
-        // match was via the id key.
-        val fieldReadOverrides: Map[WireKey.Key, (String, Schema.FieldTransform[A])] =
-            if schema.fieldTransforms.isEmpty then Map.empty
-            else
-                schema.fieldTransforms.iterator.collect {
-                    case (name, t) if t.read.isDefined =>
-                        Iterator[(WireKey.Key, (String, Schema.FieldTransform[A]))](
-                            WireKey.name(name)                   -> (name, t),
-                            WireKey.id(CodecMacro.fieldId(name)) -> (name, t)
-                        )
-                }.flatten.toMap
-
         val transformReader =
-            if !schema.denyUnknownFieldsEnabled && reverseMap.isEmpty && renamedSources.isEmpty &&
-                droppedIndices.isEmpty && syntheticFields.isEmpty && flattenLayout.isEmpty &&
-                fieldReadOverrides.isEmpty
-            then
-                source
+            if !schema.denyUnknownFieldsEnabled && tables.unchanged && !flattened then source
             else
                 source match
                     case _: Codec.IntrospectingReader =>
-                        new TransformAwareReader(
-                            source,
-                            reverseMap,
-                            renamedSources,
-                            droppedIndices,
-                            syntheticFields,
-                            schema.denyUnknownFieldsEnabled,
-                            flattenLayout,
-                            fieldReadOverrides,
-                            sumInput
-                        ) with IntrospectingWrapper
+                        new TransformAwareReader(source, tables, schema.denyUnknownFieldsEnabled, flattened, sumInput)
+                            with IntrospectingWrapper
                     case _ =>
-                        new TransformAwareReader(
-                            source,
-                            reverseMap,
-                            renamedSources,
-                            droppedIndices,
-                            syntheticFields,
-                            schema.denyUnknownFieldsEnabled,
-                            flattenLayout,
-                            fieldReadOverrides,
-                            sumInput
-                        )
+                        new TransformAwareReader(source, tables, schema.denyUnknownFieldsEnabled, flattened, sumInput)
 
-        // The generated read body names a failing or missing field by its source name; the wire carries it under the renamed or
-        // convention-cased key. A sum's renames do not reach its variants' fields, so only a product's names are rewritten.
-        val fieldCase     = schema.variantNaming.fieldCase.map(NameCaseConversion.convert)
-        val renamesFields = (forwardMap.nonEmpty || fieldCase.nonEmpty) &&
-            (schema.structure match
-                case _: Structure.Type.Product => true
-                case _                         => false)
+        val renamesFields = tables.renamesFields
         // A flattened field's keys sit at the parent level, so a failure inside one is located by the key the input holds there, without
         // the field the value is held in: a flattened record's key through the layout, a flattened sum's as its variant names it.
         val sumParent = sumInput.map(_._1)
-        val flatKeys  = flattenLayout.map(_.flatKeys).getOrElse(Map.empty)
+        val flatKeys  = if flattened then layout.flatKeys else Map.empty[(String, String), String]
         if !renamesFields && sumParent.isEmpty && flatKeys.isEmpty then schema.rawSerializeRead(transformReader)
         else
             def wireOf(name: String): String =
                 if !renamesFields then name
-                else if forwardMap.contains(name) then forwardMap(name)
-                else
-                    fieldCase match
-                        case Maybe.Present(convert) => convert(name)
-                        case _                      => name
+                else layout.wireOf(name)
             def located(path: Seq[String]): Seq[String] =
                 path match
                     case parent +: key +: rest if flatKeys.contains((parent, key)) => flatKeys((parent, key)) +: rest
@@ -1227,96 +1284,73 @@ private[kyo] object SchemaSerializer:
         end if
     end readWithTransforms
 
-    /** Replaces each flattened parent field's nested record with the record's own entries, the write half of `flatten` whose read
-      * half is `FlattenLayout.readMap`. A parent is found under its wire name, so a flattened field that was also renamed is still
-      * spliced. A key the layout does not expect would write a record the schema cannot read back, so it raises instead.
+    /** Replaces each flattened parent field's nested record with the record's own entries under their parent-level keys, the write
+      * half of `flatten` whose read half is `WireLayout.route`. A parent is found under its wire key, so a flattened field that was also
+      * renamed is still spliced. A key the layout does not expect would write a record the schema cannot read back, so it raises
+      * instead.
       *
-      * A flattened sum splices whatever record its variant wrote. A key the parent's own fields also write would appear twice, so it
-      * raises, except in a catch-all variant: that one holds the whole input it was read from, the parent's keys included, and the
-      * parent's own values stand for them.
+      * A flattened sum splices whatever record its variant wrote, its keys cased by the parent's convention. A key the parent's own
+      * fields also write would appear twice, so it raises, except in a catch-all variant: that one holds the whole input it was read
+      * from, the parent's keys included, and the parent's own values stand for them.
       */
     private def flattenFields[A](schema: Schema[A], value: A, fields: Chunk[(String, Structure.Value)])(using
         Frame
     ): Chunk[(String, Structure.Value)] =
-        schema.flattenLayout match
-            case Maybe.Absent          => fields
-            case Maybe.Present(layout) =>
-                val sumWire =
-                    layout.sumParent.map((parent, _) => layout.parentByWire.collectFirst { case (w, `parent`) => w }.getOrElse(parent))
-                fields.flatMap {
-                    case (name, written) if sumWire.contains(name) =>
-                        val (parent, child) = layout.sumParent.get
-                        val parentKeys      = fields.map(_._1).filterNot(_ == name).toSet
-                        val isCatchAll      = child.catchAll.exists { catchAll =>
-                            val index = schema.sourceFields.indexWhere(_.name == parent)
-                            value match
-                                case product: Product if index >= 0 =>
-                                    product.productElement(index) match
-                                        case variant: Product => variant.productPrefix == catchAll.variant
-                                        case _                => false
-                                case _ => false
-                            end match
-                        }
-                        // A wrapper-object sum is held as its variant case, which the codec writes as a one-key record.
-                        val entries = written match
-                            case Structure.Value.Record(children)              => children
-                            case Structure.Value.VariantCase(variant, payload) => Chunk(variant -> payload)
-                            case other                                         =>
-                                throw TransformFailedException(
-                                    s"flatten(_.$parent): the sum wrote ${other.getClass.getSimpleName}, not a record, so it has no keys to move"
-                                )
-                        entries.flatMap { (key, child) =>
-                            if !parentKeys.contains(key) then Chunk(key -> child)
-                            else if isCatchAll then Chunk.empty
-                            else
-                                throw TransformFailedException(
-                                    s"flatten: the sum '$parent' wrote the key '$key', which the parent's field '$key' also writes"
-                                )
-                        }
-                    // an absent optional record writes none of its keys
-                    case (name, Structure.Value.Null) if layout.parentByWire.get(name).exists(layout.optionalParents.contains) =>
-                        Chunk.empty
-                    case (name, Structure.Value.Record(children)) if layout.parentByWire.contains(name) =>
-                        val parent   = layout.parentByWire(name)
-                        val expected = layout.childKeys(parent)
-                        children.foreach { (key, _) =>
-                            if !expected.contains(key) then
+        val layout = schema.wireLayout
+        if !layout.flattens then fields
+        else
+            val sumWire = layout.flatSum.map(sum => layout.wireOf(sum.parent))
+            fields.flatMap {
+                case (name, written) if sumWire.contains(name) =>
+                    val WireLayout.FlatSum(parent, child) = layout.flatSum.get
+                    val parentKeys                        = fields.map(_._1).filterNot(_ == name).toSet
+                    val isCatchAll                        = child.catchAll.exists { catchAll =>
+                        val index = schema.sourceFields.indexWhere(_.name == parent)
+                        value match
+                            case product: Product if index >= 0 =>
+                                product.productElement(index) match
+                                    case variant: Product => variant.productPrefix == catchAll.variant
+                                    case _                => false
+                            case _ => false
+                        end match
+                    }
+                    // A wrapper-object sum is held as its variant case, which the codec writes as a one-key record.
+                    val entries = written match
+                        case Structure.Value.Record(children)              => children
+                        case Structure.Value.VariantCase(variant, payload) => Chunk(variant -> payload)
+                        case other                                         =>
+                            throw TransformFailedException(
+                                s"flatten(_.$parent): the sum wrote ${other.getClass.getSimpleName}, not a record, so it has no keys to move"
+                            )
+                    entries.flatMap { (written, child) =>
+                        val key = layout.casedFlatSumKey(written)
+                        if !parentKeys.contains(key) then Chunk(key -> child)
+                        else if isCatchAll then Chunk.empty
+                        else
+                            throw TransformFailedException(
+                                s"flatten: the sum '$parent' wrote the key '$key', which the parent's field '$key' also writes"
+                            )
+                        end if
+                    }
+                // an absent optional record writes none of its keys
+                case (name, Structure.Value.Null) if layout.flattenedAt(name).exists(_.optionalParent) =>
+                    Chunk.empty
+                case (name, Structure.Value.Record(children)) if layout.flattenedAt(name).nonEmpty =>
+                    val parent = layout.flattenedAt(name).get.source
+                    children.map { (key, child) =>
+                        layout.flatWire(parent, key) match
+                            case Maybe.Present(wire) => wire -> child
+                            case _                   =>
+                                val expected = layout.expectedChildKeys(parent)
                                 throw TransformFailedException(
                                     s"flatten: the schema of '$parent' wrote the key '$key', which is not one of its fields' wire names " +
                                         s"(${expected.toSeq.sorted.mkString(", ")}), so the flat record could not be read back"
                                 )
-                        }
-                        children
-                    case other => Chunk(other)
-                }
+                    }
+                case other => Chunk(other)
+            }
+        end if
     end flattenFields
-
-    /** Builds the field-naming reverse entries (convention + aliases) keyed wire -> source
-      * field name, from the SEPARATE variantNaming slot. A source field already covered by
-      * a rename (present as a value in `renameReverse`) is left to the rename mapping.
-      */
-    private def fieldNamingReverse[A](schema: Schema[A], renameReverse: Map[String, String]): Map[String, String] =
-        val naming         = schema.variantNaming
-        val renamedTargets = renameReverse.values.toSet
-        val conventionMap  = naming.fieldCase match
-            case Maybe.Present(nc) =>
-                val fn = NameCaseConversion.convert(nc)
-                schema.sourceFields.iterator
-                    .map(_.name)
-                    .filterNot(renamedTargets.contains)
-                    .map(src => fn(src) -> src)
-                    .toMap
-            case _ => Map.empty
-        // alias target -> effective source: resolve each alias's primary wire to a source.
-        // renameReverse maps final wire name -> original source name for renamed fields; include
-        // those so an alias registered against a rename target (e.g. alias("given","g") after
-        // rename("firstName","given")) resolves on decode.
-        val wireToSource = conventionMap ++ renameReverse ++ schema.sourceFields.map(sf => sf.name -> sf.name)
-        val aliasMap     = naming.fieldAliases.flatMap { (alias, primaryWire) =>
-            wireToSource.get(primaryWire).map(src => alias -> src)
-        }.toMap
-        aliasMap ++ conventionMap
-    end fieldNamingReverse
 
     /** Converts an arbitrary Scala value to Structure.Value for transform-aware serialization. */
     def anyToStructureValue(value: Any): Structure.Value =
@@ -2098,6 +2132,11 @@ private[kyo] object SchemaSerializer:
             end match
         end absentDefaultedFieldsMask
 
+        override private[kyo] def missingOptionalIsAbsent: Boolean =
+            delegateReader match
+                case Present(reader) => reader.missingOptionalIsAbsent
+                case _               => inner.missingOptionalIsAbsent
+
     end DelegatingWrapperReader
 
     /** A [[Reader]] wrapper that transforms flat discriminator format back to wrapper format for sealed trait deserialization.
@@ -2612,21 +2651,24 @@ private[kyo] object SchemaSerializer:
       *   - Drops: [[droppedFieldsMask]] reports the dropped-field bit positions so the macro's required-field bitmap check treats them as
       *     already satisfied and does not throw [[MissingFieldException]].
       */
+    // One is built per record read, so what is fixed per schema is held through `tables` and the layout and read through defs: a
+    // field per table would be copied into every instance.
     private class TransformAwareReader(
         inner: Reader,
-        reverseMap: Map[String, String],
-        renamedSources: Set[String],
-        droppedIndices: Map[Int, Field[?, ?]],
-        syntheticFields: List[SyntheticField] = Nil,
-        denyUnknownFieldsEnabled: Boolean = false,
-        flattenLayout: Maybe[FlattenLayout] = Maybe.empty,
-        fieldReadOverrides: Map[WireKey.Key, (String, Schema.FieldTransform[?])] = Map.empty,
-        sumInput: Maybe[(String, Structure.Value)] = Maybe.empty
+        tables: ReadTables[?],
+        denyUnknownFieldsEnabled: Boolean,
+        flattened: Boolean,
+        sumInput: Maybe[(String, Structure.Value)]
     ) extends Reader with StructureSource:
 
-        private val flatReadMap: Map[String, (String, String)] = flattenLayout.map(_.readMap).getOrElse(Map.empty)
-        private val flatOwnKeys: Set[String]                   = flattenLayout.map(_.ownKeys).getOrElse(Set.empty)
-        private val optionalFlat: Set[String]                  = flattenLayout.map(_.optionalParents).getOrElse(Set.empty)
+        private def reverseMap: Map[String, String]                                          = tables.layout.fieldReverse
+        private def renamedSources: Set[String]                                              = tables.layout.renamedAway
+        private def fieldReadOverrides: Map[WireKey.Key, (String, Schema.FieldTransform[?])] = tables.fieldReadOverrides
+        private def sourceIndex: Map[String, Int]                                            = tables.sourceIndex
+        private def idIndex: Map[Int, Int]                                                   = tables.idIndex
+        private def flatReadMap: Map[String, (String, String)] = if flattened then tables.layout.flatReverse else Map.empty
+        private def flatOwnKeys: Set[String]                   = if flattened then tables.layout.ownKeys else Set.empty
+        private def optionalFlat: Set[String]                  = if flattened then tables.layout.optionalParents else Set.empty
 
         def frame: Frame = inner.frame
 
@@ -2656,23 +2698,16 @@ private[kyo] object SchemaSerializer:
             this
         override def fieldIdOverridesSnapshot: Map[String, Int] = inner.fieldIdOverridesSnapshot
 
-        // Pre-compute the dropped-field bitmask once per reader instance.
-        // Bit i is set iff field index i is dropped. Indices >= 64 are clamped to 63 (see the 64-field macro limit).
-        private val _droppedMask: Long =
-            var m = 0L
-            for (idx, _) <- droppedIndices do
-                if idx >= 0 && idx < 64 then m |= (1L << idx)
-            m
-        end _droppedMask
-
         override def droppedFieldsMask(n: Int): Long =
             val innerMask = inner.droppedFieldsMask(n)
-            if n >= 64 then _droppedMask | innerMask
-            else (_droppedMask & ((1L << n) - 1L)) | innerMask
+            if n >= 64 then tables.droppedMask | innerMask
+            else (tables.droppedMask & ((1L << n) - 1L)) | innerMask
         end droppedFieldsMask
 
         override def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long =
             inner.absentDefaultedFieldsMask(n, defaultableFieldsMask)
+
+        override private[kyo] def missingOptionalIsAbsent: Boolean = inner.missingOptionalIsAbsent
 
         override def initFields(n: Int): Array[AnyRef] = inner.initFields(n)
 
@@ -2683,24 +2718,25 @@ private[kyo] object SchemaSerializer:
         private var _matchedField: Boolean          = false
         private var _syntheticField: Boolean        = false
         private var _rawFieldName: String           = ""
+        // The key is none of the names the wrapper acts on, so matching and naming it are the wrapped reader's, and `_rawFieldName`
+        // is not read: it is set only where a strict schema names an unknown key.
+        private var _passThrough: Boolean = false
 
-        // Synthetic injection state for flattened parent replay and configured missing-field values.
-        // _seenFromWire: WireKey of every field read from the real wire; used to skip injection for
-        //   fields that already had a value on the wire (prevents overwriting non-empty data). Recorded
-        //   under both the name and the id key when the wire token is numeric, so the synthetic and
-        //   flattened-parent checks (which know the source name) match it on either codec.
-        // List, not Chunk: these are drained head/tail as the reader yields each pending field,
-        // and List gives O(1) head/tail on this hot decode path.
-        private var _pendingSyntheticFields: List[SyntheticField]                                                      = syntheticFields
-        private var _pendingFlattened: List[(String, Structure.Value)]                                                 = Nil
-        private var _flattenedPrepared: Boolean                                                                        = false
-        private var _syntheticActive: Boolean                                                                          = false
-        private var _syntheticDepth: Int                                                                               = 0
-        private var _syntheticReader: Maybe[Reader]                                                                    = Maybe.empty
-        private val _flattenedValues: scala.collection.mutable.LinkedHashMap[String, Chunk[(String, Structure.Value)]] =
-            scala.collection.mutable.LinkedHashMap.empty[String, Chunk[(String, Structure.Value)]]
-        private val _seenFromWire: scala.collection.mutable.HashSet[WireKey.Key] =
-            scala.collection.mutable.HashSet.empty[WireKey.Key]
+        private var _syntheticActive: Boolean       = false
+        private var _syntheticDepth: Int            = 0
+        private var _syntheticReader: Maybe[Reader] = Maybe.empty
+        // Null for a record with no injected and no flattened field, which then allocates none of the state they track.
+        private val _injection: Injection =
+            if tables.syntheticFields.nonEmpty || flattened then new Injection(tables.syntheticFields) else null
+
+        private def markSeen(index: Int): Unit =
+            if index < 64 then _injection.seenMask |= (1L << index)
+            else
+                if _injection.seenWide == null then _injection.seenWide = scala.collection.mutable.BitSet.empty
+                _injection.seenWide += index
+
+        private def flattenedOf(parent: String): Maybe[Chunk[(String, Structure.Value)]] =
+            if _injection.flattenedValues == null then Maybe.empty else Maybe.fromOption(_injection.flattenedValues.get(parent))
 
         // Containers opened on the wrapped reader. The wrapper's record is level 1; a nested record, sequence or map read through this
         // wrapper sits deeper and belongs to its own schema, so there every field step goes straight to the wrapped reader: this
@@ -2712,11 +2748,14 @@ private[kyo] object SchemaSerializer:
         // A source field counts as present on the wire when either its name key or its numeric-id key
         // was recorded, so suppression works whether the codec reported the field by name or by id.
         private def seenOnWire(sourceName: String): Boolean =
-            _seenFromWire.contains(WireKey.name(sourceName)) ||
-                _seenFromWire.contains(WireKey.id(CodecMacro.fieldId(sourceName)))
+            sourceIndex.get(sourceName) match
+                case Some(index) =>
+                    if index < 64 then (_injection.seenMask & (1L << index)) != 0L
+                    else _injection.seenWide != null && _injection.seenWide.contains(index)
+                case None => false
 
         // Read the field name from the inner reader and translate it.
-        // Records the translated name in _seenFromWire so hasNextField skips injection for it.
+        // Records the translated field as seen so hasNextField skips injection for it.
         // When in synthetic mode, the name was already set by hasNextField; just return.
         override def fieldParse(): Unit =
             if _syntheticReader.nonEmpty then
@@ -2725,57 +2764,102 @@ private[kyo] object SchemaSerializer:
                 _matchedField = false
             else if nested then
                 inner.fieldParse()
-                _rawFieldName = inner.lastFieldName()
+                if denyUnknownFieldsEnabled then _rawFieldName = inner.lastFieldName()
                 _matchedField = false
                 _syntheticField = false
             else
                 inner.fieldParse()
-                val displayName = inner.lastFieldName()
-                val rawName     = displayName
-                _rawFieldName = if displayName.isEmpty then rawName else displayName
                 _matchedField = false
                 _syntheticField = false
-                val sourceName = inner.presentsSourceFieldNames
-                // A flattened field's own name that is also one of its record's keys (a caption beside its entities) is that key: the
-                // field is never written under its name, so the reader routes the key to the record instead of matching the field.
-                val flatOwnKey  = !sourceName && flatReadMap.contains(rawName) && flatOwnKeys.contains(rawName)
-                val renamedAway = !sourceName && (renamedSources.contains(rawName) || flatOwnKey)
-                val mapped      = if sourceName then Some(rawName) else reverseMap.get(rawName)
-                val translated  = mapped.getOrElse(
-                    if renamedAway then "\u0000_invalid_renamed_field"
-                    else rawName
-                )
-                _translatedByWrapper = mapped.isDefined || renamedAway
-                _translatedField = Maybe(translated)
-                // Record the wire field under its name key, and additionally under its id key when the
-                // token is numeric (the Protobuf path), so a present field is not later overwritten by
-                // its configured default and a flattened parent is recognized on either codec.
-                val translatedId = wireFieldId(translated)
-                _seenFromWire += WireKey.name(translated)
-                if translatedId >= 0 then _seenFromWire += WireKey.id(translatedId)
-                val readOverride =
-                    fieldReadOverrides.get(WireKey.name(translated)) match
-                        case hit @ Some(_) => hit
-                        case None          => if translatedId >= 0 then fieldReadOverrides.get(WireKey.id(translatedId)) else None
-                readOverride match
-                    case Some((sourceName, transform)) if transform.read.isDefined =>
-                        val rawResult =
-                            try transform.read.get(inner)
-                            catch case e: DecodeException => throw e.prependPath(sourceName)
-                        val svWriter = StructureValueWriter()
-                        transform.writeDerived(rawResult, svWriter)
-                        _pendingSyntheticValue = svWriter.getResult
-                        // Rewrite _translatedField to the source name so matchField's
-                        // string comparison succeeds even when `translated` was a numeric
-                        // field-ID string (Protobuf wire path).
-                        _translatedField = Maybe(sourceName)
-                        _syntheticActive = true
-                        _translatedByWrapper = true
-                        _matchedField = true
-                        _syntheticField = true
-                    case _ => ()
-                end match
+                val number = if denyUnknownFieldsEnabled then -1 else inner.lastFieldNumber
+                if number >= 0 then parseNumberedKey(number)
+                else
+                    val rawName = wireKeyName()
+                    _passThrough = rawName == null
+                    if !_passThrough then parseNamedKey(rawName)
+                end if
         end fieldParse
+
+        // The key's name when it is one the wrapper acts on, found by matching its bytes, or null when it is none of them. A strict
+        // schema names every key, since a key nothing matches is reported by name.
+        private def wireKeyName(): String =
+            if denyUnknownFieldsEnabled || !inner.matchesKeyBytes then inner.lastFieldName()
+            else
+                val probes                        = tables.probeBytes
+                @tailrec def loop(i: Int): String =
+                    if i >= probes.length then null
+                    else if inner.matchField(probes(i)) then tables.probeNames(i)
+                    else loop(i + 1)
+                loop(0)
+        end wireKeyName
+
+        private def parseNamedKey(rawName: String): Unit =
+            _rawFieldName = rawName
+            val sourceName = inner.presentsSourceFieldNames
+            // A flattened field's own name that is also one of its record's keys (a caption beside its entities) is that key: the
+            // field is never written under its name, so the reader routes the key to the record instead of matching the field.
+            val flatOwnKey  = !sourceName && flatReadMap.contains(rawName) && flatOwnKeys.contains(rawName)
+            val renamedAway = !sourceName && (renamedSources.contains(rawName) || flatOwnKey)
+            val mapped      = if sourceName then rawName else reverseMap.getOrElse(rawName, null)
+            val translated  =
+                if mapped != null then mapped
+                else if renamedAway then "\u0000_invalid_renamed_field"
+                else rawName
+            _translatedByWrapper = mapped != null || renamedAway
+            _translatedField = Maybe(translated)
+            // Record the wire field under its name key, and additionally under its id key when the
+            // token is numeric (the Protobuf path), so a present field is not later overwritten by
+            // its configured default and a flattened parent is recognized on either codec.
+            val translatedId = wireFieldId(translated)
+            if _injection != null then
+                val index = sourceIndex.getOrElse(translated, -1)
+                if index >= 0 then markSeen(index)
+                else if translatedId >= 0 then
+                    val byId = idIndex.getOrElse(translatedId, -1)
+                    if byId >= 0 then markSeen(byId)
+                end if
+            end if
+            if fieldReadOverrides.nonEmpty then
+                fieldReadOverrides.get(WireKey.name(translated)) match
+                    case Some(found) => applyReadOverride(found)
+                    case None => if translatedId >= 0 then fieldReadOverrides.get(WireKey.id(translatedId)).foreach(applyReadOverride)
+            end if
+        end parseNamedKey
+
+        // A key reported by its field number is matched by the wrapped reader through the numbers the schema installs, so it is
+        // never translated: it marks its field seen and takes its read override by number, and is named only if a failure asks.
+        private def parseNumberedKey(number: Int): Unit =
+            _passThrough = true
+            if _injection != null then
+                val byId = idIndex.getOrElse(number, -1)
+                if byId >= 0 then markSeen(byId)
+            if fieldReadOverrides.nonEmpty then fieldReadOverrides.get(WireKey.id(number)).foreach(applyReadOverride)
+        end parseNumberedKey
+
+        private def applyReadOverride(found: (String, Schema.FieldTransform[?])): Unit =
+            val (sourceName, transform) = found
+            if transform.read.isDefined then
+                val rawResult =
+                    try transform.read.get(inner)
+                    catch case e: DecodeException => throw e.prependPath(sourceName)
+                val svWriter = StructureValueWriter()
+                transform.writeDerived(rawResult, svWriter)
+                _pendingSyntheticValue = svWriter.getResult
+                // The field is matched by its source name, whatever key the wire held it under.
+                _translatedField = Maybe(sourceName)
+                _passThrough = false
+                _syntheticActive = true
+                _translatedByWrapper = true
+                _matchedField = true
+                _syntheticField = true
+            end if
+        end applyReadOverride
+
+        override private[kyo] def matchesKeyBytes: Boolean =
+            _syntheticReader.isEmpty && !_syntheticActive && nested && inner.matchesKeyBytes
+
+        override private[kyo] def lastFieldNumber: Int =
+            if _syntheticReader.isEmpty && !_syntheticActive && nested then inner.lastFieldNumber else -1
 
         override def matchField(nameBytes: Array[Byte]): Boolean =
             if _syntheticReader.isEmpty && !_syntheticActive && nested then
@@ -2785,10 +2869,9 @@ private[kyo] object SchemaSerializer:
             else
                 val matched =
                     if _syntheticReader.nonEmpty then _syntheticReader.get.matchField(nameBytes)
+                    else if _passThrough && !_syntheticActive then inner.matchField(nameBytes)
                     else if _translatedField.isEmpty then false
-                    else if _translatedByWrapper then
-                        val expected = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
-                        _translatedField.get == expected
+                    else if _translatedByWrapper then sameName(_translatedField.get, nameBytes)
                     else
                         inner.matchField(nameBytes)
                 if matched then _matchedField = true
@@ -2797,7 +2880,7 @@ private[kyo] object SchemaSerializer:
 
         override def lastFieldName(): String =
             if _syntheticReader.nonEmpty then _syntheticReader.get.lastFieldName()
-            else if !_syntheticActive && nested then inner.lastFieldName()
+            else if !_syntheticActive && (nested || _passThrough) then inner.lastFieldName()
             else _translatedField.getOrElse("")
 
         // A key no field of the parent matched may be the flattened sum's, which reads the whole record, so it is not unknown here.
@@ -2816,13 +2899,15 @@ private[kyo] object SchemaSerializer:
                 _syntheticReader.get.skip()
             else if _syntheticActive then
                 clearSynthetic()
-            else if !_syntheticField && !_matchedField && flatReadMap.contains(_rawFieldName) then
+            else if !_passThrough && !_syntheticField && !_matchedField && flatReadMap.contains(_rawFieldName) then
                 val (parent, child) = flatReadMap(_rawFieldName)
                 val captured        = inner.captureValue() match
                     case reader: Codec.IntrospectingReader => reader.readStructure()
                     case other                             => notIntrospecting(other)
-                val current = _flattenedValues.getOrElse(parent, Chunk.empty)
-                _flattenedValues.update(parent, current :+ (child -> captured))
+                if _injection.flattenedValues == null then
+                    _injection.flattenedValues = scala.collection.mutable.LinkedHashMap.empty[String, Chunk[(String, Structure.Value)]]
+                val current = _injection.flattenedValues.getOrElse(parent, Chunk.empty)
+                _injection.flattenedValues.update(parent, current :+ (child -> captured))
             else
                 inner.skip()
         end skip
@@ -2852,7 +2937,8 @@ private[kyo] object SchemaSerializer:
                 _depth += 1
                 inner.objectStart()
 
-        private var _pendingSyntheticValue: Structure.Value = Structure.Value.Record(Chunk.empty)
+        // Set before the synthetic reader that reads it is created.
+        private var _pendingSyntheticValue: Structure.Value = null
 
         def objectEnd(): Unit =
             if _syntheticActive then
@@ -2895,20 +2981,22 @@ private[kyo] object SchemaSerializer:
             if _syntheticReader.nonEmpty then _syntheticReader.get.hasNextField()
             else if nested then inner.hasNextField()
             else if inner.hasNextField() then true
+            else if _injection == null then false
             else
-                if !_flattenedPrepared then
+                val injection = _injection
+                if !injection.flattenedPrepared then
                     // A flattened field with no flat key on the wire still decodes, from an empty record, since its child may
                     // have written no key at all (every field absent or omitted); a configured default for it takes precedence.
-                    _pendingFlattened = flattenLayout.map(_.parentSources).getOrElse(Chunk.empty).iterator
+                    injection.pendingFlattened = (if flattened then tables.layout.parentSources else Chunk.empty).iterator
                         .filterNot(seenOnWire)
                         .flatMap { parent =>
                             sumInput match
                                 case Maybe.Present((`parent`, whole)) => Some(parent -> whole)
                                 case _                                =>
-                                    _flattenedValues.get(parent) match
-                                        case Some(fields) => Some(parent -> Structure.Value.Record(fields))
-                                        case None         =>
-                                            if _pendingSyntheticFields.exists(_.name == parent) then None
+                                    flattenedOf(parent) match
+                                        case Maybe.Present(fields) => Some(parent -> Structure.Value.Record(fields))
+                                        case _                     =>
+                                            if injection.pendingSynthetic.exists(_.name == parent) then None
                                             else
                                                 // an optional record with none of its keys on the wire is absent
                                                 val empty =
@@ -2917,27 +3005,29 @@ private[kyo] object SchemaSerializer:
                                                 Some(parent -> empty)
                         }
                         .toList
-                    _flattenedPrepared = true
+                    injection.flattenedPrepared = true
                 end if
-                _pendingSyntheticFields = _pendingSyntheticFields.dropWhile { field =>
-                    seenOnWire(field.name) || _flattenedValues.contains(field.name)
+                injection.pendingSynthetic = injection.pendingSynthetic.dropWhile { field =>
+                    seenOnWire(field.name) || flattenedOf(field.name).nonEmpty
                 }
-                if _pendingFlattened.nonEmpty then
-                    val (name, value) = _pendingFlattened.head
-                    _pendingFlattened = _pendingFlattened.tail
+                if injection.pendingFlattened.nonEmpty then
+                    val (name, value) = injection.pendingFlattened.head
+                    injection.pendingFlattened = injection.pendingFlattened.tail
                     _translatedField = Maybe(name)
                     _translatedByWrapper = true
+                    _passThrough = false
                     _matchedField = false
                     _syntheticField = true
                     _rawFieldName = name
                     _pendingSyntheticValue = value
                     _syntheticActive = true
                     true
-                else if _pendingSyntheticFields.nonEmpty then
-                    val field = _pendingSyntheticFields.head
-                    _pendingSyntheticFields = _pendingSyntheticFields.tail
+                else if injection.pendingSynthetic.nonEmpty then
+                    val field = injection.pendingSynthetic.head
+                    injection.pendingSynthetic = injection.pendingSynthetic.tail
                     _translatedField = Maybe(field.name)
                     _translatedByWrapper = true
+                    _passThrough = false
                     _matchedField = false
                     _syntheticField = true
                     _rawFieldName = field.name

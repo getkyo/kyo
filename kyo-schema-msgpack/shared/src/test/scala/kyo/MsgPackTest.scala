@@ -737,7 +737,11 @@ class MsgPackTest extends kyo.test.Test[Any]:
             wirePin(WCValues.defaultsAll, "84a46e616d65a164a5636f756e7407a56c6162656ca178a473697a6503", summon[Schema[WCDefaults]])
         }
         "fields overriding their defaults: the bytes written" in {
-            wireWrites(WCValues.defaultsSet, "84a46e616d65a164a5636f756e7401a56c6162656ca179a46e6f7465a16e", summon[Schema[WCDefaults]])
+            wireWrites(
+                WCValues.defaultsSet,
+                "85a46e616d65a164a5636f756e7401a56c6162656ca179a46e6f7465a16ea473697a65c0",
+                summon[Schema[WCDefaults]]
+            )
         }
         "present optional fields" in {
             wirePin(WCValues.maybePresent, "84a16101a162a173a16382a17802a56c6162656ca163a16404", summon[Schema[WCMaybe]])

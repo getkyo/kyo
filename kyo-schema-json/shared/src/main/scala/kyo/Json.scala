@@ -191,7 +191,7 @@ object Json:
                     else schema.examples.map(e => schema.toStructureValue(e)),
                     schema.constraints,
                     schema.droppedFields,
-                    Schema.resolvedRenames(schema.sourceFields.map(_.name), schema.renamedFields).toMap
+                    schema.wireLayout.renamedKeys
                 )
             case other => other
         end match

@@ -322,7 +322,7 @@ object SchemaTransformMacro:
       *
       * For each field in Focused whose value type is a case class, replaces the field with the case class's sub-fields. Primitive and
       * non-case-class fields pass through unchanged. Each flattened field's schema is the one summoned here, and its wire names decide
-      * where the flat keys go (`FlattenLayout`). Two fields sharing a name at this level, a flattened field's own name included, cannot
+      * where the flat keys go (`WireLayout`). Two fields sharing a name at this level, a flattened field's own name included, cannot
       * share one flat record, so they are rejected here; a collision only the wire names reveal is rejected when the schema is built.
       */
     def flattenImpl[A: Type, F: Type](
@@ -376,12 +376,15 @@ object SchemaTransformMacro:
                     report.errorAndAbort(s"flatten(_.$name): no field '$name'. Available fields: ${fields.map(_._1).mkString(", ")}.")
         }
 
-        // A sum's variants are alternatives, so their fields may share names with each other; each one only has to differ from
-        // every other field of the parent, since a variant's fields and the parent's fields share one record.
+        // A sum's variants are alternatives, so their fields may share keys with each other; each one only has to differ from
+        // every other field of the parent, since a variant's fields and the parent's fields share one record. The variants are the
+        // sum's as it derives them, each field under its wire key; a variant with its own given is checked when it is written.
         def variantFields(sum: TypeRepr): List[(String, String)] =
-            def children(sym: Symbol): List[Symbol] =
-                sym.children.flatMap(c => if c.flags.is(Flags.Sealed) && !c.flags.is(Flags.Case) then children(c) else List(c))
-            children(sum.dealias.typeSymbol).flatMap(variant => variant.caseFields.map(f => f.name -> s"${variant.name}.${f.name}"))
+            val sumType = sum.dealias
+            val sumSym  = sumType.typeSymbol
+            FocusMacro.inlineVariantKeys(sumType, sumSym, FocusMacro.sumVariants(sumType, sumSym)).flatMap { (variant, keys) =>
+                keys.map((field, key) => key -> s"$variant.$field")
+            }
         end variantFields
 
         val tildeType = TypeRepr.of[Record.~]

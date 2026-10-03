@@ -231,6 +231,25 @@ object Codec:
           */
         def lastFieldName(): String
 
+        /** Whether [[matchField]] compares the key [[fieldParse]] last parsed as its own name bytes, allocating nothing, while
+          * [[lastFieldName]] allocates the name. A transform layer then finds which of its names a key is by matching, and leaves a key
+          * that is none of them unnamed. A key reported by number (Protobuf, a MsgPack integer key) is matched through its field id, so
+          * it is not one, nor is a key the reader already holds as a String.
+          */
+        private[kyo] def matchesKeyBytes: Boolean = false
+
+        /** The field number of the key [[fieldParse]] last parsed, for a key reported by number (Protobuf, a MsgPack integer key),
+          * or -1 for a key reported by name. [[matchField]] matches such a key through the schema's field numbers, so a transform layer
+          * takes it by number instead of naming it.
+          */
+        private[kyo] def lastFieldNumber: Int = -1
+
+        /** Whether an optional field missing from the input is absent, whatever its default. True for a format with no null, where
+          * an absent field is written by leaving it out (Protobuf's explicit presence); elsewhere a missing field takes its default,
+          * and an absent one whose default is present is written as null.
+          */
+        private[kyo] def missingOptionalIsAbsent: Boolean = false
+
         /** Release this reader back to its pool. Default is no-op. */
         def release(): Unit = ()
 

@@ -86,7 +86,7 @@ private[kyo] object SchemaFactory:
             omitNoneAll = source.omitNoneAll,
             omitEmptyCollectionsAll = source.omitEmptyCollectionsAll,
             unionAmbiguityPolicy = source.unionAmbiguityPolicy,
-            variantDecoders = source.variantDecoders,
+            variantSchemas = source.variantSchemas,
             denyUnknownFieldsEnabled = source.denyUnknownFieldsEnabled,
             fieldDefaults = source.fieldDefaults,
             fieldTransforms = source.fieldTransforms,

@@ -442,7 +442,7 @@ class IonBinaryTest extends kyo.test.Test[Any]:
         "fields overriding their defaults: the bytes written" in {
             wireWrites(
                 WCValues.defaultsSet,
-                "e00100eaee99988183de9487be9185636f756e74856c6162656c846e6f7465dc8481648a21018b81798c816e",
+                "e00100eaee9e9d8183de9987be9685636f756e74856c6162656c846e6f74658473697a65de8e8481648a21018b81798c816e8d0f",
                 summon[Schema[WCDefaults]]
             )
         }

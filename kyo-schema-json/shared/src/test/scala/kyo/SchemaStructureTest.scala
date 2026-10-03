@@ -974,8 +974,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         // --- changeset + transforms ---
 
         "changeset on values with drop - dropped field not in changeset" in {
-            val schema           = Schema[MTUser].drop("ssn")
-            given Schema[MTUser] = schema
+            given Schema[MTUser] = Schema[MTUser].drop("ssn")
             val changeset        = Changeset(user, user2)
             val fieldPaths       = changeset.operations.map(_.fieldPath)
             assert(!fieldPaths.exists(_.contains("ssn")))
@@ -983,8 +982,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
 
         "changeset on values with rename - renamed field in ops" in {
-            val schema           = Schema[MTUser].rename("name", "userName")
-            given Schema[MTUser] = schema
+            given Schema[MTUser] = Schema[MTUser].rename("name", "userName")
             val changeset        = Changeset(user, user2)
             val fieldPaths       = changeset.operations.flatMap(_.fieldPath)
             assert(fieldPaths.contains("userName"))
@@ -1001,8 +999,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
 
         "empty changeset after transforms on identical values" in {
-            val schema           = Schema[MTUser].drop("ssn").rename("name", "userName")
-            given Schema[MTUser] = schema
+            given Schema[MTUser] = Schema[MTUser].drop("ssn").rename("name", "userName")
             val changeset        = Changeset(user, user)
             assert(changeset.isEmpty)
         }

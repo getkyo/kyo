@@ -299,11 +299,12 @@ import scala.quoted.*
     /** Returns the given `Schema[A]` where one exists, and otherwise builds `Schema[A] { type Focused = F }` where `F` is the structural
       * expansion of `A`.
       *
-      * A given counts unless it is derivation itself: `Schema.derived`, the `derives Schema` instance in A's companion, or kyo's own
-      * given for a case class or sealed type (the tuple givens), all of which take the build path so the result keeps its full
-      * expansion as `Focused`. A call inside the object, class or block that
-      * defines the given also takes the build path, since returning the given there would make `given Schema[A] = Schema[A].drop(...)`
-      * refer to itself, directly or through a val or method the given is defined with.
+      * The given is the one `summon[Schema[A]]` finds, an imported one included. It counts unless it is derivation itself:
+      * `Schema.derived`, the `derives Schema` instance in A's companion, or kyo's own given for a case class or sealed type (the tuple
+      * givens), all of which take the build path so the result keeps its full expansion as `Focused`. A call inside the given's own
+      * definition, `given Schema[A] = Schema[A].drop(...)`, also takes the build path, since returning the given would refer to
+      * itself. Any other call in the object, class or block that defines the given is a compile error that asks for
+      * `summon[Schema[A]]` or `Schema.derived[A]`: a macro cannot tell a val the given is defined through from an unrelated use.
       *
       * The given's `Focused` is never widened to the full expansion, since a given built with `drop` or `rename` no longer has
       * those fields. When the given's static type refines `Focused`, the result carries that refinement. When it does not, a type
@@ -371,16 +372,14 @@ import scala.quoted.*
 
     /** The given `Schema[A]` that [[metaApplyImpl]] returns, when one counts.
       *
-      * The `derives Schema` instance is recognized by its synthetic name before any search, so a derived type costs no search. The
-      * enclosure test is lexical: a val or method the given is defined through lives in the same template as the given, so the call
-      * site's owner chain reaches the given's owner. An ambiguous search is reported, since `summon[Schema[A]]` fails there too.
+      * The enclosure tests are lexical, on the call site's owner chain: it reaches the given's own symbol inside its definition, and
+      * the given's owner anywhere else in the template that defines it. An ambiguous search is reported, since `summon[Schema[A]]`
+      * fails there too.
       */
     private def givenSchema[A: Type](using Quotes): Option[quotes.reflect.Term] =
         import quotes.reflect.*
 
         val derivesName = "derived$Schema"
-        val companion   = TypeRepr.of[A].dealias.typeSymbol.companionModule
-        val derives     = !companion.isNoSymbol && companion.moduleClass.declarations.exists(_.name == derivesName)
 
         def definition(tree: Tree): Symbol = tree match
             case Inlined(Some(call), _, _)   => call.symbol
@@ -390,26 +389,35 @@ import scala.quoted.*
         @tailrec def encloses(definitionOwner: Symbol, site: Symbol): Boolean =
             !site.isNoSymbol && (site.equals(definitionOwner) || encloses(definitionOwner, site.maybeOwner))
 
-        if derives then None
-        else
-            Implicits.search(TypeRepr.of[Schema[A]]) match
-                case success: ImplicitSearchSuccess =>
-                    val sym          = definition(success.tree)
-                    val schemaModule = Symbol.requiredModule("kyo.Schema")
-                    val derived      = schemaModule.methodMember("derived").contains(sym)
-                    // kyo's own given for a case class or sealed type (the tuples) is `Schema.derived` under a name.
-                    val typeSym           = TypeRepr.of[A].dealias.typeSymbol
-                    val builtInDerivation =
-                        sym.maybeOwner.equals(schemaModule.moduleClass) &&
-                            (isConstructibleCaseClass(typeSym) || typeSym.flags.is(Flags.Sealed))
-                    if derived || builtInDerivation || sym.name == derivesName || encloses(sym.maybeOwner, Symbol.spliceOwner) then None
-                    else Some(success.tree)
-                case ambiguous: AmbiguousImplicits =>
-                    report.errorAndAbort(s"Schema[${TypeRepr.of[A].show}]: ${ambiguous.explanation}")
-                case _ =>
-                    None
-            end match
-        end if
+        Implicits.search(TypeRepr.of[Schema[A]]) match
+            case success: ImplicitSearchSuccess =>
+                val sym          = definition(success.tree)
+                val schemaModule = Symbol.requiredModule("kyo.Schema")
+                val derived      = schemaModule.methodMember("derived").contains(sym)
+                // kyo's own given for a case class or sealed type (the tuples) is `Schema.derived` under a name.
+                val typeSym           = TypeRepr.of[A].dealias.typeSymbol
+                val builtInDerivation =
+                    sym.maybeOwner.equals(schemaModule.moduleClass) &&
+                        (isConstructibleCaseClass(typeSym) || typeSym.flags.is(Flags.Sealed))
+                if derived || builtInDerivation || sym.name == derivesName then None
+                // The given's own definition, `given Schema[A] = Schema[A].tupleFlat`, builds the schema it configures.
+                else if encloses(sym, Symbol.spliceOwner) then None
+                // Elsewhere in the template that defines the given, the call could mean the given or a fresh derivation; returning
+                // one silently changed meaning with where the line sat, so the author names it.
+                else if encloses(sym.maybeOwner, Symbol.spliceOwner) then
+                    val name = TypeRepr.of[A].show
+                    report.errorAndAbort(
+                        s"Schema[$name] inside the definition scope of the given ${sym.name}: write summon[Schema[$name]] for that given, or " +
+                            s"Schema.derived[$name] for a schema derived afresh. To configure the given with builders that name its fields, " +
+                            s"write them in its own definition: given Schema[$name] = Schema[$name]..."
+                    )
+                else Some(success.tree)
+                end if
+            case ambiguous: AmbiguousImplicits =>
+                report.errorAndAbort(s"Schema[${TypeRepr.of[A].show}]: ${ambiguous.explanation}")
+            case _ =>
+                None
+        end match
     end givenSchema
 
     // ==========================================================================
@@ -1262,6 +1270,7 @@ import scala.quoted.*
             case _ => Nil
 
         var discriminatorOpt: Option[Expr[String]]                      = None
+        var discriminatorKey: Option[String]                            = None
         var representationOpt: Option[Expr[Schema.UnionRepresentation]] = None
         var docOpt: Option[Expr[String]]                                = None
         var variantPairs: List[Expr[(String, String)]]                  = Nil
@@ -1272,6 +1281,7 @@ import scala.quoted.*
             if term.tpe <:< TypeRepr.of[kyo.schema.discriminator] then
                 firstStringArg(term).foreach { key =>
                     discriminatorOpt = Some(Expr(key))
+                    discriminatorKey = Some(key)
                     representationOpt = Some('{ kyo.Schema.UnionRepresentation.Internal(${ Expr(key) }) })
                 }
             else if term.tpe <:< TypeRepr.of[kyo.schema.adjacent] then
@@ -1313,6 +1323,22 @@ import scala.quoted.*
             }.map(child -> _)
         }
         val catchAllChild = children.find(_.annotations.exists(_.tpe <:< TypeRepr.of[kyo.schema.catchAll]))
+
+        // The tag is written beside a variant's fields, so a field written under the tag key would be overwritten by it. The catch-all
+        // holds the input it was read from, tag key included, and writes the tag in its place. A variant with its own given is checked
+        // when the schema is first used (`SchemaSerializer.checkTagKeys`).
+        discriminatorKey.foreach { key =>
+            inlineVariantKeys(tpe, sym, children).foreach { (variant, keys) =>
+                if !catchAllChild.exists(_.name.stripSuffix("$") == variant) then
+                    keys.find(_._2 == key).foreach { (field, _) =>
+                        report.errorAndAbort(
+                            s"@discriminator(\"$key\"): the variant $variant writes its field '$field' under the key '$key', where the tag " +
+                                "is written; rename the field or choose another tag key."
+                        )
+                    }
+            }
+        }
+
         if variantNumbers.nonEmpty then
             def names(symbols: List[Symbol]): String = symbols.map(_.name.stripSuffix("$")).mkString(", ")
             val unnumbered                           =
@@ -1810,12 +1836,12 @@ import scala.quoted.*
             chain.asExprOf[Unit]
         end writeBody
 
-        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
-            val perMember: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
-                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+        val variantSchemasExpr: Expr[Chunk[() => Schema[Any]]] =
+            val perMember: List[Expr[() => Schema[Any]]] = (0 until n).toList.map { idx =>
+                '{ () => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] } }
             }
-            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perMember) }*)) }
-        end variantDecodersExpr
+            '{ kyo.Chunk.from[() => Schema[Any]](Array[() => Schema[Any]](${ Varargs(perMember) }*)) }
+        end variantSchemasExpr
 
         // External-format variant dispatcher: reads {memberName: payload} and routes to the
         // matching member's serializeRead. Used for tagged representations (adjacent, internal,
@@ -1874,7 +1900,7 @@ import scala.quoted.*
             Schema.init[A](
                 writeFn = $writeFn,
                 readFn = $readFn,
-                variantDecoders = $variantDecodersExpr,
+                variantSchemas = $variantSchemasExpr,
                 representation = Schema.UnionRepresentation.Untagged,
                 structure = ${ structureExpr }
             )
@@ -2125,6 +2151,15 @@ import scala.quoted.*
                 // meta.fieldIds(i).
                 val idxExpr = Expr(CodecMacro.fieldId(f.name))
                 val nbRef   = Ref(nameByteSyms(idx)).asExprOf[Array[Byte]]
+                // An absent field reads back as its default, so one whose default is present is written, as null.
+                def writeAbsent: Expr[Unit] =
+                    if !hasDefaultFlags(idx) then '{ kyo.internal.writeAbsentField($nbRef, $idxExpr, $w) }
+                    else
+                        val default = MacroUtils.getDefault(tpe, idx).get
+                        val empty   =
+                            if isMaybeFlags(idx) then '{ $default.asInstanceOf[kyo.Maybe[Any]].isEmpty }
+                            else '{ $default.asInstanceOf[Option[Any]].isEmpty }
+                        '{ kyo.internal.writeAbsentDefaultedField($nbRef, $idxExpr, $w, $empty) }
                 if isMaybeFlags(idx) then
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
@@ -2135,7 +2170,7 @@ import scala.quoted.*
                                     case kyo.Present(inner) =>
                                         $w.fieldBytes($nbRef, $idxExpr)
                                         kyo.internal.writeField($s, inner, $w)
-                                    case _ => kyo.internal.writeAbsentField($nbRef, $idxExpr, $w)
+                                    case _ => $writeAbsent
                                 end match
                             }.asTerm
                 else if isOptionFlags(idx) then
@@ -2148,7 +2183,7 @@ import scala.quoted.*
                                 if _opt.asInstanceOf[Option[?]].isDefined then
                                     $w.fieldBytes($nbRef, $idxExpr)
                                     kyo.internal.writeField($s, _opt, $w)
-                                else kyo.internal.writeAbsentField($nbRef, $idxExpr, $w)
+                                else $writeAbsent
                                 end if
                             }.asTerm
                 else
@@ -2186,7 +2221,12 @@ import scala.quoted.*
 
             val seedExprs: List[Expr[Any]] = fields.zipWithIndex.map { (f, idx) =>
                 val ft = tpe.memberType(f)
-                if hasDefaultFlags(idx) then
+                if hasDefaultFlags(idx) && (isMaybeFlags(idx) || isOptionFlags(idx)) then
+                    val default = MacroUtils.getDefault(tpe, idx).get
+                    val empty   = if isMaybeFlags(idx) then '{ kyo.Maybe.empty[Any] } else '{ Option.empty[Any] }
+                    ft.asType match
+                        case '[t] => '{ kyo.internal.defaultedOptionalSeed[Any]($r, $default, $empty).asInstanceOf[t] }
+                else if hasDefaultFlags(idx) then
                     MacroUtils.getDefault(tpe, idx).get
                 else if isMaybeFlags(idx) then
                     ft.dealias match
@@ -2683,12 +2723,12 @@ import scala.quoted.*
             ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
         }
 
-        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
-            val perVariant: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
-                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+        val variantSchemasExpr: Expr[Chunk[() => Schema[Any]]] =
+            val perVariant: List[Expr[() => Schema[Any]]] = (0 until n).toList.map { idx =>
+                '{ () => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] } }
             }
-            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perVariant) }*)) }
-        end variantDecodersExpr
+            '{ kyo.Chunk.from[() => Schema[Any]](Array[() => Schema[Any]](${ Varargs(perVariant) }*)) }
+        end variantSchemasExpr
         val cfg                      = desugarSumConfig(sym, tpe, children)
         val writeFn                  = writeFnExpr[A](writeBody)
         val readFn                   = readFnExpr[A](readBody)
@@ -2697,7 +2737,7 @@ import scala.quoted.*
                 writeFn = $writeFn,
                 readFn = $readFn,
                 sourceFields = ${ Ref(sourceFieldsSym).asExprOf[Seq[kyo.Field[?, ?]]] },
-                variantDecoders = $variantDecodersExpr,
+                variantSchemas = $variantSchemasExpr,
                 discriminatorField = ${ cfg.discriminatorField },
                 representation = ${ cfg.representation },
                 variantNaming = ${ cfg.variantNaming },
@@ -2754,6 +2794,47 @@ import scala.quoted.*
                 case child :: rest                   => loop(rest, seen + child, child :: variants)
         loop(sym.children, Set.empty, Nil)
     end sumVariants
+
+    /** The variants among `variants` of the sum `sym` (reached as `tpe`) that the sum's own derivation lays out, each with the key every
+      * field is written under: its `@rename`, or its name, and none for a `@transient` field. A variant with a given of its own is laid
+      * out by that given, which is known only once the schema is built, so it is not listed; a case object writes no field.
+      */
+    private[internal] def inlineVariantKeys(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        variants: List[quotes.reflect.Symbol]
+    ): List[(String, List[(String, String)])] =
+        import quotes.reflect.*
+        def renamed(annotation: Term): Option[String] = annotation match
+            case Apply(_, args) =>
+                args.collectFirst {
+                    case Literal(StringConstant(s))              => s
+                    case NamedArg(_, Literal(StringConstant(s))) => s
+                }
+            case _ => None
+        variants.flatMap { variant =>
+            MacroUtils.sumCaseReference(tpe, sym, variant) match
+                case _: TermRef => Nil
+                case reference  =>
+                    MacroUtils.sumCaseType(reference).asType match
+                        case '[t] if isConstructibleCaseClass(variant) && explicitSchemaGiven[t](tpe.show, variant.name).isEmpty =>
+                            val params = variant.primaryConstructor.paramSymss.flatten
+                            val keys   = variant.caseFields.flatMap { field =>
+                                val annotations = params.find(_.name == field.name).map(_.annotations).getOrElse(Nil)
+                                if annotations.exists(_.tpe <:< TypeRepr.of[kyo.schema.transient]) then None
+                                else
+                                    val key = annotations.collectFirst {
+                                        case a if a.tpe <:< TypeRepr.of[kyo.schema.rename] => renamed(a)
+                                    }.flatten
+                                    Some(field.name -> key.getOrElse(field.name))
+                                end if
+                            }
+                            List(variant.name.stripSuffix("$") -> keys)
+                        case _ => Nil
+        }
+    end inlineVariantKeys
 
     /** The given `Schema[T]` in scope, unless the search resolves to `Schema.derived` itself: a type with no given of its own is
       * derived at the call site, where the caller's own emission (inline variants, recursion guards) applies. An ambiguous or

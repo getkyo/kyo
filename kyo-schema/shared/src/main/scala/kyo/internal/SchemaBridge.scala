@@ -62,6 +62,18 @@ def writeAbsentField(nameBytes: Array[Byte], fieldId: Int, w: Writer): Unit =
         w.fieldBytes(nameBytes, fieldId)
         w.nil()
 
+// An absent optional field whose default is present is written as null wherever a format can: left off, it would read back as the
+// default. A format with no null writes nothing, and its reader takes the missing field as absent (see
+// `Codec.Reader.missingOptionalIsAbsent`).
+def writeAbsentDefaultedField(nameBytes: Array[Byte], fieldId: Int, w: Writer, defaultIsAbsent: Boolean): Unit =
+    if !defaultIsAbsent || w.writesEveryField then
+        w.fieldBytes(nameBytes, fieldId)
+        w.nil()
+
+// The value an optional field with a default starts from before its record is read.
+def defaultedOptionalSeed[A](r: Reader, default: A, empty: A): A =
+    if r.missingOptionalIsAbsent then empty else default
+
 // Smart-constructor fold for `Schema.derivedVia`-generated decoders.
 //
 // The generated read body decodes every field exactly as a plain product does, then hands the

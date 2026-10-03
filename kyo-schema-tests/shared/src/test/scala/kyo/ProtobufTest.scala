@@ -1569,11 +1569,10 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
         "INV-PBC-PIN-i-override-round-trip-wire-true" in {
             // A field pinned via Schema.fieldId must encode with the pinned number and decode back correctly.
-            val pinnedSchema: Schema[PBAuditPerson] = Schema[PBAuditPerson].fieldId(_.name)(7)
-            given Schema[PBAuditPerson]             = pinnedSchema
-            val value                               = PBAuditPerson("Alice", PBAuditInner(42))
-            val bytes                               = Protobuf.encode(value)
-            val result                              = Protobuf.decode[PBAuditPerson](bytes)
+            given Schema[PBAuditPerson] = Schema[PBAuditPerson].fieldId(_.name)(7)
+            val value                   = PBAuditPerson("Alice", PBAuditInner(42))
+            val bytes                   = Protobuf.encode(value)
+            val result                  = Protobuf.decode[PBAuditPerson](bytes)
             assert(result == Result.Success(value), s"pinned-field round-trip failed: $result")
         }
 
@@ -1659,12 +1658,11 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "programmatic rename composes with explicit fieldId pin" in {
-            val pinnedThenRenamed: Schema[PBRenameSimple] =
+            given Schema[PBRenameSimple] =
                 Schema[PBRenameSimple].fieldId(_.id)(7).rename("id", "wire_id").asInstanceOf[Schema[PBRenameSimple]]
-            given Schema[PBRenameSimple] = pinnedThenRenamed
-            val value                    = PBRenameSimple(99, "compose")
-            val bytes                    = Protobuf.encode(value)
-            val result                   = Protobuf.decode[PBRenameSimple](bytes)
+            val value  = PBRenameSimple(99, "compose")
+            val bytes  = Protobuf.encode(value)
+            val result = Protobuf.decode[PBRenameSimple](bytes)
             assert(result == Result.Success(value), s"rename+fieldId compose round-trip failed: $result")
         }
 
@@ -1973,6 +1971,28 @@ class ProtobufTest extends kyo.test.Test[Any]:
         assert(decoded == Result.succeed(WCValues.defaultsSet), outcome(decoded))
     }
 
+    "a renamed field read from the bytes keeps its value over its configured default" in {
+        given Schema[PBRenamedDefault] = Schema[PBRenamedDefault].default(_.name)(Present("configured"))
+        val value                      = PBRenamedDefault(1, Present("wire"))
+        val decoded                    = Protobuf.decode[PBRenamedDefault](Protobuf.encode(value))
+        assert(decoded == Result.succeed(value), outcome(decoded))
+    }
+
+    "an optional field missing from the bytes is absent, and its present default is written" - {
+        "missing reads as Absent though the default is Present" in {
+            val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(PBDefaultsName("d")))
+            assert(decoded == Result.succeed(WCDefaults("d", 7, "x", Absent, Absent)), outcome(decoded))
+        }
+        "the default round-trips, since a Present value is written" in {
+            val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(WCValues.defaultsAll))
+            assert(decoded == Result.succeed(WCValues.defaultsAll), outcome(decoded))
+        }
+        "the field is declared optional, so other proto3 code reads the same presence" in {
+            val proto = ProtoSchema.from[WCDefaults]
+            assert(proto.contains(s"optional sint32 size = ${kyo.internal.CodecMacro.fieldId("size")};"), proto)
+        }
+    }
+
     "a numbered variant under the wrapper form round-trips" in {
         val variant: WCNumberedWrapped = WCWrapA(3)
         val decoded                    = Protobuf.decode[WCNumberedWrapped](Protobuf.encode(variant))
@@ -2129,3 +2149,7 @@ case class PBRenameAnnotated(@rename("wire_id") id: Int, @rename("wire_label") l
 case class PBNestedPinned(@proto.fieldNumber(5) x: Int, y: String) derives Schema, CanEqual
 case class PBRenamedHolder(@rename("wire_label") label: String, inner: PBNestedPinned) derives Schema, CanEqual
 case class PBMirrorHolder(wire_label: String, inner: PBNestedPinned) derives Schema, CanEqual
+
+// Writes only the `name` field of WCDefaults, as a producer that leaves the others out.
+case class PBDefaultsName(name: String) derives Schema, CanEqual
+case class PBRenamedDefault(id: Int, @rename("wire_name") name: Maybe[String]) derives CanEqual

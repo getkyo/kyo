@@ -107,6 +107,8 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             loop(0)
     end matchField
 
+    override private[kyo] def matchesKeyBytes: Boolean = true
+
     override def lastFieldName(): String =
         if lastFieldEscaped then new String(lastFieldDecoded, StandardCharsets.UTF_8)
         else if lastFieldLen <= 0 then ""

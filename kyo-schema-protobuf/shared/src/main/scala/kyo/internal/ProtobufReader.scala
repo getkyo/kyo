@@ -30,6 +30,8 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
     private var limits: List[Int]            = List(data.length)
     private var fieldNames: Map[Int, String] = Map.empty
     private var pendingTag: Boolean          = false
+    // The last key parsed was a map entry's key, which is a value, not a field number.
+    private var entryKeyParsed: Boolean = false
     // Leaf-name field-id overrides for read/write symmetry under functional pinning. Empty in the
     // common case; threaded from Schema.fieldIdNameOverrides by Protobuf.decode when present.
     private var fieldIdOverrides: Map[String, Int] = Map.empty
@@ -150,19 +152,33 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
                 pendingTag = false
                 key
             case _ =>
-                val tag = readVarint().toInt
-                currentFieldNumber = tag >>> 3
-                currentWireType = tag & 0x7
-                pendingTag = false
-                fieldNames.getOrElse(currentFieldNumber, currentFieldNumber.toString)
+                readTag()
+                lastFieldName()
         end match
     end field
 
+    private def readTag(): Unit =
+        val tag = readVarint().toInt
+        currentFieldNumber = tag >>> 3
+        currentWireType = tag & 0x7
+        pendingTag = false
+    end readTag
+
+    // A message field's tag is read without naming it, since matchField and lastFieldName read currentFieldNumber; a map entry's
+    // key is a value the entry decodes.
     override def fieldParse(): Unit =
-        // Advance past the tag without allocating a String. matchField and
-        // lastFieldName read from currentFieldNumber directly.
-        val _ = field()
+        mapFrames match
+            case f :: _ if f.entryLimitPushed && limits.size == f.baseLimitDepth + 1 =>
+                entryKeyParsed = true
+                discard(field())
+            case _ =>
+                entryKeyParsed = false
+                readTag()
     end fieldParse
+
+    // A reader given names reports its keys by them.
+    override private[kyo] def lastFieldNumber: Int =
+        if entryKeyParsed || fieldNames.nonEmpty then -1 else currentFieldNumber
 
     override def matchField(nameBytes: Array[Byte]): Boolean =
         val name     = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
@@ -180,6 +196,8 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
 
     override def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long =
         defaultableFieldsMask
+
+    override private[kyo] def missingOptionalIsAbsent: Boolean = true
 
     def hasNextElement(): Boolean =
         repeatedFrames match

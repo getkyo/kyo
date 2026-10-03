@@ -73,7 +73,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] val omitNoneAll: Boolean = false,
     @publicInBinary private[kyo] val omitEmptyCollectionsAll: Boolean = false,
     @publicInBinary private[kyo] val unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
-    @publicInBinary private[kyo] val variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+    @publicInBinary private[kyo] val variantSchemas: Chunk[() => Schema[Any]] = Chunk.empty,
     @publicInBinary private[kyo] val denyUnknownFieldsEnabled: Boolean = false,
     @publicInBinary private[kyo] val fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
     @publicInBinary private[kyo] val fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] =
@@ -113,12 +113,14 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * `Schema.init`'s inline `serializeWrite` / `serializeRead` call these only when transforms exist.
       */
     @publicInBinary private[kyo] def transformedWrite(value: A, writer: Writer): Unit =
+        if internalTagKeys.nonEmpty then discard(tagKeyClash)
         val prior = writer.schemaTransformOverrides
         if nominalIdentity.nonEmpty then writer.schemaTransformOverrides = this :: prior
         try internal.SchemaSerializer.writeWithTransforms(this, value, writer)(using Frame.internal)
         finally writer.schemaTransformOverrides = prior
     end transformedWrite
     @publicInBinary private[kyo] def transformedRead(reader: Reader): A =
+        if internalTagKeys.nonEmpty then discard(tagKeyClash)
         val prior = reader.schemaTransformOverrides
         if nominalIdentity.nonEmpty then reader.schemaTransformOverrides = this :: prior
         try
@@ -255,11 +257,34 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     // A positional representation has no place for the unmatched input, whichever builder came first.
     catchAll.foreach(Schema.rejectPositionalCatchAll(representation, representationChain, _))
 
-    /** The flat-key layout of a flattened schema, built when the schema is, so a layout that cannot round-trip (a key collision, a
+    /** The key every field is written and read under, built when the schema is, so a layout that cannot round-trip (a key collision, a
       * builder naming a flattened field's own field) raises at the builder call that produced it.
       */
-    @publicInBinary private[kyo] val flattenLayout: Maybe[internal.FlattenLayout] =
-        if flattenedFields.isEmpty then Maybe.empty else Maybe(internal.FlattenLayout(this))
+    @publicInBinary private[kyo] val wireLayout: internal.WireLayout =
+        if sourceFields.isEmpty && computedFields.isEmpty && fieldIdOverrides.isEmpty && variantNaming.fieldAliases.isEmpty then
+            internal.WireLayout.empty
+        else internal.WireLayout(this)
+
+    /** Reads one variant of a sum, in the sum's variant order. */
+    @publicInBinary private[kyo] lazy val variantDecoders: Chunk[Codec.Reader => Any] =
+        variantSchemas.map(variant => (reader: Codec.Reader) => variant().serializeRead(reader))
+
+    /** The tag keys a discriminator writes beside a variant's fields, in every representation this sum may select. */
+    private val internalTagKeys: Chunk[String] =
+        if variantSchemas.isEmpty then Chunk.empty
+        else
+            (representation +: representationChain.getOrElse(Chunk.empty)).collect {
+                case Schema.UnionRepresentation.Internal(tagKey) => tagKey
+            }.distinct
+
+    /** Refuses a variant field written under a tag key, which the variant's tag would overwrite. Checked on the first write or read,
+      * before anything is written: the variant schemas cannot be read while a recursive sum is built.
+      */
+    @publicInBinary private[kyo] lazy val tagKeyClash: Unit =
+        internal.SchemaSerializer.checkTagKeys(this, internalTagKeys)(using Frame.internal)
+
+    /** The tables a transform-aware read consults; lazy because they read `structure`, which a recursive schema cannot force here. */
+    @publicInBinary private[kyo] lazy val readTables: internal.SchemaSerializer.ReadTables[A] = internal.SchemaSerializer.readTables(this)
 
     /** The variants of a sum that have fields, which tagOnly cannot write; lazy since only a tagOnly schema asks. */
     @publicInBinary private[kyo] lazy val fieldBearingVariants: Chunk[String] =
@@ -781,10 +806,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     /** Derives every field's wire name from its Scala name by a case convention.
       *
       * Serialization-only: does NOT change `Focused` (unlike `rename`). Explicit per-field
-      * `rename` overrides the convention. A convention that maps two fields to one wire
-      * name raises `FieldNameCollisionException` at the first encode/decode. An alias
-      * already registered whose target collides with a convention-derived primary wire name
-      * raises `FieldNameCollisionException` at this call.
+      * `rename` overrides the convention, and so does a flattened field's own `rename`. A
+      * convention that maps two fields to one wire name, or an alias already registered whose
+      * name collides with a convention-derived wire name, raises `FieldNameCollisionException`
+      * at this call.
       *
       * {{{
       * val s = Schema[Account].renameAllFields(Schema.NameCase.SnakeCase)
@@ -792,11 +817,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def renameAllFields(nameCase: Schema.NameCase)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
-        val updatedNaming = variantNaming.copy(fieldCase = Maybe(nameCase))
-        val newPrimaries  = Schema.effectiveFieldWireNames(sourceFields, renamedFields, updatedNaming)
-        Schema.checkFieldAliases(Chunk.empty, variantNaming.fieldAliases, newPrimaries)
         Schema.copyWith(this)(
-            variantNaming = updatedNaming
+            variantNaming = variantNaming.copy(fieldCase = Maybe(nameCase))
         )
     end renameAllFields
 
@@ -811,10 +833,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * }}}
       */
     def alias(fieldWireName: String, aliases: String*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
-        val added     = Chunk.from(aliases).map(a => (a, fieldWireName))
-        val merged    = variantNaming.fieldAliases ++ added
-        val primaries = Schema.effectiveFieldWireNames(sourceFields, renamedFields, variantNaming)
-        Schema.checkFieldAliases(variantNaming.fieldAliases, merged, primaries)
+        val added  = Chunk.from(aliases).map(a => (a, fieldWireName))
+        val merged = variantNaming.fieldAliases ++ added
         Schema.copyWith(this)(
             variantNaming = variantNaming.copy(fieldAliases = merged)
         )
@@ -1192,26 +1212,15 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * derived write path uses one stable hash id per leaf name, so only leaf-name pins are
       * wire-functional.
       *
-      * A renamed field is resolved to a single number: its explicit leaf-name pin when one is set,
-      * otherwise the rename-invariant hash of its effective wire name. That number is registered
-      * under BOTH names the codec presents for the field, because the two sides key the lookup
-      * differently: the encode side presents the effective wire name to the writer, while the decode
-      * side and `Protobuf.fieldNumberAudit` resolve the field by its source name. Registering both
-      * keys lets a pin override the rename hash on every surface; an unpinned, non-renamed field gets
-      * no entry, so its `fieldNumberAudit` row stays `pinned == false`.
+      * A field whose wire key is not its name (renamed, or cased by a convention) is resolved to a
+      * single number: its explicit leaf-name pin when one is set, otherwise the hash of its wire key.
+      * That number is registered under BOTH names the codec presents for the field, because the two
+      * sides key the lookup differently: the encode side presents the wire key to the writer, while
+      * the decode side and `Protobuf.fieldNumberAudit` resolve the field by its source name.
+      * Registering both keys lets a pin override the hash on every surface; an unpinned field written
+      * under its own name gets no entry, so its `fieldNumberAudit` row stays `pinned == false`.
       */
-    private[kyo] def fieldIdNameOverrides: Map[String, Int] =
-        val baseOverrides = fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
-        if renamedFields.isEmpty then baseOverrides
-        else
-            val renamedEntries: Map[String, Int] =
-                Schema.resolvedRenames(sourceFields.map(_.name), renamedFields).flatMap { (source, wireName) =>
-                    val number = baseOverrides.getOrElse(source, kyo.internal.CodecMacro.fieldId(wireName))
-                    Seq(source -> number, wireName -> number)
-                }.toMap
-            baseOverrides ++ renamedEntries
-        end if
-    end fieldIdNameOverrides
+    @publicInBinary private[kyo] def fieldIdNameOverrides: Map[String, Int] = wireLayout.fieldIds
 
     /** The explicit single-segment field-id overrides, projected to a name set. These are the leaf
       * field names carrying a real user pin, set programmatically via `Schema.fieldId` or
@@ -1927,7 +1936,7 @@ object Schema:
         omitNoneAll: Boolean = false,
         omitEmptyCollectionsAll: Boolean = false,
         unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
-        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        variantSchemas: Chunk[() => Schema[Any]] = Chunk.empty,
         denyUnknownFieldsEnabled: Boolean = false,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
@@ -1942,19 +1951,14 @@ object Schema:
         // prevents initialization cycles for recursive structure type graphs.
         lazy val _structure          = structure
         lazy val _absentDefaultValue = absentDefaultValue
-        // Annotation-baked aliases arrive in variantNaming at Schema.init time (the macro
-        // sets them before the Schema object exists, unlike programmatic .alias() which
-        // calls checkFieldAliases at the builder invocation site). Run the same checks here
-        // so collisions raise immediately rather than silently passing through as a
-        // last-write-wins map and surfacing as MissingFieldException at decode time.
-        // Empty alias lists are no-ops; the lazy structure is never forced by these checks.
-        // variantEffectivePrimaries is the compile-time-baked set of effective variant wire
-        // names (accounting for @rename on each variant) passed by the macro; it matches the
-        // set that the programmatic .variantAlias builder computes via effectiveVariantWires,
-        // without forcing the lazy _structure and breaking recursive-schema init cycles.
-        if variantNaming.fieldAliases.nonEmpty then
-            val primaries = Schema.effectiveFieldWireNames(sourceFields, renamedFields, variantNaming)
-            Schema.checkFieldAliases(Chunk.empty, variantNaming.fieldAliases, primaries)(using Frame.internal)
+        // Annotation-baked variant aliases arrive in variantNaming at Schema.init time, so a
+        // collision raises here rather than passing through as a last-write-wins map and
+        // surfacing as MissingFieldException at decode time. variantEffectivePrimaries is the
+        // compile-time-baked set of effective variant wire names (accounting for @rename on each
+        // variant) passed by the macro; it matches the set that the programmatic .variantAlias
+        // builder computes via effectiveVariantWires, without forcing the lazy _structure and
+        // breaking recursive-schema init cycles. Field aliases are checked by the schema's
+        // WireLayout, which every constructor builds.
         if variantNaming.variantAliases.nonEmpty then
             Schema.checkVariantAliases(variantEffectivePrimaries, variantNaming.variantAliases)(using Frame.internal)
         new Schema[A](
@@ -1978,7 +1982,7 @@ object Schema:
             omitNoneAll,
             omitEmptyCollectionsAll,
             unionAmbiguityPolicy,
-            variantDecoders,
+            variantSchemas,
             denyUnknownFieldsEnabled,
             fieldDefaults,
             fieldTransforms,
@@ -2038,7 +2042,7 @@ object Schema:
         omitNoneAll: Boolean,
         omitEmptyCollectionsAll: Boolean,
         unionAmbiguityPolicy: Schema.UnionAmbiguity,
-        variantDecoders: Chunk[Codec.Reader => Any],
+        variantSchemas: Chunk[() => Schema[Any]],
         structure: => Structure.Type
     ): Schema[A] =
         init[A](
@@ -2066,7 +2070,7 @@ object Schema:
             omitNoneAll = omitNoneAll,
             omitEmptyCollectionsAll = omitEmptyCollectionsAll,
             unionAmbiguityPolicy = unionAmbiguityPolicy,
-            variantDecoders = variantDecoders,
+            variantSchemas = variantSchemas,
             denyUnknownFieldsEnabled = false,
             fieldDefaults = Chunk.empty,
             fieldTransforms = Chunk.empty[(String, Schema.FieldTransform[A])],
@@ -2105,7 +2109,7 @@ object Schema:
         omitNoneAll: Boolean = false,
         omitEmptyCollectionsAll: Boolean = false,
         unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
-        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        variantSchemas: Chunk[() => Schema[Any]] = Chunk.empty,
         denyUnknownFieldsEnabled: Boolean = false,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
@@ -2141,7 +2145,7 @@ object Schema:
             omitNoneAll = omitNoneAll,
             omitEmptyCollectionsAll = omitEmptyCollectionsAll,
             unionAmbiguityPolicy = unionAmbiguityPolicy,
-            variantDecoders = variantDecoders,
+            variantSchemas = variantSchemas,
             denyUnknownFieldsEnabled = denyUnknownFieldsEnabled,
             fieldDefaults = fieldDefaults,
             fieldTransforms = fieldTransforms,
@@ -2616,33 +2620,14 @@ object Schema:
     /** Raises `FieldNameCollisionException` if a field alias duplicates another field's
       * wire name or another alias target.
       */
-    private[kyo] def checkFieldAliases(
-        existing: Chunk[(String, String)],
-        merged: Chunk[(String, String)],
-        primaries: Set[String]
-    )(using Frame): Unit =
-        val byAlias = merged.groupBy(_._1)
+    private[kyo] def checkFieldAliases(aliases: Chunk[(String, String)], primaries: Set[String])(using Frame): Unit =
+        val byAlias = aliases.groupBy(_._1)
         byAlias.foreach { (alias, group) =>
             val targets = group.map(_._2).distinct
             if primaries.contains(alias) || targets.size > 1 then
                 throw FieldNameCollisionException(alias, Chunk.from((alias +: targets).distinct.sorted))
         }
     end checkFieldAliases
-
-    /** Computes the effective wire name for every source field, accounting for the
-      * explicit rename chain and the field-case convention. Used by `alias` to build
-      * the primaries set for collision detection.
-      */
-    private[kyo] def effectiveFieldWireNames(
-        sourceFields: Seq[Field[?, ?]],
-        renamedFields: Chunk[(String, String)],
-        naming: VariantNaming
-    ): Set[String] =
-        val conventionFn = naming.fieldCase.map(nc => internal.NameCaseConversion.convert(nc))
-        sourceFields.map { sf =>
-            renamedWire(renamedFields, sf.name).getOrElse(conventionFn.map(fn => fn(sf.name)).getOrElse(sf.name))
-        }.toSet
-    end effectiveFieldWireNames
 
     /** The name `name` ends with after `renamedFields`, or `Absent` when no rename applies to it.
       *
@@ -3942,7 +3927,7 @@ object Schema:
         omitNoneAll: Boolean = false,
         omitEmptyCollectionsAll: Boolean = false,
         unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
-        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        variantSchemas: Chunk[() => Schema[Any]] = Chunk.empty,
         denyUnknownFieldsEnabled: Boolean = false,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
@@ -3975,7 +3960,7 @@ object Schema:
             omitNoneAll,
             omitEmptyCollectionsAll,
             unionAmbiguityPolicy,
-            variantDecoders,
+            variantSchemas,
             denyUnknownFieldsEnabled,
             fieldDefaults,
             fieldTransforms,
@@ -4038,7 +4023,7 @@ object Schema:
         omitNoneAll: Boolean = self.omitNoneAll,
         omitEmptyCollectionsAll: Boolean = self.omitEmptyCollectionsAll,
         unionAmbiguityPolicy: Schema.UnionAmbiguity = self.unionAmbiguityPolicy,
-        variantDecoders: Chunk[Codec.Reader => Any] = self.variantDecoders,
+        variantSchemas: Chunk[() => Schema[Any]] = self.variantSchemas,
         denyUnknownFieldsEnabled: Boolean = self.denyUnknownFieldsEnabled,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = self.fieldDefaults,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = self.fieldTransforms,
@@ -4073,7 +4058,7 @@ object Schema:
             omitNoneAll = omitNoneAll,
             omitEmptyCollectionsAll = omitEmptyCollectionsAll,
             unionAmbiguityPolicy = unionAmbiguityPolicy,
-            variantDecoders = variantDecoders,
+            variantSchemas = variantSchemas,
             denyUnknownFieldsEnabled = denyUnknownFieldsEnabled,
             fieldDefaults = fieldDefaults,
             fieldTransforms = fieldTransforms,

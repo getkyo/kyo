@@ -1569,7 +1569,7 @@ class YamlTest extends kyo.test.Test[Any]:
             wirePin(WCValues.defaultsAll, "name: d\ncount: 7\nlabel: x\nsize: 3\n", summon[Schema[WCDefaults]])
         }
         "fields overriding their defaults: the bytes written" in {
-            wireWrites(WCValues.defaultsSet, "name: d\ncount: 1\nlabel: y\nnote: n\n", summon[Schema[WCDefaults]])
+            wireWrites(WCValues.defaultsSet, "name: d\ncount: 1\nlabel: y\nnote: n\nsize: null\n", summon[Schema[WCDefaults]])
         }
         "present optional fields" in {
             wirePin(WCValues.maybePresent, "a: 1\nb: s\nc:\n  x: 2\n  label: c\nd: 4\n", summon[Schema[WCMaybe]])

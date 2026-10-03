@@ -431,9 +431,16 @@ class SchemaFlattenTest extends kyo.test.Test[Any]:
             assert(result == Result.fail(FieldNameCollisionException("type", Chunk("type", "kind.type"))), result.toString)
         }
 
-        "a renamed variant field that collides with a parent key is refused on write, naming both" in {
-            val schema = Schema[FLRenamedClash].flatten(_.kind)
-            val result = Result.catching[TransformFailedException](schema.encodeString[Json](FLRenamedClash("a", FLRenamedKind.Named("b"))))
+        "a renamed variant field that collides with a parent key is a compile error naming both" in {
+            typeCheckFailure("kyo.Schema[kyo.FLRenamedClash].flatten(_.kind)")(
+                "Wire name 'title' is targeted by 2 fields: title, kind.Named.name. Give each field a distinct wire name."
+            )
+        }
+
+        "a variant laid out by its own given that collides with a parent key is refused on write, naming both" in {
+            val schema = Schema[FLGivenClash].flatten(_.kind)
+            val result =
+                Result.catching[TransformFailedException](schema.encodeString[Json](FLGivenClash("a", FLGivenKind.Named("b"))))
             assert(
                 result.failure.exists(_.getMessage.contains(
                     "flatten: the sum 'kind' wrote the key 'title', which the parent's field 'title' also writes"
@@ -686,6 +693,14 @@ sealed trait FLRenamedKind derives CanEqual, Schema
 object FLRenamedKind:
     final case class Named(@kyo.schema.rename("title") name: String) extends FLRenamedKind derives CanEqual
 case class FLRenamedClash(title: String, kind: FLRenamedKind) derives CanEqual, Schema
+@kyo.schema.discriminator("kind")
+sealed trait FLGivenKind derives CanEqual, Schema
+object FLGivenKind:
+    final case class Named(name: String) extends FLGivenKind derives CanEqual
+    object Named:
+        given Schema[Named] = Schema[Named].rename("name", "title")
+end FLGivenKind
+case class FLGivenClash(title: String, kind: FLGivenKind) derives CanEqual, Schema
 
 @kyo.schema.tagOnly()
 sealed trait FLPriority derives CanEqual, Schema

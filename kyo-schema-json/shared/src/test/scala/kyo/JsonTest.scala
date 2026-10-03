@@ -2234,7 +2234,11 @@ class JsonTest extends kyo.test.Test[Any]:
             wirePin(WCValues.defaultsAll, "{\"name\":\"d\",\"count\":7,\"label\":\"x\",\"size\":3}", summon[Schema[WCDefaults]])
         }
         "fields overriding their defaults: the bytes written" in {
-            wireWrites(WCValues.defaultsSet, "{\"name\":\"d\",\"count\":1,\"label\":\"y\",\"note\":\"n\"}", summon[Schema[WCDefaults]])
+            wireWrites(
+                WCValues.defaultsSet,
+                "{\"name\":\"d\",\"count\":1,\"label\":\"y\",\"note\":\"n\",\"size\":null}",
+                summon[Schema[WCDefaults]]
+            )
         }
         "present optional fields" in {
             wirePin(WCValues.maybePresent, "{\"a\":1,\"b\":\"s\",\"c\":{\"x\":2,\"label\":\"c\"},\"d\":4}", summon[Schema[WCMaybe]])

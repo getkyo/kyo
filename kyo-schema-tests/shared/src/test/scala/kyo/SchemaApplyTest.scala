@@ -96,19 +96,14 @@ class SchemaApplyTest extends kyo.test.Test[Any]:
             typeCheckFailure("kyo.Schema[kyo.SchemaApplyGivens.SAConfigured].focus(_.value)")("the schema's Focused type is abstract")
         }
 
-        "a given defined through Schema[A] of its own type derives instead of referring to itself" - {
+        "a given defined through Schema[A] of its own type derives instead of referring to itself" in {
+            assert(Json.encode(SchemaApplyGivens.SASelfDefined(1, "s")) == """{"id":1}""")
+        }
 
-            "directly" in {
-                assert(Json.encode(SchemaApplyGivens.SASelfDefined(1, "s")) == """{"id":1}""")
-            }
-
-            "through an intermediate val" in {
-                assert(Json.encode(SchemaApplyGivens.SAViaVal(1, "s")) == """{"id":1}""")
-            }
-
-            "through a method" in {
-                assert(Json.encode(SchemaApplyGivens.SAViaDef(1, "s")) == """{"id":1}""")
-            }
+        "a builder for a given held in a val or method beside it does not compile, pointing at the given's own definition" in {
+            val errors = SchemaApplyGivens.SAViaVal.besideErrors
+            assert(errors.exists(_.contains("write them in its own definition")), s"got: $errors")
+            assert(Json.encode(SchemaApplyGivens.SAViaVal(1, "s")) == """{"id":1}""")
         }
 
         "inside the object that defines a given, a Schema[A] that is not the given's definition does not compile, naming both meanings" in {
@@ -217,11 +212,9 @@ object SchemaApplyGivens:
 
     case class SAViaVal(id: Int, secret: String) derives CanEqual
     object SAViaVal:
-        private val base       = Schema[SAViaVal].drop("secret")
-        given Schema[SAViaVal] = base
-
-    case class SAViaDef(id: Int, secret: String) derives CanEqual
-    object SAViaDef:
-        private def base: Schema[SAViaDef] = Schema[SAViaDef].drop("secret")
-        given Schema[SAViaDef]             = base
+        given Schema[SAViaVal] = Schema[SAViaVal].drop("secret")
+        // The builder as a val or method beside the given would hold it.
+        val besideErrors: List[String] =
+            scala.compiletime.testing.typeCheckErrors("""Schema[SAViaVal].drop("secret")""").map(_.message)
+    end SAViaVal
 end SchemaApplyGivens

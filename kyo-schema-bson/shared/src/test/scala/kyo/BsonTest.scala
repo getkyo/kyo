@@ -785,7 +785,7 @@ class BsonTest extends kyo.test.Test[Any]:
         "fields overriding their defaults: the bytes written" in {
             wireWrites(
                 WCValues.defaultsSet,
-                "35000000026e616d650002000000640010636f756e740001000000026c6162656c00020000007900026e6f746500020000006e0000",
+                "3b000000026e616d650002000000640010636f756e740001000000026c6162656c00020000007900026e6f746500020000006e000a73697a650000",
                 summon[Schema[WCDefaults]]
             )
         }

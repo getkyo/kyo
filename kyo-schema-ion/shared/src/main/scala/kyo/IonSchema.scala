@@ -190,10 +190,13 @@ object IonSchema:
                     if seen.contains(product.name) then TypeExpr.AnyType
                     else
                         val nextSeen = seen + product.name
-                        val renamed  = Schema.resolvedRenames(schema.sourceFields.map(_.name), schema.renamedFields).toMap
-                        val fields   =
+                        // The schema's keys name its own record's fields; a nested record is written by its own schema.
+                        val root    = path.isEmpty
+                        val renamed = if root then schema.wireLayout.renamedKeys else Map.empty[String, String]
+                        val dropped = if root then schema.droppedFields else Set.empty[String]
+                        val fields  =
                             product.fields.flatMap { field =>
-                                if schema.droppedFields.contains(field.name) then Chunk.empty
+                                if dropped.contains(field.name) then Chunk.empty
                                 else
                                     val wireName  = renamed.getOrElse(field.name, field.name)
                                     val fieldPath = path :+ field.name

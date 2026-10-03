@@ -214,6 +214,10 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
             }
     end matchField
 
+    override private[kyo] def matchesKeyBytes: Boolean = !keyIsInt
+
+    override private[kyo] def lastFieldNumber: Int = if keyIsInt then keyInt.toInt else -1
+
     def lastFieldName(): String =
         if keyIsInt then keyInt.toString
         else new String(data, keyStart, keyLen, StandardCharsets.UTF_8)

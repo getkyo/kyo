@@ -223,6 +223,15 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    // A variant whose read fails with an error that is not a decode failure.
+    private def throwingVariant(message: String): () => Schema[Any] =
+        val variant = Schema.init[Any](
+            writeFn = (_: Any, _: Codec.Writer) => (),
+            readFn = (_: Codec.Reader) => throw new IllegalStateException(message)
+        )
+        () => variant
+    end throwingVariant
+
     "a union with a parameterized member derives without an unchecked type test and round-trips each member" in {
         val one  = SSRUAudience("bot")
         val many = SSRUAudience(Chunk("bot", "other"), Present(Chunk(1, 2)))
@@ -392,15 +401,15 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
     }
 
     "discriminator chaining is last-wins" in {
-        val schema           = Schema[SSRShape].discriminator("a").discriminator("b")
+        val schema           = Schema[SSRShape].discriminator("first").discriminator("second")
         val circle: SSRShape = SSRCircle(10.0)
 
         // Last discriminator call wins for both fields
-        assert(schema.representation == Schema.UnionRepresentation.Internal("b"))
+        assert(schema.representation == Schema.UnionRepresentation.Internal("second"))
 
         val wire = schema.encodeString[Json](circle)
-        assert(wire == """{"b":"SSRCircle","radius":10.0}""")
-        assert(!wire.contains("\"a\""))
+        assert(wire == """{"second":"SSRCircle","radius":10.0}""")
+        assert(!wire.contains("\"first\""))
     }
 
     // =========================================================================
@@ -828,13 +837,10 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
     "untagged decode surfaces unexpected error from variant decoder, not NoVariantMatchException" in {
         // An unexpected error thrown by a variant decoder (IllegalStateException) must surface as
         // Result.Panic, never be retried and masked as a no-match: a Panic is not a clean decode miss.
-        // Replace the first variant decoder with one that throws to verify the Panic surfaces.
-        val base                                 = Schema[SSRUShape].untagged
-        val decoders                             = base.variantDecoders
-        val injectedDecoder: Codec.Reader => Any = (_: Codec.Reader) =>
-            throw new IllegalStateException("injected unexpected decoder failure")
+        // Replace the first variant with one whose read throws to verify the Panic surfaces.
+        val base    = Schema[SSRUShape].untagged
         val patched = Schema.copyWith(base)(
-            variantDecoders = Chunk(injectedDecoder) ++ decoders.drop(1)
+            variantSchemas = Chunk(throwingVariant("injected unexpected decoder failure")) ++ base.variantSchemas.drop(1)
         )
         // SSRUSquare matches only the second decoder (index 1). The first throws
         // IllegalStateException, which must surface as Result.Panic.
@@ -1231,16 +1237,14 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
     }
 
     "chain decode whose first attempt panics re-throws the panic" in {
-        // Use Untagged as the only chain entry so readUntagged calls variantDecoders.
-        // The injected decoder at position 0 throws IllegalStateException (not a SchemaException),
+        // Use Untagged as the only chain entry so readUntagged reads each variant in turn.
+        // The injected variant at position 0 throws IllegalStateException (not a SchemaException),
         // which must surface as Result.Panic and NOT be swallowed as a chain no-match.
         val base = Schema[SSRShape].representations(
             Schema.UnionRepresentation.Untagged
         )
-        val injected: Codec.Reader => Any = (_: Codec.Reader) =>
-            throw new IllegalStateException("injected panic in chain decode")
         val patched = Schema.copyWith(base)(
-            variantDecoders = Chunk(injected) ++ base.variantDecoders.drop(1)
+            variantSchemas = Chunk(throwingVariant("injected panic in chain decode")) ++ base.variantSchemas.drop(1)
         )
         // Untagged wire: a bare SSRCircle payload
         val wire   = """{"radius":10.0}"""
@@ -1456,18 +1460,18 @@ class SchemaUnionRepresentationTest extends kyo.test.Test[Any]:
         assert(Json.decode[SSRFNested](wire) == Result.succeed(leaf))
     }
 
-    "chain decode over empty variantDecoders yields typed NoVariantMatchException" in {
-        // A schema whose variantDecoders is empty reaches readChain, which dispatches to
+    "chain decode over no variants yields typed NoVariantMatchException" in {
+        // A schema with no variant schemas reaches readChain, which dispatches to
         // readUntagged (via readForRepresentation), which immediately throws NoVariantMatchException
-        // (zero decoders). That is caught as a DecodeException and re-thrown on chain exhaustion.
+        // (zero variants). That is caught as a DecodeException and re-thrown on chain exhaustion.
         val base = Schema[SSRShape].representations(
             Schema.UnionRepresentation.Untagged
         )
-        val patched = Schema.copyWith(base)(variantDecoders = Chunk.empty)
+        val patched = Schema.copyWith(base)(variantSchemas = Chunk.empty)
         val wire    = """{"radius":10.0}"""
         val result  = patched.decodeString[Json](wire)
         result match
-            case Result.Failure(_: NoVariantMatchException) => succeed("empty variantDecoders yields NoVariantMatchException")
+            case Result.Failure(_: NoVariantMatchException) => succeed("no variants yields NoVariantMatchException")
             case Result.Panic(ex)                           => fail(s"Expected typed Failure but got Panic: $ex")
             case other                                      => fail(s"Expected Failure(NoVariantMatchException) but got $other")
         end match
