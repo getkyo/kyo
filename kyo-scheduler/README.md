@@ -50,7 +50,7 @@ Scheduler.get.schedule(Task(handle(req)))
 ```scala
 import kyo.scheduler.Task
 
-val fromBlock: Task = Task(println("a"))
+val fromBlock: Task    = Task(println("a"))
 val fromRunnable: Task = Task(new Runnable:
     def run() = println("b"))
 val highPriority: Task = Task(println("c"), runtime = 0)
@@ -75,7 +75,7 @@ val exec                          = s.asExecutor        // java.util.concurrent.
 val execSv                        = s.asExecutorService // java.util.concurrent.ExecutorService
 implicit val ec: ExecutionContext = s.asExecutionContext
 
-val req = Request("u-7", Array.emptyByteArray)
+val req            = Request("u-7", Array.emptyByteArray)
 val f: Future[Int] = Future {
     req.payload.length
 }
@@ -136,7 +136,7 @@ import kyo.scheduler.InternalClock
 import kyo.scheduler.Task
 
 class CountUp(target: Int) extends Task:
-    private var n = 0
+    private var n                                                                 = 0
     def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         while n < target do
             n += 1
@@ -155,7 +155,7 @@ import kyo.scheduler.InternalClock
 import kyo.scheduler.Task
 
 class Interruptible(body: => Unit) extends Task:
-    override def needsInterrupt(): Boolean = true
+    override def needsInterrupt(): Boolean                                        = true
     def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         body
         Task.Done
@@ -537,9 +537,9 @@ val s = new Scheduler(config = cfg)
 
 // 2. Cooperatively-preempting hash task.
 class HashRequest(req: Request) extends Task:
-    override def needsInterrupt(): Boolean = true
-    private var i                          = 0
-    private var h                          = 0
+    override def needsInterrupt(): Boolean                                        = true
+    private var i                                                                 = 0
+    private var h                                                                 = 0
     def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         val n = req.payload.length
         while i < n do

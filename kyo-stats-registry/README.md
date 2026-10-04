@@ -313,7 +313,7 @@ At startup the application calls `TraceExporter.get` once; it runs `ServiceLoade
 import kyo.AllowUnsafe.embrace.danger
 
 val exporter: TraceExporter = TraceExporter.get
-val span = exporter.startSpan(
+val span                    = exporter.startSpan(
     scope = List("kyo", "http", "client"),
     name = "GET /users",
     now = Instant.now()
@@ -334,7 +334,7 @@ Between `startSpan` and the call that ends it, the caller drives an `UnsafeTrace
 import kyo.AllowUnsafe.embrace.danger
 
 val exporter: TraceExporter = TraceExporter.noop
-val span: UnsafeTraceSpan = exporter.startSpan(
+val span: UnsafeTraceSpan   = exporter.startSpan(
     List("kyo", "http", "client"),
     "GET /users",
     Instant.now()

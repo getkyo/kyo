@@ -36,10 +36,11 @@ On Scala Native, `java.util.ServiceLoader` is resolved at LINK time: the same `M
 
 ```scala doctest:expect=skipped
 // build.sbt, in the Scala Native application project
-nativeConfig ~= (_.withServiceProviders(Map(
-    "kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.otlp.OTLPExporterFactory"),
-    "kyo.HttpFilter$Factory"             -> Seq("kyo.stats.otlp.OTLPHttpFilterFactory")
-)))
+nativeConfig ~=
+    (_.withServiceProviders(Map(
+        "kyo.stats.internal.ExporterFactory" -> Seq("kyo.stats.otlp.OTLPExporterFactory"),
+        "kyo.HttpFilter$Factory"             -> Seq("kyo.stats.otlp.OTLPHttpFilterFactory")
+    )))
 ```
 
 On Scala.js, `META-INF/services` does not work. The module's JS-only `OTLPRegistration` object uses `@JSExportTopLevel("__kyo_otel_init")` to register both factories at module load time:
@@ -161,7 +162,7 @@ When OTLP export is active, kyo-stats-registry resolves `TraceExporter.get` to a
 ```scala
 import kyo.*
 
-val scope = Stat.initScope("http", "server")
+val scope                            = Stat.initScope("http", "server")
 val handler: String < (Sync & Async) =
     scope.traceSpan("GET /hello") {
         "hi"

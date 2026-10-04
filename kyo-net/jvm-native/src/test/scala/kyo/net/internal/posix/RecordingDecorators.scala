@@ -41,7 +41,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // Recorded before delegating, mirroring closeCounts.
     val shutdownCalls: ConcurrentLinkedQueue[(Int, Int)] = new ConcurrentLinkedQueue[(Int, Int)]()
 
-    // Unified call-order log across shutdown/send/sendNow/close for this spy instance, in execution order (each entry recorded before
+    // Unified call-order log across shutdown/send/sendNow/recvNow/acceptNow/close for this spy instance, in execution order (each entry recorded before
     // delegating to real, mirroring RecordingTlsEngine.entries/order below). A close-during-io race test uses this to assert the exact
     // interleaving of a claimed fd-close credit (shutdown, deferred) against the in-flight syscall it was deferred past (send) and the
     // eventual real close it unblocks (close).
@@ -220,8 +220,23 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         r
     end recvNow
 
+    // One-shot hook fired after an acceptNow that returned a connection, with the listen fd, for races against an accept drain's next
+    // acceptNow. null means no hook set; CAS to null before firing so it fires exactly once.
+    @volatile var onAccepted: Int => Unit = null
+
     def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
-        real.acceptNow(fd, addr, addrlen)
+        discard(callOrder.add(s"accept($fd)"))
+        val r = real.acceptNow(fd, addr, addrlen)
+        if r.value >= 0 then
+            val hook = onAccepted
+            if hook != null then
+                if onAccepted.eq(hook) then
+                    onAccepted = null
+                    hook(fd)
+            end if
+        end if
+        r
+    end acceptNow
 
     def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.connectNow(fd, addr, addrlen)
@@ -229,12 +244,27 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         real.read(fd, buf, count)
 
+    // fd -> the promise a held close waits on, standing in for a close(2) that has not returned yet.
+    private val closeHolds = new ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]]()
+
+    /** Holds the next close of `fd`: it is recorded at once, but the real close runs, and its fiber completes, only when the returned promise
+      * completes.
+      */
+    def holdClose(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        closeHolds.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
+
     def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =
         // Record before delegating so the count is visible even if the caller does not await the returned fiber.
         discard(closeCounts.merge(fd, 1, (a, b) => a + b))
         discard(callOrder.add(s"close($fd)"))
         closedOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]()).completeDiscard(Result.succeed(()))
-        real.close(fd)
+        Maybe(closeHolds.remove(fd)) match
+            case Absent        => real.close(fd)
+            case Present(hold) =>
+                val out = Promise.Unsafe.init[Int, Any]()
+                hold.onComplete(_ => real.close(fd).onComplete(r => out.completeDiscard(r)))
+                out
+        end match
     end close
 
 end RecordingSocketBindings
@@ -544,6 +574,9 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // change worker inside the first change (the single-owner proof). null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onRegisterRead: Int => Unit = null
 
+    // Called on the poll carrier with the changelist each poll submits, before it reaches the kernel. null means none set.
+    @volatile var onPoll: (kyo.ffi.Buffer[Byte], Int) => Unit = null
+
     // Per-fd latch that completes the first time registerRead(fd) runs on the change worker.
     private val registeredReadOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
 
@@ -617,6 +650,8 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     ): Fiber.Unsafe[Int, Any] =
         if throwOnPoll.compareAndSet(true, false) then
             throw new RuntimeException("injected poll failure (crash-containment guard)")
+        val pollHook = onPoll
+        if pollHook != null then pollHook(changelist, nChanges)
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
@@ -988,9 +1023,27 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.awaitRead(handle, promise)
     end awaitRead
 
+    // When true, the next awaitWritable is held instead of registered, until releaseHeldWritable registers it with the real driver. A
+    // loopback socket can drain into the peer's buffer at any moment, so a writable wait registered for real may resolve before a test has
+    // observed the parked state; holding it makes "parked" a state the test ends, not one the kernel ends. Fires once.
+    @volatile var holdNextWritable: Boolean = false
+
+    @volatile private var heldWritable: Maybe[(PosixHandle, Promise.Unsafe[Unit, Abort[Closed | NetException]])] = Absent
+
+    /** Registers the held writable wait with the real driver. */
+    def releaseHeldWritable()(using AllowUnsafe, Frame): Unit =
+        val held = heldWritable
+        heldWritable = Absent
+        held.foreach((handle, promise) => real.awaitWritable(handle, promise))
+    end releaseHeldWritable
+
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
         discard(awaitWritableCalls.getAndIncrement())
-        real.awaitWritable(handle, promise)
+        if holdNextWritable then
+            holdNextWritable = false
+            heldWritable = Present((handle, promise))
+        else real.awaitWritable(handle, promise)
+        end if
         val hook = onAwaitWritable
         if hook != null then
             onAwaitWritable = null
@@ -1039,6 +1092,12 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         if hook != null then hook()
         real.closeHandle(handle)
     end closeHandle
+
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.releaseFd(handle, closeFd)
+
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.closeListener(handle, closeFd)
 
     def close()(using AllowUnsafe, Frame): Unit =
         discard(closeCalls.getAndIncrement())

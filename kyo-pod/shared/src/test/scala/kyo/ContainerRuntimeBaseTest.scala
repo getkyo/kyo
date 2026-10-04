@@ -48,6 +48,27 @@ class ContainerRuntimeBaseTest extends BasePodTest:
         }
     }
 
+    "envSocketFrom" - {
+
+        "podman takes CONTAINER_HOST as given, whatever its path looks like" in {
+            // A forwarded socket under a name that says nothing about its daemon: classifying by path sent the podman leaves to the
+            // default rootless socket while the docker leaves took this one, with no error anywhere.
+            assert(ContainerRuntime.envSocketFrom("podman", Present("unix:///tmp/kyo-pod-root.sock"), Absent) ==
+                Present("/tmp/kyo-pod-root.sock"))
+            assert(ContainerRuntime.envSocketFrom("docker", Present("unix:///tmp/kyo-pod-root.sock"), Absent) == Absent)
+        }
+
+        "docker takes DOCKER_HOST, the variable its CLI reads" in {
+            assert(ContainerRuntime.envSocketFrom("docker", Absent, Present("unix:///var/run/docker.sock")) ==
+                Present("/var/run/docker.sock"))
+            assert(ContainerRuntime.envSocketFrom("podman", Absent, Present("unix:///var/run/docker.sock")) == Absent)
+        }
+
+        "an empty socket path names nothing" in {
+            assert(ContainerRuntime.envSocketFrom("podman", Present("unix://"), Absent) == Absent)
+        }
+    }
+
     "available" - {
 
         "never reports a runtime whose installed CLI cannot reach its daemon" in {

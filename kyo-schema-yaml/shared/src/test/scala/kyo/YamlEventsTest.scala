@@ -163,6 +163,17 @@ class YamlEventsTest extends kyo.test.Test[Any]:
             assert(result == Result.succeed("[1, 2]"))
         }
 
+        "writes a sum under a non-object representation as Yaml.encode does" in {
+            given Yaml.WriterConfig = Yaml.WriterConfig.Small
+            given Schema[MTShape]   = Schema[MTShape].tupleFlat
+
+            val renderer = Yaml.Events.Renderer()
+            val shape    = MTRectangle(3.0, 4.0): MTShape
+            val result   = Result.catching[SchemaException](Yaml.Events.write(shape, ())(renderer)).map(_ => renderer.resultString)
+
+            assert(result == Result.succeed(Yaml.encode(shape)), result.toString)
+        }
+
         "audits anchors and aliases with typed YAML metadata" in {
             val tag      = Yaml.YamlTag("!custom")
             val defaults = Yaml.Anchor("defaults")

@@ -1,4 +1,9 @@
 import java.io.File
+import kyo.doctest.sbt.KyoDoctestPlugin
+import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctest
+import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctestExtraClasspath
+import kyo.doctest.sbt.KyoDoctestPlugin.autoImport.doctestSources
+import kyo.ffi.sbt.KyoFfiPlugin.autoImport.ffiLibraries
 import sbt.*
 import sbt.Keys.*
 import sbt.internal.BuildDependencies
@@ -7,6 +12,7 @@ import sbt.internal.util.LinePosition
 import sbt.internal.util.LineRange
 import sbt.internal.util.RangePosition
 import sbt.internal.util.SourcePosition
+import sbtcrossproject.CrossPlugin.autoImport.crossProjectPlatform
 import scala.sys.process.*
 
 /** Unified test command for CI and local use.
@@ -25,6 +31,9 @@ import scala.sys.process.*
   *   - `testKyo --dry-run --plan-file /tmp/p Native` write the selected modules to /tmp/p, run nothing
   *   - `testKyo origin/feature JVM` diff vs a specific ref
   *   - `testKyo --dry-run JVM` show what would run without executing
+  *   - `testKyo --phase doctest JVM` README doctests of the projects a diff vs origin/main reaches
+  *   - `testKyo --phase scaladoc --all JVM` scaladoc of every kyoJVM member
+  *   - `testKyo --phase publish JVM` +publishLocal of the kyoJVM members whose main sources a diff reaches
   *
   * A run is a sequence of passes: the primary Scala version, then one per Scala 2.x cross-build
   * version. All passes go out as ONE `;`-chained command string (per pass: version switch, module
@@ -40,7 +49,14 @@ object TestKyo {
     // and full-run paths both exclude them and treat any change scoped to one as "run all".
     private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
-    private val phases = Seq("compile-main", "compile-test", "link", "test")
+    private val phases = Seq("compile-main", "compile-test", "link", "test", "doctest", "scaladoc", "publish")
+
+    /** Phases that validate documentation or artifacts rather than run tests. Each runs every selected
+      * project at its own Scala version in one pass, and selects by what reaches a project's doctests or
+      * its main sources. doctest and scaladoc run on the JVM only.
+      */
+    private val singlePassPhases = Set("doctest", "scaladoc", "publish")
+    private val jvmOnlyPhases    = Set("doctest", "scaladoc")
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
@@ -170,13 +186,117 @@ object TestKyo {
                 Some("--modules is an execution list, --exclude/--only filter a selection; pass only one")
             else if (modules.exists(_.isEmpty)) Some("--modules needs a comma-separated module list")
             else if (!phases.contains(phase)) Some(s"unknown phase '$phase', expected one of ${phases.mkString(", ")}")
+            else if (singlePassPhases.contains(phase) && (isCross || scalaArg.isDefined || isQuick))
+                Some(s"--phase $phase runs every project at its own Scala version; --cross, --scala and --quick do not apply")
+            else if (jvmOnlyPhases.contains(phase) && platform.exists(_ != "JVM")) Some(s"--phase $phase runs on the JVM only")
             else None
 
         error.orElse(invalid)
             .toLeft(Args(isAll, isDryRun, isCross, isQuick, scalaArg, phase, modules, exclude, only, planFile, platform, baseRef))
     }
 
-    private def run(state: State, a: Args): State = {
+    private def run(state: State, a: Args): State =
+        if (singlePassPhases.contains(a.phase)) runSinglePassPhase(state, a) else runTestPhase(state, a)
+
+    /** The doctest, scaladoc or publish phase: one pass over the selected projects, each at its own Scala
+      * version, as the `doctest` aggregate, `kyoJVM / doc` and `+publishLocal` run them.
+      *
+      * doctest selects the projects whose doctests a change reaches (their test classpath, a doctest
+      * source, or a file one links to) among those the `doctest` aggregate covers, and compiles their
+      * test scopes before forking any validator, as the aggregate does. scaladoc selects the members of
+      * `kyoJVM` whose main sources a change reaches: scaladoc renders main sources against the compile
+      * classpath, so a test or README change renders nothing. publish selects the members of the
+      * platform's aggregate whose main sources a change reaches, for the same reason: an artifact is
+      * built from main sources and the build, never from tests or READMEs.
+      */
+    private def runSinglePassPhase(state: State, a: Args): State = {
+        val extracted = Project.extract(state)
+        val structure = extracted.structure
+        val allRefs   = structure.allProjectRefs
+        val platform  = a.platform.getOrElse("JVM")
+
+        val eligible: Seq[String] = a.phase match {
+            case "doctest" =>
+                structure.allProjects.filter { p =>
+                    p.autoPlugins.contains(KyoDoctestPlugin) && !KyoDoctestPlugin.isNonJvmCrossDir(p.base)
+                }.map(_.id)
+            case _ =>
+                structure.allProjects.find(_.id == s"kyo$platform").toSeq.flatMap(_.aggregate.map(_.project))
+        }
+        val reachedKind: Kind = if (a.phase == "doctest") Kind.Doc else Kind.Main
+
+        def selected(name: String): Boolean =
+            !a.exclude.contains(baseName(name)) && (a.only.isEmpty || a.only.contains(baseName(name)))
+
+        val mode =
+            if (a.modules.isDefined) "explicit module list"
+            else if (a.isAll) "all"
+            else s"diff vs ${a.baseRef}"
+        log(s"phase: ${a.phase}, platform: $platform, mode: $mode")
+
+        val chosen: Either[String, Seq[String]] = a.modules match {
+            case Some(names) =>
+                val outside = names.filterNot(eligible.contains)
+                if (outside.nonEmpty) Left(s"modules the ${a.phase} phase does not cover: ${outside.mkString(", ")}")
+                else Right(names)
+            case None =>
+                val restrict =
+                    if (a.isAll) None
+                    else diffSelection(a, allRefs, extracted).map(_.collect { case n if n.kind == reachedKind => n.project })
+                Right(eligible.filter(n => selected(n) && restrict.forall(_.contains(n))))
+        }
+
+        chosen match {
+            case Left(err) =>
+                state.log.error(s"testKyo: $err")
+                state.fail
+            case Right(modules) =>
+                val sorted = modules.sorted
+                a.planFile.foreach(writePlan(_, sorted))
+                if (sorted.isEmpty) {
+                    log(s"${a.phase}: no modules selected")
+                    log("completed")
+                    state
+                } else {
+                    val tasks = a.phase match {
+                        case "doctest" =>
+                            Seq(
+                                sorted.map(m => s"$m/Test/compile").mkString("all ", " ", ""),
+                                sorted.map(m => s"$m/doctest").mkString("all ", " ", "")
+                            )
+                        case "scaladoc" => Seq(sorted.map(m => s"$m/doc").mkString("all ", " ", ""))
+                        case _          => publishPasses(extracted, sorted)
+                    }
+                    val parts = tasks :+ doneCommandName
+                    log(s"${a.phase} ${sorted.size} modules: ${sorted.mkString(", ")}")
+                    log(s"pass: ${parts.mkString("; ")}")
+                    if (a.isDryRun) state else Command.process(parts.mkString("; "), state, msg => state.log.error(msg))
+                }
+        }
+    }
+
+    /** `+publishLocal` restricted to `modules`: one pass per Scala version any of them cross-builds for, each
+      * publishing in parallel the modules built at that version, then back to the primary version. `++v`
+      * moves only the projects that list v, as root `+publishLocal` does. One `+m/publishLocal` per module
+      * is the same work done serially, with two version switches per module: measured on a 16-module plan
+      * it took 19.7 minutes, longer than root `+publishLocal` over every module (16.4).
+      */
+    private def publishPasses(extracted: Extracted, modules: Seq[String]): Seq[String] = {
+        val structure                             = extracted.structure
+        val primary                               = extracted.get(scalaVersion)
+        def versionsOf(name: String): Seq[String] =
+            structure.allProjectRefs.find(_.project == name).toSeq.flatMap(ref =>
+                (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+            )
+        val versions = modules.flatMap(versionsOf).distinct.sortBy(v => if (v == primary) 0 else 1)
+        val passes   = versions.flatMap { v =>
+            val at = modules.filter(m => versionsOf(m).contains(v))
+            if (at.isEmpty) Nil else Seq(s"++$v", at.map(m => s"$m/publishLocal").mkString("all ", " ", ""))
+        }
+        passes :+ s"++$primary"
+    }
+
+    private def runTestPhase(state: State, a: Args): State = {
         val extracted = Project.extract(state)
         val scala3    = extracted.get(scalaVersion)
 
@@ -268,7 +388,9 @@ object TestKyo {
                 else if (offVersion.nonEmpty) Left(s"modules not cross-built for Scala $version: ${offVersion.mkString(", ")}")
                 else Right(Seq(version -> names.sorted))
             case None =>
-                val restrict = if (a.isAll) None else diffSelection(state, a, allRefs, extracted)
+                val restrict =
+                    if (a.isAll) None
+                    else diffSelection(a, allRefs, extracted).map(_.collect { case n if n.kind != Kind.Doc => n.project })
                 Right(versions.map { v =>
                     val eligible =
                         allRefs.map(_.project).filter(n => platformMatch(n) && selected(n) && buildsAt(n, v))
@@ -285,18 +407,24 @@ object TestKyo {
     // If the meta-build changed (project/*, .github/*), run all modules. A build.sbt change is
     // attributed to the specific projects whose settings, or whose `lazy val` blocks, cover the
     // changed lines (see buildSbtAffectedProjects), widening to all only when a changed line cannot
-    // be pinned to a project. Otherwise, run only affected modules + their transitive dependents.
+    // be pinned to a project. Otherwise, run the affected modules plus every module whose classpath
+    // the change reaches: a main change reaches all transitive dependents, a test-only change only
+    // the dependents that put the changed module's test classes on their classpath (`test->test`).
 
-    /** The modules a diff selects, before the per-pass platform and Scala filters, or None when the
-      * change is global and every module must run.
+    /** The nodes a diff reaches, before the per-phase, platform and Scala filters, or None when the
+      * change is global and everything must run.
       */
     private def diffSelection(
-        state: State,
         a: Args,
         allRefs: Seq[ProjectRef],
         extracted: Extracted
-    ): Option[Set[String]] = {
-        val changedFiles = diffFiles(a.baseRef)
+    ): Option[Set[Node]] = {
+        val changedFiles = diffFiles(a.baseRef) match {
+            case Some(files) => files
+            case None        =>
+                log(s"could not diff against ${a.baseRef}, running all modules")
+                return None
+        }
         if (changedFiles.isEmpty) {
             log(s"no changed files vs ${a.baseRef}, skipping tests")
             return Some(Set.empty)
@@ -305,13 +433,10 @@ object TestKyo {
         log(s"${changedFiles.size} changed files vs ${a.baseRef}:")
         changedFiles.foreach(f => log(s"  $f"))
 
-        if (metaBuildChanged(changedFiles)) {
-            log("meta-build changed (project/ or .github/), running all modules")
+        if (metaBuildChanged(changedFiles, extracted)) {
+            log("meta-build changed (project/, an in-repo plugin it compiles, or .github/), running all modules")
             return None
         }
-
-        val allNames = allRefs.map(_.project).toSet
-        val bd       = extracted.get(buildDependencies)
 
         // A build.sbt change maps to the projects whose settings changed; None means a changed
         // line could not be attributed to specific projects, so fall back to running all modules.
@@ -322,25 +447,295 @@ object TestKyo {
                 case None        => return None
             }
 
-        val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
-        val filtered        = a.platform match {
-            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
-            case None    => directlyChanged
+        val attributed = changedNodes(changedFiles, extracted, allRefs) match {
+            case Right(nodes)       => nodes
+            case Left(unattributed) =>
+                log(s"no project claims ${unattributed.mkString(", ")}, running all modules")
+                return None
         }
-
-        if (filtered.isEmpty) {
+        val directlyChanged = attributed ++ buildSbtProjects.map(Node(_, Kind.Main))
+        if (directlyChanged.isEmpty) {
             log("no affected projects found, skipping tests")
             return Some(Set.empty)
         }
 
-        log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
-        val dependentMap = transitiveDependents(allRefs, bd)
-        Some(filtered.flatMap { name =>
-            allRefs.find(_.project == name) match {
-                case Some(ref) => dependentMap.getOrElse(ref, Set.empty).map(_.project) + name
-                case None      => Set(name)
+        // Only a project's broadest change is worth naming: main reaches its tests and docs, tests reach its docs.
+        val broadest = directlyChanged.groupBy(_.project).map { case (project, nodes) => project -> nodes.map(_.kind).minBy(_.rank) }
+        val named    = broadest.toSeq.sortBy(_._1).map { case (p, k) => if (k == Kind.Main) p else s"$p (${k.label} only)" }
+        log(s"directly changed: ${named.mkString(", ")}")
+        Some(propagate(directlyChanged, edgesOf(extracted)))
+    }
+
+    /** Files or directories outside a project's source and resource directories whose change reaches
+      * its main artifact, such as a resource generator's input. A change under one is a main change of
+      * the project, so it reaches the project's dependents even when the files are some other
+      * project's test sources.
+      */
+    val mainInputs: SettingKey[Seq[File]] = SettingKey[Seq[File]](
+        "testKyoMainInputs",
+        "Files or directories outside the source and resource directories whose files feed the project's main artifact"
+    )
+
+    /** Files or directories outside a project's source and resource directories that its tests read,
+      * such as repository files a suite opens by path. A change under one is a test change of the
+      * project.
+      */
+    val testInputs: SettingKey[Seq[File]] = SettingKey[Seq[File]](
+        "testKyoTestInputs",
+        "Files or directories outside the source and resource directories that the project's tests read"
+    )
+
+    /** The part of a project a change reaches. Each kind implies the next: a project's test
+      * configuration extends its main one, and its doctests compile against its test classpath.
+      */
+    sealed abstract private class Kind(val label: String, val rank: Int)
+    private object Kind {
+        case object Main extends Kind("main", 0)
+        case object Test extends Kind("test", 1)
+        case object Doc  extends Kind("doc", 2)
+    }
+
+    /** A project's main configuration, test configuration or doctests: the unit a change is attributed to and propagates from. */
+    final private case class Node(project: String, kind: Kind)
+
+    /** A classpath entry `dependent` takes from another project: which of its own parts receives it, and
+      * whether it is the other project's test classes (which only a test change of that project alters).
+      */
+    final private case class Edge(dependent: String, into: Kind, fromTest: Boolean)
+
+    /** Files that feed no build step, test, doctest or artifact: a change to one runs nothing on its own. Listed
+      * rather than inferred, because a file no project claims can still feed every module (`scripts/`, `.jvmopts`,
+      * `.scalafmt.conf`), so anything unclaimed and not listed here runs everything.
+      */
+    private val inertFiles = Set(
+        ".git-blame-ignore-revs",
+        ".gitignore",
+        ".readthedocs.yaml",
+        "CODE_OF_CONDUCT.md",
+        "LICENSE.txt",
+        "MANIFESTO.md",
+        "kyo-logo.pdf"
+    )
+    private val inertDirectories = Seq(".claude/")
+    // Contributor guides, in the root and in modules. A doctest that links to one still sees its change.
+    private val inertNames = Set("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md")
+
+    private def isInert(file: String): Boolean =
+        inertFiles.contains(file) || inertDirectories.exists(file.startsWith) || inertNames.contains(file.split('/').last)
+
+    /** The configurations each changed file belongs to, or the files no project claims, which must run everything.
+      *
+      * A file is owned by every project whose unmanaged source or resource directory, declared
+      * `mainInputs`/`testInputs`, or FFI C sources, headers and include directories contain it: that is
+      * what sbt compiles from and what the tests read, so a directory several projects share attributes
+      * to all of them. A file that is one of a project's `doctestSources` reaches only its doctests. A
+      * file none of those claim belongs to the project whose base directory most closely contains it,
+      * then to the module-directory heuristic, as a test change under `src/test` and a main change
+      * otherwise. A file still unclaimed, and not inert, is returned: nothing can say what it affects.
+      * Independently, a file a doctest source links to reaches that project's doctests, since the run
+      * checks every relative link.
+      */
+    private def changedNodes(files: Seq[String], extracted: Extracted, allRefs: Seq[ProjectRef]): Either[Seq[String], Set[Node]] = {
+        val structure = extracted.structure
+        val root      = new File(extracted.currentRef.build).getCanonicalFile
+        val allNames  = allRefs.map(_.project).toSet
+        val refs      = allRefs.filterNot(ref => aggregateProjects.contains(ref.project))
+
+        def setting(ref: ProjectRef, key: SettingKey[Seq[File]], config: Option[Configuration] = None): Seq[File] =
+            config.fold((ref / key).get(structure.data))(c => (ref / c / key).get(structure.data)).getOrElse(Nil)
+
+        def dirs(ref: ProjectRef, config: Configuration): Seq[File] =
+            setting(ref, unmanagedSourceDirectories, Some(config)) ++ setting(ref, unmanagedResourceDirectories, Some(config))
+
+        // C a project's FFI libraries compile, which can sit in another module's tree: kyo-sql-doltlite compiles
+        // kyo-sql-sqlite's shim against its own engine.
+        def ffiInputs(ref: ProjectRef): Seq[File] = (ref / ffiLibraries).get(structure.data).getOrElse(Nil).flatMap(lib =>
+            lib.cSources ++ lib.cHeaders ++ lib.includeDirs
+        )
+
+        val owners: Seq[(java.nio.file.Path, Node)] =
+            refs.flatMap { ref =>
+                val main = dirs(ref, Compile) ++ setting(ref, mainInputs) ++ ffiInputs(ref)
+                val test = dirs(ref, Test) ++ setting(ref, testInputs)
+                val docs = setting(ref, doctestSources)
+                (main.map(_ -> Node(ref.project, Kind.Main)) ++
+                    test.map(_ -> Node(ref.project, Kind.Test)) ++
+                    docs.map(_ -> Node(ref.project, Kind.Doc))).flatMap { case (file, node) => safeCanonical(file).map(_ -> node) }
             }
-        })
+
+        val bases: Seq[(java.nio.file.Path, String)] =
+            refs.flatMap(ref => (ref / baseDirectory).get(structure.data).flatMap(safeCanonical).map(_ -> ref.project))
+
+        // Every relative link target of every doctest source, with the projects validating it.
+        val linkTargets: Seq[(java.nio.file.Path, String)] =
+            refs.flatMap { ref =>
+                setting(ref, doctestSources).filter(_.isFile).flatMap(source => linkTargetsOf(source).map(_ -> ref.project))
+            }
+
+        val perFile = files.map { f =>
+            val path    = canonical(new File(root, f))
+            val kind    = if (f.split("/").sliding(2).exists(_.sameElements(Array("src", "test")))) Kind.Test else Kind.Main
+            val owned   = owners.collect { case (dir, node) if path.startsWith(dir) => node }
+            val claimed =
+                if (owned.nonEmpty || isInert(f)) owned
+                else {
+                    val containing = bases.filter { case (base, _) => path.startsWith(base) }
+                    if (containing.nonEmpty) {
+                        val deepest = containing.map(_._1.getNameCount).max
+                        containing.collect { case (base, project) if base.getNameCount == deepest => Node(project, kind) }
+                    } else fileToProjects(f, allNames).map(Node(_, kind)).toSeq
+                }
+            val links = linkTargets.collect { case (target, project) if path.startsWith(target) => Node(project, Kind.Doc) }
+            (f, claimed.isEmpty && !isInert(f), claimed ++ links)
+        }
+
+        val unattributed = perFile.collect { case (f, true, _) => f }
+        if (unattributed.nonEmpty) Left(unattributed) else Right(perFile.flatMap(_._3).toSet)
+    }
+
+    private def safeCanonical(file: File): Option[java.nio.file.Path] = scala.util.Try(canonical(file)).toOption
+
+    private def canonical(file: File): java.nio.file.Path = file.getCanonicalFile.toPath
+
+    private val markdownLink = """\]\(\s*<?([^)\s>]+)""".r
+    private val urlScheme    = """^[A-Za-z][A-Za-z0-9+.-]*:""".r
+
+    /** The files a Markdown file's relative links point at, resolved against its directory. External
+      * links and same-document anchors are dropped, as the doctest link check drops them. Links inside
+      * fenced code are skipped; one inside an inline code span is kept, which can only add a target.
+      * A target that is not a legal path on this platform (Windows rejects `|`, `*`, `"` and more) is
+      * dropped rather than failing the whole selection: no changed file can be at such a path.
+      */
+    private def linkTargetsOf(markdown: File): Seq[java.nio.file.Path] = {
+        val parent  = markdown.getCanonicalFile.getParentFile
+        var inFence = false
+        IO.readLines(markdown).flatMap { line =>
+            if (line.trim.startsWith("```")) {
+                inFence = !inFence
+                Nil
+            } else if (inFence) Nil
+            else
+                markdownLink.findAllMatchIn(line).map(_.group(1)).toList.flatMap { target =>
+                    val path = target.takeWhile(c => c != '#' && c != '?')
+                    if (path.isEmpty || urlScheme.findFirstIn(path).isDefined) Nil
+                    else safeCanonical(new File(parent, path)).toList
+                }
+        }
+    }
+
+    /** The (dependent, dependency) configuration pairs of a classpath dependency's mapping, as
+      * isTest flags. No mapping is `compile->compile` and a bare `x` is `x->compile`. Every
+      * configuration but `test` counts as main, except a `*` target, which counts as test: a test
+      * target is the one that also receives test changes, so it never under-propagates.
+      */
+    private def configPairs(configuration: Option[String]): Seq[(Boolean, Boolean)] =
+        configuration.getOrElse("compile").split(";").toSeq.map(_.trim).filter(_.nonEmpty).flatMap { mapping =>
+            val (from, to) = mapping.split("->", 2) match {
+                case Array(f, t) => (f, t)
+                case Array(f)    => (f, "compile")
+            }
+            for {
+                f <- from.split(",").toSeq.map(_.trim)
+                t <- to.split(",").toSeq.map(_.trim)
+            } yield (f == "test", t == "test" || t == "*")
+        }
+
+    /** Every edge of the build, keyed by the project a change travels from.
+      *
+      * Two sources. `buildDependencies` holds the `dependsOn` graph. The settings graph holds everything a
+      * setting or task takes from another project, which `dependsOn` never shows: `.withKyoTest` appends
+      * kyo-test-runner's test classpath to `Test / unmanagedClasspath`; `kyo-settings` appends kyo-doctest
+      * to `Test / unmanagedJars` and `doctestExtraClasspath`; FFI modules run kyo-ffi-codegen through
+      * `ffiCodegenClasspath` to generate their bindings; scripted suites publish other modules locally
+      * (`scriptedDependencies`); kyo-website's tests serve kyo-website-bundle's linked JS. Each such
+      * dependency is an edge, so no list of keys can fall behind the build.
+      *
+      * The part an edge reaches follows the key that takes it: a doctest key reaches doctests, a test
+      * configuration or a test or scripted task reaches tests, anything else (generators, compile
+      * classpaths) reaches main. One edge kind is dropped: a JVM-only project's classes on a JS, Native or
+      * Wasm classpath, as `kyo-settings` puts kyo-doctest on every platform. Those linkers cannot load JVM
+      * classes, so no green build of a non-JVM module uses them, and a change to them reaches nothing
+      * there. A task that runs a JVM project (codegen, publishing) is kept on every platform.
+      */
+    private def edgesOf(extracted: Extracted): Map[String, Seq[Edge]] = {
+        val structure = extracted.structure
+        val declared  =
+            extracted.get(buildDependencies).classpath.toSeq.flatMap { case (project, deps) =>
+                deps.flatMap { dep =>
+                    configPairs(dep.configuration).map { case (fromTest, toTest) =>
+                        dep.project.project -> Edge(project.project, if (fromTest) Kind.Test else Kind.Main, toTest)
+                    }
+                }
+            }
+
+        val docKeys       = Set(doctestExtraClasspath.key.label, doctest.key.label)
+        val testTasks     = Set(test.key.label, testOnly.key.label, testQuick.key.label, "scripted", "scriptedDependencies")
+        val classpathKeys = Set(
+            unmanagedClasspath.key.label,
+            unmanagedJars.key.label,
+            managedClasspath.key.label,
+            internalDependencyClasspath.key.label,
+            dependencyClasspath.key.label,
+            fullClasspath.key.label,
+            doctestExtraClasspath.key.label
+        )
+        def isTestConfig(scope: Scope): Boolean = scope.config match {
+            case Select(c) => c.name == Test.name
+            case _         => false
+        }
+        val platformOf: Map[String, String] =
+            structure.allProjectRefs.map(ref => ref.project -> extracted.getOpt(ref / crossProjectPlatform).fold("jvm")(_.identifier)).toMap
+        def jvmOnlyIntoNonJvm(from: String, owner: String): Boolean =
+            platformOf.getOrElse(from, "jvm") == "jvm" && platformOf.getOrElse(owner, "jvm") != "jvm"
+
+        val appended =
+            structure.settings.flatMap { s =>
+                s.key.scope.project match {
+                    case Select(owner: ProjectRef) if !aggregateProjects.contains(owner.project) =>
+                        val label = s.key.key.label
+                        val into  =
+                            if (docKeys.contains(label)) Kind.Doc
+                            else if (isTestConfig(s.key.scope) || testTasks.contains(label)) Kind.Test
+                            else Kind.Main
+                        s.dependencies.flatMap { dep =>
+                            dep.scope.project match {
+                                case Select(from: ProjectRef)
+                                    if from.project != owner.project && !aggregateProjects.contains(from.project) &&
+                                        !(classpathKeys.contains(label) && jvmOnlyIntoNonJvm(from.project, owner.project)) =>
+                                    Some(from.project -> Edge(owner.project, into, isTestConfig(dep.scope)))
+                                case _ => None
+                            }
+                        }
+                    case _ => Nil
+                }
+            }
+
+        (declared ++ appended).groupBy(_._1).map { case (from, edges) => from -> edges.map(_._2).distinct }
+    }
+
+    /** Every node a change reaches. A main change reaches each dependent through every edge, because a
+      * project's test configuration extends its main one; a test change reaches only the edges that
+      * carry test classes; a doctest change reaches nothing further. Reaching a project's main
+      * configuration also reaches its tests, and reaching its tests also reaches its doctests.
+      */
+    private def propagate(changed: Set[Node], edges: Map[String, Seq[Edge]]): Set[Node] = {
+        val reached                 = scala.collection.mutable.Set.empty[Node]
+        val pending                 = scala.collection.mutable.Queue.empty[Node]
+        def reach(node: Node): Unit = if (reached.add(node)) pending.enqueue(node)
+        changed.foreach(reach)
+        while (pending.nonEmpty) {
+            val node = pending.dequeue()
+            node.kind match {
+                case Kind.Main => reach(Node(node.project, Kind.Test))
+                case Kind.Test => reach(Node(node.project, Kind.Doc))
+                case Kind.Doc  => ()
+            }
+            if (node.kind != Kind.Doc)
+                edges.getOrElse(node.project, Nil).foreach { edge =>
+                    if (node.kind == Kind.Main || edge.fromTest) reach(Node(edge.dependent, edge.into))
+                }
+        }
+        reached.toSet
     }
 
     /** Submit every pass as one `;`-chained command string: switch, tasks, completion marker, and
@@ -431,19 +826,40 @@ object TestKyo {
         }
     }
 
-    private def diffFiles(baseRef: String): Seq[String] =
-        try Seq("git", "diff", "--name-only", baseRef).!!.trim.split("\n").filter(_.nonEmpty).toSeq
+    /** The files changed vs baseRef, or None when git cannot say, which must run everything rather than nothing.
+      *
+      * `-z` separates paths with NUL and never quotes them: split on "\n", every path would keep a "\r" on
+      * Windows, where `!!` joins output lines with the platform separator, and "\r" is not a legal file name
+      * character there. `--no-renames` lists both sides of a rename or move; without it git reports only the
+      * new path, and whatever depended on the old one (a module, a README linking to it) is never selected.
+      */
+    private def diffFiles(baseRef: String): Option[Seq[String]] =
+        try
+            Some(
+                Seq("git", "diff", "--name-only", "--no-renames", "-z", baseRef).!!.split('\u0000').map(_.trim).filter(_.nonEmpty).toSeq
+            )
         catch {
             case e: Exception =>
                 log(s"Failed to run git diff: ${e.getMessage}")
-                Seq.empty
+                None
         }
 
-    // project/ (the meta-build, plugins, this command) and .github/ (CI workflows) are genuinely
-    // global: a change there can alter how every module builds, so run all. A build.sbt change is
-    // handled separately by buildSbtAffectedProjects, which pins it to the projects that changed.
-    private def metaBuildChanged(files: Seq[String]): Boolean =
-        files.exists(f => f.startsWith("project/") || f.startsWith(".github/"))
+    // The meta-build and .github/ (CI workflows) are genuinely global: a change there can alter how
+    // every module builds, so run all. The meta-build is project/ plus the in-repo plugin sources
+    // project/*.sbt compiles into it (kyo-doctest/plugin, kyo-ffi/plugin, ...), read from the loaded
+    // build so a newly wired plugin is covered. A build.sbt change is handled separately by
+    // buildSbtAffectedProjects, which pins it to the projects that changed.
+    private def metaBuildChanged(files: Seq[String], extracted: Extracted): Boolean = {
+        val root       = new File(extracted.currentRef.build).getCanonicalFile
+        val pluginDirs =
+            extracted.structure.units.values.toSeq.flatMap(_.unit.plugins.pluginData.unmanagedSourceDirectories).map(canonical)
+        files.exists { f =>
+            f.startsWith("project/") || f.startsWith(".github/") || {
+                val path = canonical(new File(root, f))
+                pluginDirs.exists(path.startsWith)
+            }
+        }
+    }
 
     /** New-side line numbers changed in build.sbt vs baseRef, or None when the change cannot be
       * attributed from the new file alone. None covers a pure deletion (the removed setting has no
@@ -655,27 +1071,6 @@ object TestKyo {
             }
         }
         Some(names.toSet)
-    }
-
-    private def transitiveDependents(
-        allRefs: Seq[ProjectRef],
-        bd: BuildDependencies
-    ): Map[ProjectRef, Set[ProjectRef]] = {
-        val directDependents = scala.collection.mutable.Map[ProjectRef, Set[ProjectRef]]()
-        for {
-            (project, deps) <- bd.classpath
-            dep             <- deps
-        } {
-            directDependents(dep.project) =
-                directDependents.getOrElse(dep.project, Set.empty) + project
-        }
-
-        def closure(ref: ProjectRef, visited: Set[ProjectRef]): Set[ProjectRef] = {
-            val direct = directDependents.getOrElse(ref, Set.empty) -- visited
-            direct ++ direct.flatMap(d => closure(d, visited + d))
-        }
-
-        allRefs.map(ref => ref -> closure(ref, Set(ref))).toMap
     }
 
     /** Resolve shorthand scala versions: "2" to the Scala 2 version in crossScalaVersions, "3" to the

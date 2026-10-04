@@ -74,7 +74,8 @@ object HttpRequest:
     /** A single part in a multipart request, representing an uploaded file or form field.
       *
       * Parts are produced by routes with `.request(_.bodyMultipart)` or `.request(_.bodyMultipartStream)`. The `filename` and `contentType`
-      * fields are present for file uploads but absent for plain form fields.
+      * fields are present for file uploads but absent for plain form fields. A part is identified by the `name` its `Content-Disposition`
+      * carries, and a part without one is dropped, so a `multipart/mixed` body, whose parts carry no names, decodes to no parts.
       */
     case class Part(
         name: String,

@@ -122,8 +122,63 @@ private[internal] object MacroUtils:
         import quotes.reflect.*
         reference match
             case ref: TermRef if ref.termSymbol.flags.is(Flags.Module) => ref.widen
-            case other                                                 => other
+            case applied: AppliedType                                  => applied
+            case other                                                 =>
+                // A case whose own type parameter the sum does not fix (`sealed trait Sub[A] extends Sum[A]` under `Sum[?]`) is
+                // referenced at wildcards: the bare constructor is not a type a Schema or an instance test can take.
+                val params = other.typeSymbol.declaredTypes.filter(_.isTypeParam)
+                if params.isEmpty then other else other.appliedTo(params.map(_ => TypeBounds.empty))
+        end match
     end sumCaseType
+
+    /** Aborts unless every variant of the sum `sym` is one a tag-only representation can write as its name alone: a case object, an
+      * enum value without parameters, or a case class without fields. `variants` are the sum's variants (`FocusMacro.sumVariants`), so a
+      * sealed sub-trait in them is one with a Schema of its own, which is not a name alone. A case class with one `String` field is the
+      * catch-all shape, which receives an unknown name; it passes where `catchAllOnly` admits it, and the catch-all builder is checked
+      * against it at the first encode or decode.
+      */
+    private[internal] def requireTagOnlyVariants(using
+        Quotes
+    )(
+        sym: quotes.reflect.Symbol,
+        variants: List[quotes.reflect.Symbol],
+        site: String,
+        catchAllOnly: quotes.reflect.Symbol => Boolean
+    ): Unit =
+        import quotes.reflect.*
+        if !(sym.isClassDef && sym.flags.is(Flags.Sealed)) || variants.isEmpty then
+            report.errorAndAbort(s"$site: ${sym.name} is not a sealed trait or enum; tagOnly selects how a sum writes its variants.")
+        def caseClass(child: Symbol): Boolean = child.flags.is(Flags.Case) && !child.flags.is(Flags.Sealed) && child.isClassDef
+        val withData                          = variants.filterNot { child =>
+            child.flags.is(Flags.Module) || !child.isClassDef ||
+            (caseClass(child) && child.caseFields.isEmpty) ||
+            (caseClass(child) && isTagOnlyCatchAllShape(child) && catchAllOnly(child))
+        }
+        if withData.nonEmpty then
+            report.errorAndAbort(
+                s"$site: ${sym.name} cannot be tag-only, since a tag-only sum writes each variant as its name alone. Every variant " +
+                    "must be a case object, an enum value without parameters, or a case class without fields, except one catch-all " +
+                    s"with a single String field (or Int or Long, marked @catchAll(), for numbered variants); these are not: " +
+                    s"${withData.map(_.name.stripSuffix("$")).mkString(", ")}."
+            )
+        end if
+    end requireTagOnlyVariants
+
+    /** A case class whose only field is a `String`: the shape of a catch-all under a tag-only representation. A variant marked
+      * `@catchAll()` may instead hold an `Int` or `Long`, the tag of numbered variants. The builder path admits only the `String`
+      * shape, so a field-bearing variant that is no catch-all stays a compile error there.
+      */
+    private[internal] def isTagOnlyCatchAllShape(using Quotes)(child: quotes.reflect.Symbol): Boolean =
+        import quotes.reflect.*
+        val annotated = child.annotations.exists(_.tpe <:< TypeRepr.of[kyo.schema.catchAll])
+        child.caseFields match
+            case List(field) =>
+                val fieldType = child.typeRef.memberType(field).dealias
+                fieldType =:= TypeRepr.of[String] ||
+                (annotated && (fieldType =:= TypeRepr.of[Int] || fieldType =:= TypeRepr.of[Long]))
+            case _ => false
+        end match
+    end isTagOnlyCatchAllShape
 
     // ---- Field operations ----
 

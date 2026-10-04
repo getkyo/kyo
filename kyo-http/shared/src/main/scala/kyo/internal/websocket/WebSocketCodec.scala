@@ -132,22 +132,23 @@ private[kyo] object WebSocketCodec:
                     dst.write(Span.fromUnsafe(response.toString.getBytes(Utf8)))
                 }
 
-    /** Client: send upgrade request, validate 101 response, pass remaining stream after headers to f. */
+    /** Client: send the upgrade request for `url`, validate the 101 response, pass the remaining stream after headers to f. A well-formed
+      * answer with any other status is the server refusing the upgrade: `HttpWebSocketHandshakeException` naming `url` and that status.
+      */
     def requestUpgradeWith[A, S](
         conn: TransportStream,
-        host: String,
-        path: String,
+        url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
-        unsendableField(path, host, headers) match
+        unsendableField(url.pathWithQuery, url.host, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent      =>
                 unsendableSubprotocol(config, headers) match
                     case Present(ex) => Abort.fail(ex)
-                    case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
+                    case Absent      => writeUpgradeRequestWith(conn, url, headers, config)(f)
 
     /** Names the first element of an upgrade handshake that cannot go on the wire, or `Absent` when all of them can.
       *
@@ -178,13 +179,14 @@ private[kyo] object WebSocketCodec:
 
     private def writeUpgradeRequestWith[A, S](
         conn: TransportStream,
-        host: String,
-        path: String,
+        url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config
     )(
         f: Stream[Span[Byte], Async] => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
+        val host = url.host
+        val path = url.pathWithQuery
         Sync.defer {
             val clientKey = Base64.getEncoder.encodeToString(randomBytes(16))
             val request   = new StringBuilder
@@ -205,32 +207,37 @@ private[kyo] object WebSocketCodec:
             }
             discard(request.append("\r\n"))
             conn.write(Span.fromUnsafe(request.toString.getBytes(Utf8))).andThen {
-                ByteStream.readUntilWith(conn.read, "\r\n\r\n".getBytes(Utf8), 4096) { (headerBytes, remaining) =>
-                    val responseStr = new String(headerBytes.toArrayUnsafe, Utf8)
-                    if !responseStr.startsWith("HTTP/1.1 101") then
-                        Abort.fail(HttpProtocolException(s"HttpWebSocket upgrade failed: expected 101, got: ${responseStr.take(40)}"))
-                    else
-                        val expectedAccept = computeAcceptKey(clientKey)
-                        if !responseStr.contains(expectedAccept) then
-                            Abort.fail(HttpProtocolException("HttpWebSocket upgrade: invalid Sec-WebSocket-Accept"))
+                ByteStream.readUntilWith(HttpConnectionClosedException.Phase.BeforeHead, conn.read, "\r\n\r\n".getBytes(Utf8), 4096) {
+                    (headerBytes, remaining) =>
+                        val responseStr = new String(headerBytes.toArrayUnsafe, Utf8)
+                        val switched    = responseStr.startsWith("HTTP/1.1 ") &&
+                            responseStatus(responseStr).contains(HttpStatus.SwitchingProtocols.code)
+                        if !switched then
+                            responseStatus(responseStr) match
+                                case Present(status) => Abort.fail(HttpWebSocketHandshakeException(url.full, status))
+                                case Absent          => Abort.fail(HttpProtocolException(upgradeRefusalDetail(responseStr)))
                         else
-                            // RFC 6455 §4.1: if the client offered subprotocols, the server's selected subprotocol (if any)
-                            // MUST be one of them. Fail the connection on a mismatched echo. The "offered" list is whatever
-                            // we put on the wire — caller-supplied header takes precedence over config.subprotocols.
-                            val offered =
-                                callerSuppliedProtocol match
-                                    case Present(v) => v.split(',').iterator.map(_.trim).toList
-                                    case Absent     => config.subprotocols.toList
-                            val selected = parseResponseSubprotocol(responseStr)
-                            selected match
-                                case Some(s) if offered.nonEmpty && !offered.contains(s) =>
-                                    Abort.fail(HttpProtocolException(
-                                        s"HttpWebSocket upgrade: server selected subprotocol '$s' that was not offered"
-                                    ))
-                                case _ => f(remaining)
-                            end match
+                            val expectedAccept = computeAcceptKey(clientKey)
+                            if !responseStr.contains(expectedAccept) then
+                                Abort.fail(HttpProtocolException("HttpWebSocket upgrade: invalid Sec-WebSocket-Accept"))
+                            else
+                                // RFC 6455 §4.1: if the client offered subprotocols, the server's selected subprotocol (if any)
+                                // MUST be one of them. Fail the connection on a mismatched echo. The "offered" list is whatever
+                                // we put on the wire: a caller-supplied header takes precedence over config.subprotocols.
+                                val offered: Chunk[String] =
+                                    callerSuppliedProtocol match
+                                        case Present(v) => Chunk.from(v.split(',')).map(_.trim)
+                                        case Absent     => Chunk.from(config.subprotocols)
+                                val selected = parseResponseSubprotocol(responseStr)
+                                selected match
+                                    case Present(s) if offered.nonEmpty && !offered.contains(s) =>
+                                        Abort.fail(HttpProtocolException(
+                                            s"HttpWebSocket upgrade: server selected subprotocol '$s' that was not offered"
+                                        ))
+                                    case _ => f(remaining)
+                                end match
+                            end if
                         end if
-                    end if
                 }
             }
         }
@@ -297,15 +304,41 @@ private[kyo] object WebSocketCodec:
         Span.fromUnsafe(headerBuf.toByteArray)
     end encodeFrameHeader
 
+    /** The status code of an HTTP/1.x status line (RFC 9112 section 4: version, SP, three digits, SP), or `Absent` when the answer does
+      * not start with one.
+      */
+    private[internal] def responseStatus(responseStr: String): Maybe[Int] =
+        val codeStart = "HTTP/1.1 ".length
+        val codeEnd   = codeStart + 3
+        if responseStr.length >= codeEnd &&
+            (responseStr.startsWith("HTTP/1.1 ") || responseStr.startsWith("HTTP/1.0 ")) &&
+            (codeStart until codeEnd).forall(i => responseStr.charAt(i) >= '0' && responseStr.charAt(i) <= '9') &&
+            (responseStr.length == codeEnd || responseStr.charAt(codeEnd) == ' ' || responseStr.charAt(codeEnd) == '\r')
+        then Present(responseStr.substring(codeStart, codeEnd).toInt)
+        else Absent
+        end if
+    end responseStatus
+
+    /** The detail of a refused upgrade: the status code the peer's status line carries, never its bytes. */
+    private[internal] def upgradeRefusalDetail(responseStr: String): String =
+        val statusLine =
+            responseStr.length >= 12 && responseStr.startsWith("HTTP/1.") && responseStr.charAt(7).isDigit &&
+                responseStr.charAt(8) == ' ' &&
+                responseStr.substring(9, 12).forall(_.isDigit) &&
+                (responseStr.length == 12 || responseStr.charAt(12) == ' ' || responseStr.charAt(12) == '\r')
+        val status = if statusLine then s"got ${responseStr.substring(9, 12)}" else "no status line"
+        s"HttpWebSocket upgrade failed: expected 101, $status"
+    end upgradeRefusalDetail
+
     /** Extract the value of the `Sec-WebSocket-Protocol` response header from a raw HTTP/1.1 upgrade response, if present. Case-insensitive
       * header-name match per RFC 7230 §3.2.
       */
-    private[internal] def parseResponseSubprotocol(responseStr: String): Option[String] =
+    private[internal] def parseResponseSubprotocol(responseStr: String): Maybe[String] =
         val needle = "sec-websocket-protocol:"
-        responseStr.linesIterator.drop(1).collectFirst {
+        Maybe.fromOption(responseStr.linesIterator.drop(1).collectFirst {
             case line if line.toLowerCase.startsWith(needle) =>
                 line.substring(needle.length).trim
-        }
+        })
     end parseResponseSubprotocol
 
     /** Decode the payload of a Close frame (opcode 0x8): first 2 bytes big-endian code, remaining bytes UTF-8 reason. Returns (1005, "") if
@@ -340,7 +373,7 @@ private[kyo] object WebSocketCodec:
     private inline def readRawFrameWith[A, S2](src: Stream[Span[Byte], Async], maxFrameSize: Int, expectMasked: Boolean)(
         inline f: (Int, Span[Byte], Stream[Span[Byte], Async]) => A < S2
     )(using inline frame: Frame): A < (S2 & Async & Abort[HttpException]) =
-        ByteStream.readExactWith(src, 2) { (header, rem1) =>
+        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, src, 2) { (header, rem1) =>
             val fh          = parseFrameHeader(header(0), header(1))
             val payloadLen  = fh.payloadLen
             val extLenBytes = if payloadLen == 126 then 2 else if payloadLen == 127 then 8 else 0
@@ -362,18 +395,19 @@ private[kyo] object WebSocketCodec:
                 if actualLen > maxFrameSize.toLong then
                     Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
                 else if fh.masked then
-                    ByteStream.readExactWith(rem1, 4) { (maskKey, rem2) =>
-                        ByteStream.readExactWith(rem2, actualLen.toInt) { (payload, rem3) =>
-                            f(fh.opcode, unmask(payload, maskKey), rem3)
+                    ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, 4) { (maskKey, rem2) =>
+                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, actualLen.toInt) {
+                            (payload, rem3) =>
+                                f(fh.opcode, unmask(payload, maskKey), rem3)
                         }
                     }
                 else
-                    ByteStream.readExactWith(rem1, actualLen.toInt) { (payload, rem2) =>
+                    ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, actualLen.toInt) { (payload, rem2) =>
                         f(fh.opcode, payload, rem2)
                     }
                 end if
             else
-                ByteStream.readExactWith(rem1, extLenBytes) { (ext, rem2) =>
+                ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem1, extLenBytes) { (ext, rem2) =>
                     val actualLen =
                         if extLenBytes == 2 then ((ext(0) & 0xff) << 8) | (ext(1) & 0xff).toLong
                         else
@@ -383,14 +417,16 @@ private[kyo] object WebSocketCodec:
                     if actualLen < 0 || actualLen > maxFrameSize.toLong || actualLen > Int.MaxValue.toLong then
                         Abort.fail(HttpProtocolException("HttpWebSocket frame exceeds max frame size"))
                     else if fh.masked then
-                        ByteStream.readExactWith(rem2, 4) { (maskKey, rem3) =>
-                            ByteStream.readExactWith(rem3, actualLen.toInt) { (payload, rem4) =>
-                                f(fh.opcode, unmask(payload, maskKey), rem4)
+                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, 4) { (maskKey, rem3) =>
+                            ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem3, actualLen.toInt) {
+                                (payload, rem4) =>
+                                    f(fh.opcode, unmask(payload, maskKey), rem4)
                             }
                         }
                     else
-                        ByteStream.readExactWith(rem2, actualLen.toInt) { (payload, rem3) =>
-                            f(fh.opcode, payload, rem3)
+                        ByteStream.readExactWith(HttpConnectionClosedException.Phase.BodyTruncated, rem2, actualLen.toInt) {
+                            (payload, rem3) =>
+                                f(fh.opcode, payload, rem3)
                         }
                     end if
                 }

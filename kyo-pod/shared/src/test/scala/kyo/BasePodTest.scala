@@ -52,40 +52,52 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
         Frame,
         kyo.test.AssertScope
     ): Unit < (Async & Abort[Any] & Scope) =
-        Container.currentBackend.map { backend =>
-            Container.list(all = true).map { before =>
-                val beforeIds = before.map(_.id).toSet
-                Scope.run(v).andThen {
-                    Container.list(all = true).map { after =>
-                        val candidates = after.filterNot(s => beforeIds.contains(s.id))
-                        // The daemon's listing lags inspect on podman: a just-removed container can still appear in `list`.
-                        // Confirm each candidate via an authoritative inspect before flagging, avoiding a false leak.
-                        //
-                        // Removal is asynchronous: the scope's `remove` returns when the daemon has accepted it, not when the
-                        // container is gone, and under load the daemon takes seconds over it.
-                        // The check waits on the daemon through the leaf's barrier
-                        // rather than a fixed window, and still demands every candidate be gone: a container that really leaked
-                        // never goes, since nothing else is going to remove it.
-                        def stillHere: Chunk[Container.Summary] < (Async & Abort[Any]) =
-                            Kyo.foreach(candidates) { s =>
-                                Abort.run[ContainerException](backend.state(s.id)).map {
-                                    case Result.Failure(_: ContainerMissingException) => Chunk.empty[Container.Summary]
-                                    case _                                            => Chunk(s)
-                                }
-                            }.map(_.flattenChunk)
-                        assertEventually {
-                            stillHere.map { leaked =>
-                                leaked.isEmpty || fail(
-                                    s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
-                                        leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
-                                )
-                            }
-                        }
-                    }
+        leafCandidates(v).map { (_, candidates) =>
+            // Removal is asynchronous: the scope's `remove` returns when the daemon has accepted it, not when the
+            // container is gone, and under load the daemon takes seconds over it.
+            // The check waits on the daemon through the leaf's barrier
+            // rather than a fixed window, and still demands every candidate be gone: a container that really leaked
+            // never goes, since nothing else is going to remove it.
+            assertEventually {
+                stillPresent(candidates).map { leaked =>
+                    leaked.isEmpty || fail(
+                        s"leaf leaked ${leaked.size} container(s) not freed before exit: " +
+                            leaked.map(s => s"${s.id.value.take(12)}[${s.state}]").mkString(", ")
+                    )
                 }
             }
         }
     end checkingContainerLeak
+
+    /** Runs `v` under its own `Scope` and returns its result with the containers the leaf may have left behind.
+      *
+      * The daemon is shared with other suites and other builds, so a before/after diff of its container set would count their containers
+      * too. Every container `v` causes kyo-pod to create carries this leaf's label instead, and only those are candidates.
+      */
+    private[kyo] def leafCandidates[A](v: A < (Async & Abort[Any] & Scope))(using
+        Frame
+    ): (A, Chunk[Container.Summary]) < (Async & Abort[Any]) =
+        Random.nextStringAlphanumeric(16).map { leaf =>
+            Container.ambientLabels.let(Dict(BasePodTest.leafLabel -> leaf))(Scope.run(v)).map { result =>
+                Container.list(all = true, filters = Dict("label" -> Chunk(s"${BasePodTest.leafLabel}=$leaf")))
+                    .map(candidates => (result, candidates))
+            }
+        }
+
+    /** The candidates the daemon still holds. The daemon's listing lags inspect on podman: a just-removed container can still appear in
+      * `list`, so each candidate is confirmed through an authoritative inspect before it counts.
+      */
+    private[kyo] def stillPresent(candidates: Chunk[Container.Summary])(using
+        Frame
+    ): Chunk[Container.Summary] < (Async & Abort[Any]) =
+        Container.currentBackend.map { backend =>
+            Kyo.foreach(candidates) { s =>
+                Abort.run[ContainerException](backend.state(s.id)).map {
+                    case Result.Failure(_: ContainerMissingException) => Chunk.empty[Container.Summary]
+                    case _                                            => Chunk(s)
+                }
+            }.map(_.flattenChunk)
+        }
 
     /** Register one leaf test per available `(runtime, backend)` combination. Each registered test runs `v` with the appropriate
       * `Container.withBackendConfig` wrapper. Use as the body of `String -` in test declarations:
@@ -112,6 +124,24 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     // the run's own totals instead of the leaf silently not existing.
                     requireRuntimeCli(runtime)
                     Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                }
+            }
+        }
+
+    /** [[runBackends]] without the leak check around the body, for the leaves that test the leak check itself; the body gets the runtime
+      * name. A leaf registered here cleans up after itself explicitly.
+      */
+    def runBackendsUnchecked(v: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
+            s"[$runtime]" - {
+                ContainerRuntime.findSocket(runtime).foreach { path =>
+                    "http" in {
+                        Container.withBackendConfig(_.UnixSocket(Path(path)))(v(runtime))
+                    }
+                }
+                "shell" in {
+                    requireRuntimeCli(runtime)
+                    Container.withBackendConfig(_.Shell(runtime))(v(runtime))
                 }
             }
         }
@@ -251,3 +281,6 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
 
 end BasePodTest
+
+object BasePodTest:
+    private[kyo] val leafLabel = "kyo.pod.test.leaf"

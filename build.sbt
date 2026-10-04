@@ -95,8 +95,9 @@ Global / concurrentRestrictions := {
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
-    val forkLimit = if (isCI) 2 else 1 max cores / 2
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
+    // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
+    val forkLimit = 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
@@ -111,7 +112,8 @@ Global / concurrentRestrictions := {
         Tags.limit(DoctestTag, 2),
         // Serialize scaladoc: each run is a forked JVM sized by the module it documents.
         // See DocTag above.
-        Tags.limit(DocTag, 1)
+        Tags.limit(DocTag, 1),
+        FormatOnCompile.restriction
     )
 }
 
@@ -144,11 +146,6 @@ lazy val `kyo-settings` = Seq(
     // module, which CI does not have to spare.
     scalacOptions ++= (if (sys.env.get("KYO_RETAIN_TREES").contains("true")) Seq("-Yretain-trees") else Nil),
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
-    // Not in CI: parallel cross-version compilations of one module format the same shared
-    // sources concurrently, and the loser reports a formatting failure on every
-    // Native job. The scalafmt workflow (scalafmtAll plus a dirty-tree check) is the CI
-    // enforcement; compile-time formatting is a local convenience only.
-    scalafmtOnCompile := !insideCI.value,
     ivyConfigurations += ScaladocTool,
     // The tool ships its own standard library, so it can only read a module whose library it agrees
     // with: each module documents with the scaladoc release of its own Scala version.
@@ -197,7 +194,7 @@ lazy val `kyo-settings` = Seq(
                 }
             }
             // Named so a module that documents locally documents on a runner: the JVM default is a
-            // quarter of physical RAM, 4G beside the 12G driver on the 16G runner that runs this.
+            // quarter of physical RAM, 4G beside the driver on the 16G runner that runs this.
             val exit = Fork.java(
                 ForkOptions()
                     .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
@@ -260,16 +257,16 @@ lazy val `kyo-settings` = Seq(
     // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
     // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
     // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
-    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts): it runs no forked-test
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
-    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
-    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
-    // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
-    // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
-    // ForkedTestGroup cap at 2, two 5GB forks plus the floor-less driver fit the 16GB box. Local dev
-    // keeps the auto-scaling default so small machines are not over-committed.
-    Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM: 4GB on the 16GB CI
+    // runners, too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
+    // classpaths under globalK-way leaf concurrency), and 24GB on a 96GB workstation, where a few
+    // concurrent forks saturate the machine. With the ForkedTestGroup cap at 2, two 5GB forks plus the
+    // driver fit a 16GB box.
+    Test / javaOptions += "-Xmx5g",
     doctestPredef := Seq("import kyo.*"),
     // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
@@ -323,6 +320,10 @@ Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
 // coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
 Global / excludeLintKeys += coverageExcludedFiles
+// checkClassNames reads it per project through a dynamic ScopeFilter, which the lint cannot see.
+Global / excludeLintKeys += ClassNameCheck.classNameGroup
+// Read only by the testKyo command's diff selection, which the lint cannot see.
+Global / excludeLintKeys += TestKyo.testInputs
 
 Global / onLoad := {
 
@@ -345,7 +346,11 @@ Global / onLoad := {
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
+    val ci        = insideCI.value
+    val buildRoot = (ThisBuild / baseDirectory).value
+
     (Global / onLoad).value andThen { state =>
+        if (!ci) GitHooks.enable(buildRoot, state.log)
         // ci-release publishes from the platform aggregates, so a project that does not skip
         // publishing and is missing from its platform's aggregate builds, tests, and never ships,
         // with nothing failing: testKyo discovers modules from the whole build, and a scripted
@@ -507,6 +512,7 @@ lazy val kyoJVM: Project = project
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
+        `kyo-telegram`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
         `kyo-i18n`.jvm,
@@ -602,6 +608,7 @@ lazy val kyoJS = project
         `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
+        `kyo-telegram`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
         `kyo-i18n`.js,
@@ -686,6 +693,7 @@ lazy val kyoNative = project
         `kyo-stats-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
+        `kyo-telegram`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
         `kyo-i18n`.native,
@@ -768,6 +776,7 @@ lazy val kyoWasm = project
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
+        `kyo-telegram`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
         `kyo-i18n`.wasm,
@@ -1056,7 +1065,7 @@ lazy val `kyo-parse` =
 lazy val `kyo-schema` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .dependsOn(`kyo-data`)
         .dependsOn(`kyo-core` % "test->compile")
         .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema"))
@@ -1149,7 +1158,7 @@ lazy val `kyo-schema-tests` =
 lazy val `kyo-schema-protobuf` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-schema` % "test->test;compile->compile")
+        .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema-protobuf"))
         .withKyoTest
@@ -1222,9 +1231,7 @@ lazy val `kyo-sql` =
         // only at the JSON tier, for Sql.jsonColumn's Schema-based overload.
         .dependsOn(`kyo-schema-json`)
         .dependsOn(`kyo-net`)
-        // test->test as well: the leftover-container sweep the SQL suites create their containers through
-        // (`kyo.internal.TestContainers`) lives in kyo-pod's test tree.
-        .dependsOn(`kyo-pod` % "test->test;test->compile")
+        .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1310,7 +1317,7 @@ lazy val `kyo-sql-mysql` =
 lazy val `kyo-sql-dolt-api` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql`)
         .in(file("kyo-sql-dolt-api"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1336,9 +1343,9 @@ lazy val `kyo-sql-dolt` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-pod` % "test->test;test->compile")
+        .dependsOn(`kyo-sql-dolt-api`)
+        .dependsOn(`kyo-sql-mysql`)
+        .dependsOn(`kyo-pod` % "test->compile")
         .in(file("kyo-sql-dolt"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1361,7 +1368,7 @@ lazy val `kyo-sql-dolt` =
 lazy val `kyo-sql-sqlite-driver` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-sql` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql`)
         // The conformance answers every engine on this driver shares live in its tests, for both engines' descriptors.
         .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-ffi`)
@@ -1479,11 +1486,6 @@ lazy val `kyo-sql-sqlite` =
             Test / compile := (Test / compile).dependsOn(kyoSqliteKoffiInstall).value
         )
 
-// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
-// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
-// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
-// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
-// module (the other's suites could not see it). `test->test` on all three lets the suites reuse core's `Test`
 // Every platform DoltLite is built and bundled for, which is every one the build supports except Windows.
 //
 // `linkFlags` below links the static archive INTO the shim, so the engine travels with it. Upstream
@@ -1510,7 +1512,7 @@ def kyoSqlDoltLiteOsArchTargets: Seq[String] = Seq(
 // The embedded VERSIONED engine: DoltLite is a SQLite fork that keeps the sqlite3_* API and replaces the storage
 // engine with a content-addressed prolly tree, so one file carries branches, commits, merges and diffs.
 //
-// libdoltlite exports all 32 sqlite3 symbols this driver's bindings call, so the connection, codecs and row
+// libdoltlite exports every sqlite3 symbol this driver's bindings call, so the connection, codecs and row
 // reader are reused rather than rewritten; `kyo-sql-dolt-api` carries the version-control vocabulary it shares
 // with the server backend.
 //
@@ -1619,7 +1621,8 @@ lazy val `kyo-system-doltfs` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-system`)
         .dependsOn(`kyo-system-conformance` % Test)
-        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api`)
+        .dependsOn(`kyo-sql` % "test->test")
         // Test-only, and only one of the two engines: the conformance fixtures need a real engine and the embedded one
         // needs no container. The store speaks portable SQL, so what passes here is what a server runs. Compile scope
         // stays on the shared API, which keeps the filesystem engine-agnostic.
@@ -1678,15 +1681,26 @@ lazy val `kyo-system-doltfs` =
             Test / compile := (Test / compile).dependsOn(kyoDoltLiteKoffiInstall).value
         )
 
-// base and mocks plus each engine's fixtures; `publish / skip` keeps the shipped artifact count at three.
+// Unpublished; it holds the suites whose SUBJECT spans both engines and so have no single-module home: the
+// cross-backend suites that name both clients/factories to prove they behave the same through one abstract
+// surface, and the container-driven suites sharing `internal/SqlSharedContainers`. That fixture connects to
+// both engines directly, so it can live neither in core (which must compile with no backend) nor in one engine
+// module (the other's suites could not see it). `test->test` goes only to the modules whose test trees hold
+// what the suites reuse: core's `Test` base and mocks, and the engine conformance fixtures in
+// `kyo-sql-sqlite-driver` and `kyo-sql-dolt-api`. A test-only diff follows exactly these edges, so an engine
+// module taken `test->test` without need re-runs this whole module on every change to its own tests.
+// It has only test sources, so there is nothing to publish; the battery external backends run ships as
+// `kyo-sql-conformance`.
 lazy val `kyo-sql-tests` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-sql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-postgres` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-mysql` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-sqlite` % "test->test;compile->compile")
-        .dependsOn(`kyo-sql-dolt` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-postgres`)
+        .dependsOn(`kyo-sql-mysql`)
+        .dependsOn(`kyo-sql-sqlite`)
+        .dependsOn(`kyo-sql-dolt`)
+        .dependsOn(`kyo-sql-sqlite-driver` % "test->test;compile->compile")
+        .dependsOn(`kyo-sql-dolt-api` % "test->test;compile->compile")
         .dependsOn(`kyo-sql-conformance` % Test)
         .dependsOn(`kyo-pod` % "test->test;test->compile")
         .in(file("kyo-sql-tests"))
@@ -2510,6 +2524,12 @@ def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): 
         base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
     }
 
+// The linking half of `stripSystemOpensslForStagedBoringSsl`, for a module that inherits kyo-net's TLS shims: their
+// staged BoringSSL include already leads through `native-settings`, so only the system-OpenSSL link flags go.
+def stripSystemOpensslLinkingForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): NativeConfig =
+    if (!boringSslStaged(kyoNetBase)) base
+    else base.withLinkingOptions(removeSubsequence(base.linkingOptions, systemOpensslNativeLinkOpts))
+
 // kyo-net's staged-BoringSSL force-load link flags (whole-archive on Linux, -force_load on darwin) plus the
 // dynamic C++ runtime. Reconstructed here (not reused) because downstream kyo-http lacks the
 // `ffiNativeLinkingOptions` task yet also needs them. `kyoNetBase` is kyo-net's own dir; no-op if unstaged.
@@ -3201,12 +3221,13 @@ lazy val `kyo-http` =
             `native-settings`,
             `openssl-native-settings`,
             // kyo-http does not own the FFI libraries (only kyo-net enables KyoFfiPlugin); it inherits the bundled TLS
-            // shim C transitively. When BoringSSL is staged, apply the same COMPILE strip/prepend as kyo-net
-            // (stripSystemOpensslForStagedBoringSsl) and re-append kyo-net's force-load LINK window. Linux only, since
-            // darwin force-loads by path (re-appending would duplicate symbols). Unstaged: both are no-ops.
+            // shim C transitively, and its headers lead through `native-settings` as in every other dependent module.
+            // When BoringSSL is staged, drop the system-OpenSSL link flags and re-append kyo-net's force-load LINK
+            // window. Linux only, since darwin force-loads by path (re-appending would duplicate symbols). Unstaged:
+            // both are no-ops.
             nativeConfig := {
                 val kyoNetBase   = baseDirectory.value / ".." / ".." / "kyo-net"
-                val stripped     = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                val stripped     = stripSystemOpensslLinkingForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
                 val isMac        = System.getProperty("os.name", "").toLowerCase.contains("mac")
                 val bsslReappend = if (isMac) Nil else stagedBoringSslForceLoadLinkOpts(kyoNetBase)
                 if (bsslReappend.isEmpty) stripped
@@ -3841,6 +3862,29 @@ lazy val `kyo-slack` =
         )
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-telegram` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-telegram"))
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`, `kyo-crypto`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-markdown` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -3944,6 +3988,12 @@ lazy val `kyo-website` =
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.dependsOn(`kyo-browser`.jvm % Test))
         .jvmSettings(
+            // The suites render the live root and module READMEs, copy the root logos, and read build.sbt as text.
+            TestKyo.testInputs := {
+                val root = (ThisBuild / baseDirectory).value
+                Seq(root / "README.md", root / "build.sbt", root / "kyo.png", root / "kyo.svg") ++
+                    (root * DirectoryFilter * "README.md").get
+            },
             // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
             // link classpath. WebsiteBuildGraphTest enforces this placement.
             // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
@@ -4104,7 +4154,9 @@ lazy val `kyo-doctest` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala39Version,
+            // CorpusTest validates this module's own README.
+            TestKyo.testInputs := Seq(baseDirectory.value / ".." / "README.md")
         )
 
 // Validates the root README.md (repo-level, outside any module directory).
@@ -4220,12 +4272,23 @@ lazy val `native-settings-base` = Seq(
         val dependencyLinkExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir, KyoFfiPlugin.ffiNativeInBuildLinkFlagsDir)
         // Scala Native 0.5.12 omits GNU-stack notes in its safepoint assembly (upstream #4956).
         // Mark Linux binaries' stacks non-executable until a release carries those notes.
-        val triple       = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
-        val isLinux      = triple.split("-").contains("linux")
-        val linkExtra    = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
-        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir, KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir)
-        val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
-        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+        val triple    = base.targetTriple.getOrElse(scala.scalanative.build.Discover.targetTriple(base))
+        val isLinux   = triple.split("-").contains("linux")
+        val linkExtra = dependencyLinkExtra ++ (if (isLinux) Seq("-Wl,-z,noexecstack") else Nil)
+        // The compile flags come from the FULL classpath, which carries this project's own manifest too: its own bundled C needs
+        // its own defines, and nothing else hands them to the compile. The link flags stay dependency-only, since this project's
+        // own libraries are compiled in rather than linked.
+        val compileExtra = readFfiNativeManifest(
+            (Compile / fullClasspath).value,
+            KyoFfiPlugin.ffiNativeCompileFlagsDir,
+            KyoFfiPlugin.ffiNativeInBuildCompileFlagsDir
+        )
+        val withLink = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
+        // The manifest's flags go first: bundled C was written against the headers it names, and Scala Native's default
+        // includes (/opt/homebrew/include, which links openssl@3's headers) would otherwise shadow them. Behind them,
+        // kyo-net's BoringSSL shim compiles against OpenSSL 3's prototypes and passes BIO_new_mem_buf a length BoringSSL
+        // reads as 0xFFFFFFFF.
+        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(compileExtra ++ withLink.compileOptions)
     }
 )
 
@@ -4274,7 +4337,7 @@ lazy val `js-settings` = Seq(
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
-    // linker state overflows the 12G sbt heap now that the schema family links per-format
+    // linker state overflows the driver heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
     // irrelevant in CI, footprint is what matters.
     scalaJSLinkerConfig := {
@@ -4345,10 +4408,14 @@ lazy val `kyo-doctest-plugin` = (project in file("kyo-doctest/plugin"))
         scalaVersion       := "2.12.21",
         crossScalaVersions := Seq("2.12.21"),
         sbtPlugin          := true,
-        // scalafmt-dynamic powers the `doctestFormat` task (rewrite-in-place of README scala
-        // blocks using the repo's .scalafmt.conf). Pinned to the .scalafmt.conf version.
-        libraryDependencies += "org.scalameta" %% "scalafmt-dynamic" % "3.11.5",
-        scriptedLaunchOpts                     := Seq(
+        // The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, so a published plugin
+        // formats exactly as scalafmtAll does and never fetches a formatter at run time.
+        libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+            val conf = IO.read((ThisBuild / baseDirectory).value / ".scalafmt.conf")
+            """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+                .getOrElse(sys.error("no version in .scalafmt.conf"))
+        },
+        scriptedLaunchOpts := Seq(
             "-Xmx1024M",
             "-Dplugin.version=" + version.value,
             // Path to the runner-classpath file written by scriptedDependencies below.
@@ -4439,18 +4506,22 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // into the plugin jar as resources, plus an INDEX, so an external binding can
         // pull it in via `.compatConformance`. Copied verbatim from the canonical suite
         // the in-repo bindings compile against, so the bundle stays byte-identical.
+        // Declared as main inputs so a diff that only touches the suite, which the bindings see as
+        // their test sources, still selects this plugin.
+        TestKyo.mainInputs := Seq("test", "test-streams").map((ThisBuild / baseDirectory).value / "kyo-compat" / _),
         Compile / resourceGenerators += Def.task {
-            val outDir  = (Compile / resourceManaged).value / "kyo-compat-testkit"
-            val suites  = Seq("test" -> "test", "test-streams" -> "streams")
-            val buckets = Seq("shared", "jvm", "js", "native")
-            val base    = (ThisBuild / baseDirectory).value / "kyo-compat"
+            val outDir    = (Compile / resourceManaged).value / "kyo-compat-testkit"
+            val suiteTags = Map("test" -> "test", "test-streams" -> "streams")
+            val buckets   = Seq("shared", "jvm", "js", "native")
+            val suiteDirs = TestKyo.mainInputs.value
             IO.delete(outDir)
             val index     = scala.collection.mutable.ArrayBuffer.empty[String]
             val generated = scala.collection.mutable.ArrayBuffer.empty[File]
             for {
-                (suiteDir, suiteTag) <- suites
-                bucket               <- buckets
-                root = base / suiteDir / bucket / "src" / "test" / "scala"
+                suiteDir <- suiteDirs
+                suiteTag = suiteTags(suiteDir.getName)
+                bucket <- buckets
+                root = suiteDir / bucket / "src" / "test" / "scala"
                 if root.exists
                 src <- (root ** "*.scala").get
             } {

@@ -34,25 +34,58 @@ class TransportPerOperationConfigTest extends Test:
             // Guards every acquisition above if a later one fails: e.g. if the second connect aborts, `small` and `listener` would otherwise
             // never reach their trailing close() calls below.
             Scope.ensure(Sync.defer(listener.close())).andThen {
-                transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 4)).safe.get.map { small =>
-                    Scope.ensure(Sync.defer(small.close())).andThen {
-                        transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 64)).safe.get.map { large =>
-                            Scope.ensure(Sync.defer(large.close())).andThen {
-                                // Read both before closing anything: the point is that two live connections on one transport carry different
-                                // capacities at the same time, which a construction-captured value could not produce.
-                                val smallCapacity = small.inbound.capacity
-                                val largeCapacity = large.inbound.capacity
-                                small.close()
-                                large.close()
-                                listener.close()
-                                assert(smallCapacity == 4, s"the connection that asked for 4 got $smallCapacity")
-                                assert(largeCapacity == 64, s"the connection that asked for 64 got $largeCapacity")
-                                assert(NetPlatform.transport eq transport, "both connections must have come from the one shared transport")
+                transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 4)).safe.get.map {
+                    small =>
+                        Scope.ensure(Sync.defer(small.close())).andThen {
+                            transport.connect(
+                                "127.0.0.1",
+                                listener.port,
+                                config = NetConfig(channelCapacity = 64)
+                            ).safe.get.map { large =>
+                                Scope.ensure(Sync.defer(large.close())).andThen {
+                                    // Read both before closing anything: the point is that two live connections on one transport carry different
+                                    // capacities at the same time, which a construction-captured value could not produce.
+                                    val smallCapacity = small.inbound.capacity
+                                    val largeCapacity = large.inbound.capacity
+                                    small.close()
+                                    large.close()
+                                    listener.close()
+                                    assert(smallCapacity == 4, s"the connection that asked for 4 got $smallCapacity")
+                                    assert(largeCapacity == 64, s"the connection that asked for 64 got $largeCapacity")
+                                    assert(
+                                        NetPlatform.transport eq transport,
+                                        "both connections must have come from the one shared transport"
+                                    )
+                                }
                             }
                         }
-                    }
                 }
             }
+        }
+    }
+
+    "a channel capacity of zero or less makes rendezvous pump channels that still round-trip" - eachBackend { transport =>
+        Kyo.foreach(Chunk(0, -1)) { capacity =>
+            val config = NetConfig(channelCapacity = capacity)
+            for
+                listener <- transport.listen("127.0.0.1", 0, 16, config) { conn =>
+                    discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(Abort.run[Closed] {
+                        Loop.foreach(conn.inbound.safe.take.map(chunk => conn.outbound.safe.put(chunk).andThen(Loop.continue)))
+                    }.andThen(Sync.defer(conn.close())))))
+                }.safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
+                client <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
+                message = s"rendezvous $capacity".getBytes("UTF-8")
+                _      <- client.outbound.safe.put(Span.fromUnsafe(message))
+                echoed <- Loop(Array.emptyByteArray) { acc =>
+                    if acc.length >= message.length then Loop.done(acc)
+                    else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                }
+            yield (capacity, client.inbound.capacity, new String(echoed, "UTF-8"))
+            end for
+        }.map { outcomes =>
+            assert(outcomes == Chunk((0, 0, "rendezvous 0"), (-1, 0, "rendezvous -1")))
         }
     }
 

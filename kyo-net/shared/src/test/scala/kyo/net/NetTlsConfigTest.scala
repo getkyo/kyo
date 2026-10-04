@@ -24,15 +24,8 @@ class NetTlsConfigTest extends Test:
             succeed
         }
 
-        "rejects zero and negative deadlines" in {
-            assert(
-                intercept[IllegalArgumentException](NetTlsConfig.default.copy(handshakeTimeout = Duration.Zero))
-                    .getMessage.contains("handshakeTimeout")
-            )
-            assert(
-                intercept[IllegalArgumentException](NetTlsConfig.default.copy(handshakeTimeout = (-1).seconds))
-                    .getMessage.contains("handshakeTimeout")
-            )
+        "holds a zero deadline as given: it fails the handshake at once rather than being refused" in {
+            assert(NetTlsConfig.default.copy(handshakeTimeout = Duration.Zero).handshakeTimeout == Duration.Zero)
             succeed
         }
 

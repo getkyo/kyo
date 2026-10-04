@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Blocks a push whose changes are not formatted, by running the formatter over the files that differ
+# from origin/main. The build points core.hooksPath here when sbt loads (project/GitHooks.scala).
+set -uo pipefail
+
+root=$(git rev-parse --show-toplevel) || exit 1
+"$root/scripts/format.sh" --check --changed
+status=$?
+case $status in
+    0) exit 0 ;;
+    1)
+        echo "" >&2
+        echo "Push blocked: the files above were not formatted. They are formatted in your working tree now;" >&2
+        echo "review and commit them, then push again. To format the whole tree: scripts/format.sh" >&2
+        exit 1
+        ;;
+    *)
+        echo "" >&2
+        echo "Push blocked: the format check could not run (exit $status). Run scripts/format.sh --check --changed" >&2
+        echo "to see why, or push with --no-verify to skip the check." >&2
+        exit 1
+        ;;
+esac

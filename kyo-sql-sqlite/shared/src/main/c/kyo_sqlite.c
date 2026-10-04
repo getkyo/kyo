@@ -137,6 +137,20 @@ KYO_SQLITE_API int kyo_sqlite3_column_decltype_bytes(sqlite3_stmt *stmt, int iCo
   return (int)n;
 }
 
+/* sqlite3_db_filename with "" in place of the NULL it answers for an in-memory or temporary database
+** and for a schema that is not attached: a String result is marshalled by reading its bytes, so NULL
+** cannot cross. */
+KYO_SQLITE_API const char *kyo_sqlite3_db_filename(sqlite3 *db, const char *zDbName) {
+  const char *name = sqlite3_db_filename(db, zDbName);
+  return name == 0 ? "" : name;
+}
+
+/* sqlite3_txn_state across every schema, which only a NULL schema name asks for and a String argument
+** cannot carry. */
+KYO_SQLITE_API int kyo_sqlite3_txn_state(sqlite3 *db) {
+  return sqlite3_txn_state(db, 0);
+}
+
 /* sqlite3_exec without its callback. The error message is not returned: sqlite3_errmsg carries the
 ** same text and needs no freeing, where sqlite3_exec's out-parameter must be released. */
 KYO_SQLITE_API int kyo_sqlite3_exec_simple(sqlite3 *db, const char *sql) {

@@ -20,7 +20,7 @@ POSIX_SUITES='kyo.net.internal.posix.PollerIoDriverUpgradeDetachTest kyo.net.int
 SHARED_SUITES='kyo.net.TransportStartTlsTest kyo.net.TransportStartTlsConcurrentTest kyo.net.TransportStartTlsCrossTailTest'
 NIO_SUITES='kyo.net.internal.NioIoDriverTest kyo.net.internal.NioTransportTest'
 
-exec sbt \
+exec scripts/sbt.sh link \
     "kyo-netJVM/testOnly $NIO_SUITES $POSIX_SUITES $SHARED_SUITES" \
     "kyo-netNative/testOnly $POSIX_SUITES $SHARED_SUITES" \
     "kyo-netJS/testOnly $SHARED_SUITES kyo.net.TransportInMemoryUpgradeTest"

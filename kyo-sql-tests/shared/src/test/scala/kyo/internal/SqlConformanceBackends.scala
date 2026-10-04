@@ -9,13 +9,9 @@ import kyo.*
   */
 object SqlConformanceBackends:
 
-    val all: Seq[SqlConformanceBackend] =
-        Seq(new PostgresConformanceBackend, new MysqlConformanceBackend, new SqliteConformanceBackend, new DoltConformanceBackend)
+    val dolt: SqlConformanceBackend = new DoltConformanceBackend
 
-    /** The descriptor answering to `id`, failing loudly when none does: a suite reaching for an engine that is not listed would assert
-      * nothing.
-      */
-    def byId(id: String): SqlConformanceBackend =
-        all.find(_.id == id).getOrElse(throw new IllegalArgumentException(s"no conformance descriptor has the id '$id'"))
+    val all: Seq[SqlConformanceBackend] =
+        Seq(new PostgresConformanceBackend, new MysqlConformanceBackend, new SqliteConformanceBackend, dolt)
 
 end SqlConformanceBackends

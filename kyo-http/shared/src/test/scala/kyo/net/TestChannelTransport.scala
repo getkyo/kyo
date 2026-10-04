@@ -5,8 +5,9 @@ import kyo.*
 /** Test transport whose `connect` hands out pre-built connections in order (see
   * `kyo.net.internal.transport.Connection.inMemoryPair`), so a client backend runs its full pool/connect path against channel-backed
   * connections with no sockets. Every other operation panics. Lives in package kyo.net because `Transport.capabilities` is `private[net]`.
+  * `tlsCloseReason` is the capability a real transport declares: true for posix and NIO, false for Node.
   */
-final class TestChannelTransport(conns: Seq[Connection]) extends Transport:
+final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean = false) extends Transport:
 
     private val next = new java.util.concurrent.atomic.AtomicInteger(0)
 
@@ -39,7 +40,7 @@ final class TestChannelTransport(conns: Seq[Connection]) extends Transport:
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")
@@ -65,7 +66,7 @@ final class TestChannelTransport(conns: Seq[Connection]) extends Transport:
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("upgradeToTls")
 
     private[net] def capabilities: TransportCapabilities =
-        TransportCapabilities(Set.empty, unixSockets = false, tlsCloseReason = false)
+        TransportCapabilities(Set.empty, unixSockets = false, tlsCloseReason = tlsCloseReason)
 
 end TestChannelTransport
 
@@ -98,12 +99,33 @@ final class RecordingConnection(underlying: Connection) extends Connection:
     def status: Connection.Status = underlying.status
 end RecordingConnection
 
+/** Wraps a connection and reports `reported` as its close reason, which an in-memory connection cannot produce: `Truncated` for a TLS peer's
+  * bare FIN, `CleanClose` for one that sent close_notify, `Active` for an end the transport did not classify (a reset, a fatal record). The
+  * reason is reported from the start; a reader is expected to consult it only once the inbound channel has closed, as
+  * [[Connection.status]] documents.
+  */
+final class TlsCloseConnection(underlying: Connection, reported: Connection.Status) extends Connection:
+    def inbound: Channel.Unsafe[Span[Byte]]                                                       = underlying.inbound
+    def outbound: Channel.Unsafe[Span[Byte]]                                                      = underlying.outbound
+    def isOpen(using AllowUnsafe): Boolean                                                        = underlying.isOpen
+    def close()(using AllowUnsafe, Frame): Unit                                                   = underlying.close()
+    private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                                           = underlying.onClosing
+    def detachForUpgrade()(using AllowUnsafe, Frame): Fiber.Unsafe[Maybe[Chunk[Span[Byte]]], Any] = underlying.detachForUpgrade()
+    private[net] def start()(using AllowUnsafe, Frame): Boolean                                   = underlying.start()
+    def serverCertificateHash: Maybe[Span[Byte]]                                                  = underlying.serverCertificateHash
+    def status: Connection.Status                                                                 = reported
+end TlsCloseConnection
+
 /** Test transport whose `connect` parks until the test releases it, so a test can settle the caller's own promise FIRST and then let the
   * connect succeed. That ordering is what an interrupted caller produces in production, and it cannot be staged with a transport that
   * hands back an already-completed fiber.
   */
 final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extends Transport:
-    private val gate = Promise.Unsafe.init[Connection, Abort[NetException]]()
+    private val gate      = Promise.Unsafe.init[Connection, Abort[NetException]]()
+    private val requested = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Whether a caller has asked for the connect. */
+    def connectRequested: Boolean = requested.get()
 
     /** Let the pending connect succeed with the prepared connection. */
     def release()(using AllowUnsafe, Frame): Unit = discard(gate.complete(Result.succeed(conn)))
@@ -111,7 +133,10 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
     def connect(host: String, port: Int, connectTimeout: Duration, config: NetConfig)(using
         AllowUnsafe,
         Frame
-    ): Fiber.Unsafe[Connection, Abort[NetException]] = gate
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
+        requested.set(true)
+        gate
+    end connect
 
     private def unsupported[A](op: String)(using AllowUnsafe): Fiber.Unsafe[A, Abort[NetException]] =
         Fiber.Unsafe.fromResult(Result.panic(new UnsupportedOperationException(s"DeferredConnectTransport: $op not supported")))
@@ -126,7 +151,7 @@ final class DeferredConnectTransport(conn: Connection)(using AllowUnsafe) extend
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")

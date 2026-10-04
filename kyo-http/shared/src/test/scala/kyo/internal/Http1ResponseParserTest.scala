@@ -34,6 +34,18 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         (result, body)
     end parseResponse
 
+    /** How the parser refuses `rawResponse`, or Absent when it does not. */
+    private def refusal(rawResponse: String): Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] =
+        val channel = Channel.Unsafe.init[Span[Byte]](16)
+        discard(channel.offer(Span.fromUnsafe(rawResponse.getBytes(StandardCharsets.US_ASCII))))
+        var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+        new Http1ResponseParser(channel, onFailure = f => failure = Present(f)).start()
+        failure
+    end refusal
+
+    private def refused(detail: String): Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] =
+        Present(Result.Failure(HttpProtocolException(detail)))
+
     /** Helper: parse from multiple chunks offered before start. */
     private def parseResponseFromChunks(
         chunks: Seq[Array[Byte]],
@@ -97,6 +109,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "rejects a response with conflicting Content-Length values (GHSA-p83c-4wj9-p6w9)" in {
             val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 100\r\n\r\nhello")
             assert(resp == null, "two different Content-Length values leave the body length undeterminable")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 100\r\n\r\nhello") ==
+                refused("the response has conflicting Content-Length values"))
         }
 
         // The over-strictness control: a repeated but IDENTICAL value is not a conflict and must still parse.
@@ -117,9 +131,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
         // The response parser must reject an obs-fold (a header line beginning with SP or HTAB), as the request parser
         // does. RFC 9112 section 5.2 makes rejecting or unfolding a recipient MUST, because a folded value read one way
-        // by this client and another by an intermediary is a header-interpretation disagreement. Here the fold line is
-        // silently dropped, so the value is truncated ("one two" becomes "one") rather than rejected. This asserts the
-        // secure behavior (rejection) and therefore FAILS until the response parser refuses obs-fold.
+        // by this client and another by an intermediary is a header-interpretation disagreement. Dropping the colon-less
+        // fold line instead would truncate the value ("one two" becomes "one").
         //
         // Origin: RFC 9112 section 5.2; the response-side analog of the request-parser obs-fold reject.
         "rejects an obs-folded response header (RFC 9112 section 5.2)" in {
@@ -130,21 +143,20 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
                         if resp == null then "n/a" else resp.headers.get("X-A")
                     }"
             )
+            assert(refusal("HTTP/1.1 200 OK\r\nX-A: one\r\n two\r\nContent-Length: 0\r\n\r\n") ==
+                refused("a response header line is folded"))
         }
 
-        // A Content-Length that overflows the Int accumulator must be refused, not wrapped. The request parser guards
-        // this (Http1Parser.parseContentLength rejects above 214748364); the response parser does not, so
-        // "4294967301" (2^32 + 5) wraps to 5. The client then frames the body at 5 bytes, keeps the pooled keep-alive
-        // connection, and reads the attacker's trailing bytes as the next response on that connection. This asserts
-        // the secure behavior (refusal) and therefore FAILS until the response side carries the same overflow guard.
+        // A Content-Length that overflows the Int accumulator must be refused, not wrapped. Wrapped, "4294967301"
+        // (2^32 + 5) becomes 5: the client frames the body at 5 bytes, keeps the pooled keep-alive connection, and reads
+        // the attacker's trailing bytes as the next response on that connection.
         //
         // Origin: hyper RUSTSEC-2021-0078 (lenient Content-Length), the response-side analog of the request-side guard.
         "rejects a response Content-Length that overflows Int" in {
-            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 4294967301\r\nConnection: keep-alive\r\n\r\nHELLO")
-            assert(
-                resp == null || resp.contentLength < 0,
-                s"an overflowing Content-Length must be refused, but it wrapped to ${if resp == null then "n/a" else resp.contentLength}"
-            )
+            val raw       = "HTTP/1.1 200 OK\r\nContent-Length: 4294967301\r\nConnection: keep-alive\r\n\r\nHELLO"
+            val (resp, _) = parseResponse(raw)
+            assert(resp == null, s"an overflowing Content-Length must be refused, but it parsed as ${resp.contentLength}")
+            assert(refusal(raw) == refused("the response Content-Length is not a valid length"))
         }
 
         // The response-side half of the Transfer-Encoding token check. "chunkedfoo" is a single token and is not
@@ -186,38 +198,35 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             val raw     = "HTTP/1.1 999 Invalid\r\nContent-Length: 0\r\n\r\n"
             discard(channel.offer(Span.fromUnsafe(raw.getBytes(StandardCharsets.US_ASCII))))
 
-            var closedCalled           = false
-            var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser                 = new Http1ResponseParser(
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            var parsed: ParsedResponse                                              = null.asInstanceOf[ParsedResponse]
+            val parser                                                              = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => parsed = resp,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             parser.start()
 
-            // 999 is outside 100-599 range, should trigger onClosed
-            assert(closedCalled, "Parser should call onClosed for status code 999")
+            assert(failure == refused("the response status code 999 is outside 100 to 599"), s"observed: $failure")
             assert(parsed == null, "Parser should not produce a response for status code 999")
         }
 
         // Test 6
         "reject response with garbage status line" in {
             val channel = Channel.Unsafe.init[Span[Byte]](16)
-            // "GARBAGE" has no valid status code — parseStatusCode returns 0
-            val raw = "GARBAGE /bad HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
+            val raw     = "GARBAGE /bad HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
             discard(channel.offer(Span.fromUnsafe(raw.getBytes(StandardCharsets.US_ASCII))))
 
-            var closedCalled           = false
-            var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser                 = new Http1ResponseParser(
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            var parsed: ParsedResponse                                              = null.asInstanceOf[ParsedResponse]
+            val parser                                                              = new Http1ResponseParser(
                 channel,
                 onResponseParsed = (resp, _) => parsed = resp,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             parser.start()
 
-            // Status code 0 is outside 100-599, should trigger onClosed
-            assert(closedCalled, "Parser should call onClosed for garbage status line")
+            assert(failure == refused("the response status line does not begin with HTTP/1.x"), s"observed: $failure")
             assert(parsed == null, "Parser should not produce a response for garbage status line")
         }
 
@@ -259,6 +268,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
                 "HTTP/1.1 200 OK\r\nContent-Length: 1a2b\r\n\r\n"
             )
             assert(resp == null, "an invalid Content-Length leaves the framing undeterminable and must be refused")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 1a2b\r\n\r\n") ==
+                refused("the response Content-Length is not a valid length"))
         }
 
         // The spelling the duplicate check could not catch while a malformed value was tolerated: the first header
@@ -268,6 +279,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
                 "HTTP/1.1 200 OK\r\nContent-Length: abc\r\nContent-Length: 5\r\n\r\nhello"
             )
             assert(resp == null, "the first value is not recoverable, so the message is not framed by the second")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: abc\r\nContent-Length: 5\r\n\r\nhello") ==
+                refused("the response Content-Length is not a valid length"))
         }
 
         // Test 11
@@ -327,17 +340,32 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
 
         // Test 15
         "handle EOF during header parse — channel closes gracefully" in {
-            val channel      = Channel.Unsafe.init[Span[Byte]](16)
-            var closedCalled = false
-            val parser       = new Http1ResponseParser(
+            val channel                                                             = Channel.Unsafe.init[Span[Byte]](16)
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            val parser                                                              = new Http1ResponseParser(
                 channel,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             // Close channel BEFORE start — parser gets Closed immediately
             discard(channel.close())
             parser.start()
 
-            assert(closedCalled, "onClosed should be called when channel is closed during parse")
+            assert(
+                failure == Present(Result.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BeforeHead))),
+                s"observed: $failure"
+            )
+        }
+
+        "a read that panics stays a panic carrying its own throwable" in {
+            val channel                                                             = Channel.Unsafe.init[Span[Byte]](16)
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            val parser                                                              = new Http1ResponseParser(
+                channel,
+                onFailure = f => failure = Present(f)
+            )
+            val cause = new RuntimeException("the read failed")
+            parser.onRead(Result.panic(cause))
+            assert(failure == Present(Result.panic(cause)), s"observed: $failure")
         }
 
         // Test 16
@@ -347,7 +375,9 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             val resp1Bytes = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Seq: first\r\n\r\nhello"
             val resp2Bytes = "HTTP/1.1 201 Created\r\nContent-Length: 6\r\nX-Seq: second\r\n\r\nworld!"
 
-            discard(channel.offer(Span.fromUnsafe((resp1Bytes + resp2Bytes).getBytes(StandardCharsets.US_ASCII))))
+            // Each response in its own read, as a client that sends the second request after reading the first receives them.
+            discard(channel.offer(Span.fromUnsafe(resp1Bytes.getBytes(StandardCharsets.US_ASCII))))
+            discard(channel.offer(Span.fromUnsafe(resp2Bytes.getBytes(StandardCharsets.US_ASCII))))
 
             val responses                        = new scala.collection.mutable.ArrayBuffer[(ParsedResponse, Span[Byte])]()
             lazy val parser: Http1ResponseParser = new Http1ResponseParser(
@@ -355,7 +385,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
                 onResponseParsed = (resp, body) =>
                     responses += ((resp, body))
                     if responses.size < 2 then
-                        parser.reset()
+                        parser.reset(HttpMethod.GET, rawAfterHead = false)
                         parser.start()
             )
             parser.start()
@@ -372,6 +402,59 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             assert(r2.contentLength == 6)
             assert(r2.headers.get("X-Seq") == Present("second"))
             assert(new String(b2.toArray, StandardCharsets.US_ASCII) == "world!")
+        }
+
+        "bytes after a complete response in the same read are dropped and the connection is not reused (RFC 9112 section 6.3)" in {
+            val channel = Channel.Unsafe.init[Span[Byte]](64)
+            val read    = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloHTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nevil"
+            discard(channel.offer(Span.fromUnsafe(read.getBytes(StandardCharsets.US_ASCII))))
+
+            val responses                        = new scala.collection.mutable.ArrayBuffer[(Int, String, Boolean)]()
+            lazy val parser: Http1ResponseParser = new Http1ResponseParser(
+                channel,
+                onResponseParsed = (resp, body) =>
+                    responses += ((resp.statusCode, new String(body.toArray, StandardCharsets.US_ASCII), resp.isKeepAlive))
+                    parser.reset(HttpMethod.GET, rawAfterHead = false)
+                    parser.start()
+            )
+            parser.start()
+
+            assert(responses.toList == List((200, "hello", false)), s"observed: $responses")
+        }
+
+        "each body-less response ends at its head, so the bytes after it are dropped" in {
+            def outcome(method: HttpMethod, head: String): (Int, String, Boolean) =
+                val channel = Channel.Unsafe.init[Span[Byte]](16)
+                discard(channel.offer(Span.fromUnsafe((head + "extra").getBytes(StandardCharsets.US_ASCII))))
+                var result = (0, "", true)
+                val parser = new Http1ResponseParser(
+                    channel,
+                    onResponseParsed = (resp, body) =>
+                        result = (resp.statusCode, new String(body.toArray, StandardCharsets.US_ASCII), resp.isKeepAlive)
+                )
+                parser.reset(method, rawAfterHead = false)
+                parser.start()
+                result
+            end outcome
+            assert(outcome(HttpMethod.HEAD, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n") == ((200, "", false)))
+            assert(outcome(HttpMethod.GET, "HTTP/1.1 204 No Content\r\n\r\n") == ((204, "", false)))
+            assert(outcome(HttpMethod.GET, "HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n") == ((304, "", false)))
+            assert(outcome(HttpMethod.GET, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n") == ((200, "", false)))
+        }
+
+        "on a raw exchange every byte after the head is the caller's" in {
+            val channel = Channel.Unsafe.init[Span[Byte]](16)
+            val read    = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\ntunnelled"
+            discard(channel.offer(Span.fromUnsafe(read.getBytes(StandardCharsets.US_ASCII))))
+            var result = (0, "", false)
+            val parser = new Http1ResponseParser(
+                channel,
+                onResponseParsed = (resp, body) =>
+                    result = (resp.statusCode, new String(body.toArray, StandardCharsets.US_ASCII), resp.isKeepAlive)
+            )
+            parser.reset(HttpMethod.GET, rawAfterHead = true)
+            parser.start()
+            assert(result == ((200, "tunnelled", true)), s"observed: $result")
         }
 
         // Test 17
@@ -412,7 +495,7 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         }
 
         // Test 20
-        "pack response headers into format compatible with HttpHeaders.fromPacked" in {
+        "response headers answer lookups by name" in {
             val (resp, _) = parseResponse(
                 "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: application/json\r\n" +
@@ -461,6 +544,16 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             assert(!resp.isChunked)
         }
 
+        // RFC 9110 section 5.6.3: the optional whitespace around a field value is SP or HTAB.
+        "a field value after a tab, or after spaces and tabs, is read without them" in {
+            val (resp, _) = parseResponse(
+                "HTTP/1.1 200 OK\r\nX-Tab:\tafter-tab\r\nX-Mixed: \t \tmixed\r\nContent-Length: 0\r\n\r\n"
+            )
+            assert(resp != null, "Response should have been parsed")
+            assert(resp.headers.get("X-Tab") == Present("after-tab"), s"observed ${resp.headers.get("X-Tab")}")
+            assert(resp.headers.get("X-Mixed") == Present("mixed"), s"observed ${resp.headers.get("X-Mixed")}")
+        }
+
         // Test 23
         "ignore header line with no colon — malformed header line skipped" in {
             val (resp, _) = parseResponse(
@@ -475,24 +568,27 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         }
 
         // Test 24
-        "handle response exceeding maxHeaderSize — onClosed called" in {
+        "handle response exceeding maxHeaderSize: onFailure called" in {
             val smallMax     = 64
             val channel      = Channel.Unsafe.init[Span[Byte]](16)
             val longResponse =
                 "HTTP/1.1 200 OK\r\nX-Big: " + "x" * 200 + "\r\n\r\n"
             discard(channel.offer(Span.fromUnsafe(longResponse.getBytes(StandardCharsets.US_ASCII))))
 
-            var closedCalled           = false
-            var parsed: ParsedResponse = null.asInstanceOf[ParsedResponse]
-            val parser                 = new Http1ResponseParser(
+            var failure: Maybe[Result.Error[Http1ClientConnection.ResponseFailure]] = Absent
+            var parsed: ParsedResponse                                              = null.asInstanceOf[ParsedResponse]
+            val parser                                                              = new Http1ResponseParser(
                 channel,
                 maxHeaderSize = smallMax,
                 onResponseParsed = (resp, _) => parsed = resp,
-                onClosed = () => closedCalled = true
+                onFailure = f => failure = Present(f)
             )
             parser.start()
 
-            assert(closedCalled, "Parser should call onClosed when headers exceed maxHeaderSize")
+            assert(
+                failure == Present(Result.fail(HttpProtocolException("the response head exceeds 64 bytes"))),
+                s"observed: $failure"
+            )
             assert(parsed == null, "Parser should not produce a response when headers exceed maxHeaderSize")
         }
 
@@ -514,6 +610,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "rejects a bare LF inside a header value" in {
             val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\nX-Evil: 1\r\n\r\n")
             assert(resp == null, "a bare LF in a response field value must be rejected")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\nX-Evil: 1\r\n\r\n") ==
+                refused("a response header line holds a bare CR or LF"))
         }
 
         // Test 27
@@ -521,6 +619,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "rejects a bare CR inside a header value" in {
             val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\rX-Evil: 1\r\n\r\n")
             assert(resp == null, "a bare CR in a response field value must be rejected")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\rX-Evil: 1\r\n\r\n") ==
+                refused("a response header line holds a bare CR or LF"))
         }
 
         // Test 28
@@ -528,6 +628,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "rejects a NUL inside a header value" in {
             val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: ba\u0000r\r\n\r\n")
             assert(resp == null, "a NUL in a response field value must be rejected")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: ba\u0000r\r\n\r\n") ==
+                refused("a response header value holds a NUL"))
         }
 
         // Test 29
@@ -536,6 +638,8 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
         "rejects a header name that is not a token" in {
             val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX Foo: bar\r\n\r\n")
             assert(resp == null, "a response field name containing SP is not a token and must be rejected")
+            assert(refusal("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX Foo: bar\r\n\r\n") ==
+                refused("a response header name is not a token"))
         }
 
         // Test 30

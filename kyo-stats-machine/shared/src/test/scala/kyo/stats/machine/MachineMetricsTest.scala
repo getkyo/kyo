@@ -67,8 +67,13 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
         // set actually put in the registry and compares it to the taxonomy named in MachineMetrics, with no
         // string reconstruction on either side.
         val root    = "mmetricstest-taxonomy"
-        val handles = MachineHandles.initForTest(Stat.initScope(root), 8L)
+        val handles = MachineHandlesOwners.initForTest(Stat.initScope(root), 8L)
         registerEveryCell(handles)
+        // The registry holds instruments weakly, so this collection drops every cell nothing owns: the set
+        // below holds only while MachineHandlesOwners keeps the handles owned, as the sampler does in production.
+        java.lang.System.gc()
+        val registered = StatsRegistry.snapshot(root)
+        handles.loadOne.set(2.0)
 
         val expectedFixed = MachineMetrics.all.map(k => rerooted(root, k.path))
         val expectedDisk  =
@@ -81,7 +86,12 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
             }
 
         val expected = (expectedFixed ++ expectedDisk ++ expectedPressure).toSet
-        assert(registeredUnder(root) == expected)
+        assert(registered.map(_.path).toSet == expected)
+        val loadOne = registered.collectFirst {
+            case StatsRegistry.Registration(path, StatsRegistry.Instrument.Gauge(gauge, _))
+                if path == rerooted(root, MachineMetrics.loadOne.path) => gauge
+        }
+        assert(loadOne.map(_.collect()) == Some(2.0))
     }
 
     "the fixed taxonomy has no duplicate keys" in {
@@ -119,7 +129,7 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
             "needs a host OS with a dedicated Machine implementation to register anything"
         )
         for
-            handles <- MachineHandles.init
+            handles <- MachineHandlesOwners.init
             sampler = new MachineSampler(handles)
             machine = Machine.forOs(hostOs, handles, sampler)
             _       = machine.read()
@@ -154,7 +164,7 @@ class MachineMetricsTest extends kyo.test.Test[Any]:
             "needs a host OS with a dedicated Machine implementation to enumerate mounts"
         )
         for
-            handles <- MachineHandles.init
+            handles <- MachineHandlesOwners.init
             sampler = new MachineSampler(handles)
             machine = Machine.forOs(hostOs, handles, sampler)
             _       = machine.readDisks()

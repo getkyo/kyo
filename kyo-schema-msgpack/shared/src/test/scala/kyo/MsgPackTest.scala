@@ -612,6 +612,188 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
     }
 
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(MsgPack.decode[A](CodecTestSupport.unhex(wire)) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(CodecTestSupport.hex(MsgPack.encode(value)) == wire)
+    end wireWrites
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "86a46e616d65a3416e6ea361676529a6616374697665c3a573636f7265cb4004000000000000a47461677392a161a162a5696e6e657282a17803a56c6162656ca2696e",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(WCValues.renamed, "82a8686f6d6543697479a64c6973626f6ea9757365725f6e616d65a3616e6e", summon[Schema[WCRenamed]])
+            wireWrites(WCValues.renamed, "82a9757365725f6e616d65a3616e6ea8686f6d6543697479a64c6973626f6e", summon[Schema[WCRenamed]])
+        }
+        "fields under a naming convention, one renamed by annotation" in {
+            wirePin(WCValues.cased, "82aa66697273745f6e616d65a3416e6ea2494409", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes and the flat form is written" in {
+            wireDecodes(
+                WCValues.person,
+                "82a46e616d65a3416e6ea76164647265737382a6737472656574a74d61696e205374a77a6970436f6465a53937323031",
+                summon[Schema[WCPerson]]
+            )
+            wireWrites(
+                WCValues.person,
+                "83a46e616d65a3416e6ea6737472656574a74d61696e205374a77a6970436f6465a53937323031",
+                summon[Schema[WCPerson]]
+            )
+        }
+        "a flattened record under a naming convention: the nested form decodes" in {
+            wireDecodes(
+                WCValues.personC,
+                "82a966756c6c5f6e616d65a7416e6e204c6565ac686f6d655f6164647265737382a8636974794e616d65a8506f72746c616e64a35a4950a53937323031",
+                summon[Schema[WCPersonCased]]
+            )
+        }
+        "a variant under the wrapper form" in {
+            wirePin(WCValues.circle: WCShape, "81a85743436972636c6581a6726164697573cb3ff8000000000000", summon[Schema[WCShape]])
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "81a75743456d70747980", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(WCValues.circle: WCShape, "82a474797065a85743436972636c65a6726164697573cb3ff8000000000000", WCShapes.discriminated)
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "81a474797065a75743456d707479", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(WCValues.square: WCShape, "82a174a85743537175617265a16381a47369646504", WCShapes.adjacent)
+        }
+        "a variant under tupleTagged" in {
+            wirePin(WCValues.square: WCShape, "92a8574353717561726581a47369646504", WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat" in {
+            wirePin(WCValues.square: WCShape, "92a8574353717561726504", WCShapes.tupleFlat)
+        }
+        "a variant under untagged" in {
+            wirePin(WCValues.square: WCShape, "81a47369646504", WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(WCValues.circle: WCShape, "82a474797065a977635f636972636c65a6726164697573cb3ff8000000000000", WCShapes.snake)
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "82a46b696e64a66f70656e6564a2696401", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(WCValues.closed: WCEvent, "83a46b696e64a85743436c6f736564a2696402a6726561736f6ea4646f6e65", summon[Schema[WCEvent]])
+        }
+        "a record of maps of every key kind: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.maps,
+                "86a662794e616d6582a16101a16202a56279496e749282a36b657901a576616c7565a36f6e6582a36b657902a576616c7565a374776fa662794c6f6e679182a36b65790aa576616c7565c3a66279436861729182a36b657978a576616c756501a862795265636f72649182a36b657982a17801a56c6162656ca16ba576616c756505a4627949649182a36b6579a3696431a576616c756507",
+                summon[Schema[WCMaps]]
+            )
+            wireWrites(
+                WCValues.maps,
+                "86a662794e616d6582a16101a16202a56279496e749282a36b657901a576616c7565a36f6e6582a36b657902a576616c7565a374776fa662794c6f6e679182a36b65790aa576616c7565c3a66279436861729182a36b657978a576616c756501a862795265636f72649182a36b657982a17801a56c6162656ca16ba576616c756505a46279496481a369643107",
+                summon[Schema[WCMaps]]
+            )
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "81a16d82a16101a16202", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(
+                WCValues.mapByInt,
+                "81a16d9282a36b657901a576616c7565a36f6e6582a36b657902a576616c7565a374776f",
+                summon[Schema[WCMapByInt]]
+            )
+        }
+        "a map keyed by Long" in {
+            wirePin(WCValues.mapByLong, "81a16d9182a36b65790aa576616c7565c3", summon[Schema[WCMapByLong]])
+        }
+        "a map keyed by Char" in {
+            wirePin(WCValues.mapByChar, "81a16d9182a36b657978a576616c756501", summon[Schema[WCMapByChar]])
+        }
+        "a map keyed by a record" in {
+            wirePin(WCValues.mapByRecord, "81a16d9182a36b657982a17801a56c6162656ca16ba576616c756505", summon[Schema[WCMapByRecord]])
+        }
+        "a map keyed by a string-backed type: the pair form decodes and the object form is written" in {
+            wireDecodes(
+                WCValues.mapById,
+                "81a16d9282a36b6579a3696431a576616c75650782a36b6579a3696432a576616c756508",
+                summon[Schema[WCMapById]]
+            )
+            wireWrites(WCValues.mapById, "81a16d82a369643107a369643208", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(WCValues.defaultsAll, "84a46e616d65a164a5636f756e7407a56c6162656ca178a473697a6503", summon[Schema[WCDefaults]])
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(
+                WCValues.defaultsSet,
+                "85a46e616d65a164a5636f756e7401a56c6162656ca179a46e6f7465a16ea473697a65c0",
+                summon[Schema[WCDefaults]]
+            )
+        }
+        "present optional fields" in {
+            wirePin(WCValues.maybePresent, "84a16101a162a173a16382a17802a56c6162656ca163a16404", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "80", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "80", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "82a47479706501a17805", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "82a47479706502a173a162", summon[Schema[WCNumbered]])
+        }
+        "a numbered variant under the wrapper form, written by name" in {
+            wirePin(WCWrapA(3): WCNumberedWrapped, "81a75743577261704181a17803", summon[Schema[WCNumberedWrapped]])
+        }
+        "a numbered case object under the wrapper form, written by name" in {
+            wirePin(WCWrapB: WCNumberedWrapped, "81a75743577261704280", summon[Schema[WCNumberedWrapped]])
+        }
+        "a tagOnly variant" in {
+            wirePin(WCLow: WCLevel, "a557434c6f77", summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant" in {
+            wirePin(WCHigh: WCLevel, "a26869", summon[Schema[WCLevel]])
+        }
+        "a known variant beside a catch-all" in {
+            wirePin(WCKnown(1): WCOpen, "82a474797065a757434b6e6f776ea17801", summon[Schema[WCOpen]])
+        }
+        "a catch-all variant" in {
+            wirePin(WCValues.other: WCOpen, "82a474797065a37a7a7aa17901", summon[Schema[WCOpen]])
+        }
+    }
+
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = MsgPack.decode[WCDefaults](MsgPack.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), s"decoded $decoded")
+    }
+
+    "a Short out of range or with a fraction fails with one exception type, read directly or from a captured value" in {
+        val (direct, captured) = CodecTestSupport.shortNarrowing[MsgPack]
+        assert(direct == Chunk("RangeException", "TypeMismatchException"), direct.toString)
+        assert(captured == direct, s"direct: $direct, captured: $captured")
+    }
+
+    "a record cut off before its end is truncated input" in {
+        val kind = CodecTestSupport.truncation[MsgPack]
+        assert(kind == "TruncatedInputException", kind)
+    }
+
 end MsgPackTest
 
 // ===== test fixtures (each shares a name prefix with no source file; local to this suite) =====
