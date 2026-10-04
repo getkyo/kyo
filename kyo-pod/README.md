@@ -332,6 +332,7 @@ Fields group by concern:
 
 | group | fields |
 |-------|--------|
+| image | `image`, `platform` |
 | identity | `name`, `hostname`, `user`, `labels` |
 | runtime | `command`, `env`, `interactive`, `allocateTty` |
 | networking | `ports`, `networkMode`, `dns`, `extraHosts` |
@@ -339,6 +340,18 @@ Fields group by concern:
 | resources | `memory`, `memorySwap`, `cpuLimit`, `cpuAffinity`, `maxProcesses` |
 | security | `privileged`, `addCapabilities`, `dropCapabilities`, `readOnlyFilesystem` |
 | lifecycle | `autoRemove`, `restartPolicy`, `stopSignal`, `stopTimeout`, `healthCheck` |
+
+Pinning a multi-architecture image by its index digest does not choose an architecture. Without `platform`, the daemon creates the container from whatever copy its store holds under the reference, so a copy another platform's pull left behind runs under emulation. `platform` names the copy to run: `init` pulls it when the store holds only another platform's. `Container.Platform.host` is the daemon's own platform, which under podman machine or Docker Desktop is the Linux VM's:
+
+```scala
+Container.Platform.host.map { host =>
+    Container.init(Container.Config(ContainerImage("alpine")).platform(host))
+}
+```
+
+`platform` is unset by default, so an image built only for another platform still runs under emulation when the daemon can emulate it.
+
+Docker's classic image store holds one copy per reference, so it refuses to pull a second platform's copy of an index digest it already holds for another platform. `init` then fails with `ContainerImagePlatformConflictException` and leaves the cached copy in place, since other users of the daemon may rely on it. Reference the platform's own manifest digest instead, or remove the image first. Docker's containerd image store, the default for fresh installs from Docker Engine 29 on, and podman both keep one copy per platform.
 
 ### Backend Selection
 
@@ -623,7 +636,7 @@ All container operations fail with `Abort[ContainerException]`. The hierarchy is
 |---|---|---|
 | `ContainerBackendException` *(concrete, also used directly)* | `ContainerBackendUnavailableException(backend, reason)`, `ContainerTimeoutException(operation, duration)`, `ContainerNotSupportedException(operation, detail)` | Retry on transport failures, fail fast at boot, bail on missing capabilities. Instantiated directly for HTTP transport errors, meter closures, and panics during daemon requests. |
 | `ContainerNotFoundException` *(abstract)* | `ContainerMissingException(id)`, `ContainerImageMissingException(image)`, `ContainerNetworkMissingException(id)`, `ContainerVolumeMissingException(id)` | Often absorbable in idempotent cleanup; useful for fallback pulls. Always a specific resource leaf. |
-| `ContainerConflictException` *(concrete, also used directly)* | `ContainerAlreadyExistsException(name)`, `ContainerAlreadyRunningException(id)`, `ContainerAlreadyStoppedException(id)`, `ContainerPortConflictException(port, detail)`, `ContainerVolumeInUseException(id, containers)` | Frequently absorb as success (idempotent start/stop). Instantiated directly for network-endpoint-already-attached-style conflicts. |
+| `ContainerConflictException` *(concrete, also used directly)* | `ContainerAlreadyExistsException(name)`, `ContainerAlreadyRunningException(id)`, `ContainerAlreadyStoppedException(id)`, `ContainerPortConflictException(port, detail)`, `ContainerImagePlatformConflictException(image, platform, detail)`, `ContainerVolumeInUseException(id, containers)` | Frequently absorb as success (idempotent start/stop). Instantiated directly for network-endpoint-already-attached-style conflicts. |
 | `ContainerOperationException` *(concrete, also used directly)* | `ContainerStartFailedException(id, reason)`, `ContainerExecFailedException(id, cmd, exitCode, stderr)`, `ContainerAuthException(registry, detail)`, `ContainerBuildFailedException(context, detail, cause)`, `ContainerHealthCheckException(id, reason, attempts, lastError)` | Daemon rejected the request; propagate with context. Instantiated directly for unclassified operation rejections. |
 | `ContainerDecodeException` *(concrete)* | *(no leaves; used directly)* | Daemon response couldn't be parsed. Programmer-level or daemon version mismatch. |
 

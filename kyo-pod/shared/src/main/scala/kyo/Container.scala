@@ -470,14 +470,14 @@ object Container:
             // retrying either never helps. A registry that could not answer asserts neither, and is the one
             // up-front failure worth another attempt, so it alone is retried.
             Retry[ContainerRegistryUnavailableException](retrySchedule) {
-                b.imageEnsure(config.image, Absent, Absent)
+                b.imageEnsure(config.image, config.platform, Absent)
             }.andThen {
                 // The image was present, but under concurrent suites another operation can remove it before
                 // `create` runs (the HTTP backend's create then returns 404 / ImageMissing, since unlike
                 // `docker run` it does not auto-pull). Retry re-ensures (re-pulling the vanished image) then
                 // re-creates; scoped to ImageMissing so create conflicts and other errors propagate at once.
                 Retry[ContainerImageMissingException](retrySchedule) {
-                    b.imageEnsure(config.image, Absent, Absent).andThen(stamped(config).map(b.create))
+                    b.imageEnsure(config.image, config.platform, Absent).andThen(stamped(config).map(b.create))
                 }
             }.map { cid =>
                 // Capture the HttpClient bound at registration: by finalizer time the fiber-local has unwound to the
@@ -591,10 +591,10 @@ object Container:
                     // race, re-pulling on each attempt; scoped to ImageMissing so create conflicts and other
                     // errors propagate at once.
                     Retry[ContainerRegistryUnavailableException](retrySchedule) {
-                        b.imageEnsure(config.image, Absent, Absent)
+                        b.imageEnsure(config.image, config.platform, Absent)
                     }.andThen {
                         Retry[ContainerImageMissingException](retrySchedule) {
-                            b.imageEnsure(config.image, Absent, Absent).andThen(stamped(config).map(b.create))
+                            b.imageEnsure(config.image, config.platform, Absent).andThen(stamped(config).map(b.create))
                         }
                     }.map { cid =>
                         val container = new Container(cid, config, b, healthRef, pendingRef)
@@ -797,6 +797,12 @@ object Container:
       */
     final case class Config(
         image: ContainerImage,
+        /** The platform whose copy of `image` the container runs. `Absent` leaves the choice to the daemon, which takes whatever copy
+          * its store holds under the reference: for an image index pinned by digest, a copy another platform's pull left behind is
+          * created and run under emulation. `Present` makes `init` pull that platform's copy when the store holds only another, and
+          * the daemon create the container from it. [[Container.Platform.host]] names the daemon's own platform.
+          */
+        platform: Maybe[Container.Platform],
         command: Maybe[Command],
         name: Maybe[String],
         hostname: Maybe[String],
@@ -857,6 +863,8 @@ object Container:
         def command(cmd: Command): Config = copy(command = Present(cmd))
 
         def command(cmd: String*): Config = copy(command = Present(Command(cmd*)))
+
+        def platform(p: Container.Platform): Config = copy(platform = Present(p))
 
         def name(n: String): Config = copy(name = Present(n))
 
@@ -979,6 +987,7 @@ object Container:
                 tag = Absent,
                 digest = Absent
             ),
+            platform = Absent,
             command = Absent,
             name = Absent,
             hostname = Absent,
@@ -2070,6 +2079,15 @@ object Container:
 
         def apply(os: String, arch: String): Platform =
             default.copy(os = os, arch = arch)
+
+        /** The platform the current backend's daemon runs containers on natively.
+          *
+          * It is the daemon's platform, not the calling process's: under podman machine or Docker Desktop the containers run in a Linux
+          * VM, whose architecture is the one an image must match to run without emulation. Pass it to [[Config.platform]] to keep a
+          * multi-architecture image from running another platform's cached copy.
+          */
+        def host(using Frame): Platform < (Async & Abort[ContainerException]) =
+            currentBackend.map(_.hostPlatform)
 
         // Linux
         val LinuxAmd64    = Platform("linux", "amd64")

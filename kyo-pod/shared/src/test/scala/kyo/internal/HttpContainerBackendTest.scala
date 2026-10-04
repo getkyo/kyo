@@ -410,6 +410,24 @@ class HttpContainerBackendTest extends BasePodTest:
                     assert(result.failure.exists(_.isInstanceOf[ContainerAuthException]), s"expected an auth failure, got $result")
             }
         }
+
+        // Docker's classic image store keeps one copy per digest reference, so a platform's pull of an index already cached for
+        // another platform is refused mid-stream. Read as an unclassified failure, nothing tells the caller the store is the cause.
+        "a refused overwrite of another platform's copy is a platform conflict" in {
+            val digest  = "sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            val image   = ContainerImage(s"docker.io/library/busybox@$digest")
+            val arm64   = Container.Platform("linux", "arm64")
+            val line    = s"""{"errorDetail":{"message":"cannot overwrite digest $digest"},"error":"cannot overwrite digest $digest"}"""
+            val backend = new HttpContainerBackend("/unused.sock")
+            Abort.run[ContainerException](Emit.run(backend.processPullLine(line, image, Present(arm64)))).map { result =>
+                result.failure match
+                    case Present(e: ContainerImagePlatformConflictException) =>
+                        assert(e.image == image)
+                        assert(e.platform == Present(arm64))
+                        assert(e.detail.contains(digest))
+                    case other => fail(s"expected a platform conflict, got $result")
+            }
+        }
     }
 
 end HttpContainerBackendTest

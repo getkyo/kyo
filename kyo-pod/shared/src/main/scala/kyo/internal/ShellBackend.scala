@@ -61,6 +61,7 @@ final private[kyo] class ShellBackend(
             val args = Chunk("create") ++
                 // Config flags
                 config.name.map(n => Chunk("--name", n)).getOrElse(Chunk.empty) ++
+                config.platform.map(p => Chunk("--platform", p.reference)).getOrElse(Chunk.empty) ++
                 // Hostname
                 config.hostname.map(h => Chunk("--hostname", h)).getOrElse(Chunk.empty) ++
                 // User
@@ -1526,6 +1527,19 @@ final private[kyo] class ShellBackend(
             }
         }
 
+    // A remote podman's `version` client side is the caller's machine, so podman is asked for the host its `info` reports. Docker's
+    // `info` names the architecture as uname does (`aarch64`), so docker is asked for its server's Go names through `version`.
+    def hostPlatform(using Frame): Container.Platform < (Async & Abort[ContainerException]) =
+        val args =
+            if cmd.endsWith("podman") then Chunk("info", "--format", "{{.Host.OS}}/{{.Host.Arch}}")
+            else Chunk("version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
+        run(ResourceContext.Op("version"), args.toSeq*).map { raw =>
+            Container.Platform.parse(raw.trim) match
+                case Result.Success(platform) => platform
+                case _                        => Abort.fail(ContainerBackendException(s"$cmd answered no platform", raw.trim))
+        }
+    end hostPlatform
+
     def imageRemove(image: ContainerImage, force: Boolean, noPrune: Boolean)(
         using Frame
     ): Chunk[ContainerImage.DeleteResponse] < (Async & Abort[ContainerException]) =
@@ -2247,6 +2261,14 @@ final private[kyo] class ShellBackend(
                         (matchesAny(DaemonErrorPhrases.ServerError) || matchesAny(DaemonErrorPhrases.RegistryUnreachable))
                     then
                         ContainerRegistryUnavailableException(ctx.describe, output)
+                    else if matchesAny(DaemonErrorPhrases.PlatformCopyConflict) then
+                        val ref = ctx match
+                            case ResourceContext.Image(r) => r
+                            case other                    => other.describe
+                        val platform = args.sliding(2).collectFirst {
+                            case Seq("--platform", p) => Container.Platform.parse(p).toMaybe
+                        }.getOrElse(Absent)
+                        ContainerImagePlatformConflictException(ContainerImage.parse(ref).getOrElse(ContainerImage(ref)), platform, output)
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then
                         val dockerIdx = output.indexOf("docker://")

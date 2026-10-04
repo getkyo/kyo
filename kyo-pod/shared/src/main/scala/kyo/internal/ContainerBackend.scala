@@ -189,11 +189,10 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
     final def imageEnsure(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame
     ): Unit < (Async & Abort[ContainerException]) =
-        Abort.recover[ContainerException](
-            (_: ContainerException) => imagePull(image, platform, auth),
-            (_: Throwable) => imagePull(image, platform, auth)
-        ) {
-            imageInspect(image).unit
+        // A copy cached for another platform is as good as missing when one is requested: create would refuse it.
+        Abort.run[Throwable](imageInspect(image)).map {
+            case Result.Success(info) if platform.forall(p => info.os == p.os && info.architecture == p.arch) => Kyo.unit
+            case _ => imagePull(image, platform, auth)
         }
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
@@ -205,6 +204,9 @@ abstract private[kyo] class ContainerBackend(val meter: Meter):
     ): Chunk[ContainerImage.Summary] < (Async & Abort[ContainerException])
 
     def imageInspect(image: ContainerImage)(using Frame): ContainerImage.Info < (Async & Abort[ContainerException])
+
+    /** The platform the daemon runs containers on natively: the daemon's, not the caller's, which differ under a VM-backed daemon. */
+    def hostPlatform(using Frame): Container.Platform < (Async & Abort[ContainerException])
 
     def imageRemove(image: ContainerImage, force: Boolean, noPrune: Boolean)(
         using Frame

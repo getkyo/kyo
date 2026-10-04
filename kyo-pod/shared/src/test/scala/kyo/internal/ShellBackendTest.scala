@@ -333,6 +333,26 @@ class ShellBackendTest extends kyo.BasePodTest:
                 s"expected every failed connection to read as a registry fault, got $classes"
             )
         }
+
+        "a refused overwrite of another platform's copy is a platform conflict naming the requested platform" in {
+            val ref    = "docker.io/library/busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            val output =
+                "Error response from daemon: cannot overwrite digest sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            backend.mapError(output, ResourceContext.Image(ref), Seq("pull", "--platform", "linux/arm64", ref)) match
+                case e: kyo.ContainerImagePlatformConflictException =>
+                    assert(e.image.reference == ref)
+                    assert(e.platform == Present(Container.Platform("linux", "arm64")))
+                    assert(e.detail == output)
+                case other => fail(s"expected a platform conflict, got $other")
+            end match
+        }
+
+        "a refused overwrite with no platform requested names none" in {
+            val ref = "docker.io/library/busybox@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092"
+            backend.mapError("cannot overwrite digest sha256:5cec3fc1", ResourceContext.Image(ref), Seq("pull", ref)) match
+                case e: kyo.ContainerImagePlatformConflictException => assert(e.platform == Absent)
+                case other                                          => fail(s"expected a platform conflict, got $other")
+        }
     }
 
     /** The docker CLI prints a failed pull as the daemon's own message, with no status of its own; the HTTP backend types the same

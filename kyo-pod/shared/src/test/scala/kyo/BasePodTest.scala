@@ -108,11 +108,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       * this method registers leaves only for the pinned runtime; combined with sequential leaves, ≤1 in-flight container op per daemon.
       */
     def runBackends(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        runBackendsOf(_ => v)
+
+    /** [[runBackends]] whose body gets the runtime name, for a leaf whose expected outcome depends on which daemon it reaches. */
+    def runBackendsOf(v: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
         Seq("podman", "docker").filter(ContainerRuntime.isAvailable).foreach { runtime =>
             s"[$runtime]" - {
                 ContainerRuntime.findSocket(runtime).foreach { path =>
                     "http" in {
-                        Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v))
+                        Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v(runtime)))
                     }
                 }
 
@@ -123,7 +127,7 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                     // cannot serve Shell at all. Cancelled rather than unregistered so the skip is visible in
                     // the run's own totals instead of the leaf silently not existing.
                     requireRuntimeCli(runtime)
-                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v))
+                    Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v(runtime)))
                 }
             }
         }
