@@ -91,13 +91,13 @@ object Runner {
                 val abs = f.getCanonicalFile.getAbsolutePath
                 if (abs.startsWith(cwd + "/")) abs.substring(cwd.length + 1) else abs
             }.mkString(", ")
-            log.info(s"doctest: validating $labels (${classpath.size} classpath entries)")
-            log.debug(s"doctest: fork command: ${command.mkString(" ")}")
+            log.info(labelled(labels, s"validating against ${classpath.size} classpath entries"))
+            log.debug(labelled(labels, s"fork command: ${command.mkString(" ")}"))
 
             // The fork's output goes through the task's logger: an inherited stdout is the sbt server's own, which an
             // `sbt --client` session never shows, so a failing block's compiler errors would reach no one.
             val exitCode = scala.sys.process.Process(command).!(
-                scala.sys.process.ProcessLogger(line => log.info(line), line => log.error(line))
+                scala.sys.process.ProcessLogger(line => log.info(labelled(labels, line)), line => log.error(labelled(labels, line)))
             )
 
             // Parse the result file if it was written.
@@ -110,18 +110,18 @@ object Runner {
                 }
 
             report.foreach { r =>
-                log.info(
-                    s"doctest: total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} warnings=${r.warnings} failures=${r.failureCount}"
-                )
-                val summary =
+                val summary = labelled(
+                    labels,
                     s"total=${r.totalBlocks} compiled=${r.compiled} cacheHits=${r.cacheHits} warnings=${r.warnings} failures=${r.failureCount}"
+                )
+                log.info(summary)
                 val summaryFile = new File(effectiveCacheDir, "last-summary.txt")
                 NioFiles.writeString(summaryFile.toPath, summary, StandardCharsets.UTF_8)
             }
 
             if (exitCode != 0) {
                 throw new sbt.MessageOnlyException(
-                    s"doctest: validation failed (exit code $exitCode). See output above for details."
+                    labelled(labels, s"validation failed (exit code $exitCode). See output above for details.")
                 )
             }
         } finally {
@@ -132,6 +132,12 @@ object Runner {
             }
         }
     }
+
+    // Every line a run logs names the Markdown it validates. Projects run doctest concurrently (DoctestTag allows 2) and their lines
+    // interleave in one log, so a line that names no source cannot be attributed: a summary read against the line before it is often
+    // another project's.
+    private[sbt] def labelled(labels: String, message: String): String =
+        s"doctest: $labels: $message"
 
     private def deleteRecursive(f: File): Unit = {
         if (f.isDirectory) {
