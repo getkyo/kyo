@@ -958,11 +958,11 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
 
     def write(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-        if data.isEmpty || offset >= data.size then WriteResult.Done
-        else
-            handle.tls match
-                case Present(tls) => writeTls(handle, data, offset, tls)
-                case Absent       => writePlain(handle, data, offset)
+        handle.tls match
+            // No early Done at the span's end: writeTls returns Partial at offset == data.size when its last record only partly fit the socket,
+            // and only writeTls flushes that record's held ciphertext on the retry.
+            case Present(tls) => writeTls(handle, data, offset, tls)
+            case Absent       => if data.isEmpty || offset >= data.size then WriteResult.Done else writePlain(handle, data, offset)
 
     private def writePlain(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         try
