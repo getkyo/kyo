@@ -284,6 +284,32 @@ class ContainerItTest extends BasePodTest:
             end for
         }
 
+        "registers scope cleanup — container removed when the fiber holding the scope is interrupted" - runBackendsPendingUntilFixed(
+            "Open: by decision there is no backpressure on abnormal exit: the scope's async finalizers run on a detached drain, so the " +
+                "interrupted fiber's join returns while the container's removal is still running"
+        ) {
+            for
+                idRef   <- AtomicRef.init[Container.Id](Container.Id(""))
+                started <- Latch.init(1)
+                fiber   <- Fiber.initUnscoped(Scope.run {
+                    Container.init(alpinePersistent(alpine)).map { c =>
+                        idRef.set(c.id).andThen(started.release).andThen(Async.never[Unit])
+                    }
+                })
+                _                <- started.await
+                _                <- fiber.interrupt
+                _                <- fiber.getResult
+                id               <- idRef.get
+                presentAfterJoin <- Abort.run[ContainerException](Container.attach(id)).map(_.isSuccess)
+                // The finalizer does run: the drain removes the container, only after the join has returned.
+                _ <- assertEventually(Abort.run[ContainerException](Container.attach(id)).map {
+                    case Result.Failure(_: ContainerMissingException) => true
+                    case _                                            => false
+                })
+            yield assert(!presentAfterJoin, s"container ${id.value.take(12)} was still present right after the interrupted fiber's join")
+            end for
+        }
+
         "convenience overload with image" - runBackends {
             Container.init(
                 image = ContainerImage("alpine", "latest"),

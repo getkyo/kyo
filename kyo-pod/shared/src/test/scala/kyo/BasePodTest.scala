@@ -122,6 +122,16 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             runtime => Container.withBackendConfig(_.Shell(runtime))(v(runtime))
         )
 
+    /** [[runBackends]] with every runnable leaf marked `pendingUntilFixed(reason)`, for a defect every backend shows the same way. A
+      * runtime that cannot run here keeps its plain cancelled leaves.
+      */
+    def runBackendsPendingUntilFixed(reason: String)(v: kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope))(using Frame): Unit =
+        registerBackends(
+            (_, path) => Container.withBackendConfig(_.UnixSocket(Path(path)))(checkingContainerLeak(v)),
+            runtime => Container.withBackendConfig(_.Shell(runtime))(checkingContainerLeak(v)),
+            Present(reason)
+        )
+
     /** The `[runtime] › http` and `[runtime] › shell` leaves of the [[runBackends]] family, for every runtime this process answers for.
       *
       * A runtime that cannot run here gets the same two leaves cancelled with its reason, so a filter that matches the real leaves where
@@ -129,8 +139,12 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
       */
     private def registerBackends(
         http: (String, String) => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope),
-        shell: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope)
+        shell: String => kyo.test.AssertScope ?=> Unit < (Async & Abort[Any] & Scope),
+        pendingUntilFixed: Maybe[String] = Absent
     )(using Frame): Unit =
+        // The decorator goes on each leaf: an enclosing group does not pass `pendingUntilFixed` down to the leaves it holds.
+        def leaf(name: String): kyo.test.TestBuilder =
+            pendingUntilFixed.fold(kyo.test.TestBuilder(name))(reason => name.pendingUntilFixed(reason))
         ContainerRuntime.assigned.foreach { (runtime, cannotRun) =>
             s"[$runtime]" - {
                 cannotRun match
@@ -139,9 +153,9 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
                         "shell" in cancel(reason)
                     case Absent =>
                         ContainerRuntime.findSocket(runtime).foreach { path =>
-                            "http" in http(runtime, path)
+                            leaf("http") in http(runtime, path)
                         }
-                        "shell" in {
+                        leaf("shell") in {
                             // The http arm above needs a socket to talk to; this one needs a CLI that reaches the
                             // daemon. A runtime reached through a mounted socket with no CLI installed (a build
                             // container, and any CI runner wired the same way) is genuinely available for HTTP and
