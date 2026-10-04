@@ -265,6 +265,19 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a worker that never answers the readiness probe fails init with CompilerWorkerReadyException carrying the timeout" in {
+        // An empty classpath leaves the worker JVM unable to load its main class, so it can never answer; the readiness
+        // timeout is then the only way init can end, and its length sets only how long the leaf takes.
+        val unanswerable = spawnConfig().copy(classpath = Chunk.empty, toolchain = Compiler.Toolchain("3.0.0", Chunk.empty))
+        withDriver { driver =>
+            Abort.run[CompilerException](SpawnBackend.init(unanswerable, driver, 11, readyTimeout = 2.seconds)).map {
+                case Result.Failure(CompilerWorkerReadyException(version, timeout)) =>
+                    assert(version == "3.0.0" && timeout == 2.seconds, s"version $version, timeout $timeout")
+                case other => fail(s"expected CompilerWorkerReadyException, got $other")
+            }
+        }
+    }
+
     "interrupting init during the readiness probe force-kills the partial worker (no orphaned process)" in {
         withDriver { driver =>
             for

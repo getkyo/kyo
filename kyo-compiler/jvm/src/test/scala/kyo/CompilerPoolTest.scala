@@ -181,11 +181,8 @@ class CompilerPoolTest extends kyo.test.Test[Any]:
                             cMismatch   <- pool.compiler(mismatchCfg)
                             resMismatch <- Abort.run[CompilerException](cMismatch.compile(Compiler.Uri("m.scala"), "object M"))
                             _ = resMismatch match
-                                case Result.Failure(e: CompilerInitializationFailure) =>
-                                    assert(
-                                        e.getMessage.contains("worker"),
-                                        s"expected a worker initialization failure, got: '${e.getMessage}'"
-                                    )
+                                case Result.Failure(CompilerWorkerReadyException(version, _)) =>
+                                    assert(version == "3.0.0", s"expected the mismatched toolchain's version, got $version")
                                 case other =>
                                     assert(
                                         false,

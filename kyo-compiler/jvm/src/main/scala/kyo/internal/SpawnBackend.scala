@@ -111,6 +111,10 @@ private[kyo] object SpawnBackend:
             }
         }.map {
             case Result.Success(value) => value
+            // A typed failure from inside init (the readiness probe's CompilerWorkerReadyException) already names what failed;
+            // only an untyped throw is a failure to launch the worker.
+            case Result.Failure(e: CompilerException) =>
+                Log.error("worker backend failed to initialize", e).andThen(Abort.fail(e))
             // Log the failure; CompilerWorkerSpawnException carries the Scala version and the cause.
             case Result.Failure(t) =>
                 Log.error("worker backend failed to initialize", t)
