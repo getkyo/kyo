@@ -6,9 +6,8 @@ import kyo.scheduler.IOPromise
 import scala.scalajs.js.annotation.JSImport
 import scala.scalajs.js as sjs
 
-/** Real-Node loopback tests for the [[JsIoDriver]] peer-close grace probe. Node gives no non-consuming FIN signal on a paused socket
-  * (`pause()` calls `readStop`, so a FIN never reaches Node while parked), so `isPeerClosed` detects the FIN by draining the socket toward
-  * the stream end.
+/** Real-Node loopback tests for the [[JsIoDriver]] peer-close watch. Node gives no non-consuming FIN signal on a paused socket
+  * (`pause()` calls `readStop`, so a FIN never reaches Node while parked), so the watch reads the socket on toward the stream end.
   */
 class JsIoDriverTest extends kyo.net.Test:
 
@@ -55,10 +54,8 @@ class JsIoDriverTest extends kyo.net.Test:
     private def buffer(bytes: Array[Byte]): sjs.Dynamic =
         sjs.Dynamic.global.Buffer.from(sjs.typedarray.byteArray2Int8Array(bytes).buffer)
 
-    /** How many times a standing probe is read while its peer is open: each read resumes it once, so a latch on any is the regression.
-      * The "stays false" leaf asserts over this read count, not a clock.
-      */
-    private val liveWatchReads = 25
+    /** How many chunks a live peer sends while a watch is registered: the watch must stay pending across every one of them. */
+    private val liveWatchChunks = 25
 
     /** Completed by the first of `events` on `socket`. Armed before the action that causes the event, since Node emits on a later turn. */
     private def nextEvent(socket: sjs.Dynamic, events: String*)(using Frame): Fiber[Unit, Any] =
@@ -68,33 +65,77 @@ class JsIoDriverTest extends kyo.net.Test:
         promise.safe
     end nextEvent
 
-    /** Reads the probe until it reports the peer closed. Each read that reports false resumed the socket, so the next `data`, `end` or
-      * `close` is awaited before reading again: the wait is bounded by Node's events, never by a clock.
-      */
-    private def untilPeerClosed(driver: JsIoDriver, handle: JsHandle)(using Frame): Unit < Async =
-        Loop.foreach {
-            Sync.defer {
-                val next = nextEvent(handle.socket, "data", "end", "close")
-                if driver.isPeerClosed(handle) then Loop.done(()) else next.get.andThen(Loop.continue)
-            }
-        }
+    private def watched(watch: Promise.Unsafe[Unit, Abort[Closed]])(using Frame): Result[Closed, Unit] < Async =
+        Abort.run[Closed](watch.safe.get)
 
-    "isPeerClosed observes a peer FIN while backpressured by resuming for one chunk at a time" in {
+    "a watch registered while backpressured completes once the peer's FIN is read" in {
         given Frame = Frame.internal
         val driver  = JsIoDriver.init()
         openPair().map { case (serverSock, clientSock) =>
             val handle = JsHandle.init(serverSock, driver, Frame.internal)
-            // Backpressured: no awaitRead is armed. The peer writes 3 bytes then half-closes (FIN via end()).
+            val watch  = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            // Backpressured: no awaitRead is armed. The peer writes 3 bytes then half-closes, which the paused socket cannot see on its own.
             discard(clientSock.write(buffer(Array[Byte](10, 20, 30))))
             discard(clientSock.end())
-            // Each call resumes one chunk toward the FIN.
-            assert(!driver.isPeerClosed(handle), "first isPeerClosed resumes the probe and returns false (not observed yet)")
-            untilPeerClosed(driver, handle).map { _ =>
-                val observed = driver.isPeerClosed(handle)
+            driver.awaitPeerClose(handle, watch)
+            watched(watch).map { outcome =>
                 discard(clientSock.destroy())
                 driver.closeHandle(handle)
                 driver.close()
-                assert(observed, "isPeerClosed must observe the peer FIN after resuming the paused socket drains to the stream end")
+                assert(outcome == Result.succeed(()), s"the watch must report the peer's close, got $outcome")
+                assert(handle.peerCloseWatch.isEmpty, "a completed watch must not stay registered")
+            }
+        }
+    }
+
+    "a watch on a live peer stays pending while it sends, and completes on its FIN" in {
+        given Frame = Frame.internal
+        val driver  = JsIoDriver.init()
+        openPair().map { case (serverSock, clientSock) =>
+            val handle = JsHandle.init(serverSock, driver, Frame.internal)
+            val watch  = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            driver.awaitPeerClose(handle, watch)
+            // Each chunk's 'data' event is awaited, so Node had the turn to surface a FIN, had there been one. A count of chunks, not a stretch
+            // of wall-clock time.
+            Loop(0) { i =>
+                if i >= liveWatchChunks then Loop.done(true)
+                else
+                    val data = nextEvent(serverSock, "data")
+                    discard(clientSock.write(buffer(Array[Byte](i.toByte))))
+                    data.get.andThen(if watch.done() then Loop.done(false) else Loop.continue(i + 1))
+                end if
+            }.map { stayedPending =>
+                // The watch read every chunk above, so it was live: the FIN now must complete it. Without this a watch that never resumed
+                // the socket would stay pending just as happily, proving nothing.
+                discard(clientSock.end())
+                watched(watch).map { outcome =>
+                    discard(clientSock.destroy())
+                    driver.closeHandle(handle)
+                    driver.close()
+                    assert(stayedPending, "the watch must stay pending for a live peer that has not sent a FIN")
+                    assert(outcome == Result.succeed(()), s"the watch must report the peer's FIN, got $outcome")
+                }
+            }
+        }
+    }
+
+    "a withdrawn watch is not completed by the peer's FIN, while the watch that replaced it is" in {
+        given Frame = Frame.internal
+        val driver  = JsIoDriver.init()
+        openPair().map { case (serverSock, clientSock) =>
+            val handle    = JsHandle.init(serverSock, driver, Frame.internal)
+            val withdrawn = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            val current   = Promise.Unsafe.init[Unit, Abort[Closed]]()
+            driver.awaitPeerClose(handle, withdrawn)
+            driver.cancelPeerCloseWatch(handle, withdrawn)
+            discard(clientSock.end())
+            driver.awaitPeerClose(handle, current)
+            watched(current).map { outcome =>
+                discard(clientSock.destroy())
+                driver.closeHandle(handle)
+                driver.close()
+                assert(outcome == Result.succeed(()), s"the registered watch must report the peer's FIN, got $outcome")
+                assert(!withdrawn.done(), "a withdrawn watch must never be completed")
             }
         }
     }
@@ -139,40 +180,6 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
-    "isPeerClosed stays false for a live peer that has not closed" in {
-        given Frame = Frame.internal
-        val driver  = JsIoDriver.init()
-        openPair().map { case (serverSock, clientSock) =>
-            val handle = JsHandle.init(serverSock, driver, Frame.internal)
-            // The peer stays connected and sends one byte per read, never a FIN: each read resumes the socket, the byte's 'data' event is awaited
-            // (so Node had the turn to surface a FIN, had there been one), and every read must report false. A count of reads, not a stretch of
-            // wall-clock time.
-            assert(!driver.isPeerClosed(handle), "first isPeerClosed returns false")
-            Loop(0) { i =>
-                if i >= liveWatchReads then Loop.done(true)
-                else
-                    val data = nextEvent(serverSock, "data")
-                    discard(clientSock.write(buffer(Array[Byte](i.toByte))))
-                    if driver.isPeerClosed(handle) then Loop.done(false)
-                    else data.get.andThen(Loop.continue(i + 1))
-                end if
-            }.map { stayedOpen =>
-                assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
-            }.andThen {
-                // Prove the probe was live, not dead: half-closing the peer now must make it observe the FIN. Without this a probe that never
-                // resumed the socket would report false just as happily, proving nothing.
-                discard(clientSock.end())
-                untilPeerClosed(driver, handle).map { _ =>
-                    val observed = driver.isPeerClosed(handle)
-                    discard(clientSock.destroy())
-                    driver.closeHandle(handle)
-                    driver.close()
-                    assert(observed, "the probe was not live: the peer FIN was never observed after the reads above")
-                }
-            }
-        }
-    }
-
     "a graceful close whose output never flushes destroys the socket at closeFlushGrace on the handle's clock, not one tick before" in {
         given Frame = Frame.internal
         Clock.withTimeControl { tc =>
@@ -205,14 +212,14 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
-    "an abandoned backpressured connection is reclaimed after the peer FIN at the grace on the transport's clock" in {
+    "an abandoned backpressured connection is reclaimed at the grace after the peer FIN, on the transport's clock" in {
         given Frame = Frame.internal
         val grace   = 200.millis
         // Small inbound channel so two chunks overflow it.
         val config = kyo.net.NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = grace)
-        // Capture the accepted (server) connection: with its ReadPump parked on the full cap-1 channel the client FIN is observable only through the
-        // peer-close grace poll, so the captured connection's close is the reclaim oracle, validating that the transport threads the grace and
-        // its clock. The client is a raw Node socket, so the accepted side's grace is the only sleep on the controlled clock.
+        // Capture the accepted (server) connection: with its ReadPump parked on the full cap-1 channel the client FIN is observable only through
+        // the peer-close watch, so the captured connection's close is the reclaim oracle, validating that the transport threads the grace and its
+        // clock. The client is a raw Node socket, so the accepted side's grace is the only sleep on the controlled clock.
         Clock.withTimeControl { tc =>
             Clock.get.map { clock =>
                 val transport = JsTransport.init(poolSize = 1, clock = clock)
@@ -226,32 +233,30 @@ class JsIoDriverTest extends kyo.net.Test:
                     accepted <- acceptedP.asInstanceOf[Fiber.Unsafe[kyo.net.Connection, Abort[Closed]]].safe.get
                     socket = accepted.asInstanceOf[Connection[JsHandle]].handle.socket
                     // Two writes, the second sent only once Node surfaced the first on the accepted socket, so they are two 'data' events: one
-                    // fills the cap-1 channel, the other overflows it and parks the pump.
+                    // fills the cap-1 channel, the other overflows it and parks the pump. Once the second has surfaced no read is armed, so the
+                    // FIN below can reach the pump only through its watch.
                     firstData = nextEvent(socket, "data")
                     _ <- Sync.defer(discard(client.write(buffer(Array.fill[Byte](64)(1)))))
                     _ <- firstData.get
+                    secondData = nextEvent(socket, "data")
                     _ <- Sync.defer(discard(client.write(buffer(Array.fill[Byte](64)(2)))))
-                    // The pump arms its grace on the controlled clock exactly when it parks, so the pending sleeper IS the parked state. A FIN
-                    // arriving while a read is still armed takes the ordinary EOF path, leaving the grace reclaim untested.
+                    _ <- secondData.get
+                    _ <- Sync.defer(discard(client.end()))
+                    // The grace sleep is armed only once the watch reports the FIN, so the pending sleeper IS the observed close.
                     _ <- tc.awaitPendingSleepers(1)
                     _ = assert(
                         accepted.inbound.pendingPuts().getOrElse(0) == 1,
                         "the accepted-side ReadPump must be parked on the full channel"
                     )
-                    end = nextEvent(socket, "end")
-                    _ <- Sync.defer(discard(client.end())) // FIN with the accepted-side pump parked
-                    // The first expiry finds the paused socket not yet ended: the probe resumes it toward the FIN and the grace re-arms.
-                    _ <- tc.advance(grace)
-                    _ <- end.get
-                    _ <- tc.awaitPendingSleepers(1)
-                    openAfterFirstExpiry = accepted.isOpen
-                    closing              = accepted.onClosing.safe
-                    _ <- tc.advance(grace)
+                    closing = accepted.onClosing.safe
+                    _ <- tc.advance((grace.toMillis - 1).millis)
+                    openOneTickBefore = accepted.isOpen
+                    _ <- tc.advance(1.millis)
                     _ <- closing.get
                 yield
                     discard(client.destroy())
-                    assert(openAfterFirstExpiry, "the first expiry cannot have observed the FIN on a paused socket, so it must not reclaim")
-                    assert(!accepted.isOpen, "the second expiry must reclaim the abandoned connection whose peer has closed")
+                    assert(openOneTickBefore, "the connection must stay open until the grace after the FIN ends")
+                    assert(!accepted.isOpen, "the grace must reclaim the abandoned connection whose peer has closed")
                 end for
             }
         }

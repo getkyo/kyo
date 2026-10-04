@@ -183,6 +183,10 @@ final private[net] class IoUringDriver private[posix] (
     // what deciding whether to re-issue requires.
     private val cancelTargets = new java.util.concurrent.ConcurrentHashMap[java.lang.Long, java.lang.Long]()
 
+    // The op key of each handle's in-flight peer-close watch, by handle id, so a withdrawal cancels it without scanning `pending`. Reap-carrier
+    // confined: the watch is submitted, withdrawn and reaped only there.
+    private val peerCloseWatches = new java.util.HashMap[java.lang.Long, java.lang.Long]()
+
     // Cancel keys descend from -2, below the wake eventfd's -1 and far from the op generator, which counts up from 1.
     private val cancelKeyGen = new java.util.concurrent.atomic.AtomicLong(-2L)
 
@@ -1065,12 +1069,43 @@ final private[net] class IoUringDriver private[posix] (
     // socket stream into handle.readBuffer under load, fabricating a corrupt handshake record). The handshake reads exclusively through awaitRead.
     override def inlineRecvSafe: Boolean = false
 
-    /** Whether a backpressured `handle`'s peer has closed, for the ReadPump's grace poll. io_uring keeps no standing read registration (its recv
-      * SQEs are one-shot), so there is no edge-delivered latch to read; a non-blocking `poll(2)` off the ring (racing no reap-carrier SQE/CQE) asks
-      * the kernel directly. Skipped on a closing handle (its fd may be closed/recycled, and closeFn's CAS makes a stray reclaim a no-op regardless).
+    /** io_uring keeps no standing read registration (its recv SQEs are one-shot), so the watch is an op of its own: a one-shot poll for
+      * `POLLRDHUP` on the read fd, whose completion is the peer's close. It runs on the reap carrier, the single `get_sqe` producer.
       */
-    override def isPeerClosed(handle: PosixHandle)(using AllowUnsafe, Frame): Boolean =
-        !handle.isClosing() && uring.kyo_uring_poll_peer_closed(handle.readFd) == 1
+    override def awaitPeerClose(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        submitEngineOp(() => submitPeerCloseWatch(promise, handle))
+
+    /** The watch op holds the handle's in-flight count up until it completes, so withdrawing it cancels it in the kernel. */
+    override def cancelPeerCloseWatch(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        submitEngineOp { () =>
+            discard(stalledSubmits.removeIf {
+                case PendingOp.PeerCloseWatch(p, _) => p.equals(promise)
+                case _                              => false
+            })
+            Maybe(peerCloseWatches.get(java.lang.Long.valueOf(handle.id.packed))).foreach { key =>
+                Maybe(pending.get(key.longValue())).foreach {
+                    case PendingOp.PeerCloseWatch(p, _) if p.equals(promise) => cancelOp(key.longValue())
+                    case _                                                   => ()
+                }
+            }
+        }
+
+    private def submitPeerCloseWatch(promise: Promise.Unsafe[Unit, Abort[Closed]], handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if closedFlag.get() || handle.isClosing() then
+            promise.completeDiscard(Result.fail(Closed(handleLabel(handle), handle.createdAt, "handle closing")))
+        else
+            uring.kyo_uring_get_sqe(ring) match
+                case Present(sqe) =>
+                    val key = keyGen.getAndIncrement()
+                    register(key, PendingOp.PeerCloseWatch(promise, handle))
+                    discard(peerCloseWatches.put(java.lang.Long.valueOf(handle.id.packed), java.lang.Long.valueOf(key)))
+                    uring.kyo_uring_prep_poll_peer_close(sqe, handle.readFd)
+                    uring.kyo_uring_sqe_set_data64(sqe, key)
+                    submitBatched()
+                case Absent =>
+                    discard(stalledSubmits.add(PendingOp.PeerCloseWatch(promise, handle)))
+            end match
+    end submitPeerCloseWatch
 
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
@@ -1126,36 +1161,43 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end closeHandle
 
-    /** Submit an `IORING_OP_ASYNC_CANCEL` for every connect this handle still has in flight, so the kernel completes it and the handle's
-      * in-flight count can reach zero. Without this a connect against a peer that never answers pins its deferred close forever.
+    /** Submit an `IORING_OP_ASYNC_CANCEL` for every op this handle has in flight that only the peer or a cancel completes: a connect, and a
+      * peer-close watch. The kernel then completes it and the handle's in-flight count can reach zero. Without this a connect against a peer
+      * that never answers, or a watch on a peer that never closes, pins its deferred close forever.
       *
       * Runs on the reap carrier: every caller reaches it through [[closeHandle]]'s `submitEngineOp`, which is the single `get_sqe`
-      * producer. A full SQ is left alone rather than parked in [[stalledSubmits]]: the entry there is keyed by the op it re-arms, and a
-      * cancel has no op of its own to re-arm, so the TARGET's key is parked in [[stalledCancels]] and retried on the next reap turn once
-      * submit has freed a slot. Dropping it instead is not good enough: a loaded leg owed 66 deferred closes at once, the SQ filled, and the
-      * connects that never received a cancel never reaped, stranding a descriptor until teardown.
+      * producer.
       */
-    private def forceInFlightConnects(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+    private def forceInFlightWaits(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         val id = handle.id.packed
         pending.forEach { (key, op) =>
             op match
-                case PendingOp.Connect(_, h) if h.id.packed == id =>
-                    uring.kyo_uring_get_sqe(ring) match
-                        case Present(sqe) =>
-                            val cancelKey = cancelKeyGen.getAndDecrement()
-                            discard(cancelTargets.put(java.lang.Long.valueOf(cancelKey), java.lang.Long.valueOf(key)))
-                            uring.kyo_uring_prep_cancel64(sqe, key, 0)
-                            uring.kyo_uring_sqe_set_data64(sqe, cancelKey)
-                            discard(diagCancelSubmitted.incrementAndGet())
-                            submitBatched()
-                        case Absent =>
-                            discard(diagCancelParked.incrementAndGet())
-                            discard(stalledCancels.add(key))
-                    end match
-                case _ => ()
+                case PendingOp.Connect(_, h) if h.id.packed == id        => cancelOp(key)
+                case PendingOp.PeerCloseWatch(_, h) if h.id.packed == id => cancelOp(key)
+                case _                                                   => ()
             end match
         }
-    end forceInFlightConnects
+    end forceInFlightWaits
+
+    /** Submit an `IORING_OP_ASYNC_CANCEL` for the op under `key`. Reap carrier only. A full SQ is left alone rather than parked in
+      * [[stalledSubmits]]: the entry there is keyed by the op it re-arms, and a cancel has no op of its own to re-arm, so the TARGET's key is
+      * parked in [[stalledCancels]] and retried on the next reap turn once submit has freed a slot. Dropping it instead is not good enough: a
+      * loaded leg owed 66 deferred closes at once, the SQ filled, and the connects that never received a cancel never reaped, stranding a
+      * descriptor until teardown.
+      */
+    private def cancelOp(key: Long)(using AllowUnsafe, Frame): Unit =
+        uring.kyo_uring_get_sqe(ring) match
+            case Present(sqe) =>
+                val cancelKey = cancelKeyGen.getAndDecrement()
+                discard(cancelTargets.put(java.lang.Long.valueOf(cancelKey), java.lang.Long.valueOf(key)))
+                uring.kyo_uring_prep_cancel64(sqe, key, 0)
+                uring.kyo_uring_sqe_set_data64(sqe, cancelKey)
+                discard(diagCancelSubmitted.incrementAndGet())
+                submitBatched()
+            case Absent =>
+                discard(diagCancelParked.incrementAndGet())
+                discard(stalledCancels.add(key))
+    end cancelOp
 
     /** Retry the cancels that could not reach a full submission queue, once per reap turn from [[reArmStalledSubmits]], after submit has freed
       * SQ slots. A key whose target has since completed on its own is dropped rather than re-submitted: `pending` no longer holds it, so there
@@ -1167,20 +1209,7 @@ final private[net] class IoUringDriver private[posix] (
             stalledCancels.clear()
             while !batch.isEmpty do
                 val key = batch.poll()
-                if pending.containsKey(key) then
-                    uring.kyo_uring_get_sqe(ring) match
-                        case Present(sqe) =>
-                            val cancelKey = cancelKeyGen.getAndDecrement()
-                            discard(cancelTargets.put(java.lang.Long.valueOf(cancelKey), java.lang.Long.valueOf(key)))
-                            uring.kyo_uring_prep_cancel64(sqe, key, 0)
-                            uring.kyo_uring_sqe_set_data64(sqe, cancelKey)
-                            discard(diagCancelSubmitted.incrementAndGet())
-                            submitBatched()
-                        case Absent =>
-                            discard(diagCancelParked.incrementAndGet())
-                            discard(stalledCancels.add(key))
-                    end match
-                end if
+                if pending.containsKey(key) then cancelOp(key)
             end while
     end retryStalledCancels
 
@@ -1223,13 +1252,14 @@ final private[net] class IoUringDriver private[posix] (
                 // effect on a socket that is not yet established, and `cancel` fails only the local promise. So the in-flight count for a
                 // connect the peer never answers can never reach zero, this deferred close never discharges, and the descriptor is held
                 // until the ring tears down (teardownRing's closeAfterDrain sweep is the only thing that has ever reclaimed it). In a
-                // long-lived process that sweep never comes. Ask the kernel to complete the connect instead.
+                // long-lived process that sweep never comes. Ask the kernel to complete the connect instead. A peer-close watch is the
+                // same kind of wait and is cancelled with it, since the SHUT_RD is skipped when another closer holds the fd claim.
                 //
                 // Deliberately NOT gated on `claimedHere`: a cancel names the op by its user_data, never by a descriptor, so it is
                 // correct even when a racing transport-path closer owns the fd and even if that fd number has already been recycled. The
                 // target is either still in flight (reaped as -ECANCELED) or already complete (-ENOENT), and neither outcome touches a
                 // descriptor this driver no longer owns. Gating it on the claim is what left the previous attempt short.
-                forceInFlightConnects(handle)
+                forceInFlightWaits(handle)
                 // Register the deferred close, then re-check: if the reap loop drained the count between the read above and this put, it already
                 // ran (and removed) nothing, so claim the registration back and close here. This closes the close-vs-reap race either way.
                 // putIfAbsent, not put: a SECOND closeHandle for this same handle (production pair: an onFatal closeHandle plus the
@@ -1985,6 +2015,7 @@ final private[net] class IoUringDriver private[posix] (
                         submitRecv(h, promise, eintrRetries, handshakeOwned, armedPostUpgrade)
                     case PendingOp.Accept(promise, h, noAddr, noLen)               => submitAccept(promise, h, noAddr, noLen)
                     case PendingOp.Connect(promise, h)                             => submitConnect(promise, h)
+                    case PendingOp.PeerCloseWatch(promise, h)                      => submitPeerCloseWatch(promise, h)
                     case PendingOp.Write(_, _, _, _) | PendingOp.TlsWrite(_, _, _) =>
                         () // sends park in stalledSends / the in-flight send tail, never here
                 end match
@@ -1996,7 +2027,7 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Re-issue the forcing cancel for handles whose deferred close has been owed for a long time.
       *
-      * [[forceInFlightConnects]] runs ONCE, when the close is first deferred. A cancel that never reaches the kernel at all leaves nothing to
+      * [[forceInFlightWaits]] runs ONCE, when the close is first deferred. A cancel that never reaches the kernel at all leaves nothing to
       * judge and nothing to retry: [[retryStalledCancels]] only sees a cancel the submission queue rejected, and the result-based re-arm only
       * sees a cancel that actually reaped. Anything lost between those two, and any op that became stuck after the single forcing pass, is
       * owed until the ring tears down, which in a long-lived process never happens.
@@ -2008,7 +2039,7 @@ final private[net] class IoUringDriver private[posix] (
         if !closeAfterDrain.isEmpty && (diagReapCycles % ReForceInterval) == 0L then
             val it = closeAfterDrain.values().iterator()
             while it.hasNext do
-                forceInFlightConnects(it.next())
+                forceInFlightWaits(it.next())
         end if
     end reForceStaleDeferredCloses
 
@@ -2348,6 +2379,12 @@ final private[net] class IoUringDriver private[posix] (
                                 NetConnectionIoException.Operation.Connect,
                                 new NetErrno(-res)
                             )(using h.createdAt)))
+                    case PendingOp.PeerCloseWatch(promise, h) =>
+                        val id = java.lang.Long.valueOf(h.id.packed)
+                        if peerCloseWatches.get(id) == java.lang.Long.valueOf(key) then discard(peerCloseWatches.remove(id))
+                        // A positive res is the revents mask: the peer closed. A cancel (-ECANCELED) or a close of the fd withdrew the watch.
+                        if res > 0 then promise.completeDiscard(Result.succeed(()))
+                        else promise.completeDiscard(Result.fail(Closed(handleLabel(h), h.createdAt, s"peer-close watch ended res=$res")))
                     case PendingOp.Accept(promise, h, noAddr, noLen) =>
                         if res >= 0 then
                             // The accept SQE produced a connected fd. If the accept promise was already completed -- the listener's close
@@ -2425,7 +2462,7 @@ final private[net] class IoUringDriver private[posix] (
             discard(uring.kyo_uring_eventfd_read(wakeFd))
             if !more then wakePollArmed = false
         else if cancelTargets.containsKey(java.lang.Long.valueOf(key)) then
-            // A cancel issued by [[forceInFlightConnects]] reaped. Its own result decides whether the forcing actually happened: 0 means the
+            // A cancel issued by [[cancelOp]] reaped. Its own result decides whether the forcing actually happened: 0 means the
             // kernel cancelled the target and -ENOENT means the target had already completed, and in both the deferred close is discharged
             // by the TARGET's completion rather than this one. ANY OTHER RESULT MEANS THE FORCING DID NOT TAKE. -EALREADY is the case that
             // matters under load: the target was already executing (mid-issue, or punted to a worker), so the kernel declines to cancel it

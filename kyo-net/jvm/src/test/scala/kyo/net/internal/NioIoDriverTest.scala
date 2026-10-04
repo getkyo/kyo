@@ -306,10 +306,23 @@ class NioIoDriverTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // isPeerClosed: the peer-close grace probe (poll-on-expiry) detector
+    // awaitPeerClose: the standing peer-close probe
     // -----------------------------------------------------------------------
 
-    "isPeerClosed arms a probe that observes a peer FIN while backpressured, staging pre-FIN bytes ahead of the EOF" in {
+    /** Register a fresh peer-close watch on `handle`, arming the probe. */
+    private def watchPeerClose(driver: NioIoDriver, handle: NioHandle)(using Frame): Promise.Unsafe[Unit, Abort[Closed]] =
+        val watch = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        driver.awaitPeerClose(handle, watch)
+        watch
+    end watchPeerClose
+
+    /** The watch's outcome, bounded so a watch that never fires fails the leaf instead of hanging it. */
+    private def watchOutcome(watch: Promise.Unsafe[Unit, Abort[Closed]], bound: Duration)(using
+        Frame
+    ): Result[Timeout | Closed, Unit] < Async =
+        Abort.run[Timeout | Closed](Async.timeout(bound)(watch.safe.get))
+
+    "a peer-close watch completes on a peer FIN while backpressured, staging pre-FIN bytes ahead of the EOF" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -321,10 +334,10 @@ class NioIoDriverTest extends Test:
         discard(sv.write(ByteBuffer.wrap(Array[Byte](10, 20, 30))))
         sv.close()
 
-        // First call arms the probe and returns false; the probe stages the 3 bytes and latches peerClosed on the FIN, so a later call reads true.
-        assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false (not observed yet)")
-        awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { latched =>
-            assert(latched, "the probe must latch peerClosed after the peer FIN while backpressured")
+        // The watch arms the probe; the probe stages the 3 bytes and reads the FIN, which completes the watch.
+        val watch = watchPeerClose(driver, handle)
+        watchOutcome(watch, 5.seconds).map { result =>
+            assert(result == Result.succeed(()), s"the watch must complete on the peer FIN while backpressured; got $result")
         }.andThen {
             val p1 = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p1.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
@@ -347,7 +360,7 @@ class NioIoDriverTest extends Test:
         }
     }
 
-    "isPeerClosed stays false for a live peer that has not closed" in {
+    "a peer-close watch stays pending for a live peer that has not closed" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -355,28 +368,28 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         discard(driver.start())
 
-        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch. It is read a fixed count of
-        // times rather than over a wall-clock window, and every read must report false.
-        assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false")
+        // The peer stays open and sends nothing: the probe reads n == 0 and stays armed as a standing FIN watch. It is checked a fixed count of
+        // times rather than over a wall-clock window, and every check must find the watch pending.
+        val watch = watchPeerClose(driver, handle)
         Loop(0) { i =>
             if i >= liveWatchReads then Loop.done(true)
-            else if driver.isPeerClosed(handle) then Loop.done(false)
+            else if watch.done() then Loop.done(false)
             else Async.sleep(1.milli).andThen(Loop.continue(i + 1))
         }.map { stayedOpen =>
-            assert(stayedOpen, "isPeerClosed must stay false for a live peer that has not sent a FIN")
+            assert(stayedOpen, "the watch must stay pending for a live peer that has not sent a FIN")
         }.andThen {
-            // The watch was armed, not dead: closing the peer now latches it. Without this, a probe that never ran would report false just as
-            // happily and the reads above would prove nothing.
+            // The watch was armed, not dead: closing the peer now completes it. Without this, a probe that never ran would leave it pending just
+            // as happily and the checks above would prove nothing.
             sv.close()
-            awaitCondition(5.seconds)(driver.isPeerClosed(handle)).map { latched =>
+            watchOutcome(watch, 5.seconds).map { result =>
                 driver.closeHandle(handle)
                 driver.close()
-                assert(latched, "the standing FIN watch was not live: the peer FIN never latched peerClosed")
+                assert(result == Result.succeed(()), s"the standing FIN watch was not live: the peer FIN never completed it; got $result")
             }
         }
     }
 
-    "the grace probe stages at most GraceProbeBudgetChunks buffers per window, not the whole receive buffer" in {
+    "the probe keeps reading a chatty peer across selector passes until the socket is drained" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -385,26 +398,23 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         discard(driver.start())
 
-        // Backpressured, no read armed. The peer sends twice the budget worth of data (no FIN). One probe window reads at most
-        // GraceProbeBudgetChunks buffers, so it stages exactly that many and stops: staying armed with data present would refire the
-        // level-triggered selector and drain the whole receive buffer in one window.
-        val chunks = NioIoDriver.GraceProbeBudgetChunks
-        discard(sv.write(ByteBuffer.wrap(Array.fill[Byte](chunks * 2 * bufSize)(7))))
+        // Backpressured, no read armed. The peer sends three budgets' worth of data (no FIN). One selector pass reads at most
+        // GraceProbeBudgetChunks buffers and re-arms, so the probe drains everything over several passes with no external kick.
+        val total = NioIoDriver.GraceProbeBudgetChunks * 3 * bufSize
+        discard(sv.write(ByteBuffer.wrap(Array.fill[Byte](total)(7))))
 
-        assert(!driver.isPeerClosed(handle), "the first isPeerClosed arms the probe and returns false")
-        awaitCondition(2.seconds)(driver.stagedBytes(handle) >= chunks * bufSize).map { _ =>
+        val watch = watchPeerClose(driver, handle)
+        awaitCondition(5.seconds)(driver.stagedBytes(handle) >= total).map { drained =>
             val staged = driver.stagedBytes(handle)
             sv.close()
             driver.closeHandle(handle)
             driver.close()
-            assert(
-                staged == chunks * bufSize,
-                s"one probe window must stage exactly the budget ($chunks buffers of $bufSize = ${chunks * bufSize} bytes), not the whole receive buffer; got $staged"
-            )
+            assert(drained && staged == total, s"the probe must stage all $total bytes across passes; got $staged")
+            assert(!watch.done() || watch.poll().exists(_.isSuccess), "data alone must not fail the watch")
         }
     }
 
-    "the grace probe stops staging past GraceProbeStagingCap, so a FIN behind the cap is not observed" in {
+    "the probe stops staging past GraceProbeStagingCap, so a FIN behind the cap is not observed" in {
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -413,8 +423,8 @@ class NioIoDriverTest extends Test:
         discard(driver.start())
 
         // A background writer floods more than the staging cap and then closes (FIN). The probe stages up to the cap and stops consuming, so the
-        // FIN sits behind the cap and is never observed: isPeerClosed stays false. This is the deliberate trade that stops a live chatty peer
-        // turning the descriptor fix into a heap leak (a FIN behind more than the cap keeps the pre-fix behavior).
+        // FIN sits behind the cap and is never observed: the watch stays pending. This is the deliberate trade that stops a live chatty peer
+        // turning the descriptor fix into a heap leak.
         val cap    = NioIoDriver.GraceProbeStagingCap
         val writer = new Thread(() =>
             try
@@ -426,18 +436,16 @@ class NioIoDriverTest extends Test:
         writer.setDaemon(true)
         writer.start()
 
-        // Each poll arms a probe (isPeerClosed) and checks staging; once staging reaches the cap the probe stops arming and consuming.
-        awaitCondition(5.seconds) {
-            discard(driver.isPeerClosed(handle))
-            driver.stagedBytes(handle) >= cap
-        }.map { capped =>
+        // One watch arms the standing probe, which re-arms itself until staging reaches the cap and then stops consuming.
+        val watch = watchPeerClose(driver, handle)
+        awaitCondition(5.seconds)(driver.stagedBytes(handle) >= cap).map { capped =>
             val staged = driver.stagedBytes(handle)
-            val closed = driver.isPeerClosed(handle)
+            val closed = watch.done()
             writer.interrupt()
             driver.closeHandle(handle)
             driver.close()
             assert(capped, s"the probe must stage up to the cap ($cap); stagedBytes=$staged")
-            assert(!closed, s"a FIN behind the staging cap must not be observed; isPeerClosed=$closed")
+            assert(!closed, "a FIN behind the staging cap must not be observed")
         }
     }
 
@@ -452,10 +460,8 @@ class NioIoDriverTest extends Test:
         // Backpressured: the peer sends [1,2,3] and a probe stages them. The pump then re-arms and takes over, so the fresh [4,5,6] arrives through
         // the pump's read path. The staged bytes must be delivered first (the pre-read staging drain), then the fresh socket bytes.
         discard(sv.write(ByteBuffer.wrap(Array[Byte](1, 2, 3))))
-        awaitCondition(2.seconds) {
-            discard(driver.isPeerClosed(handle))
-            driver.stagedBytes(handle) >= 3
-        }.andThen {
+        discard(watchPeerClose(driver, handle))
+        awaitCondition(2.seconds)(driver.stagedBytes(handle) >= 3).andThen {
             val p1 = new IOPromise[Closed, ReadOutcome]
             driver.awaitRead(handle, p1.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             p1.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get
@@ -526,7 +532,7 @@ class NioIoDriverTest extends Test:
                 else
                     // Arm (or re-arm) the grace probe and prove it is staging: the sentinel must land in graceStaging, which also leaves the
                     // probe re-armed as a standing FIN watch holding OP_READ (the n == 0 re-install after the staging read drains the socket).
-                    discard(driver.isPeerClosed(handle))
+                    discard(watchPeerClose(driver, handle))
                     discard(sv.write(ByteBuffer.wrap(encode(sentinel))))
                     awaitCondition(4.seconds)(driver.stagedBytes(handle) >= 1).map { staged =>
                         assert(

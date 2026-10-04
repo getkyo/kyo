@@ -40,9 +40,10 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     // tick, flowing the unshifted handshake flight to no listener and discarding it before the TLSSocket can read it.
     var dataListener: js.Function1[js.Dynamic, Unit] = null
 
-    // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close grace probe's
-    // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.isPeerClosed). A single slot would let the probe's
-    // chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal bounds it (JsIoDriver.PeerProbeBufferCap).
+    // FIFO of undelivered chunks, delivered one per awaitRead. Two producers: an oversized "data" chunk's tail, and the peer-close watch's
+    // resume() draining kernel bytes into the "data" listener while the pump is parked (JsIoDriver.awaitPeerClose). A single slot would let the
+    // watch's chunk clobber the tail (byte loss), so a queue; the single-threaded event loop makes a plain mutable queue safe. stagedBytesTotal
+    // bounds it (JsIoDriver.PeerProbeBufferCap).
     private val leftoverQueue: scala.collection.mutable.Queue[JsHandle.Leftover] = scala.collection.mutable.Queue.empty
     private var stagedBytesTotal: Int                                            = 0
 
@@ -64,6 +65,22 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
 
     def clearPendingRead(): Unit =
         pendingRead = Absent
+
+    // The parked ReadPump's peer-close watch. While it is registered the paused socket keeps reading into the leftover queue, since Node sees a
+    // FIN or RST only by reading; 'end', 'close' and 'error' complete it.
+    var peerCloseWatch: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+
+    /** Read on toward the peer's close while a watch is registered and the staging is under its cap. */
+    def resumeForPeerClose(): Unit =
+        if peerCloseWatch.nonEmpty && stagedBytesTotal < JsIoDriver.PeerProbeBufferCap && socket.listenerCount("data").asInstanceOf[Int] > 0
+        then
+            discard(socket.resume())
+
+    def completePeerCloseWatch()(using AllowUnsafe): Unit =
+        val watch = peerCloseWatch
+        peerCloseWatch = Absent
+        watch.foreach(_.completeDiscard(Result.succeed(())))
+    end completePeerCloseWatch
 
 end JsHandle
 
@@ -90,6 +107,7 @@ private[kyo] object JsHandle:
                     pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                 case Absent =>
                     handle.enqueueLeftover(arr, 0, arr.length)
+                    handle.resumeForPeerClose()
             end match
         handle.dataListener = dataFn
         discard(socket.on("data", dataFn))
@@ -100,7 +118,7 @@ private[kyo] object JsHandle:
                 case Present(pending) =>
                     handle.clearPendingRead()
                     pending.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                case Absent => ()
+                case Absent => handle.completePeerCloseWatch()
 
         discard(socket.on("end", signalEof))
         discard(socket.on("close", signalEof))
@@ -120,7 +138,7 @@ private[kyo] object JsHandle:
                                 cause
                             )(using handle.createdAt)
                         )))
-                    case Absent => ()
+                    case Absent => handle.completePeerCloseWatch()
             }: js.Function1[js.Dynamic, Unit]
         ))
 

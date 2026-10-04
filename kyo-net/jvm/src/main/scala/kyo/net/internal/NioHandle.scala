@@ -100,10 +100,29 @@ final private[kyo] class NioHandle private (
     // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val upgradeAppData: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
 
-    // Peer-close grace latch: selector-carrier writer only (probe read saw FIN or a hard error); never cleared (terminal, and the handle spans a
-    // STARTTLS upgrade). @volatile for the grace timer's arbitrary reader carrier. No recycled-handle hazard: NIO keys every map by SocketChannel
-    // object identity, not an integer fd.
+    // Peer-close latch: set only on the selector carrier, through latchPeerClosed, when a probe read saw FIN or a hard error; never cleared
+    // (terminal, and the handle spans a STARTTLS upgrade). @volatile for the read paths and the watch registration on other carriers. No
+    // recycled-handle hazard: NIO keys every map by SocketChannel object identity, not an integer fd.
     @volatile var peerClosed: Boolean = false
+
+    // The parked ReadPump's peer-close watch, completed by latchPeerClosed. Registration stores then re-checks the latch and the latch sets
+    // then takes, so whichever side runs second sees the other and the watch completes exactly once.
+    // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
+    val peerCloseWatch: AtomicRef.Unsafe[Maybe[Promise.Unsafe[Unit, Abort[Closed]]]] = AtomicRef.Unsafe.init(Absent)
+
+    /** Latch the peer's close and complete a registered peer-close watch. */
+    def latchPeerClosed(): Unit =
+        peerClosed = true
+        peerCloseWatch.getAndSet(Absent).foreach(_.completeDiscard(Result.succeed(())))
+
+    /** Register `promise` as the peer-close watch, completing it at once when the close was already latched. */
+    def watchPeerClose(promise: Promise.Unsafe[Unit, Abort[Closed]]): Unit =
+        peerCloseWatch.set(Present(promise))
+        if peerClosed then peerCloseWatch.getAndSet(Absent).foreach(_.completeDiscard(Result.succeed(())))
+
+    /** Withdraw `promise` if it is still the registered watch. */
+    def unwatchPeerClose(promise: Promise.Unsafe[Unit, Abort[Closed]]): Unit =
+        discard(peerCloseWatch.compareAndSet(Present(promise), Absent))
 
     // Raw socket bytes the peer-close grace probe consumed while backpressured (plaintext for a plain handle, CIPHERTEXT for TLS): every read path
     // redelivers them in order BEFORE any fresh socket byte. Selector-carrier single appender (CAS-append, chunk order preserved); drained by

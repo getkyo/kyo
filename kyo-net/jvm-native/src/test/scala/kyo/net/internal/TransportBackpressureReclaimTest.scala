@@ -6,7 +6,7 @@ import kyo.scheduler.IOPromise
 
 /** End-to-end regression guard for the peer-close grace reclaim on the real posix transport (epoll / kqueue / io_uring). A never-draining server
   * handler and a cap-1 inbound channel park the accepted-side ReadPump with no armed read (the first chunk fills the channel, the second overflows);
-  * the client then closes, and each backend's `isPeerClosed` observes the FIN so the grace timer reclaims the accepted connection. The in-leaf oracle
+  * the client then closes, and each backend's peer-close watch reports the FIN so the grace timer reclaims the accepted connection. The in-leaf oracle
   * is the captured accepted connection's `isOpen` (portable); on Linux the fork's `/proc/self/fd` leak check is a second oracle for the reclaimed fd.
   */
 class TransportBackpressureReclaimTest extends kyo.net.Test:

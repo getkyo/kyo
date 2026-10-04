@@ -137,74 +137,78 @@ final private[kyo] class ReadPump[Handle](
         closeFn()
     end teardown
 
-    /** One backpressure episode: the pump is parked on a full inbound channel with no read armed. A grace timer is armed on park; on each expiry
-      * it asks the driver whether the peer has closed ([[IoDriver.isPeerClosed]]) and reclaims the connection only when the peer is gone AND no
-      * consumer progress happened for a full grace window, re-arming the timer otherwise (the peer is still there, or the consumer is merely idle).
-      * The abandonment evidence is the progress silence, confirmed against the peer-close state; slow-but-live consumers are never reclaimed,
-      * because any drained span completes the put ([[progressed]]) and settles the episode.
+    /** One backpressure episode: the pump is parked on a full inbound channel with no read armed. On park it asks the driver to watch for the
+      * peer's close ([[IoDriver.awaitPeerClose]]), an event the backend delivers rather than a state anything polls. Once the close is observed,
+      * the grace is the time the consumer still gets to drain before the connection is reclaimed: zero reclaims at once, a positive grace arms
+      * exactly one timer. A peer close is terminal, so nothing re-arms. Slow-but-live consumers are never reclaimed, because any drained span
+      * completes the put ([[progressed]]) and settles the episode.
       *
-      * The `settled` flag is a one-shot gate: `progressed` (consumer drained / channel closed) and a reclaiming expiry race to win it; the loser
-      * no-ops. A FRESH episode is allocated per park, so progress resets the grace for the next park.
+      * The `settled` flag is a one-shot gate: `progressed` (consumer drained / channel closed) and a reclaim race to win it; the loser no-ops. A
+      * FRESH episode is allocated per park, so progress resets the grace for the next park.
       *
       * Teardown always goes through `closeFn`, never `Connection.close()`: a `close()` on an Upgrading connection routes to the upgrade's abandon
-      * hook, so a stray grace expiry surviving into a STARTTLS window would kill a live upgrade, whereas `closeFn` is a structural no-op on the
+      * hook, so a stray reclaim surviving into a STARTTLS window would kill a live upgrade, whereas `closeFn` is a structural no-op on the
       * Upgrading state (and the detach path fails the parked put Closed, which settles the episode first anyway).
       */
     final private class BackpressureGrace:
         import AllowUnsafe.embrace.danger
 
-        // false until the episode settles, by progress/close ([[progressed]]) or by a reclaiming expiry. The CAS winner acts; a non-reclaiming
-        // expiry (peer not yet closed) does NOT settle, it re-arms.
         private val settled = AtomicBoolean.Unsafe.init(false)
-        // The current grace timer fiber, published by [[armTimer]] and read by [[progressed]] to interrupt it. @volatile for the cross-carrier read.
+        private val watch   = Promise.Unsafe.init[Unit, Abort[Closed]]()
+        // The grace timer fiber, published by [[peerClosed]] and read by [[progressed]] to interrupt it. @volatile for the cross-carrier read.
         @volatile private var timer: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
 
         // Interrupt the grace timer fiber. Panic so its onComplete guard (settled) short-circuits rather than reclaiming.
         private def disarm(t: Fiber.Unsafe[Unit, Any])(using frame: Frame): Unit =
             discard(t.interruptDiscard(Result.Panic(Interrupted(frame, "grace disarmed by progress"))))
 
-        /** Arm the first grace timer on park. `Duration.Infinity` disables reclamation (no timer). */
+        /** Watch for the peer's close on park. `Duration.Infinity` disables reclamation (no watch). */
         def arm()(using Frame): Unit =
-            if grace.isFinite then armTimer()
+            if grace.isFinite then
+                watch.onComplete { result =>
+                    import AllowUnsafe.embrace.danger
+                    given Frame = Frame.internal
+                    if result.isSuccess then peerClosed()
+                }
+                driver.awaitPeerClose(handle, watch)
+                // Publish-then-recheck: a progress that settled the episode before the registration landed withdrew nothing, so withdraw now.
+                if settled.get() then driver.cancelPeerCloseWatch(handle, watch)
+            end if
         end arm
 
-        /** Consumer made progress (the parked put completed) or the channel closed: settle the episode so a running grace timer cannot reclaim,
-          * and interrupt it. Idempotent via the gate; a no-op if a reclaiming expiry already fired, in which case the caller's re-arm hits the
-          * closing handle and fails Closed, re-entering the connection's own teardown.
+        /** Consumer made progress (the parked put completed) or the channel closed: settle the episode so a pending reclaim cannot fire, interrupt
+          * the timer, and withdraw the watch. Idempotent via the gate; a no-op if a reclaim already fired, in which case the caller's re-arm hits
+          * the closing handle and fails Closed, re-entering the connection's own teardown.
           */
         def progressed()(using Frame): Unit =
             if settled.compareAndSet(false, true) then
                 timer.foreach(disarm)
+                if grace.isFinite then driver.cancelPeerCloseWatch(handle, watch)
         end progressed
 
-        private def armTimer()(using Frame): Unit =
-            val t = clock.unsafe.sleep(grace)
-            timer = Present(t)
-            t.onComplete { _ =>
-                import AllowUnsafe.embrace.danger
-                given Frame = Frame.internal
-                onExpiry()
-            }
-            // Publish-then-recheck: if progressed() settled the gate between arm and publish, its interrupt saw the previous timer, so cancel this
-            // just-armed one rather than let it fire against a connection the consumer is actively draining.
-            if settled.get() then disarm(t)
-        end armTimer
-
-        private def onExpiry()(using Frame): Unit =
-            // Reclaim only if still parked and the peer has actually closed; the CAS gate makes that exactly-once against a concurrent progress. A
-            // closed/upgrading handle reads as peer-closed via a local shutdown, but isPeerClosed's isClosing skip and closeFn's idempotent CAS make
-            // that at worst a no-op. Otherwise (consumer idle or peer still live) re-arm and keep waiting.
+        private def peerClosed()(using Frame): Unit =
             if !settled.get() then
-                if driver.isPeerClosed(handle) then
-                    if settled.compareAndSet(false, true) then
-                        Log.live.unsafe.debug(
-                            s"ReadPump peer-close grace (${grace.show}) elapsed with no progress on a closed peer ${driver.handleLabel(handle)}; reclaiming"
-                        )
-                        closeFn()
-                    end if
-                else armTimer()
+                if grace == Duration.Zero then reclaim()
+                else
+                    val t = clock.unsafe.sleep(grace)
+                    timer = Present(t)
+                    t.onComplete { _ =>
+                        import AllowUnsafe.embrace.danger
+                        given Frame = Frame.internal
+                        reclaim()
+                    }
+                    // Publish-then-recheck: a progress that settled the gate before this publish interrupted no timer, so cancel this one.
+                    if settled.get() then disarm(t)
                 end if
-        end onExpiry
+        end peerClosed
+
+        private def reclaim()(using Frame): Unit =
+            if settled.compareAndSet(false, true) then
+                Log.live.unsafe.debug(
+                    s"ReadPump peer closed and the consumer made no progress within ${grace.show} on ${driver.handleLabel(handle)}; reclaiming"
+                )
+                closeFn()
+        end reclaim
     end BackpressureGrace
 
 end ReadPump

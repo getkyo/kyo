@@ -80,12 +80,12 @@ final private[kyo] class JsIoDriver private (
         // Node's net.Socket#destroyed / #readableEnded are documented boolean properties; js.Dynamic erases them to untyped JS values, so recovering
         // the typed Boolean needs these narrowing casts. Safe per Node's documented property types.
         if handle.hasLeftover then
-            // (i) Deliver any staged/leftover chunk FIRST, in order, even if the socket has since ended/been destroyed: a peer-close-probe-induced
+            // (i) Deliver any staged/leftover chunk FIRST, in order, even if the socket has since ended/been destroyed: a peer-close-watch-induced
             // 'end' (and Node's allowHalfOpen=false auto-destroy) must not drop bytes the probe already staged. deliverLeftover needs pendingRead set.
             handle.pendingRead = Present(promise)
             deliverLeftover(handle)
         else if handle.socket.readableEnded.asInstanceOf[Boolean] then
-            // (ii) The readable side ended (peer FIN, buffer fully consumed). Surface EOF. MANDATORY after a probe-induced 'end' fired with no pending
+            // (ii) The readable side ended (peer FIN, buffer fully consumed). Surface EOF. MANDATORY after a watch-induced 'end' fired with no pending
             // read (signalEof dropped it): a resume() on an already-ended stream would park forever, since no further 'data'/'end' will come.
             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
         else if handle.socket.destroyed.asInstanceOf[Boolean] then
@@ -99,22 +99,21 @@ final private[kyo] class JsIoDriver private (
         end if
     end awaitRead
 
-    /** Whether the peer has closed, for the ReadPump's grace poll (poll-on-expiry). Node gives no non-consuming FIN signal on a PAUSED socket:
-      * `pause()` calls `readStop`, so while backpressured libuv does not read the kernel socket and a FIN/RST never reaches Node (`readableEnded`/
-      * `destroyed` stay false forever). Consuming inline is fine: the kick runs on the same single event-loop carrier as every socket callback
-      * (unlike NIO). `false` here can mean "not observed yet". Skipped once staged bytes hit the cap or when the 'data' listener is gone (detached for a STARTTLS upgrade).
+    /** Node gives no non-consuming FIN signal on a PAUSED socket: `pause()` calls `readStop`, so while backpressured libuv does not read the
+      * kernel socket and a FIN/RST never reaches Node. The watch therefore resumes the socket: the permanent 'data' listener stages each chunk and
+      * resumes again while the watch is registered and the staging is under its cap, and 'end', 'close' or 'error' completes the watch. Everything
+      * runs on the one event-loop carrier. Reading stops at the cap or when the 'data' listener is gone (detached for a STARTTLS upgrade).
       */
-    override def isPeerClosed(handle: JsHandle)(using AllowUnsafe, Frame): Boolean =
+    override def awaitPeerClose(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         val s = handle.socket
-        if s.destroyed.asInstanceOf[Boolean] || s.readableEnded.asInstanceOf[Boolean] then true
-        else if handle.stagedBytes >= JsIoDriver.PeerProbeBufferCap then false
-        else if s.listenerCount("data").asInstanceOf[Int] == 0 then false
-        else
-            // Resume for one chunk: the permanent 'data' listener re-pauses and stashes it, or 'end'/'error' latches the close.
-            discard(s.resume())
-            false
-        end if
-    end isPeerClosed
+        handle.peerCloseWatch = Present(promise)
+        // Narrowing casts: Node documents destroyed / readableEnded as booleans, and js.Dynamic erases them.
+        if s.destroyed.asInstanceOf[Boolean] || s.readableEnded.asInstanceOf[Boolean] then handle.completePeerCloseWatch()
+        else handle.resumeForPeerClose()
+    end awaitPeerClose
+
+    override def cancelPeerCloseWatch(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        if handle.peerCloseWatch.exists(_.equals(promise)) then handle.peerCloseWatch = Absent
 
     /** STARTTLS handoff: the plaintext ReadPump pulled `bytes` off the socket but detachForUpgrade already closed the inbound
       * channel, so these are the peer's first TLS flight (the ClientHello a server pulled a moment before detaching).

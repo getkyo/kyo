@@ -70,6 +70,9 @@ final private[net] class PosixHandle private (
     // on single-threaded JS and Wasm the WritePump issues many writes before the FIFO runs any of their appends, so a bound over the appended
     // tail alone never trips and the tail grows without limit. Incremented by the writing carrier, decremented by the FIFO op, hence atomic.
     queuedWriteBytes: AtomicInt.Unsafe,
+    // The parked ReadPump's peer-close watch on the poller, completed by [[latchPeerClosed]]. Registration stores then re-checks the latch and
+    // the latch sets then takes, so whichever side runs second sees the other and the watch completes exactly once.
+    val peerCloseWatch: AtomicRef.Unsafe[Maybe[Promise.Unsafe[Unit, Abort[Closed]]]],
     val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
@@ -504,11 +507,29 @@ final private[net] class PosixHandle private (
       */
     @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed | NetException]]] = Absent
 
-    /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Written only by the poll carrier at the FIN/error
-      * edges its standing registration delivers, even while the ReadPump is backpressured with no read armed. `@volatile` because the grace timer
-      * reads it from an arbitrary carrier; write-once (never cleared: a peer close is terminal).
+    /** Latch: the peer has closed its write side (a FIN) or the connection hit a hard error (RST). Set only by the poll carrier, through
+      * [[latchPeerClosed]], at the FIN/error edges its standing registration delivers, even while the ReadPump is backpressured with no read
+      * armed. `@volatile` because a watch registers from an arbitrary carrier; write-once (never cleared: a peer close is terminal).
       */
-    @volatile var peerClosed: Boolean = false
+    @volatile private var peerClosed: Boolean = false
+
+    /** Latch the peer's close and complete a registered peer-close watch. */
+    def latchPeerClosed()(using AllowUnsafe): Unit =
+        peerClosed = true
+        peerCloseWatch.getAndSet(Absent).foreach(_.completeDiscard(Result.succeed(())))
+
+    /** Register `promise` as the peer-close watch, completing it at once when the close was already observed: by the latch, or by a FIN that
+      * arrived with data before the pump parked (`PeerHalfClosePending`), whose edge will not fire again.
+      */
+    def watchPeerClose(promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe): Unit =
+        peerCloseWatch.set(Present(promise))
+        if peerClosed || halfClose == HalfCloseState.PeerHalfClosePending then
+            peerCloseWatch.getAndSet(Absent).foreach(_.completeDiscard(Result.succeed(())))
+    end watchPeerClose
+
+    /** Withdraw `promise` if it is still the registered watch. */
+    def unwatchPeerClose(promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe): Unit =
+        discard(peerCloseWatch.compareAndSet(Present(promise), Absent))
 
     /** Ownership guard for the shared resources (the TLS engine and the reused [[readBuffer]]) against the in-flight-op-vs-close use-after-free
       * race, on BOTH the read dispatch and the write paths.
@@ -741,6 +762,7 @@ private[net] object PosixHandle:
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
+            peerCloseWatch = AtomicRef.Unsafe.init(Absent),
             createdAt = createdAt
         )
     end socket
@@ -763,6 +785,7 @@ private[net] object PosixHandle:
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
             queuedWriteBytes = AtomicInt.Unsafe.init(0),
+            peerCloseWatch = AtomicRef.Unsafe.init(Absent),
             createdAt = createdAt
         )
 

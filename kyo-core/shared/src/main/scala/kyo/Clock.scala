@@ -418,6 +418,13 @@ object Clock:
           */
         def awaitPendingSleeper(duration: Duration): Unit < Async
 
+        /** The number of sleeps registered on the controlled clock since it was created, triggered or not.
+          *
+          * The non-suspending counterpart of [[awaitPendingSleepers]]: it lets a test assert that code armed no timer at all, which a wait for
+          * a sleeper cannot express.
+          */
+        def registeredSleeps: Int < Sync
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -448,6 +455,7 @@ object Clock:
                                 // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick. A list, so two fences
                                 // waiting at once both wake.
                                 var armWaiters: Chunk[IOPromise[Nothing, Unit < Any]] = Chunk.empty
+                                var sleepCount: Int                                   = 0
 
                                 def now()(using AllowUnsafe) = current
 
@@ -458,6 +466,7 @@ object Clock:
                                     val toSignal =
                                         queue.synchronized {
                                             queue.enqueue(task)
+                                            sleepCount += 1
                                             val w = armWaiters
                                             armWaiters = Chunk.empty
                                             w
@@ -487,6 +496,8 @@ object Clock:
                                             case Absent     => Loop.done
                                             case Present(w) => Promise.Unsafe.fromIOPromise(w).safe.get.andThen(Loop.continue)
                                     }
+
+                                def registeredSleeps: Int < Sync = Sync.defer(queue.synchronized(sleepCount))
 
                                 def set(now: Instant) = set(now, 100.millis)
 

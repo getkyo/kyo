@@ -107,7 +107,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
 
     // Concurrent-collection audit: peer-close grace-probe arms deferred to the poll carrier so the probe's OP_READ interestOps write is
-    // selector-confined (isPeerClosed enqueues, drainGraceProbeArms drains). Same raw-ConcurrentLinkedQueue no-equivalent exception as
+    // selector-confined (awaitPeerClose enqueues, drainGraceProbeArms drains). Same raw-ConcurrentLinkedQueue no-equivalent exception as
     // pendingUpgradeArms above: single producer, single consumer, offer is the happens-before barrier.
     private val pendingGraceProbeArms =
         new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
@@ -484,27 +484,29 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end if
     end applyUpgradeArm
 
-    /** Whether the peer has closed, for the ReadPump's grace poll. NIO has no `POLLRDHUP` equivalent, so the only FIN observation is a consuming
-      * read, which must stay selector-carrier-confined; detection cannot happen inline. Reads the [[NioHandle.peerClosed]] latch a PRIOR probe set,
-      * and otherwise best-effort defers arming the next probe to the poll carrier (enqueue + unconditional wakeup, never a cross-carrier
-      * `interestOps` write). `false` here can mean "not observed yet". Arming is skipped while a STARTTLS upgrade owns the socket, once staged bytes
-      * hit the cap, or when a probe is already armed. There is no recycled-handle hazard: NIO keys every map by `SocketChannel` object identity.
+    /** NIO has no `POLLRDHUP` equivalent, so the only FIN observation is a consuming read, which must stay selector-carrier-confined. The watch
+      * defers a standing probe read to the poll carrier (enqueue + unconditional wakeup, never a cross-carrier `interestOps` write); the probe
+      * keeps reading while bytes arrive, staging them, until it reads the FIN or an error, which latches the handle and completes the watch, or
+      * until the staging reaches its cap. The probe is skipped while a STARTTLS upgrade owns the socket. There is no recycled-handle hazard: NIO
+      * keys every map by `SocketChannel` object identity.
       */
-    override def isPeerClosed(handle: NioHandle)(using AllowUnsafe, Frame): Boolean =
-        if handle.peerClosed then true
-        else
-            if !handle.upgrading && stagedBytes(handle) < NioIoDriver.GraceProbeStagingCap && !isProbeArmed(handle) then
-                discard(pendingGraceProbeArms.offer(handle))
-                discard(selector.wakeup())
-            end if
-            false
-    end isPeerClosed
+    override def awaitPeerClose(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        handle.watchPeerClose(promise)
+        if !handle.peerClosed && !handle.upgrading && stagedBytes(handle) < NioIoDriver.GraceProbeStagingCap && !isProbeArmed(handle) then
+            discard(pendingGraceProbeArms.offer(handle))
+            discard(selector.wakeup())
+        end if
+    end awaitPeerClose
+
+    /** Withdraws the watch. A standing probe stops re-arming once no watch is registered, and a pump read arm displaces it at once. */
+    override def cancelPeerCloseWatch(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        handle.unwatchPeerClose(promise)
 
     /** Total bytes the grace probe has staged on `handle` (recomputed from the chunk lengths; no counter field, so no skew race). */
     private[net] def stagedBytes(handle: NioHandle)(using AllowUnsafe): Int =
         handle.graceStaging.get().foldLeft(0)(_ + _.length)
 
-    /** Whether `handle`'s current read-arm cell is a peer-close probe (so [[isPeerClosed]] does not re-enqueue a standing probe). */
+    /** Whether `handle`'s current read-arm cell is a peer-close probe (so [[awaitPeerClose]] does not re-enqueue a standing probe). */
     private def isProbeArmed(handle: NioHandle)(using AllowUnsafe): Boolean =
         handle.readArm.get() match
             case Present(cell) => cell.probe
@@ -577,7 +579,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end while
     end drainGraceProbeArms
 
-    /** Install one peer-close grace probe read-arm on the SELECTOR carrier (deferred here by [[isPeerClosed]]): a fresh PROBE cell routing a readiness
+    /** Install one peer-close grace probe read-arm on the SELECTOR carrier (deferred here by [[awaitPeerClose]]): a fresh PROBE cell routing a readiness
       * dispatch to [[dispatchGraceProbe]], a `pendingReads` entry, and OP_READ. The cell CAS is against `Absent`: a parked pump leaves the slot Absent;
       * a pump re-arm or upgrade arm that won the slot owns the read, so the CAS fails and the probe yields. The slot alone gates the arm; a
       * `pendingReads` pre-check must NOT: armRead's cell set and entry put are not atomic, so a dispatch that completes a just-set cell can leave the
@@ -599,19 +601,31 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         end if
     end applyGraceProbeArm
 
-    /** Peer-close grace probe dispatch (selector carrier), routed from [[dispatchRead]] by `ReadArmCell.probe`. Consumes up to
+    /** Peer-close probe dispatch (selector carrier), routed from [[dispatchRead]] by `ReadArmCell.probe`. Consumes up to
       * [[NioIoDriver.GraceProbeBudgetChunks]] buffers off the socket toward a FIN hidden behind backpressured data, STAGING each chunk so every read
-      * path redelivers them in order, and latches [[NioHandle.peerClosed]] on `recv == -1` / IOException. Read outcomes:
-      *   - `n > 0`: stage; stop when the per-window budget or the staging cap is reached, since staying armed with data present refires the
-      *     level-triggered selector and would drain the whole receive buffer in one window. The next kick continues.
-      *   - `n < 0` / IOException: latch peerClosed (+ TLS truncation `peerEof` unless a clean close was already seen).
-      *   - `n == 0`: buffer drained, no FIN yet. Stay armed (re-install a fresh probe cell + OP_READ) as a standing FIN watch, so a later FIN fires
-      *     the selector and the probe reads -1.
+      * path redelivers them in order, and latches the handle's peer close on `recv == -1` / IOException. Read outcomes:
+      *   - `n > 0`: stage. At the staging cap the probe stops for good. When the per-cycle budget is spent it re-arms and yields the cycle, so a
+      *     chatty peer is drained one budget per selector pass rather than in one pass, and the level-triggered selector brings it back.
+      *   - `n < 0` / IOException: latch the close (+ TLS truncation `peerEof` unless a clean close was already seen).
+      *   - `n == 0`: buffer drained, no FIN yet. Stay armed as a standing FIN watch, so a later FIN fires the selector and the probe reads -1.
+      * A re-arm happens only while a peer-close watch is registered: once the pump progressed nothing is waiting for the close.
       * All socket reads here are selector-carrier-serialized with every pump dispatch, so the probe never races a pump read for the stream.
       */
     private def dispatchGraceProbe(channel: SocketChannel, cell: Maybe[ReadArmCell], handle: NioHandle)(using AllowUnsafe): Unit =
         // Take ownership. On CAS failure a close/cleanupPending getAndSet or a pump re-arm's set already took the slot; do not touch the socket.
         if handle.readArm.compareAndSet(cell, Absent) then
+            def latch(): Unit =
+                handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
+                handle.latchPeerClosed()
+            // CAS against Absent so a pump re-arm that won the slot is not clobbered.
+            def rearm(): Unit =
+                if handle.peerCloseWatch.get().nonEmpty then
+                    val nextCell = Present(ReadArmCell(Promise.Unsafe.init[ReadOutcome, Abort[Closed]](), probe = true))
+                    if handle.readArm.compareAndSet(Absent, nextCell) then
+                        pendingReads.put(channel, handle)
+                        discard(registerInterest(channel, SelectionKey.OP_READ))
+                end if
+            end rearm
             try
                 var budget = NioIoDriver.GraceProbeBudgetChunks
                 var armed  = true
@@ -625,24 +639,21 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         buf.get(arr)
                         stashGraceBytes(handle, arr)
                         budget -= 1
-                        if budget <= 0 || stagedBytes(handle) >= NioIoDriver.GraceProbeStagingCap then armed = false
+                        if stagedBytes(handle) >= NioIoDriver.GraceProbeStagingCap then armed = false
+                        else if budget <= 0 then
+                            rearm()
+                            armed = false
+                        end if
                     else if n < 0 then
-                        handle.peerClosed = true
-                        handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
+                        latch()
                         armed = false
                     else
-                        // re-install as a standing FIN watch; CAS against Absent so a pump re-arm that won the slot is not clobbered.
-                        val nextCell = Present(ReadArmCell(Promise.Unsafe.init[ReadOutcome, Abort[Closed]](), probe = true))
-                        if handle.readArm.compareAndSet(Absent, nextCell) then
-                            pendingReads.put(channel, handle)
-                            discard(registerInterest(channel, SelectionKey.OP_READ))
+                        rearm()
                         armed = false
                     end if
                 end while
             catch
-                case _: IOException =>
-                    handle.peerClosed = true
-                    handle.tls.foreach(tls => if !tls.peerCleanClose then tls.peerEof = true)
+                case _: IOException => latch()
             end try
             // Probe side of the staging handoff (see armRead's post-arm re-check): after the last stash, a pump arm that raced this dispatch
             // may own the slot with its staging pre-check already behind it, so hand the staged bytes over now. Same-carrier with every other
@@ -2115,13 +2126,14 @@ private[kyo] object NioIoDriver:
     /** Number of consecutive zero-key `select()` returns that trigger a selector rebuild. */
     private[net] val SelectorRebuildThreshold: Int = 512
 
-    /** Max `readBuffer`-sized chunks the probe consumes per grace window before disarming: with data present a level-triggered selector refires
-      * immediately, so unbudgeted one window drains the whole receive buffer. Default 8 KiB `readBuffer`: up to 128 KiB per window; the next kick continues.
+    /** Max `readBuffer`-sized chunks the probe consumes per selector pass before yielding: with data present a level-triggered selector refires
+      * immediately, so unbudgeted one pass drains the whole receive buffer ahead of every other connection. Default 8 KiB `readBuffer`: up to
+      * 128 KiB per pass; the re-armed probe continues on the next.
       */
     private[net] val GraceProbeBudgetChunks: Int = 16
 
-    /** Cap on total bytes the peer-close grace probe may stage on one handle (1 MiB). Past it the probe stops consuming, so a FIN behind more than
-      * this is never reclaimed (keeps the pre-fix behavior): the deliberate trade that stops a live chatty peer turning the fd fix into a heap leak.
+    /** Cap on total bytes the peer-close probe may stage on one handle (1 MiB). Past it the probe stops consuming, so a FIN behind more than
+      * this is never observed: the deliberate trade that stops a live chatty peer turning the fd fix into a heap leak.
       */
     private[net] val GraceProbeStagingCap: Int = 1 << 20
 

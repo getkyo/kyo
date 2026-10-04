@@ -63,12 +63,19 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def awaitWritable(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit
 
-    /** Whether the peer has closed its write side (FIN) or the connection has a hard error (RST / hangup). Synchronous, non-blocking, and
-      * side-effect-free from the caller's view: a backend with no non-consuming close signal (NIO, JS) may internally consume socket bytes to probe,
-      * but MUST redeliver them, in order, through its normal read path before any fresh socket byte. A `false` may therefore mean "not observed yet"
-      * rather than "peer is open". Detection only; defaults to `false`, so a backend that cannot test peer-close never reclaims.
+    /** Watch a handle that has no read armed for the peer closing its write side (FIN) or the connection failing hard (RST / hangup), and
+      * succeed `promise` when the driver observes it, at once if it already has. The observation is an event the backend delivers, never a
+      * timer: a parked ReadPump arms this so a peer close is seen without a read. A backend with no non-consuming close signal (NIO, JS) may
+      * consume socket bytes to reach the FIN, but MUST redeliver them, in order, through its normal read path before any fresh socket byte.
+      * At most one watch per handle; it ends with [[cancelPeerCloseWatch]] or with the handle's close. The default never completes, so a
+      * backend that cannot observe a peer close never reclaims.
       */
-    def isPeerClosed(handle: Handle)(using AllowUnsafe, Frame): Boolean = false
+    def awaitPeerClose(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+
+    /** Withdraw the [[awaitPeerClose]] watch carrying `promise`, releasing whatever the backend holds for it. Idempotent, and a no-op once
+      * the watch completed or another watch replaced it.
+      */
+    def cancelPeerCloseWatch(handle: Handle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
 
     /** Request connect completion notification. The driver completes the promise when the non-blocking connect finishes.
       *

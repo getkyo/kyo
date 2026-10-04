@@ -27,7 +27,7 @@
 
 #if defined(__linux__) && __has_include(<liburing.h>)
 
-/* POLLRDHUP (peer half-close) is a Linux extension gated behind _GNU_SOURCE; define it before any header so kyo_uring_poll_peer_closed sees it. */
+/* POLLRDHUP (peer half-close) is a Linux extension gated behind _GNU_SOURCE; define it before any header so kyo_uring_prep_poll_peer_close sees it. */
 #define _GNU_SOURCE 1
 
 #include <errno.h>
@@ -194,20 +194,13 @@ KYO_NET_API void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd,
 }
 
 /*
- * Non-blocking poll(2) for a backpressured fd's peer-close state, off the io_uring ring (a parked ReadPump arms no recv, so a peer FIN/RST cannot
- * surface through a completion; the grace poll asks the kernel directly). POLLRDHUP surfaces the peer half-close even when the receive buffer is
- * FULL of undrained data (the FIN sits behind it, so a MSG_PEEK recv would return those bytes and never see the FIN). POLLHUP and POLLERR (e.g. RST)
- * are always reported in revents regardless of the events mask, hence the wider revents check. Returns 1 peer gone, 0 open, -1 on a poll error.
+ * One-shot IORING_OP_POLL_ADD that completes when the peer closes `fd`: a parked ReadPump arms no recv, so a peer FIN/RST would otherwise never
+ * surface through a completion. POLLRDHUP fires on the peer's half-close even when the receive buffer is FULL of undrained data (the FIN sits
+ * behind it, where a MSG_PEEK recv would return those bytes and never see it). POLLHUP and POLLERR (e.g. RST) are reported whatever the mask.
+ * The completion's res is the revents mask, or -errno (-ECANCELED once cancelled).
  */
-KYO_NET_API int kyo_uring_poll_peer_closed(int fd) {
-    struct pollfd pfd;
-    pfd.fd      = fd;
-    pfd.events  = POLLRDHUP;
-    pfd.revents = 0;
-    int r = poll(&pfd, 1, 0);
-    if (r < 0) return -1;
-    if (r == 0) return 0;
-    return (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) != 0 ? 1 : 0;
+KYO_NET_API void kyo_uring_prep_poll_peer_close(struct io_uring_sqe* sqe, int fd) {
+    io_uring_prep_poll_add(sqe, fd, POLLRDHUP);
 }
 
 KYO_NET_API void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {
@@ -424,7 +417,7 @@ KYO_NET_API void kyo_uring_prep_poll_multishot(void* sqe, int fd, int poll_mask)
     (void)sqe; (void)fd; (void)poll_mask;
 }
 
-KYO_NET_API int kyo_uring_poll_peer_closed(int fd) { (void)fd; return 0; }
+KYO_NET_API void kyo_uring_prep_poll_peer_close(void* sqe, int fd) { (void)sqe; (void)fd; }
 
 KYO_NET_API void kyo_uring_prep_connect(void* sqe, int fd, void* addr, int addrlen) {
     (void)sqe; (void)fd; (void)addr; (void)addrlen;

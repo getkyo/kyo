@@ -5,11 +5,11 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.*
 
-/** Driver-level detector tests for io_uring's peer-close probe (the io_uring backend of `isPeerClosed`).
+/** Driver-level tests for io_uring's peer-close watch (the io_uring backend of `awaitPeerClose`).
   *
-  * io_uring keeps no standing read registration, so `isPeerClosed` asks the kernel directly with a non-blocking `poll(2)` off the ring. Each leaf
-  * drives a real loopback pair (Linux-gated), then closes the peer and asserts the probe flips from false to true: a clean FIN via POLLRDHUP, an RST
-  * via POLLERR/POLLHUP.
+  * io_uring keeps no standing read registration, so the watch is a one-shot `POLL_ADD` for `POLLRDHUP` on the read fd. Each leaf drives a real
+  * loopback pair (Linux-gated): a clean FIN completes the watch through `POLLRDHUP`, an RST through `POLLERR`/`POLLHUP`, and a withdrawn watch is
+  * cancelled in the kernel so the handle's deferred close still discharges.
   */
 class IoUringDriverPeerClosedTest extends Test:
 
@@ -17,47 +17,69 @@ class IoUringDriverPeerClosedTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
-        val deadline = java.lang.System.nanoTime() + bound.toNanos
-        Loop(()) { _ =>
-            if cond then Loop.done(true)
-            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
-            else Async.sleep(5.millis).andThen(Loop.continue(()))
-        }
-    end awaitCondition
-
     private def withDriver[A](body: IoUringDriver => A < (Abort[Closed] & Async))(using Frame): A < (Abort[Closed] & Async) =
         val driver = IoUringDriver.init()
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close()))(body(driver))
     end withDriver
 
-    "isPeerClosed: io_uring poll(2) probe" - {
+    /** The watch's outcome, bounded so a watch that never fires fails the leaf instead of hanging it. */
+    private def outcome(watch: Promise.Unsafe[Unit, Abort[Closed]])(using Frame): Result[Timeout | Closed, Unit] < Async =
+        Abort.run[Timeout | Closed](Async.timeout(5.seconds)(watch.safe.get))
 
-        "is false for a live peer and true after a clean FIN" in {
+    "awaitPeerClose: io_uring POLL_ADD watch" - {
+
+        "completes on a clean FIN" in {
             PosixTestSockets.assumeUring()
             withDriver { driver =>
                 PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                     val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
-                    assert(!driver.isPeerClosed(handle), "a live peer must read as not closed")
+                    val watch  = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    driver.awaitPeerClose(handle, watch)
                     PosixTestSockets.closePeerForEof(sock, peerFd) // FIN
-                    awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
+                    outcome(watch).map { result =>
                         driver.closeHandle(handle)
-                        assert(closed, "io_uring isPeerClosed must observe the peer FIN via poll(2) POLLRDHUP")
+                        assert(result == Result.succeed(()), s"the watch must complete on the peer FIN via POLLRDHUP; got $result")
                     }
                 }
             }
         }
 
-        "is true after a peer RST" in {
+        "completes on a peer RST" in {
             PosixTestSockets.assumeUring()
             withDriver { driver =>
                 PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                     val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val watch  = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    driver.awaitPeerClose(handle, watch)
                     PosixTestSockets.resetPeer(sock, peerFd) // RST
-                    awaitCondition(2.seconds)(driver.isPeerClosed(handle)).map { closed =>
+                    outcome(watch).map { result =>
                         driver.closeHandle(handle)
-                        assert(closed, "io_uring isPeerClosed must observe a peer RST via poll(2) POLLERR/POLLHUP")
+                        assert(result == Result.succeed(()), s"the watch must complete on a peer RST via POLLERR/POLLHUP; got $result")
+                    }
+                }
+            }
+        }
+
+        "a withdrawn watch on a live peer is cancelled in the kernel, not completed as a close" in {
+            PosixTestSockets.assumeUring()
+            withDriver { driver =>
+                PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
+                    val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+                    val watch  = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    driver.awaitPeerClose(handle, watch)
+                    driver.cancelPeerCloseWatch(handle, watch)
+                    outcome(watch).map { result =>
+                        driver.closeHandle(handle)
+                        discard(sock.close(peerFd))
+                        assert(
+                            result match
+                                case Result.Failure(_: Closed) => true
+                                case _                         =>
+                                    false
+                            ,
+                            s"a cancelled watch must end Closed, not as an observed close; got $result"
+                        )
                     }
                 }
             }

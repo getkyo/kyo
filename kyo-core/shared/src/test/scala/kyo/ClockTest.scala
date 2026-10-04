@@ -739,6 +739,36 @@ class ClockTest extends kyo.test.Test[Any]:
         }
     }
 
+    "TimeControl registeredSleeps" - {
+        "is zero before any sleep" in {
+            Clock.withTimeControl { control =>
+                control.registeredSleeps.map(count => assert(count == 0))
+            }
+        }
+
+        "counts every sleep, triggered or not" in {
+            Clock.withTimeControl { control =>
+                for
+                    _      <- Clock.sleep(1.milli)
+                    _      <- Clock.sleep(10.millis)
+                    before <- control.registeredSleeps
+                    _      <- control.advance(5.millis)
+                    after  <- control.registeredSleeps
+                yield assert(before == 2 && after == 2)
+            }
+        }
+
+        "a nested control shares the count" in {
+            Clock.withTimeControl { outer =>
+                for
+                    _     <- Clock.sleep(1.milli)
+                    inner <- Clock.withTimeControl(inner => Clock.sleep(1.milli).andThen(inner.registeredSleeps))
+                    total <- outer.registeredSleeps
+                yield assert(inner == 2 && total == 2)
+            }
+        }
+    }
+
     /** Records each run's start, and holds the run starting at `at` in its body until `gate` opens. */
     def holdingAt(queue: Queue.Unbounded[Instant], at: Instant, entered: Latch, gate: Latch)(using Frame): Unit < (Async & Abort[Closed]) =
         Clock.now.map { now =>

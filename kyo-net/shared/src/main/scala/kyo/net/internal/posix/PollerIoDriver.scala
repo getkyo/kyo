@@ -788,12 +788,15 @@ final private[net] class PollerIoDriver private[posix] (
             promise.completeDiscard(Result.fail(Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "detached for upgrade")))
     end awaitRead
 
-    /** Whether the peer has closed (a FIN) or the connection hit a hard error (RST), read WITHOUT a syscall. The standing edge-triggered
-      * registration already delivers the FIN/error edge while the pump is backpressured (it lands in [[dispatchRead]] or [[dispatchError]], which
-      * latch `peerClosed`), so this is a pure volatile read. The `halfClose` disjunct covers a coalesced data+FIN read.
+    /** The standing edge-triggered registration already delivers a FIN (`EPOLLRDHUP` / `EV_EOF`) or an error edge while the pump is
+      * backpressured with no read armed. It lands in [[dispatchRead]] or [[dispatchError]], which latch the handle and complete this watch, so
+      * the watch costs no syscall and no extra registration.
       */
-    override def isPeerClosed(handle: PosixHandle)(using AllowUnsafe, Frame): Boolean =
-        handle.peerClosed || handle.halfClose == HalfCloseState.PeerHalfClosePending
+    override def awaitPeerClose(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        handle.watchPeerClose(promise)
+
+    override def cancelPeerCloseWatch(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        handle.unwatchPeerClose(promise)
 
     /** STARTTLS upgrade confinement: make the poll carrier the sole producer of the upgrade's ciphertext reads. The handshake parked a waiter on
       * [[PosixHandle.upgradeHandoff]] and calls this; we arm a read whose dispatch ([[dispatchReadPlain]], gated on [[PosixHandle.upgradeActive]])
@@ -1711,7 +1714,7 @@ final private[net] class PollerIoDriver private[posix] (
             }
             // Latch peer-closed on a hard error too: a peer RST fires EPOLLHUP/EV_ERROR, not the EOF edge, so it never reaches the EOF capture, and
             // the SO_ERROR read above CLEARS the kernel's error, so without latching here the only evidence of the close would be destroyed.
-            Maybe(activeHandles.get(fd)).foreach(_.peerClosed = true)
+            Maybe(activeHandles.get(fd)).foreach(_.latchPeerClosed())
         end if
     end dispatchError
 
@@ -1788,8 +1791,9 @@ final private[net] class PollerIoDriver private[posix] (
                     // awaitRead advances halfClose to PeerHalfClosePending, ensuring the drain reaches recv == 0.
                     if eofPending then
                         discard(missedEof.add(fd))
-                        // FIN edge with no pending read: latch peerClosed for the grace poll (handle via activeHandles; staleness already gated by drainReady).
-                        Maybe(activeHandles.get(fd)).foreach(_.peerClosed = true)
+                        // FIN edge with no pending read: latch it for a parked pump's peer-close watch (handle via activeHandles; staleness already
+                        // gated by drainReady).
+                        Maybe(activeHandles.get(fd)).foreach(_.latchPeerClosed())
                     end if
         end match
     end dispatchRead

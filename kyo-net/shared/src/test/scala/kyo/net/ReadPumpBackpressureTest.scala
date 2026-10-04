@@ -160,11 +160,11 @@ class ReadPumpBackpressureTest extends Test:
         //
         // When the inbound channel fills, the ReadPump parks on an in-memory channel put (ReadPump.offerToChannel) and arms NO driver read.
         // IoDriver's only EOF path is `awaitRead` completing with ReadOutcome.PeerFin, under a one-read-per-handle contract, so a peer FIN that
-        // arrives while the pump is backpressured is structurally unobservable through the read path. The fix adds a read-independent
-        // `isPeerClosed` state test the grace timer polls on expiry (exercised in the sibling section below). Here the connection uses the default
-        // `peerCloseGrace = Infinity` (reclaim opt-out, so no grace timer is armed) and the spy driver leaves `isPeerClosed` at its no-op default
-        // (false): the pump still stops arming reads at cap+1 (model unchanged), and with no grace timer and no peer-close signal the handle is
-        // held, the pre-guard behavior a backend without the override retains.
+        // arrives while the pump is backpressured is structurally unobservable through the read path. A parked pump therefore arms a
+        // read-independent `awaitPeerClose` watch (exercised in the sibling section below). Here the connection uses the default
+        // `peerCloseGrace = Infinity` (reclaim opt-out, so no watch is armed) and the spy driver leaves `awaitPeerClose` at its never-completing
+        // default: the pump still stops arming reads at cap+1, and with no peer-close signal the handle is held, the behavior a backend without
+        // the override retains.
         "a backpressured read arms no further read; with no peer-close detection the handle is held" in {
             val cap = 1
             final class BackpressureFinDriver extends IoDriver[Unit]:
@@ -205,9 +205,8 @@ class ReadPumpBackpressureTest extends Test:
                     driver.awaitReadCalls.get() == cap + 1,
                     s"a backpressured ReadPump must stop arming reads at cap+1=${cap + 1}; got ${driver.awaitReadCalls.get()}"
                 )
-                // No read is armed, the default Infinity grace arms no timer, and the spy driver's isPeerClosed stays false, so the handle is
-                // held: the behavior a backend with no peer-close detection keeps. The grace-driven reclaim is asserted in the sibling section
-                // with a driver that implements isPeerClosed.
+                // No read is armed and the default Infinity grace arms no watch, so the handle is held: the behavior a backend with no
+                // peer-close detection keeps. The watch-driven reclaim is asserted in the sibling section with a driver that implements it.
                 assert(
                     driver.closeHandleCalls.get() == 0,
                     s"with no peer-close detection the backpressured handle must be held (not reclaimed); closeHandle=${driver.closeHandleCalls.get()}"
@@ -219,19 +218,38 @@ class ReadPumpBackpressureTest extends Test:
     "peer-close grace reclaims an abandoned backpressured connection without harming a live one" - {
 
         /** A spy driver that fills a capacity-`cap` inbound channel (one span per read arm, distinct bytes so order is checkable), parks the pump
-          * on the overflow, and exposes a `peerClosed` latch the test flips to simulate a FIN. `isPeerClosed` reads that latch (the poll-on-expiry
-          * grace polls it on each timer expiry). Counts `closeHandle`.
+          * on the overflow, and holds the pump's peer-close watch. `closePeer` stands for the backend observing a FIN: it latches and completes
+          * the held watch, so a watch registered after it completes at once. Counts `closeHandle` and the watch's registrations and withdrawals.
           */
         final class WatchDriver(cap: Int) extends IoDriver[Unit]:
-            val awaitReadCalls                                             = AtomicInt.Unsafe.init(0)
-            val closeHandleCalls                                           = AtomicInt.Unsafe.init(0)
-            @volatile var peerClosed: Boolean                              = false
-            def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+            val awaitReadCalls                                                  = AtomicInt.Unsafe.init(0)
+            val closeHandleCalls                                                = AtomicInt.Unsafe.init(0)
+            val watches                                                         = AtomicInt.Unsafe.init(0)
+            val cancels                                                         = AtomicInt.Unsafe.init(0)
+            @volatile var peerClosed: Boolean                                   = false
+            @volatile var watch: Maybe[Promise.Unsafe[Unit, Abort[Closed]]]     = Absent
+            @volatile var lastWatch: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
+            def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]      =
                 Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
             def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
                 val n = awaitReadCalls.incrementAndGet()
                 if n <= cap + 1 then promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](n.toByte)))))
-            override def isPeerClosed(handle: Unit)(using AllowUnsafe, Frame): Boolean = peerClosed
+            override def awaitPeerClose(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                discard(watches.incrementAndGet())
+                lastWatch = Present(promise)
+                if peerClosed then promise.completeDiscard(Result.succeed(()))
+                else watch = Present(promise)
+            end awaitPeerClose
+            override def cancelPeerCloseWatch(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                if watch.exists(_.equals(promise)) then
+                    discard(cancels.incrementAndGet())
+                    watch = Absent
+            def closePeer()(using AllowUnsafe): Unit =
+                peerClosed = true
+                val held = watch
+                watch = Absent
+                held.foreach(_.completeDiscard(Result.succeed(())))
+            end closePeer
             def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit =
                 ()
             def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit = ()
@@ -244,34 +262,107 @@ class ReadPumpBackpressureTest extends Test:
             def handleLabel(handle: Unit): String                         = "stub"
         end WatchDriver
 
-        // Abandoned case: the pump parks, the peer FIN arrives while parked, the consumer never drains. Advancing past the grace fires the expiry,
-        // which polls isPeerClosed and reclaims. Time is controlled so the expiry is deterministic, not a real-time wait.
-        "a peer FIN with no consumer progress reclaims after the grace elapses" in {
+        // Abandoned case with a zero grace: the pump parks and watches, the peer FIN arrives, and the observed close reclaims at once. No timer
+        // is armed at any point, so the reclaim needs no clock advance.
+        "a peer FIN on a parked connection with a zero grace reclaims at once, arming no timer" in {
             Clock.withTimeControl { tc =>
                 Clock.get.map { clock =>
                     val driver = new WatchDriver(1)
-                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
-                    conn.start()             // fills the channel, parks on the overflow put, arms the grace timer
-                    driver.peerClosed = true // peer FIN: the grace expiry polls isPeerClosed and observes it
-                    tc.advance(100.millis).map { _ =>
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = Duration.Zero, clock = clock)
+                    conn.start()
+                    driver.closePeer()
+                    tc.registeredSleeps.map { sleeps =>
+                        assert(
+                            driver.watches.get() == 1,
+                            s"a parked pump must watch for the peer's close once; watches=${driver.watches.get()}"
+                        )
+                        assert(sleeps == 0, s"a zero grace must arm no timer; sleeps=$sleeps")
                         assert(
                             driver.closeHandleCalls.get() == 1,
-                            s"the grace must reclaim an abandoned backpressured connection; closeHandle=${driver.closeHandleCalls.get()}"
+                            s"the observed close must reclaim the abandoned connection; closeHandle=${driver.closeHandleCalls.get()}"
                         )
                     }
                 }
             }
         }
 
-        // Live-consumer case: the pump parks, the peer FIN arrives, but the consumer drains before any expiry. Progress disarms the timer
-        // synchronously on the take, so advancing fully past the grace still must NOT reclaim, and the overflow span the pump held is delivered.
+        // Abandoned case with a positive grace: the observed close arms exactly one timer of the grace, and its expiry reclaims.
+        "a peer FIN on a parked connection arms one grace timer and reclaims when it expires" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
+                    conn.start()
+                    for
+                        beforeClose <- tc.registeredSleeps
+                        _ = driver.closePeer()
+                        _     <- tc.advance(99.millis)
+                        early <- Sync.defer(driver.closeHandleCalls.get())
+                        _     <- tc.advance(1.millis)
+                        after <- tc.registeredSleeps
+                    yield
+                        assert(beforeClose == 0, s"no timer may be armed before the peer closes; sleeps=$beforeClose")
+                        assert(early == 0, s"the close must wait the grace for the consumer; closeHandle=$early")
+                        assert(after == 1, s"the observed close must arm exactly one timer; sleeps=$after")
+                        assert(
+                            driver.closeHandleCalls.get() == 1,
+                            s"the grace expiry must reclaim; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                    end for
+                }
+            }
+        }
+
+        // Live-peer case: the pump parks and the peer stays open across many grace windows. Nothing polls, so no timer is ever armed and the
+        // connection is held.
+        "a parked connection whose peer stays open arms no timer and is not reclaimed" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
+                    conn.start()
+                    Loop.repeat(5)(tc.advance(100.millis)).andThen(tc.registeredSleeps).map { sleeps =>
+                        assert(sleeps == 0, s"an open peer must arm no timer; sleeps=$sleeps")
+                        assert(driver.watches.get() == 1, s"the parked pump watches once; watches=${driver.watches.get()}")
+                        assert(
+                            driver.closeHandleCalls.get() == 0,
+                            s"an open peer must not reclaim; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                    }
+                }
+            }
+        }
+
+        // A watch that completes after the consumer made progress belongs to a settled episode and must not reclaim.
+        "a peer-close watch completing after consumer progress does not reclaim" in {
+            Clock.withTimeControl { tc =>
+                Clock.get.map { clock =>
+                    val driver = new WatchDriver(1)
+                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = Duration.Zero, clock = clock)
+                    conn.start()
+                    val stale = driver.lastWatch
+                    discard(conn.inbound.poll())
+                    stale.foreach(_.completeDiscard(Result.succeed(())))
+                    tc.advance(1.second).map { _ =>
+                        assert(stale.nonEmpty, "the parked pump must have registered a watch")
+                        assert(
+                            driver.closeHandleCalls.get() == 0,
+                            s"a stale watch must not reclaim; closeHandle=${driver.closeHandleCalls.get()}"
+                        )
+                    }
+                }
+            }
+        }
+
+        // Live-consumer case: the pump parks, the peer FIN arrives, but the consumer drains before the grace expires. Progress disarms the
+        // timer synchronously on the take, so advancing fully past the grace still must NOT reclaim, and the overflow span is delivered.
         "a peer FIN with consumer progress within the grace does not reclaim and loses no bytes" in {
             Clock.withTimeControl { tc =>
                 Clock.get.map { clock =>
                     val driver = new WatchDriver(1)
                     val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 10.seconds, clock = clock)
-                    conn.start()             // channel = [1], overflow [2] parked, grace timer armed on park
-                    driver.peerClosed = true // peer FIN latched: the drain below disarms the grace before any expiry polls it
+                    conn.start()       // channel = [1], overflow [2] parked, peer-close watch registered
+                    driver.closePeer() // peer FIN observed: one grace timer armed
                     val a =
                         conn.inbound.poll() // take span 1; frees the slot, the parked overflow transfers, progress disarms synchronously
                     val b = conn.inbound.poll() // take span 2 (the overflow) -> proves it was not dropped
@@ -290,28 +381,16 @@ class ReadPumpBackpressureTest extends Test:
             }
         }
 
-        // Re-arm case: the first expiry finds the peer still live (isPeerClosed false), so it re-arms instead of reclaiming; the next expiry, after
-        // the peer closes, reclaims. Proves a non-reclaiming expiry keeps waiting rather than settling the episode.
-        "a grace expiry with the peer still live re-arms, and reclaims only once the peer closes" in {
-            Clock.withTimeControl { tc =>
-                Clock.get.map { clock =>
-                    val driver = new WatchDriver(1)
-                    val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis, clock = clock)
-                    conn.start()                      // parks on the overflow put, arms the grace timer; peer still live (peerClosed=false)
-                    tc.advance(100.millis).map { _ => // first expiry: isPeerClosed false -> re-arm, no reclaim
-                        assert(
-                            driver.closeHandleCalls.get() == 0,
-                            s"a live peer must not reclaim on expiry; closeHandle=${driver.closeHandleCalls.get()}"
-                        )
-                        driver.peerClosed = true          // peer FIN now arrives
-                        tc.advance(100.millis).map { _ => // second expiry: isPeerClosed true -> reclaim
-                            assert(
-                                driver.closeHandleCalls.get() == 1,
-                                s"the re-armed timer must reclaim once the peer closes; closeHandle=${driver.closeHandleCalls.get()}"
-                            )
-                        }
-                    }
-                }
+        // Progress withdraws the watch, so a backend releases whatever it holds for it (an io_uring poll, a probe read).
+        "consumer progress withdraws the peer-close watch" in {
+            val driver = new WatchDriver(1)
+            val conn   = Connection.init[Unit]((), driver, channelCapacity = 1, grace = 100.millis)
+            conn.start()
+            discard(conn.inbound.poll())
+            Sync.defer {
+                assert(driver.watches.get() == 1, s"the parked pump must watch once; watches=${driver.watches.get()}")
+                assert(driver.cancels.get() == 1, s"progress must withdraw the watch; cancels=${driver.cancels.get()}")
+                assert(driver.watch.isEmpty, "no watch may stay registered once the pump progressed")
             }
         }
     }

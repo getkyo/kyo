@@ -68,6 +68,11 @@ private[net] enum PendingOp(val handle: PosixHandle):
         noLen: Buffer[Int]
     ) extends PendingOp(h)
 
+    /** A parked ReadPump's peer-close watch: a one-shot poll for the peer's close. It pins no memory, but like a connect nothing but the
+      * peer or a cancel completes it, so a close must cancel it before the handle's in-flight count can drain.
+      */
+    case PeerCloseWatch(promise: Promise.Unsafe[Unit, Abort[Closed]], h: PosixHandle) extends PendingOp(h)
+
     /** Fail the promise this op carries with `closed`. A [[PendingOp.Write]] op carries no promise (its failure is surfaced on the write pump), so
       * this is a no-op for it.
       */
@@ -76,6 +81,7 @@ private[net] enum PendingOp(val handle: PosixHandle):
             case Read(promise, _, _, _, _, _) => promise.completeDiscard(Result.fail(closed))
             case Connect(promise, _)          => promise.completeDiscard(Result.fail(closed))
             case Accept(promise, _, _, _)     => promise.completeDiscard(Result.fail(closed))
+            case PeerCloseWatch(promise, _)   => promise.completeDiscard(Result.fail(closed))
             case Write(_, _, _, _)            => ()
             case TlsWrite(_, _, _)            => ()
         end match
