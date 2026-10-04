@@ -38,6 +38,13 @@ abstract class HttpCodec[A]:
       */
     def schema: Maybe[HttpOpenApi.SchemaObject] = Absent
 
+    /** The name of the decoded type, for a failure to report what a value had to be.
+      *
+      * `Absent` unless the codec names it; every built-in codec does. A decode failure reports this name and the
+      * error's class, never the raw text, which can hold a credential.
+      */
+    def typeName: Maybe[String] = Absent
+
 end HttpCodec
 
 object HttpCodec:
@@ -106,20 +113,31 @@ object HttpCodec:
                 def encode(value: A)                          = self.encode(value)
                 def decode(raw: String): Result[Throwable, A] = self.decode(raw)
                 override def schema                           = Present(published)
+                override def typeName                         = self.typeName
     end extension
 
-    given HttpCodec[Short]      = HttpCodec(_.toString, _.toShort)
-    given HttpCodec[Byte]       = HttpCodec(_.toString, _.toByte)
-    given HttpCodec[Int]        = HttpCodec(_.toString, _.toInt)
-    given HttpCodec[Long]       = HttpCodec(_.toString, _.toLong)
-    given HttpCodec[String]     = HttpCodec(identity, identity)
-    given HttpCodec[Boolean]    = HttpCodec(_.toString, _.toBoolean)
-    given HttpCodec[Double]     = HttpCodec(_.toString, _.toDouble)
-    given HttpCodec[Float]      = HttpCodec(_.toString, _.toFloat)
-    given HttpCodec[BigDecimal] = HttpCodec(_.toString, BigDecimal(_))
-    given HttpCodec[BigInt]     = HttpCodec(_.toString, BigInt(_))
-    given HttpCodec[UUID]       = HttpCodec(_.toString, UUID.fromString)
-    given HttpCodec[Duration]   = HttpCodec(_.show, s => Duration.parse(s)(using Frame.internal).getOrThrow)
-    given HttpCodec[Instant]    = HttpCodec(_.show, s => Instant.parse(s).getOrThrow)
+    @nowarn("msg=anonymous")
+    private inline def named[A](name: String)(inline enc: A => String, inline dec: String => A): HttpCodec[A] =
+        val e = enc; val d = dec
+        new HttpCodec[A]:
+            def encode(value: A)                          = e(value)
+            def decode(raw: String): Result[Throwable, A] = Result.catching[Throwable](d(raw))
+            override def typeName                         = Present(name)
+        end new
+    end named
+
+    given HttpCodec[Short]      = named("Short")(_.toString, _.toShort)
+    given HttpCodec[Byte]       = named("Byte")(_.toString, _.toByte)
+    given HttpCodec[Int]        = named("Int")(_.toString, _.toInt)
+    given HttpCodec[Long]       = named("Long")(_.toString, _.toLong)
+    given HttpCodec[String]     = named("String")(identity, identity)
+    given HttpCodec[Boolean]    = named("Boolean")(_.toString, _.toBoolean)
+    given HttpCodec[Double]     = named("Double")(_.toString, _.toDouble)
+    given HttpCodec[Float]      = named("Float")(_.toString, _.toFloat)
+    given HttpCodec[BigDecimal] = named("BigDecimal")(_.toString, BigDecimal(_))
+    given HttpCodec[BigInt]     = named("BigInt")(_.toString, BigInt(_))
+    given HttpCodec[UUID]       = named("UUID")(_.toString, UUID.fromString)
+    given HttpCodec[Duration]   = named("Duration")(_.show, s => Duration.parse(s)(using Frame.internal).getOrThrow)
+    given HttpCodec[Instant]    = named("Instant")(_.show, s => Instant.parse(s).getOrThrow)
 
 end HttpCodec

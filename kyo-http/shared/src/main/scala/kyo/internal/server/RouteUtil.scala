@@ -622,7 +622,7 @@ private[kyo] object RouteUtil:
                         if param.optional then Present(value)
                         else value
                     }
-                    .mapFailure(e => HttpFieldDecodeException(wireName, fieldType, method, url.toString, e))
+                    .mapFailure(e => HttpFieldDecodeException(wireName, fieldType, param.codec.typeName, method, url.toString, e))
             case Absent =>
                 param.default match
                     case Present(d) =>

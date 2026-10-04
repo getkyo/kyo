@@ -361,25 +361,32 @@ end HttpUrlParseException
 case class HttpMalformedBodyException private[kyo] (detail: String)(using Frame)
     extends HttpDecodeException(s"Malformed chunked body framing: $detail.")
 
-/** Failed to decode a path capture, query parameter, header, or cookie field. */
+/** Failed to decode a query parameter, header, or cookie field.
+  *
+  * Holds what the field had to be, never what it was: the raw value can be a credential (a query token, an `Authorization` header, a
+  * session cookie), and a codec's error usually quotes it, so neither the value nor that error is kept. `errorClass` is the class of the
+  * codec's error, and `typeName` the decoded type when the codec names it (every built-in [[HttpCodec]] does).
+  */
 case class HttpFieldDecodeException private (
     fieldName: String,
     fieldType: String,
-    detail: String,
+    typeName: Maybe[String],
+    errorClass: String,
     method: String,
-    url: String,
-    cause: String | Throwable
+    url: String
 )(using Frame)
     extends HttpDecodeException(
-        s"""Failed to decode $fieldType '$fieldName'.
+        s"""Failed to decode $fieldType '$fieldName'${typeName.fold("")(t => s" as $t")}.
            |
-           |  Detail: $detail
-           |  While processing: ${HttpException.showRequest(method, url)}""".stripMargin,
-        cause
+           |  Error: $errorClass
+           |  While processing: ${HttpException.showRequest(method, url)}""".stripMargin
     )
 object HttpFieldDecodeException:
-    def apply(fieldName: String, fieldType: String, method: String, url: String, cause: Throwable)(using Frame): HttpFieldDecodeException =
-        new HttpFieldDecodeException(fieldName, fieldType, cause.getMessage, method, HttpException.stripQuery(url), cause)
+    def apply(fieldName: String, fieldType: String, typeName: Maybe[String], method: String, url: String, cause: Throwable)(using
+        Frame
+    ): HttpFieldDecodeException =
+        new HttpFieldDecodeException(fieldName, fieldType, typeName, cause.getClass.getName, method, HttpException.stripQuery(url))
+end HttpFieldDecodeException
 
 /** Failed to decode a path capture.
   *
