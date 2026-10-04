@@ -9,6 +9,10 @@ private[kyo] object BrowserLauncherPlatform:
       * SIGKILL bypasses shutdown hooks on both JVM and Scala Native, so it is not covered.
       */
     def registerShutdownHook(proc: Process)(using Frame): Unit < Sync =
+        registerShutdownHookThread(proc).unit
+
+    /** [[registerShutdownHook]], returning the registered hook so a test can observe it where the runtime's hook table is not readable. */
+    private[kyo] def registerShutdownHookThread(proc: Process)(using Frame): Thread < Sync =
         // Runtime.addShutdownHook(Thread) takes a raw java.lang.Thread, below the kyo
         // effect runtime; Sync.Unsafe.defer is the entry point for that ABI boundary.
         Sync.Unsafe.defer {
@@ -22,6 +26,7 @@ private[kyo] object BrowserLauncherPlatform:
             )
             hook.setDaemon(false) // shutdown hooks must NOT be daemon threads
             Runtime.getRuntime.addShutdownHook(hook)
+            hook
         }
 
 end BrowserLauncherPlatform
