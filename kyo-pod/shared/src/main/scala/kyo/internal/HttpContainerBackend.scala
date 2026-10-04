@@ -71,11 +71,14 @@ final private[kyo] class HttpContainerBackend(
       *   Full URL string like `http+unix://%2Fvar%2Frun%2Fdocker.sock/v1.43/containers/json?all=true`
       */
     private def buildUrl(prefix: String, path: String, params: Seq[(String, String)]): String =
-        val encoded = socketPath.replace("/", "%2F")
-        // Java interop boundary: URL-encoding query parameters for Docker API
-        val query = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${java.net.URLEncoder.encode(v, "UTF-8")}").mkString("&")
+        // The authority holds only reg-name characters, so the whole socket path is percent-encoded, not just its slashes: a space or a '%'
+        // left as written makes HttpUrl refuse the URL.
+        val encoded = PercentEncoding.encode(socketPath, PercentEncoding.Mode.Component)
+        val query   = if params.isEmpty then "" else "?" + params.map((k, v) => s"$k=${encode(v)}").mkString("&")
         s"http+unix://$encoded$prefix$path$query"
     end buildUrl
+
+    private def encode(value: String): String = PercentEncoding.encode(value, PercentEncoding.Mode.Component)
 
     private[internal] def url(path: String, params: (String, String)*): String =
         buildUrl(s"/$apiVersion", path, params)
@@ -121,7 +124,8 @@ final private[kyo] class HttpContainerBackend(
                                         // treat as permanent, so it takes an actual absence claim in the body to reach it. Which status
                                         // a daemon picks for a failing registry is not something kyo-pod can rely on, so the body is
                                         // what decides here.
-                                        if HttpContainerBackend.bodyNamesServerError(e.body) && !HttpContainerBackend.claimsAbsence(e.body)
+                                        if HttpContainerBackend.bodyNamesRegistryFault(e.body) &&
+                                            !HttpContainerBackend.claimsAbsence(e.body)
                                         then
                                             Abort.fail(ContainerRegistryUnavailableException(
                                                 ctx.describe,
@@ -202,9 +206,9 @@ final private[kyo] class HttpContainerBackend(
       * @param opName
       *   Short operation name used verbatim in error messages (e.g. "checkpoint", "restore").
       */
-    private def withNotSupportedMapping[A](opName: String, ctx: ResourceContext)(
-        v: A < (Async & Abort[HttpException])
-    )(using Frame): A < (Async & Abort[ContainerException]) =
+    private def withNotSupportedMapping[A, S](opName: String, ctx: ResourceContext)(
+        v: A < (Async & Abort[HttpException] & S)
+    )(using Frame): A < (Async & Abort[ContainerException] & S) =
         Abort.runWith[Closed](meter.run {
             Abort.runWith[HttpException](v) {
                 case Result.Success(a)                                                                      => a
@@ -574,7 +578,7 @@ final private[kyo] class HttpContainerBackend(
     end awaitRemoved
 
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
+        postUnit(s"/containers/${id.value}/rename?name=${encode(newName)}", ctxContainer(id))
 
     def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         // `/wait` is a long-poll. Two deadlines cooperate: the HTTP transport gets `timeout + 30s` (so a wait
@@ -616,27 +620,74 @@ final private[kyo] class HttpContainerBackend(
     // --- Checkpoint/Restore ---
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val body     = CheckpointCreateRequest(CheckpointID = name)
-        val jsonBody = Json.encode(body)
-        // Podman's docker-compat shim returns 404 for /checkpoints — surface as NotSupported rather than Missing,
-        // since the container itself exists and the resource that's missing is the endpoint.
-        withNotSupportedMapping("checkpoint", ctxContainer(id)) {
-            HttpClient.postText(
-                url(s"/containers/${id.value}/checkpoints"),
-                jsonBody,
-                headers = Seq("Content-Type" -> "application/json")
-            ).unit
-        }
+        if runtimeName == "podman" then checkpointLibpod(id, name)
+        else
+            val body     = CheckpointCreateRequest(CheckpointID = name)
+            val jsonBody = Json.encode(body)
+            // Docker serves checkpoints only with its experimental features on; without them the endpoint is absent, which is
+            // NotSupported rather than Missing, since the container itself exists.
+            withNotSupportedMapping("checkpoint", ctxContainer(id)) {
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/checkpoints"),
+                    jsonBody,
+                    headers = Seq("Content-Type" -> "application/json")
+                ).unit
+            }
+        end if
     end checkpoint
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
-        withNotSupportedMapping("restore", ctxContainer(id)) {
-            HttpClient.postText(
-                url(s"/containers/${id.value}/start?checkpoint=${java.net.URLEncoder.encode(checkpoint, "UTF-8")}"),
-                ""
-            ).unit
-        }
+        if runtimeName == "podman" then restoreLibpod(id, checkpoint)
+        else
+            withNotSupportedMapping("restore", ctxContainer(id)) {
+                HttpClient.postText(
+                    url(s"/containers/${id.value}/start", "checkpoint" -> checkpoint),
+                    ""
+                ).unit
+            }
     end restore
+
+    /** Podman serves checkpoint only on its libpod API, where `export=true` answers with the archive itself. The archive is written where
+      * the shell backend's `podman container checkpoint --export` puts it, so a checkpoint name is the same handle on both backends.
+      */
+    private def checkpointLibpod(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val archive = ContainerBackend.checkpointArchive(name)
+        Scope.run {
+            Abort.runWith[FileSystemException] {
+                FileSystem.host.openWriteChannel(archive, FileSystem.WriteOpen.Create).map { channel =>
+                    withNotSupportedMapping("checkpoint", ctxContainer(id)) {
+                        HttpClient.postStreamBytes(libpodUrl(s"/containers/${id.value}/checkpoint", "export" -> "true"), Span.empty[Byte])
+                            .fold(0L)((offset, bytes) => channel.writeAt(offset, bytes).andThen(offset + bytes.size))
+                    }.map(channel.truncate)
+                }
+            } {
+                case Result.Success(_) => ()
+                case Result.Failure(e) =>
+                    Abort.fail(ContainerOperationException(s"Failed to write the checkpoint archive $archive for ${id.value}", e))
+                case Result.Panic(t) =>
+                    Abort.fail(ContainerBackendException(s"Unexpected error writing the checkpoint archive $archive for ${id.value}", t))
+            }
+        }
+    end checkpointLibpod
+
+    /** The libpod import creates the container from the archive, so the name in the path is ignored; podman's own client sends `import`. */
+    private def restoreLibpod(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
+        val archive = ContainerBackend.checkpointArchive(checkpoint)
+        Abort.runWith[FileSystemException](Path.runReadOnly(archive.readBytes)) {
+            case Result.Success(tar) =>
+                withNotSupportedMapping("restore", ctxContainer(id)) {
+                    HttpClient.postBinary(
+                        libpodUrl("/containers/import/restore", "import" -> "true"),
+                        tar,
+                        headers = Seq("Content-Type" -> "application/x-tar")
+                    ).unit
+                }
+            case Result.Failure(e) =>
+                Abort.fail(ContainerOperationException(s"Failed to read the checkpoint archive $archive to restore ${id.value}", e))
+            case Result.Panic(t) =>
+                Abort.fail(ContainerBackendException(s"Unexpected error reading the checkpoint archive $archive for ${id.value}", t))
+        }
+    end restoreLibpod
 
     // --- Inspection ---
 
@@ -2923,17 +2974,18 @@ private[kyo] object HttpContainerBackend:
       * registry fault classified that way lands in the bucket nothing retries.
       */
     private[kyo] def isRegistryUnavailable(httpStatus: Int, body: Maybe[String]): Boolean =
-        httpStatus >= 500 || bodyNamesServerError(body)
+        httpStatus >= 500 || bodyNamesRegistryFault(body)
 
-    /** True when the body quotes a server-side status, which the daemon proxies verbatim from the registry.
+    /** True when the body quotes a server-side status the daemon proxies verbatim from the registry, or reports that its connection to
+      * the registry failed.
       *
       * Separate from [[isRegistryUnavailable]] because the status-code half is not usable everywhere: by the time a response has been
       * mapped to a canonical status, the wire status has already been consumed, and only the body still carries the registry's own answer.
       */
-    private[kyo] def bodyNamesServerError(body: Maybe[String]): Boolean =
+    private[kyo] def bodyNamesRegistryFault(body: Maybe[String]): Boolean =
         body.exists { b =>
             val lower = b.toLowerCase
-            DaemonErrorPhrases.ServerError.exists(lower.contains)
+            DaemonErrorPhrases.ServerError.exists(lower.contains) || DaemonErrorPhrases.RegistryUnreachable.exists(lower.contains)
         }
 
     /** True when the body itself claims the resource is absent, in the vocabulary both daemons use.

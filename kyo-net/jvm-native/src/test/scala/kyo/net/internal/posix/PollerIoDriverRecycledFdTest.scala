@@ -3,10 +3,11 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** No driver operation ever uses a freed fd: the two inherited recycled-fd defects, each driven white-box over a real driver.
+/** No driver operation ever uses a freed fd: each recycled-fd defect below, driven white-box over a real driver.
   *
   *   - io_uring: a recv parked in `stalledSubmits` on a full submission queue must be failed Closed when the handle closes, NOT
   *     re-armed on the now-closed fd. If `closeNow` cleared only `stalledSends`, the reap loop would re-arm the parked recv on the closed fd
@@ -18,9 +19,8 @@ import kyo.net.internal.transport.ReadOutcome
   *     fd close and recycle. A registration whose fd was closed and recycled into a NEW handle must not (re-)claim it: an unconditional `applyRegistration`
   *     would apply every registration regardless of state, so the dead handle's dangling re-arm would overwrite the new owner's `activeFds`/`pendingReads` entry
   *     and re-arm the kernel under the dead id, stranding the new connection's read. The apply is gated on `!handle.isClosing()`.
-  *
-  * Pins that no driver operation ever uses a freed file descriptor, across the inherited recycled-fd paths: the io_uring stalled-submit close
-  * path and both poller recycled-fd paths (the stale deregister and the register-side re-arm race).
+  *   - poller, the accept twin: the accept loop can re-arm a listener the transport is closing, so `closeListener` must mark the handle
+  *     closing before the fd close, or the late registration takes the next listener's fd number and its connections.
   */
 class PollerIoDriverRecycledFdTest extends Test:
 
@@ -196,6 +196,59 @@ class PollerIoDriverRecycledFdTest extends Test:
                             fail("the live registration was evicted by the closing handle's dangling read re-arm: the read stranded")
                         case other =>
                             fail(s"unexpected read outcome for the surviving registration: $other")
+                    end match
+                }
+            }
+        }
+    }
+
+    "a closed listener's dangling accept re-arm does not evict a recycled fd's new listener" in {
+        PosixTestSockets.assumePoller()
+        // The accept twin of the re-arm race. The transport's accept loop checks `isClosed` and then calls awaitAccept, so a close on another
+        // carrier can land between the two: the late registration then applies on the poll carrier after closeListener closed the fd, and the
+        // next listener may already hold that number. Two handles share one listening fd (the recycled-fd shape): `dead` went through
+        // closeListener (its close thunk leaves the fd open, standing in for the number's new owner), `live` arms accept on it, then `dead`
+        // re-arms. A connect must reach `live`. At base closeListener leaves `dead` registrable, its late registration overwrites `live`'s
+        // pendingAccepts/activeFds entry, the readiness goes to `dead`, and `live` never hears of the connection (a timeout).
+        val (server, port) = PosixTestSockets.listening()
+        val real           = PollerBackend.default()
+        val pollerFd       = real.create()
+        // The leaf closes its own fds through the driver's bindings, so one count covers every close of each number.
+        val spy      = RecordingSocketBindings(sock)
+        val driver   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, spy)
+        val loopDone = driver.start()
+
+        val dead = PosixHandle.socket(server, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+        val live = PosixHandle.socket(server, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
+        driver.closeListener(dead, () => ())
+
+        val liveAccept = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
+        driver.awaitAccept(live, liveAccept)
+        val deadAccept = Promise.Unsafe.init[Int, Abort[Closed | NetException]]()
+        driver.awaitAccept(dead, deadAccept)
+
+        val client     = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val (ca, cl)   = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
+        val connecting = Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get)
+        connecting.andThen(Abort.run[Timeout | Closed | NetException](Async.timeout(5.seconds)(liveAccept.safe.get))).map { outcome =>
+            Abort.run[Closed | NetException](deadAccept.safe.get).map { deadOutcome =>
+                driver.closeHandle(live)
+                discard(spy.close(client))
+                outcome.foreach(accepted => discard(spy.close(accepted)))
+                // The loop's terminal exit runs every withdrawal still pending, so the deferred close(fd) of `live` has run once it is done.
+                Sync.defer(driver.close()).andThen(loopDone.safe.get).map { _ =>
+                    assert(
+                        spy.closeCounts.getOrDefault(server, 0) == 1,
+                        s"fd $server must be closed exactly once, by the driver that owns it: ${spy.closeCounts.getOrDefault(server, 0)} closes"
+                    )
+                    assert(deadOutcome.isFailure, s"the closed listener's late accept must be failed Closed, got $deadOutcome")
+                    outcome match
+                        case Result.Success(_)          => succeed
+                        case Result.Failure(_: Timeout) =>
+                            fail(
+                                "the closed listener's late accept registration evicted the live listener: the connection never reached it"
+                            )
+                        case other => fail(s"unexpected accept outcome for the live listener: $other")
                     end match
                 }
             }

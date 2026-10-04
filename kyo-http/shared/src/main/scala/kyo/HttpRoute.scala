@@ -174,18 +174,19 @@ object HttpRoute:
       * that keeps the connection open until the stream completes.
       */
     enum ContentType[A]:
-        case Text                                                            extends ContentType[String]
-        case Binary                                                          extends ContentType[Span[Byte]]
-        case ByteStream                                                      extends ContentType[Stream[Span[Byte], Async]]
-        case Multipart                                                       extends ContentType[Seq[HttpRequest.Part]]
-        case MultipartStream                                                 extends ContentType[Stream[HttpRequest.Part, Async]]
+        case Text            extends ContentType[String]
+        case Binary          extends ContentType[Span[Byte]]
+        case ByteStream      extends ContentType[Stream[Span[Byte], Async & Abort[HttpException]]]
+        case Multipart       extends ContentType[Seq[HttpRequest.Part]]
+        case MultipartStream extends ContentType[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
         case Json[A](schema: kyo.Schema[A], jsonSchema: kyo.Json.JsonSchema) extends ContentType[A]
         case Ndjson[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[V]]])
-            extends ContentType[Stream[V, Async]]
+            extends ContentType[Stream[V, Async & Abort[HttpException]]]
         case Sse[V](schema: kyo.Schema[V], jsonSchema: kyo.Json.JsonSchema, emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]])
-            extends ContentType[Stream[HttpSseEvent[V], Async]]
-        case SseText(emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]]) extends ContentType[Stream[HttpSseEvent[String], Async]]
-        case Form[A](codec: HttpFormCodec[A])                         extends ContentType[A]
+            extends ContentType[Stream[HttpSseEvent[V], Async & Abort[HttpException]]]
+        case SseText(emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]])
+            extends ContentType[Stream[HttpSseEvent[String], Async & Abort[HttpException]]]
+        case Form[A](codec: HttpFormCodec[A]) extends ContentType[A]
     end ContentType
 
     object ContentType:
@@ -327,25 +328,30 @@ object HttpRoute:
         ): RequestDef[In & N ~ Span[Byte]] =
             add(Field.Body(fieldName, ContentType.Binary, description))
 
-        def bodyStream: RequestDef[In & "body" ~ Stream[Span[Byte], Async]] =
+        /** A body streamed as it arrives. The stream fails with `HttpException` when the body ends before its framing says it should, or
+          * its framing is refused: a consumer handles that failure or its row names it.
+          */
+        def bodyStream: RequestDef[In & "body" ~ Stream[Span[Byte], Async & Abort[HttpException]]] =
             add(Field.Body("body", ContentType.ByteStream, ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[Span[Byte], Async]] =
+        )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[Span[Byte], Async & Abort[HttpException]]] =
             add(Field.Body(fieldName, ContentType.ByteStream, description))
 
         inline def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
-        ): RequestDef[In & "body" ~ Stream[V, Async]] =
+        ): RequestDef[In & "body" ~ Stream[V, Async & Abort[HttpException]]] =
             add(Field.Body("body", ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
         inline def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
-        )[N <: String & Singleton](fieldName: N, description: String = "")(using Fields.Pin[N]): RequestDef[In & N ~ Stream[V, Async]] =
+        )[N <: String & Singleton](fieldName: N, description: String = "")(using
+            Fields.Pin[N]
+        ): RequestDef[In & N ~ Stream[V, Async & Abort[HttpException]]] =
             add(Field.Body(fieldName, ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
         def bodyForm[A](using codec: HttpFormCodec[A]): RequestDef[In & "body" ~ A] =
@@ -367,13 +373,13 @@ object HttpRoute:
         ): RequestDef[In & N ~ Seq[HttpRequest.Part]] =
             add(Field.Body(fieldName, ContentType.Multipart, description))
 
-        def bodyMultipartStream: RequestDef[In & "body" ~ Stream[HttpRequest.Part, Async]] =
+        def bodyMultipartStream: RequestDef[In & "body" ~ Stream[HttpRequest.Part, Async & Abort[HttpException]]] =
             add(Field.Body("body", ContentType.MultipartStream, ""))
 
         def bodyMultipartStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[HttpRequest.Part, Async]] =
+        )(using Fields.Pin[N]): RequestDef[In & N ~ Stream[HttpRequest.Part, Async & Abort[HttpException]]] =
             add(Field.Body(fieldName, ContentType.MultipartStream, description))
 
         private def add[F](field: Field[F]): RequestDef[In & F] =
@@ -455,19 +461,22 @@ object HttpRoute:
         ): ResponseDef[Out & N ~ Span[Byte]] =
             addField(Field.Body(fieldName, ContentType.Binary, description))
 
-        def bodyStream: ResponseDef[Out & "body" ~ Stream[Span[Byte], Async]] =
+        /** A body streamed as it arrives. The stream fails with `HttpException` when the body ends before its framing says it should, or
+          * its framing is refused: a consumer handles that failure or its row names it.
+          */
+        def bodyStream: ResponseDef[Out & "body" ~ Stream[Span[Byte], Async & Abort[HttpException]]] =
             addField(Field.Body("body", ContentType.ByteStream, ""))
 
         def bodyStream[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async]] =
+        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[Span[Byte], Async & Abort[HttpException]]] =
             addField(Field.Body(fieldName, ContentType.ByteStream, description))
 
         inline def bodyNdjson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[V]]]
-        ): ResponseDef[Out & "body" ~ Stream[V, Async]] =
+        ): ResponseDef[Out & "body" ~ Stream[V, Async & Abort[HttpException]]] =
             addField(Field.Body("body", ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
         inline def bodyNdjson[V](using
@@ -475,13 +484,13 @@ object HttpRoute:
             emitTag: Tag[Emit[Chunk[V]]]
         )[N <: String & Singleton](fieldName: N, description: String = "")(using
             Fields.Pin[N]
-        ): ResponseDef[Out & N ~ Stream[V, Async]] =
+        ): ResponseDef[Out & N ~ Stream[V, Async & Abort[HttpException]]] =
             addField(Field.Body(fieldName, ContentType.Ndjson(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
         inline def bodySseJson[V](using
             schema: Schema[V],
             emitTag: Tag[Emit[Chunk[HttpSseEvent[V]]]]
-        ): ResponseDef[Out & "body" ~ Stream[HttpSseEvent[V], Async]] =
+        ): ResponseDef[Out & "body" ~ Stream[HttpSseEvent[V], Async & Abort[HttpException]]] =
             addField(Field.Body("body", ContentType.Sse(schema, kyo.Json.jsonSchema[V], emitTag), ""))
 
         inline def bodySseJson[V](using
@@ -490,12 +499,12 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[V], Async]] =
+        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[V], Async & Abort[HttpException]]] =
             addField(Field.Body(fieldName, ContentType.Sse(schema, kyo.Json.jsonSchema[V], emitTag), description))
 
         def bodySseText(using
             emitTag: Tag[Emit[Chunk[HttpSseEvent[String]]]]
-        ): ResponseDef[Out & "body" ~ Stream[HttpSseEvent[String], Async]] =
+        ): ResponseDef[Out & "body" ~ Stream[HttpSseEvent[String], Async & Abort[HttpException]]] =
             addField(Field.Body("body", ContentType.SseText(emitTag), ""))
 
         def bodySseText(using
@@ -503,7 +512,7 @@ object HttpRoute:
         )[N <: String & Singleton](
             fieldName: N,
             description: String = ""
-        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[String], Async]] =
+        )(using Fields.Pin[N]): ResponseDef[Out & N ~ Stream[HttpSseEvent[String], Async & Abort[HttpException]]] =
             addField(Field.Body(fieldName, ContentType.SseText(emitTag), description))
 
         inline def error[E](using schema: Schema[E], tag: ConcreteTag[E])(s: HttpStatus): ResponseDef[Out] =

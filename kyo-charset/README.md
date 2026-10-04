@@ -23,11 +23,11 @@ val text: Maybe[String] = Charset.resolve("iso-8859-1").map(_.decode(body))
 import kyo.*
 import kyo.charset.Charset
 
-Charset.resolve("latin1")       // Present(Charset.Windows1252)
-Charset.resolve("x-sjis")       // Present(Charset.ShiftJis)
-Charset.resolve("UTF-7")        // Present(Charset.Utf7)
-Charset.resolve("x-unknown")    // Absent
-Charset.byName("Shift_JIS")     // Present(Charset.ShiftJis): the exact WHATWG name
+Charset.resolve("latin1")    // Present(Charset.Windows1252)
+Charset.resolve("x-sjis")    // Present(Charset.ShiftJis)
+Charset.resolve("UTF-7")     // Present(Charset.Utf7)
+Charset.resolve("x-unknown") // Absent
+Charset.byName("Shift_JIS")  // Present(Charset.ShiftJis): the exact WHATWG name
 ```
 
 Three WHATWG answers are worth knowing. `utf-16` resolves to `Utf16Le`, as the standard says; a protocol that reads a bare `UTF-16` label by RFC 2781 (big-endian unless a byte order mark says otherwise), as mail does, maps that label to `Charset.Utf16` itself before calling `resolve`. The labels WHATWG maps to its `replacement` decoder (`hz-gb-2312`, `iso-2022-kr`, `iso-2022-cn`) resolve to `Absent`; `Charset.HzGb2312` and `Charset.Iso2022Kr` exist for a caller that chooses to decode them, through `byName` or the enum case. `replacement` and `x-user-defined` name no charset.
@@ -42,11 +42,11 @@ import kyo.charset.Charset
 
 val bad = Span.from(Array[Byte](0x61, 0xff.toByte, 0x62))
 
-Charset.Utf8.decode(bad)         // "a�b"
-Charset.Utf8.decodeStrict(bad)   // Result.fail(Charset.Malformed(Charset.Utf8, 1))
+Charset.Utf8.decode(bad)       // "a�b"
+Charset.Utf8.decodeStrict(bad) // Result.fail(Charset.Malformed(Charset.Utf8, 1))
 
 val good = Span.from(Array[Byte](0xe2.toByte, 0x82.toByte, 0xac.toByte))
-Charset.Utf8.decodeStrict(good)  // Result.succeed("€")
+Charset.Utf8.decodeStrict(good) // Result.succeed("€")
 ```
 
 Each call decodes one whole unit of text (a MIME part, an encoded word, a buffered body) from the encoding's initial state, so a stateful encoding such as ISO-2022-JP or UTF-7 is decoded correctly without the caller holding any state, and one `Charset` serves any number of concurrent decodes.

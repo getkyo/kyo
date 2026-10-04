@@ -19,8 +19,13 @@ class TransportListenerFdReleaseTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
+    private def listenOutsideEphemeralRange(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
+        NonEphemeralPort.bind[Listener, NetException, Any](_.isInstanceOf[NetBindException])(port =>
+            transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get
+        )
+
     "closing an idle listener releases its listen fd so the port can be re-bound once released completes" - eachBackend { transport =>
-        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
+        listenOutsideEphemeralRange(transport).map { listener =>
             val port = listener.port
             assert(!listener.released.done(), "released completed before close was called")
             // Idle close: no client ever connected, so nothing other than the close itself can wake the driver.
@@ -67,7 +72,7 @@ class TransportListenerFdReleaseTest extends Test:
                     again.released.safe.get.andThen(true)
                 case _ => false
             }
-        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { probe =>
+        listenOutsideEphemeralRange(transport).map { probe =>
             val port = probe.port
             probe.close()
             probe.released.safe.get.andThen {

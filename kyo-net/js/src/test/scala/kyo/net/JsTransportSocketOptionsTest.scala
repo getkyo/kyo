@@ -18,7 +18,7 @@ class JsTransportSocketOptionsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val bufferSize = 65536
+    private val bufferSize = 64.kib
 
     /** The Node floor transport, built directly so this fail-closed behavior is asserted against Node regardless of what the host would select. */
     private lazy val transport: Transport = NodeBackend.build()

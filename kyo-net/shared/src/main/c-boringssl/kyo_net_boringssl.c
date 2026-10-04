@@ -31,6 +31,15 @@
 #include <openssl/err.h>
 #include <openssl/crypto.h>
 
+/*
+ * The archives linked are BoringSSL's, so the headers must be too. Where another OpenSSL's headers win the include
+ * search, calls compile against different prototypes: OpenSSL 3's BIO_new_mem_buf takes an int length, BoringSSL's an
+ * ossl_ssize_t, so a -1 reaches BoringSSL as 0xFFFFFFFF and the PEM reader runs past the string.
+ */
+#ifndef OPENSSL_IS_BORINGSSL
+#error "kyo_net_boringssl.c is compiled against non-BoringSSL headers: the staged BoringSSL include must precede every other"
+#endif
+
 #define KYO_SSL_PREFIX kyo_bssl_
 #include "kyo_ssl_common.h"
 

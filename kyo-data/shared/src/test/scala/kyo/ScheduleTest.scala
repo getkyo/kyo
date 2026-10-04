@@ -1187,6 +1187,37 @@ class ScheduleTest extends kyo.test.Test[Any]:
         }
     }
 
+    "fixed rate" - {
+        def fixedRate(startAfter: Duration, interval: Duration): Schedule = Schedule.internal.FixedRate(startAfter, interval, Absent)
+
+        "starts after startAfter, then measures each start from the previous scheduled one" in {
+            val (first, s1)  = fixedRate(3.millis, 10.millis).next(now).get
+            val (second, s2) = s1.next(now + 6.millis).get
+            val (third, _)   = s2.next(now + 13.millis).get
+            assert(first == 3.millis)
+            assert(second == 7.millis)
+            assert(third == 10.millis)
+        }
+
+        "a start already due is answered at once, and the one after returns to the grid" in {
+            val (_, s1)      = fixedRate(Duration.Zero, 10.millis).next(now).get
+            val (late, s2)   = s1.next(now + 25.millis).get
+            val (onGrid, s3) = s2.next(now + 26.millis).get
+            val (later, _)   = s3.next(now + 30.millis).get
+            assert(late == Duration.Zero)
+            assert(onGrid == 4.millis)
+            assert(later == 10.millis)
+        }
+
+        "a start that falls exactly at now is answered at once" in {
+            val (_, s1)   = fixedRate(Duration.Zero, 10.millis).next(now).get
+            val (due, s2) = s1.next(now + 10.millis).get
+            val (next, _) = s2.next(now + 10.millis).get
+            assert(due == Duration.Zero)
+            assert(next == 10.millis)
+        }
+    }
+
     "anchored" - {
         "anchored" - {
             "basic behavior" - {

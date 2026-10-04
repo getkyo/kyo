@@ -99,6 +99,46 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
+    "the diagnostics probe reports an armed read as pending until its bytes arrive, and close() unregisters it" in {
+        given Frame = Frame.internal
+        val driver  = JsIoDriver.init()
+        discard(driver.start())
+        val name                                           = "JsIoDriver@" + java.lang.System.identityHashCode(driver)
+        def probe(): Maybe[kyo.internal.Diagnostics.Probe] =
+            Maybe.fromOption(kyo.internal.Diagnostics.probeAll().collectFirst { case (n, p) if n.startsWith(name) => p })
+        openPair().map { case (serverSock, clientSock) =>
+            val handle = JsHandle.init(serverSock, driver, Frame.internal)
+            val read   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+            driver.awaitRead(handle, read)
+            val armed     = probe()
+            val armedDump = kyo.internal.Diagnostics.dumpAll()
+            discard(clientSock.write(buffer(Array[Byte](7))))
+            read.safe.get.map { outcome =>
+                val delivered = probe()
+                discard(clientSock.destroy())
+                driver.closeHandle(handle)
+                driver.close()
+                val gotByte = outcome match
+                    case ReadOutcome.Bytes(s) => s.toArray.toList == List[Byte](7)
+                    case _                    => false
+                assert(gotByte, s"expected the written byte, got $outcome")
+                assert(
+                    armed == Present(kyo.internal.Diagnostics.Probe(closed = false, cycles = 1L, pending = true)),
+                    s"an armed read must report pending with one armed op, got $armed"
+                )
+                assert(
+                    armedDump.contains(s"pendingReads=[${driver.handleLabel(handle)} ]"),
+                    s"the dump must name the armed handle: $armedDump"
+                )
+                assert(
+                    delivered == Present(kyo.internal.Diagnostics.Probe(closed = false, cycles = 1L, pending = false)),
+                    s"a delivered read must no longer report pending, got $delivered"
+                )
+                assert(probe() == Absent, "close() must remove the driver's diagnostics registration")
+            }
+        }
+    }
+
     "isPeerClosed stays false for a live peer that has not closed" in {
         given Frame = Frame.internal
         val driver  = JsIoDriver.init()
@@ -133,7 +173,7 @@ class JsIoDriverTest extends kyo.net.Test:
         }
     }
 
-    "a graceful close whose output never flushes destroys the socket at peerCloseGrace on the handle's clock, not one tick before" in {
+    "a graceful close whose output never flushes destroys the socket at closeFlushGrace on the handle's clock, not one tick before" in {
         given Frame = Frame.internal
         Clock.withTimeControl { tc =>
             Clock.get.map { clock =>
@@ -143,7 +183,7 @@ class JsIoDriverTest extends kyo.net.Test:
                 // Duplex whose write callback never runs, so `end()` can never emit `finish` and the grace timer is the close's only exit.
                 val socket = neverFlushingSocket()
                 val handle = JsHandle.init(socket, driver, Frame.internal)
-                handle.peerCloseGrace = 30.seconds
+                handle.closeFlushGrace = 30.seconds
                 handle.clock = clock
                 discard(socket.write(buffer(Array[Byte](1))))
                 driver.closeHandle(handle)
@@ -169,7 +209,11 @@ class JsIoDriverTest extends kyo.net.Test:
         given Frame = Frame.internal
         val grace   = 200.millis
         // Small inbound channel so two chunks overflow it.
-        val config = kyo.net.NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = grace)
+        val config = kyo.net.NetConfig(
+            channelCapacity = 1,
+            readChunkSize = 64.bytes,
+            peerCloseGrace = kyo.net.NetConfig.Grace.init(grace).getOrThrow
+        )
         // Capture the accepted (server) connection: with its ReadPump parked on the full cap-1 channel the client FIN is observable only through the
         // peer-close grace poll, so the captured connection's close is the reclaim oracle, validating that the transport threads the grace and
         // its clock. The client is a raw Node socket, so the accepted side's grace is the only sleep on the controlled clock.

@@ -20,8 +20,8 @@ private[kyo] object SchemaValidation:
         segs: Seq[String],
         pred: V => Boolean,
         msg: String
-    )(using frame: Frame): Schema[A] { type Focused = meta.Focused } =
-        val check: A => Seq[ValidationFailedException] = (root: A) =>
+    ): Schema[A] { type Focused = meta.Focused } =
+        val check: (A, Frame) => Seq[ValidationFailedException] = (root: A, frame: Frame) =>
             getter(root) match
                 case Maybe.Present(v) =>
                     if pred(v) then Seq.empty
@@ -42,8 +42,8 @@ private[kyo] object SchemaValidation:
         pred: V => Boolean,
         msg: String,
         constraint: Schema.Constraint
-    )(using frame: Frame): Schema[A] { type Focused = meta.Focused } =
-        val check: A => Seq[ValidationFailedException] = (root: A) =>
+    ): Schema[A] { type Focused = meta.Focused } =
+        val check: (A, Frame) => Seq[ValidationFailedException] = (root: A, frame: Frame) =>
             getter(root) match
                 case Maybe.Present(v) =>
                     if pred(v) then Seq.empty

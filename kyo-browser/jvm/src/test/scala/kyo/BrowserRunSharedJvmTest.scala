@@ -63,7 +63,6 @@ class BrowserRunSharedJvmTest extends BaseChromeTest:
         }
     }
 
-    private def page(html: String): String =
-        s"data:text/html;charset=utf-8,${BrowserTest.percentEncode(html)}"
+    private def page(html: String): String = Browser.dataUrl(html)
 
 end BrowserRunSharedJvmTest

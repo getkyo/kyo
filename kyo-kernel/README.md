@@ -786,7 +786,7 @@ When the computations already exist rather than being produced per element, `col
 Selection and aggregation follow the same pattern, with the predicate or the combining function returning a computation:
 
 ```scala
-val total: Int < Ask = Kyo.foldLeft(Chunk(1, 2, 3))(0)((acc, n) => Ask.get.map(a => acc + n * a))
+val total: Int < Ask           = Kyo.foldLeft(Chunk(1, 2, 3))(0)((acc, n) => Ask.get.map(a => acc + n * a))
 val firstBig: Maybe[Int] < Ask =
     Kyo.findFirst(Chunk(1, 2, 3))(n => Ask.get.map(a => if n > a then Maybe(n * 10) else Maybe.empty))
 

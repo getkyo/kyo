@@ -235,7 +235,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "Map[K, V] produces Mapping" in {
             val ref = Structure.of[Map[String, Int]]
             ref match
-                case Structure.Type.Mapping(_, _, keyType, valueType) =>
+                case Structure.Type.Mapping(_, _, keyType, valueType, _) =>
                     keyType match
                         case Structure.Type.Primitive(_, tag) => assert(tag =:= Tag[String])
                         case other                            => fail(s"Expected Primitive key, got $other")
@@ -1539,33 +1539,34 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(r.char() == 'x')
         }
 
-        "json int parse error throws ParseException" in {
+        "json int of a fraction throws TypeMismatchException, as a captured value does" in {
             val r  = JsonReader("3.14")
-            val ex = intercept[ParseException](r.int())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[TypeMismatchException](r.int())
+            assert((ex.expected, ex.actual) == ("Int", "a number with a fraction"))
         }
 
-        "json long parse error throws ParseException" in {
-            val r = JsonReader("\"abc\"")
-            // readNumber will fail because "abc" starts with '"', not a digit
-            val ex = intercept[ParseException](r.long())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+        "json long of a fraction throws TypeMismatchException, as a captured value does" in {
+            val r  = JsonReader("3.14")
+            val ex = intercept[TypeMismatchException](r.long())
+            assert((ex.expected, ex.actual) == ("Long", "a number with a fraction"))
         }
 
-        "json short overflow throws ParseException" in {
+        "json long of a string throws TypeMismatchException naming both kinds" in {
+            val r  = JsonReader("\"abc\"")
+            val ex = intercept[TypeMismatchException](r.long())
+            assert((ex.expected, ex.actual) == ("number", "string"))
+        }
+
+        "json short overflow throws RangeException" in {
             val r  = JsonReader("99999")
-            val ex = intercept[ParseException](r.short())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[RangeException](r.short())
+            assert((ex.value, ex.targetType) == (BigDecimal(99999), "Short"))
         }
 
-        "json byte overflow throws ParseException" in {
+        "json byte overflow throws RangeException" in {
             val r  = JsonReader("999")
-            val ex = intercept[ParseException](r.byte())
-            discard(summon[ParseException <:< DecodeException])
-            assert(ex.getMessage.contains("Cannot parse"))
+            val ex = intercept[RangeException](r.byte())
+            assert((ex.value, ex.targetType) == (BigDecimal(999), "Byte"))
         }
 
         "json invalid base64 throws ParseException" in {
@@ -2150,4 +2151,73 @@ class StructureTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a Structure.Value field in a renamed record stays undecodable through a reader that cannot introspect" in {
+        val bytes  = Schema[STPlainHolder].encode[Protobuf](STPlainHolder(1, "x"))
+        val result = Result.catching[SchemaNotSerializableException](Schema[STRenamedHolder].decode[Protobuf](bytes))
+        val raised = result match
+            case Result.Failure(_: SchemaNotSerializableException)                 => true
+            case Result.Success(Result.Panic(_: SchemaNotSerializableException))   => true
+            case Result.Success(Result.Failure(_: SchemaNotSerializableException)) => true
+            case _                                                                 => false
+        assert(raised, result.toString)
+    }
+
+    "a sum encodes to a Structure.Value and back under a non-object representation" in {
+        val circle: SSRShape = SSRCircle(2.0)
+        val cases            = Chunk(
+            Schema[SSRShape].tupleFlat   -> Structure.Value.Sequence(Chunk(Structure.Value.Str("SSRCircle"), Structure.Value.Decimal(2.0))),
+            Schema[SSRShape].tupleTagged -> Structure.Value.Sequence(Chunk(
+                Structure.Value.Str("SSRCircle"),
+                Structure.Value.Record(Chunk("radius" -> Structure.Value.Decimal(2.0)))
+            )),
+            Schema[SSRShape].untagged -> Structure.Value.Record(Chunk("radius" -> Structure.Value.Decimal(2.0)))
+        )
+        cases.foreach { (schema, expected) =>
+            val encoded = Result.catching[SchemaException](Structure.encode(circle)(using schema))
+            assert(encoded == Result.succeed(expected), s"${schema.representation}: $encoded")
+            assert(Structure.decode(expected)(using schema) == Result.succeed(circle), s"${schema.representation}")
+        }
+    }
+
+    "a Short out of range or with a fraction fails with one exception type, read from JSON or from a captured value" in {
+        def kind(result: Result[DecodeException, STShort]): String =
+            result match
+                case Result.Failure(e) => e.getClass.getSimpleName
+                case other             => s"not a failure: $other"
+        val direct   = Chunk("""{"s":99999}""", """{"s":1.5}""").map(json => kind(Json.decode[STShort](json)))
+        val captured = Chunk(Structure.Value.Integer(99999), Structure.Value.Decimal(1.5))
+            .map(v => kind(Structure.decode[STShort](Structure.Value.Record(Chunk("s" -> v)))))
+        assert(direct == captured, s"direct: $direct, captured: $captured")
+    }
+
+    "a field's default is recorded in the structure as the field's schema writes it" in {
+        Schema[STDefaults].structure match
+            case Structure.Type.Product(_, _, _, fields, _) =>
+                assert(fields.map(_.default) == Chunk(Present(Structure.Value.Null), Present(Structure.Value.Integer(3))), fields.toString)
+            case other => fail(s"expected a product, got $other")
+    }
+
+    "a number outside a Short from a captured value is a RangeException whether or not it fits a Long" in {
+        val kinds = Chunk(Structure.Value.Integer(99999), Structure.Value.BigNum(BigDecimal("1e30"))).map { v =>
+            Structure.decode[STShort](Structure.Value.Record(Chunk("s" -> v))) match
+                case Result.Failure(e) => e.getClass.getSimpleName
+                case other             => s"not a failure: $other"
+        }
+        assert(kinds == Chunk("RangeException", "RangeException"), kinds.toString)
+    }
+
+    "a captured map with a key that is not a string names the key's kind" in {
+        val entries = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1) -> Structure.Value.Integer(2)))
+        Structure.decode[Map[String, Int]](entries) match
+            case Result.Failure(e: TypeMismatchException) => assert(e.actual == "number", e.actual)
+            case other                                    => fail(s"expected a TypeMismatchException, got $other")
+    }
+
 end StructureTest
+
+case class STShort(s: Short) derives CanEqual, Schema
+case class STDefaults(a: Maybe[Int] = Absent, b: Maybe[Int] = Present(3)) derives CanEqual, Schema
+
+// The same wire key "a_b" and field "v", as a String and as a Structure.Value, for decoding one's Protobuf bytes as the other.
+case class STPlainHolder(a_b: Int, v: String) derives CanEqual, Schema
+case class STRenamedHolder(@kyo.schema.rename("a_b") ab: Int, v: Structure.Value) derives CanEqual, Schema

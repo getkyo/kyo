@@ -62,6 +62,7 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
             config
         )
         running.set(concurrency)
+        val _ = concurrency.start()
 
         // Virtual scheduling around a real probe: advanceAndRun fires collect and regulate on this thread, so every host runs the same
         // probe count and one regulation decision, only the measurement real. Wall time would let a slow host stretch into an extra cycle.
@@ -122,6 +123,6 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
                     loadAvgTarget,
                     stepExp
                 )
-            )
+            ).start()
     }
 }

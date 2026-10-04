@@ -142,9 +142,7 @@ class InvariantsSpec extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Tasty.Classpath fields accept non-null values; constructing a Classpath with concrete
-    // values must type-check without error.
-    "no | Null type expressions in Tasty.scala outside scaladoc prose" in {
+    "Classpath is constructed from its symbols, indices, errors, modules and root symbol id" in {
         val errors = compiletime.testing.typeCheckErrors(
             "val _: kyo.Tasty.Classpath = kyo.Tasty.Classpath(kyo.Chunk.empty, kyo.Tasty.Classpath.Indices.empty, kyo.Chunk.empty, kyo.Chunk.empty, kyo.Tasty.SymbolId(-1))"
         )

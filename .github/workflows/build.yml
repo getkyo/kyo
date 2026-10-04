@@ -65,16 +65,10 @@ jobs:
     env:
       # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run
       # in-process in the sbt driver heap, and the Native optimizer plus forked LLVM/podman/chrome
-      # run alongside it; on the 16GB runners two of those at once either exhaust the 12GB heap
+      # run alongside it; on the 16GB runners two of those at once either exhaust the driver heap
       # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:4
       # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
       SBT_TASK_LIMIT: 1
-      # The sbt driver heap is governed by the checked-in .jvmopts (12G): the sbt runner appends
-      # .jvmopts after these env opts on the java command line, so an -Xmx set here would never
-      # take effect. The env therefore carries only the non-heap flags, which do reach the JVM
-      # because .jvmopts holds no conflicting duplicates for them.
-      JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       # No heavy-module pre-link on Native: the previous heavy (kyo-schema-tests, whose whole-program
       # optimize needed its own ~12G driver) is dropped from the Native leg via NATIVE_SKIP below, and the
       # link pool already gives every remaining (KEPT) module a driver carrying at most NATIVE_LINK_BATCH
@@ -147,10 +141,23 @@ jobs:
         run: ./scripts/native-relink-selftest.sh
 
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
+        id: test
         shell: bash
         run: |
           action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
           ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
+
+      # Saves only on a push to main (the action's own guard). Gated on the test step having run to a
+      # conclusion: a failed test leaves dependencies worth keeping, while a failed setup or relink guard
+      # leaves a partial tree, and a key is immutable once written, so that tree would own the whole
+      # generation. continue-on-error because a cache problem must never turn a main leg red.
+      - name: save caches (${{ inputs.os }})
+        if: ${{ !cancelled() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        continue-on-error: true
+        uses: ./.github/actions/caches
+        with:
+          os: ${{ inputs.os }}
+          mode: save
 
       # A JVM that dies in native code writes its diagnosis next to the forked test process and the runner
       # discards it with the workspace, so the only trace left in the log is a task failure carrying no test

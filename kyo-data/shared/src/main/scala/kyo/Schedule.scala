@@ -309,6 +309,29 @@ object Schedule:
             def show               = s"Schedule.fixed(${interval.show})"
         end Fixed
 
+        /** Starts at `startAfter` past its first `next`, then every `interval` after that start, measured between scheduled starts rather
+          * than from when a run ends. A run ending past the next start is followed at once, and the start after it returns to the grid, so
+          * missed starts are not replayed.
+          *
+          * `last` is the previous scheduled start, not the time `next` is called: the caller asks after the run, and only the prediction
+          * carries the start.
+          */
+        final case class FixedRate(startAfter: Duration, interval: Duration, last: Maybe[Instant]) extends Schedule:
+            def next(now: Instant): Maybe[(Duration, Schedule)] =
+                last match
+                    case Absent            => Maybe((startAfter, FixedRate(startAfter, interval, Present(now + startAfter))))
+                    case Present(previous) =>
+                        val due = previous + interval
+                        if due > now then Maybe((due.minusOrZero(now), FixedRate(startAfter, interval, Present(due))))
+                        else
+                            val intervalNanos = interval.toNanos.max(1)
+                            val passed        = now.minusOrZero(previous).toNanos / intervalNanos
+                            Maybe((Duration.Zero, FixedRate(startAfter, interval, Present(previous + (passed * intervalNanos).nanos))))
+                        end if
+            end next
+            def show = s"Schedule.fixedRate(${startAfter.show}, ${interval.show})"
+        end FixedRate
+
         final case class Exponential(initial: Duration, factor: Double) extends Schedule:
             def next(now: Instant) = Maybe((initial, Exponential(initial * factor, factor)))
             def show               = s"Schedule.exponential(${initial.show}, ${formatDouble(factor)})"

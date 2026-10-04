@@ -28,9 +28,6 @@ jobs:
   build:
     if: github.repository == 'getkyo/kyo'
     runs-on: ubuntu-latest
-    env:
-      JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
-      JVM_OPTS:  -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -42,18 +39,11 @@ jobs:
       #
       # restore, not the full cache action: a key is immutable once written, so a consumer with a thinner
       # tree than a ci leg must not be the one that mints it. The ci legs write; this restores.
-      - uses: actions/cache/restore@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-x64-
+          os: linux-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -75,9 +65,9 @@ jobs:
           sqlite: 'false'
           doltlite: 'false'
       - name: Link the browser bundle (fullLinkJS)
-        run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
+        run: scripts/sbt.sh compile 'kyo-website-bundleJS/Compile/fullLinkJS'
       - name: Render and assemble the site from the current repo
-        run: sbt "kyo-websiteJVM/run --out $GITHUB_WORKSPACE/site --repo-root $GITHUB_WORKSPACE"
+        run: scripts/sbt.sh compile "kyo-websiteJVM/run --out $GITHUB_WORKSPACE/site --repo-root $GITHUB_WORKSPACE"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site

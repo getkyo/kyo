@@ -229,18 +229,18 @@ site, edit both: it is one discipline at two call sites.
 
 ## SourceRange, Occurrence, and the 1-based position contract
 
-`Tasty.SourceRange` (`kyo/Tasty.scala:1453-1462`) is the element type of `Tasty.references`:
+`Tasty.SourceRange` (`kyo/Tasty.scala:1467-1476`) is the element type of `Tasty.references`:
 a contiguous span within ONE source file,
 `SourceRange(sourceFile, startLine, startColumn, endLine, endColumn)`. All four coordinates
 are 1-based, matching `Tasty.Position`. The start `(startLine, startColumn)` is inclusive;
 the end `(endLine, endColumn)` is end-exclusive (the 1-based column one past the last
 character), so a half-open `[start, end)` reading maps onto an editor range. The end is read
 directly from the TASTy Positions section, never reconstructed from a name length
-(`Tasty.scala:1448-1449`). A single `sourceFile` for the whole span makes a cross-file range
+(`Tasty.scala:1462-1463`). A single `sourceFile` for the whole span makes a cross-file range
 unrepresentable by construction; equality is structural across all five fields (`derives
 Schema, CanEqual`).
 
-`Tasty.Occurrence` (`kyo/Tasty.scala:1470`, `final private[kyo] case class Occurrence(range:
+`Tasty.Occurrence` (`kyo/Tasty.scala:1484`, `final private[kyo] case class Occurrence(range:
 SourceRange, symbolId: SymbolId)`) is the internal use-site carrier: a `SourceRange` plus the
 `SymbolId` it resolves to. It is produced by `OccurrenceScanner.scanFile` and memoized per
 file in `DecodeContext.occurrenceMemo`; it never reaches the public surface (`symbolAt`
@@ -316,15 +316,15 @@ Site 5 boundary in the Tasty query layer, and this object adds no `embrace.dange
 shadow a same-named inherited PUBLIC member; `MemberScope.Declared` keeps it. The consequence:
 `MemberScope.All` is NOT a strict superset of `MemberScope.Declared`.
 
-In `Classpath.members` (`kyo/Tasty.scala:4478-4497`), the `Inherited` arm builds its
-`directNames` shadow-set skipping any private own declaration (`Tasty.scala:4494`, `if
+In `Classpath.members` (`kyo/Tasty.scala:4492-4511`), the `Inherited` arm builds its
+`directNames` shadow-set skipping any private own declaration (`Tasty.scala:4508`, `if
 !s.isPrivate then discard(directNames.add(s.simpleName))`), so an inherited public member with
 that name survives the trailing `filter`. `allMembersOf` (backing `MemberScope.All`,
-`Tasty.scala:4622-4641`) applies the same skip for BOTH its `seen` shadow-set and its output
-(`Tasty.scala:4637-4639`, `if !d.isPrivate then ...`), so `All` emits the inherited public
-member and omits the private own one. `Declared` (`Tasty.scala:4480-4483`) reads
+`Tasty.scala:4636-4655`) applies the same skip for BOTH its `seen` shadow-set and its output
+(`Tasty.scala:4651-4653`, `if !d.isPrivate then ...`), so `All` emits the inherited public
+member and omits the private own one. `Declared` (`Tasty.scala:4494-4497`) reads
 `declarationIds` unfiltered, so it DOES include the private member. The cited shape is
-`tasty-query#195` (`Tasty.scala:4492-4493`, `4635-4636`): a `Child(y: Int)` primary-constructor
+`tasty-query#195` (`Tasty.scala:4506-4507`, `4635-4636`): a `Child(y: Int)` primary-constructor
 param retained as a private field must never hide the inherited public `Parent.y`. This is why
 `OccurrenceScanner.selectTarget` resolves a use-site selection with `MemberScope.All`: a `.y`
 selection through an external reference must reach `Parent.y`, not the private ctor artifact.
@@ -419,6 +419,13 @@ boundary and a `given Schema[Uuid]` that delegates to `Schema[String]` so the
 wire encoding is the canonical hex form. `TastyError.InconsistentClasspath`
 reports UUID mismatches as `Tasty.Uuid` values. Two `Uuid` values are equal when
 their canonical forms match (`given CanEqual[Uuid, Uuid]`).
+
+`SymbolId`, `Name`, `Uuid` and `Flags` are each declared in an object of their
+own (`SymbolIds`, `Names`, `Uuids`, `FlagSets`) and exported into `Tasty`.
+Declared in `Tasty`'s own template, each would make its underlying `Int`,
+`String` or `Long` the same type as itself there, and every schema derived in
+`Tasty` would be refused at its first field of that type. A new opaque type
+goes in an object of its own the same way.
 
 ---
 

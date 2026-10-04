@@ -109,6 +109,58 @@ class HttpStatusTest extends BaseHttpTest:
         }
     }
 
+    "message rules" - {
+        "forbidsContent holds for every 1xx, 204 and 304 and nothing next to them" in {
+            assert(!HttpStatus.forbidsContent(99))
+            assert(HttpStatus.Continue.forbidsContent)
+            assert(HttpStatus.SwitchingProtocols.forbidsContent)
+            assert(HttpStatus(199).forbidsContent)
+            assert(!HttpStatus.OK.forbidsContent)
+            assert(!HttpStatus.NonAuthoritativeInfo.forbidsContent)
+            assert(HttpStatus.NoContent.forbidsContent)
+            assert(!HttpStatus.ResetContent.forbidsContent)
+            assert(!HttpStatus.SeeOther.forbidsContent)
+            assert(HttpStatus.NotModified.forbidsContent)
+            assert(!HttpStatus.UseProxy.forbidsContent)
+            assert(!HttpStatus.InternalServerError.forbidsContent)
+        }
+
+        "isInterim holds for every 1xx but 101" in {
+            assert(!HttpStatus.isInterim(99))
+            assert(HttpStatus.Continue.isInterim)
+            assert(!HttpStatus.SwitchingProtocols.isInterim)
+            assert(HttpStatus.Processing.isInterim)
+            assert(HttpStatus(199).isInterim)
+            assert(!HttpStatus.OK.isInterim)
+        }
+
+        "acceptsUpgrade holds for 101 and every 2xx" in {
+            assert(!HttpStatus.Continue.acceptsUpgrade)
+            assert(HttpStatus.SwitchingProtocols.acceptsUpgrade)
+            assert(!HttpStatus.Processing.acceptsUpgrade)
+            assert(!HttpStatus(199).acceptsUpgrade)
+            assert(HttpStatus.OK.acceptsUpgrade)
+            assert(HttpStatus(299).acceptsUpgrade)
+            assert(!HttpStatus.MultipleChoices.acceptsUpgrade)
+            assert(!HttpStatus.BadRequest.acceptsUpgrade)
+        }
+
+        "a Custom status follows the rules of its code" in {
+            assert(HttpStatus.Custom(150).forbidsContent)
+            assert(HttpStatus.Custom(150).isInterim)
+            assert(HttpStatus.Custom(250).acceptsUpgrade)
+            assert(!HttpStatus.Custom(250).forbidsContent)
+        }
+
+        "isValid holds from 100 to 599" in {
+            assert(!HttpStatus.isValid(99))
+            assert(HttpStatus.isValid(100))
+            assert(HttpStatus.isValid(599))
+            assert(!HttpStatus.isValid(600))
+            assert(!HttpStatus.isValid(0))
+        }
+    }
+
     "apply" - {
         "resolves known status codes" in {
             assert(HttpStatus(200) == HttpStatus.OK)

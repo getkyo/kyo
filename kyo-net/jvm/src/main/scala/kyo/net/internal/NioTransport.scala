@@ -140,13 +140,18 @@ final private[kyo] class NioTransport private (
       * fixes window scaling at bind time, so setting it afterwards would not take effect.
       */
     private def applySocketBuffers(channel: java.nio.channels.NetworkChannel, config: kyo.net.NetConfig, sendSupported: Boolean): Unit =
-        config.soRcvBuf.foreach(n => discard(channel.setOption(StandardSocketOptions.SO_RCVBUF, Integer.valueOf(n))))
+        config.soRcvBuf.foreach(n =>
+            discard(channel.setOption(StandardSocketOptions.SO_RCVBUF, Integer.valueOf(kyo.net.NetConfig.bytesAtUse(n))))
+        )
         if sendSupported then
-            config.soSndBuf.foreach(n => discard(channel.setOption(StandardSocketOptions.SO_SNDBUF, Integer.valueOf(n))))
+            config.soSndBuf.foreach(n =>
+                discard(channel.setOption(StandardSocketOptions.SO_SNDBUF, Integer.valueOf(kyo.net.NetConfig.bytesAtUse(n))))
+            )
+        end if
     end applySocketBuffers
 
     private def initTracked(handle: NioHandle, channelCapacity: Int)(using AllowUnsafe, Frame): Connection[NioHandle] =
-        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace)
+        Connection.init(handle, driver, channelCapacity, handle.peerCloseGrace, handle.closeFlushGrace)
 
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
@@ -169,7 +174,10 @@ final private[kyo] class NioTransport private (
       * 0/1 (the process owns them). Shared limitation with the posix `BlockingReaderDriver`: a read parked in stdin when the connection closes
       * stays parked until the next stdin byte or EOF.
       */
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
@@ -180,7 +188,7 @@ final private[kyo] class NioTransport private (
             // the opaque-alias boundary: the value is already a Fiber.Unsafe and the cast is not required to obtain one. It is kept for
             // uniformity with the module's other Fiber.Unsafe boundary casts, which recover the opaque alias from a plain IOPromise and do
             // need it.
-            Fiber.Unsafe.init(NioStdioConnection.open(channelCapacity, readChunkSize))
+            Fiber.Unsafe.init(NioStdioConnection.open(channelCapacity, kyo.net.NetConfig.bytesAtUse(readChunkSize)))
                 .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
 
     /** Build the connect-stage [[NetException]] leaf for `host:port`: a TCP connect failure ([[NetConnectException]]), or a Unix-socket connect
@@ -201,8 +209,13 @@ final private[kyo] class NioTransport private (
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
+
+        // Armed BEFORE the connect: a loopback connect can complete inline (Linux answers `true` straight from `channel.connect`), and an
+        // arm placed only on the pending branch would never bound that path, so a zero deadline, which fails `promise` as it is armed,
+        // would let the connect through. A plaintext connect has one phase, so the deadline runs to the outcome; the promise backstop
+        // inside armConnectDeadline disarms it, and completeConnect closes a connection whose promise the deadline already failed.
+        discard(armConnectDeadline(promise, host, port, connectTimeout))
 
         // Hoisted so the catch can close it: channel.connect throws UnresolvedAddressException (DNS failure) / IOException AFTER the channel is
         // open, and the failure paths inside the try (awaitConnect, registerChannel) already close it, so only this synchronous catch was leaking
@@ -219,17 +232,29 @@ final private[kyo] class NioTransport private (
             Log.live.unsafe.debug(s"NioTransport connect immediate=$connected channel=${channel.hashCode()}")
             if connected then
                 // Immediate connection (localhost)
-                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace, frame)
+                val handle = NioHandle.init(
+                    channel,
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration,
+                    frame
+                )
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise, config.channelCapacity)
             else
-                // Connection in progress, wait for writable. Arm the connect-deadline: when the caller's connectTimeout is finite, a Clock-driven timer
-                // fails `promise` with the typed NetConnectTimeoutException if the OS connect does not complete first. The deadline arm and the
-                // OS outcome race on the same `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and
-                // an OS-failure close surfaces NetConnectException: the close cause is discriminated by which arm completes `promise` first.
-                awaitConnect(channel, host, port, promise, config.channelCapacity, config.readChunkSize, config.peerCloseGrace)
-                // A plaintext connect has one phase, so its deadline runs to the outcome; the promise backstop disarms it.
-                discard(armConnectDeadline(promise, host, port, connectTimeout))
+                // Connection in progress, wait for writable. The deadline armed above and the OS outcome race on the same `promise`
+                // (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
+                // NetConnectException: the close cause is discriminated by which arm completes `promise` first.
+                awaitConnect(
+                    channel,
+                    host,
+                    port,
+                    promise,
+                    config.channelCapacity,
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration
+                )
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -254,14 +279,15 @@ final private[kyo] class NioTransport private (
         promise: IOPromise[NetException, Connection[NioHandle]],
         channelCapacity: Int,
         readChunkSize: Int,
-        peerCloseGrace: Duration
+        peerCloseGrace: Duration,
+        closeFlushGrace: Duration
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
         def tryFinishConnect(): Boolean =
             try
                 if channel.finishConnect() then
-                    val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
+                    val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
                     discard(driver.registerChannel(handle))
                     completeConnect(handle, promise, channelCapacity)
                     true
@@ -275,7 +301,7 @@ final private[kyo] class NioTransport private (
 
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
-            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
+            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
             if !driver.registerChannel(handle) then
                 channel.close()
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
@@ -313,7 +339,7 @@ final private[kyo] class NioTransport private (
         // Wire in the STARTTLS upgrade function. NioTransport is the only platform that supports it.
         connection.upgradeFn = Present { (tls, frame) =>
             given Frame = frame
-            upgradeToTls(connection, tls, channelCapacity)
+            upgradeConnection(connection, tls, channelCapacity)
         }
         // Wire in the TLS certificate hash function. Compute the hash ONCE here, at handshake completion before connection.start() launches the
         // pumps, so the single getPeerCertificates read cannot race the Selector carrier's concurrent engine ops (concurrent SSLEngine/SSLSession
@@ -454,7 +480,13 @@ final private[kyo] class NioTransport private (
                         s"NioTransport accepted client channel=${clientChannel.hashCode()} on server port=${listener.port}"
                     )
 
-                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace, listener.createdAt)
+                    val handle = NioHandle.init(
+                        clientChannel,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration,
+                        listener.createdAt
+                    )
                     discard(driver.registerChannel(handle))
                     val connection = initTracked(handle, config.channelCapacity)
                     // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
@@ -494,11 +526,11 @@ final private[kyo] class NioTransport private (
         acceptLoop()
     end acceptAllPending
 
-    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(
+        using
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
         // Arm the connect-deadline for the TCP phase, as the plaintext path does. connectTimeout bounds the connect whether or not the
@@ -532,8 +564,9 @@ final private[kyo] class NioTransport private (
                     existingHandle = Absent,
                     preRead = Absent,
                     config.channelCapacity,
-                    config.readChunkSize,
-                    config.peerCloseGrace
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration
                 )
             else
                 awaitConnectThenTls(
@@ -543,8 +576,9 @@ final private[kyo] class NioTransport private (
                     tls,
                     promise,
                     config.channelCapacity,
-                    config.readChunkSize,
-                    config.peerCloseGrace,
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration,
                     disarmConnectDeadline
                 )
             end if
@@ -573,6 +607,7 @@ final private[kyo] class NioTransport private (
         channelCapacity: Int,
         readChunkSize: Int,
         peerCloseGrace: Duration,
+        closeFlushGrace: Duration,
         // Called at the TCP-to-handshake boundary: connectTimeout bounds the TCP phase, tls.handshakeTimeout the handshake.
         disarmConnectDeadline: () => Unit
     )(using allow: AllowUnsafe, frame: Frame): Unit =
@@ -593,7 +628,8 @@ final private[kyo] class NioTransport private (
                         preRead = Absent,
                         channelCapacity,
                         readChunkSize,
-                        peerCloseGrace
+                        peerCloseGrace,
+                        closeFlushGrace
                     )
                     true
                 else false
@@ -606,7 +642,7 @@ final private[kyo] class NioTransport private (
 
         if !tryFinishConnect() then
             // Not yet connected: register and let the driver handle OP_CONNECT
-            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
+            val handle = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
             if !driver.registerChannel(handle) then
                 channel.close()
                 promise.completeDiscard(Result.fail(NetConnectException(host, port, "")))
@@ -628,7 +664,8 @@ final private[kyo] class NioTransport private (
                                 preRead = Absent,
                                 channelCapacity,
                                 readChunkSize,
-                                handle.peerCloseGrace
+                                handle.peerCloseGrace,
+                                handle.closeFlushGrace
                             )
                         case Result.Failure(cause) =>
                             channel.close()
@@ -658,8 +695,9 @@ final private[kyo] class NioTransport private (
         preRead: Maybe[Chunk[Span[Byte]]],
         channelCapacity: Int,
         readChunkSize: Int,
-        // Unused when existingHandle is present (a STARTTLS upgrade reuses that handle, keeping its grace); applied only to a fresh TLS handle.
-        peerCloseGrace: Duration
+        // Unused when existingHandle is present (a STARTTLS upgrade reuses that handle, keeping its graces); applied only to a fresh TLS handle.
+        peerCloseGrace: Duration,
+        closeFlushGrace: Duration
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         // One deadline per handshake, armed here so every role gets it: a connection accepted by listenTls, a client connectTls, and either
         // direction of a STARTTLS upgrade. A peer that finishes the TCP phase and then stalls the handshake (sends nothing, or a partial
@@ -691,8 +729,12 @@ final private[kyo] class NioTransport private (
                     s"pinned TLS provider '${tls.tlsProvider.get}' is not supported by the NIO transport (only 'jdk')"
                 )
             end if
+            // The JDK checks the certificate against the SNI name and, when that fails, retries against the engine's peer host. Building the
+            // engine with the connect host would let a certificate for the connect host pass a client that asked for a different sniHostname,
+            // so the client's peer host is the sniHostname itself, as on the posix and Node clients.
+            val identity   = if isServer then host else tls.sniHostname.getOrElse(host)
             val sslContext = NioTransport.createSslContext(tls, isServer)
-            val engine     = sslContext.createSSLEngine(host, port)
+            val engine     = sslContext.createSSLEngine(identity, port)
             engine.setUseClientMode(!isServer)
             // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
             // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
@@ -704,13 +746,13 @@ final private[kyo] class NioTransport private (
                 // acceptable silent outcome (RFC 9525 §6.1; CWE-295). This mirrors SslEngineProvider.createEngine exactly so the inline NIO
                 // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
                 // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
-                if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
+                if tls.hostnameVerification && !tls.trustAll && identity.isEmpty then
                     throw NetTlsConfigException(
                         "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
                             "or hostnameVerification = false to opt out of name verification)"
                     )
                 end if
-                if host.nonEmpty then
+                if identity.nonEmpty then
                     // Only set endpoint identification when we have a real hostname to verify against.
                     // trustAll disables all verification (chain + hostname). hostnameVerification = false
                     // disables only hostname verification (e.g. sslmode=verify-ca).
@@ -737,7 +779,7 @@ final private[kyo] class NioTransport private (
             // Create handle in raw mode (tls = Absent) for handshake.
             // The driver reads raw ciphertext during handshake.
             val handle = existingHandle.getOrElse {
-                val h = NioHandle.init(channel, readChunkSize, peerCloseGrace, frame)
+                val h = NioHandle.init(channel, readChunkSize, peerCloseGrace, closeFlushGrace, frame)
                 discard(driver.registerChannel(h))
                 h
             }
@@ -1174,7 +1216,13 @@ final private[kyo] class NioTransport private (
                     // through driver.closeHandle(handle). The handle owns the parked awaitRead and the driver's pendingReads[channel] -> handle
                     // entry; a bare clientChannel.close() on a failed/timed-out handshake strands that entry and the armed IOPromise. Passing the
                     // handle as existingHandle to startTlsHandshake reuses it (no double registerChannel).
-                    val handle = NioHandle.init(clientChannel, config.readChunkSize, config.peerCloseGrace, listener.createdAt)
+                    val handle = NioHandle.init(
+                        clientChannel,
+                        kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                        config.peerCloseGrace.duration,
+                        config.closeFlushGrace.duration,
+                        listener.createdAt
+                    )
                     discard(driver.registerChannel(handle))
 
                     // Create a per-connection promise for the TLS handshake result
@@ -1234,8 +1282,9 @@ final private[kyo] class NioTransport private (
                             existingHandle = Present(handle),
                             preRead = Absent,
                             config.channelCapacity,
-                            config.readChunkSize,
-                            handle.peerCloseGrace
+                            kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                            handle.peerCloseGrace,
+                            handle.closeFlushGrace
                         )
                     end if
                     true   // accepted one, try again
@@ -1267,7 +1316,7 @@ final private[kyo] class NioTransport private (
         handshakeTimeout: Duration
     )(using allow: AllowUnsafe, frame: Frame): Unit =
         if handshakeTimeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(handshakeTimeout)
+            val timer = DeadlineTimer.arm(handshakeTimeout)
             timer.onComplete { _ =>
                 connPromise.completeDiscard(Result.fail(NetTlsHandshakeTimeoutException(host, port, handshakeTimeout)))
             }
@@ -1298,7 +1347,7 @@ final private[kyo] class NioTransport private (
             // at-most-once completeDiscard made it a no-op); handing the deadline off at the TCP boundary, with the promise still pending
             // through the handshake, makes it live.
             val disarmed = AtomicBoolean.Unsafe.init(false)
-            val timer    = Clock.live.unsafe.sleep(connectTimeout)
+            val timer    = DeadlineTimer.arm(connectTimeout)
             timer.onComplete { _ =>
                 if !disarmed.get() then
                     // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
@@ -1322,7 +1371,6 @@ final private[kyo] class NioTransport private (
         allow: AllowUnsafe,
         frame: Frame
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
         // Armed BEFORE the connect, not inside the connect-pending branch below. A non-blocking AF_UNIX connect never reports "pending"
@@ -1344,12 +1392,27 @@ final private[kyo] class NioTransport private (
             val connected = channel.connect(addr)
             Log.live.unsafe.debug(s"NioTransport connectUnix immediate=$connected channel=${channel.hashCode()}")
             if connected then
-                val handle = NioHandle.init(channel, config.readChunkSize, config.peerCloseGrace, frame)
+                val handle = NioHandle.init(
+                    channel,
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration,
+                    frame
+                )
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise, config.channelCapacity)
             else
                 // port = -1 sentinel: a Unix socket has no port, so connectFail routes failures to NetUnixConnectException.
-                awaitConnect(channel, path, -1, promise, config.channelCapacity, config.readChunkSize, config.peerCloseGrace)
+                awaitConnect(
+                    channel,
+                    path,
+                    -1,
+                    promise,
+                    config.channelCapacity,
+                    kyo.net.NetConfig.bytesAtUse(config.readChunkSize),
+                    config.peerCloseGrace.duration,
+                    config.closeFlushGrace.duration
+                )
             end if
         catch
             case e: IOException =>
@@ -1416,6 +1479,13 @@ final private[kyo] class NioTransport private (
         tls: kyo.net.NetTlsConfig,
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        upgradeConnection(conn, tls, channelCapacity)
+
+    private def upgradeConnection(
+        conn: NetConnection,
+        tls: kyo.net.NetTlsConfig,
+        channelCapacity: Int
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         conn match
             case nioConn: Connection[NioHandle] @unchecked if nioConn.handle.isInstanceOf[NioHandle] =>
                 upgradeToTlsNio(nioConn, tls, channelCapacity)
@@ -1423,7 +1493,7 @@ final private[kyo] class NioTransport private (
                 // Not an upgradable NIO connection (e.g. Connection.inMemory): abort typed, never a cast crash.
                 Fiber.Unsafe.fromResult(Result.fail(NetNotUpgradableException()))
         end match
-    end upgradeToTls
+    end upgradeConnection
 
     private def upgradeToTlsNio(
         nioConn: Connection[NioHandle],
@@ -1525,7 +1595,8 @@ final private[kyo] class NioTransport private (
                                 preRead,
                                 channelCapacity,
                                 handle.readBufferSize,
-                                handle.peerCloseGrace
+                                handle.peerCloseGrace,
+                                handle.closeFlushGrace
                             )
                         end if
                     catch

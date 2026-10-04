@@ -21,32 +21,37 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
             def architecture()(using AllowUnsafe): System.Arch        = System.Arch.Unknown
             def availableProcessors()(using AllowUnsafe): Int         = 1
 
+    /** Interrupts a sampler this suite started and clears the start CAS, so no live sampler loop outlives the leaf. */
+    private def stop(started: Maybe[Fiber.Unsafe[Unit, Any]]): Unit =
+        started.foreach(fiber => discard(fiber.interrupt()))
+        MachineStatFactory.resetForTest()
+
     "triggerStart" - {
 
         "starts exactly one sampler on the first winning call and a second call after the CAS fired does not start a second" in {
             MachineStatFactory.resetForTest()
+            val first = MachineStatFactory.triggerStart(disabled = false)
             try
-                val first  = MachineStatFactory.triggerStart(disabled = false)
                 val second = MachineStatFactory.triggerStart(disabled = false)
-                assert(first)
+                assert(first.isDefined)
                 assert(MachineStatFactory.hasStarted)
-                assert(!second)
+                assert(second.isEmpty)
                 assert(MachineStatFactory.hasStarted)
-            finally MachineStatFactory.stopForTest()
+            finally stop(first)
             end try
         }
 
         "the opt-out suppresses the start, and the flag supplies the default when the caller names nothing" in {
             MachineStatFactory.resetForTest()
-            assert(!MachineStatFactory.triggerStart(disabled = true))
+            assert(MachineStatFactory.triggerStart(disabled = true).isEmpty)
             assert(!MachineStatFactory.hasStarted)
             MachineStatFactory.resetForTest()
 
             // The no-argument form is what production calls: it reads the kyo.machine.disabled flag, which
             // resolves once at class load and is false unless the host set it.
-            try
-                assert(MachineStatFactory.triggerStart() == !kyo.machine.disabled())
-            finally MachineStatFactory.stopForTest()
+            val started = MachineStatFactory.triggerStart()
+            try assert(started.isDefined == !kyo.machine.disabled())
+            finally stop(started)
             end try
         }
     }

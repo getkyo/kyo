@@ -63,8 +63,16 @@ class ProcessSharedTransportTest extends Test:
             val transport = NetPlatform.transport
             transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
                 Scope.ensure(Sync.defer(listener.close())).andThen {
-                    val a = transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 2, readChunkSize = 1024))
-                    val b = transport.connect("127.0.0.1", listener.port, config = NetConfig(channelCapacity = 32, readChunkSize = 65536))
+                    val a = transport.connect(
+                        "127.0.0.1",
+                        listener.port,
+                        config = NetConfig(channelCapacity = 2, readChunkSize = 1.kib)
+                    )
+                    val b = transport.connect(
+                        "127.0.0.1",
+                        listener.port,
+                        config = NetConfig(channelCapacity = 32, readChunkSize = 64.kib)
+                    )
                     a.safe.get.map { connA =>
                         Scope.ensure(Sync.defer(connA.close())).andThen {
                             b.safe.get.map { connB =>

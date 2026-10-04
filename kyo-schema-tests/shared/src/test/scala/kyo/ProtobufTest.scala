@@ -898,6 +898,14 @@ class ProtobufTest extends kyo.test.Test[Any]:
         )
     }
 
+    "a pinned field number of a record nested in a renamed record reaches the wire" in {
+        val inner   = PBNestedPinned(1, "y")
+        val renamed = Schema[PBRenamedHolder].encode[Protobuf](PBRenamedHolder("l", inner))
+        val mirror  = Schema[PBMirrorHolder].encode[Protobuf](PBMirrorHolder("l", inner))
+        assert(renamed.toArray.toList == mirror.toArray.toList)
+        assert(Schema[PBRenamedHolder].decode[Protobuf](mirror) == Result.succeed(PBRenamedHolder("l", inner)))
+    }
+
     "all four field-customization features compose and round-trip through Json and Protobuf" in {
         // strict + transform + decode-default + whenDefault-omit on one schema, exercised through
         // BOTH the self-describing (Json) and binary (Protobuf numeric field-id) codecs. The binary
@@ -1561,11 +1569,10 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
         "INV-PBC-PIN-i-override-round-trip-wire-true" in {
             // A field pinned via Schema.fieldId must encode with the pinned number and decode back correctly.
-            val pinnedSchema: Schema[PBAuditPerson] = Schema[PBAuditPerson].fieldId(_.name)(7)
-            given Schema[PBAuditPerson]             = pinnedSchema
-            val value                               = PBAuditPerson("Alice", PBAuditInner(42))
-            val bytes                               = Protobuf.encode(value)
-            val result                              = Protobuf.decode[PBAuditPerson](bytes)
+            given Schema[PBAuditPerson] = Schema[PBAuditPerson].fieldId(_.name)(7)
+            val value                   = PBAuditPerson("Alice", PBAuditInner(42))
+            val bytes                   = Protobuf.encode(value)
+            val result                  = Protobuf.decode[PBAuditPerson](bytes)
             assert(result == Result.Success(value), s"pinned-field round-trip failed: $result")
         }
 
@@ -1651,12 +1658,11 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "programmatic rename composes with explicit fieldId pin" in {
-            val pinnedThenRenamed: Schema[PBRenameSimple] =
+            given Schema[PBRenameSimple] =
                 Schema[PBRenameSimple].fieldId(_.id)(7).rename("id", "wire_id").asInstanceOf[Schema[PBRenameSimple]]
-            given Schema[PBRenameSimple] = pinnedThenRenamed
-            val value                    = PBRenameSimple(99, "compose")
-            val bytes                    = Protobuf.encode(value)
-            val result                   = Protobuf.decode[PBRenameSimple](bytes)
+            val value  = PBRenameSimple(99, "compose")
+            val bytes  = Protobuf.encode(value)
+            val result = Protobuf.decode[PBRenameSimple](bytes)
             assert(result == Result.Success(value), s"rename+fieldId compose round-trip failed: $result")
         }
 
@@ -1817,6 +1823,195 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    private def wirePin[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        wireDecodes(value, wire, schema)
+        wireWrites(value, wire, schema)
+    end wirePin
+
+    private def wireDecodes[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Protobuf.decode[A](CodecTestSupport.unhex(wire)) == Result.succeed(value))
+    end wireDecodes
+
+    private def wireWrites[A](value: A, wire: String, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(CodecTestSupport.hex(Protobuf.encode(value)) == wire)
+    end wireWrites
+
+    private def wireRefuses[E <: Throwable](using ConcreteTag[E])[A](value: A, schema: Schema[A])(using Frame, kyo.test.AssertScope): Unit =
+        given Schema[A] = schema
+        assert(Result.catching[E](Protobuf.encode(value)).isFailure)
+    end wireRefuses
+
+    "wire pins" - {
+        "a record with a collection and a nested record" in {
+            wirePin(
+                WCValues.record,
+                "9aa5b60603416e6ea085a70252e88a6b01f1f8670000000000000440ead78b070161ead78b070162a2b8390c90d7d60206ba86d10102696e",
+                summon[Schema[WCRecord]]
+            )
+        }
+        "fields renamed and aliased by annotation: the renamed-last order decodes and declaration order is written" in {
+            wireDecodes(WCValues.renamed, "fa8326064c6973626f6efac7ee0503616e6e", summon[Schema[WCRenamed]])
+            wireWrites(WCValues.renamed, "fac7ee0503616e6efa8326064c6973626f6e", summon[Schema[WCRenamed]])
+        }
+        "fields under a naming convention, one renamed by annotation: the bytes written" in {
+            wireWrites(WCValues.cased, "eaedc90203416e6ec89cae0512", summon[Schema[WCCased]])
+        }
+        "a flattened record: the nested form decodes" in {
+            wireDecodes(WCValues.person, "9aa5b60603416e6e8aa4661682c4a603074d61696e205374baa6aa07053937323031", summon[Schema[WCPerson]])
+        }
+        "a flattened record is refused on encode" in {
+            wireRefuses[TransformUnsupportedException](WCValues.person, summon[Schema[WCPerson]])
+        }
+        "a flattened record under a naming convention is refused on encode" in {
+            wireRefuses[TransformUnsupportedException](WCValues.personC, summon[Schema[WCPersonCased]])
+        }
+        "a variant under the wrapper form" in {
+            wirePin(WCValues.circle: WCShape, "faba90040cf980f206000000000000f83f", summon[Schema[WCShape]])
+        }
+        "a case-object variant under the wrapper form" in {
+            wirePin(WCValues.empty: WCShape, "da949b0400", summon[Schema[WCShape]])
+        }
+        "a variant under a discriminator" in {
+            wirePin(WCValues.circle: WCShape, "ca84e403085743436972636c65f980f206000000000000f83f", WCShapes.discriminated)
+        }
+        "a case-object variant under a discriminator" in {
+            wirePin(WCValues.empty: WCShape, "ca84e403075743456d707479", WCShapes.discriminated)
+        }
+        "a variant under the adjacent form" in {
+            wirePin(WCValues.square: WCShape, "ea95b206085743537175617265b289ce0205f0bcba0108", WCShapes.adjacent)
+        }
+        "a variant under tupleTagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleTagged)
+        }
+        "a variant under tupleFlat is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.tupleFlat)
+        }
+        "a variant under untagged is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCValues.square: WCShape, WCShapes.untagged)
+        }
+        "a variant under a naming convention with an alias" in {
+            wirePin(WCValues.circle: WCShape, "ca84e4030977635f636972636c65f980f206000000000000f83f", WCShapes.snake)
+        }
+        "a renamed variant under an annotated discriminator" in {
+            wirePin(WCValues.opened: WCEvent, "ea9d19066f70656e656480936102", summon[Schema[WCEvent]])
+        }
+        "a variant under an annotated discriminator" in {
+            wirePin(WCValues.closed: WCEvent, "ea9d19085743436c6f7365648093610482c2b80404646f6e65", summon[Schema[WCEvent]])
+        }
+        "a record of maps of every key kind is refused" in {
+            wireRefuses[SchemaNotSerializableException](WCValues.maps, summon[Schema[WCMaps]])
+        }
+        "a map keyed by String" in {
+            wirePin(WCValues.mapByName, "eade62050a01611002eade62050a01621004", summon[Schema[WCMapByName]])
+        }
+        "a map keyed by Int" in {
+            wirePin(WCValues.mapByInt, "eade6207080212036f6e65eade62070804120374776f", summon[Schema[WCMapByInt]])
+        }
+        "a map keyed by Long" in {
+            wirePin(WCValues.mapByLong, "eade620408141001", summon[Schema[WCMapByLong]])
+        }
+        "a map keyed by Char" in {
+            wirePin(WCValues.mapByChar, "eade620508f0011002", summon[Schema[WCMapByChar]])
+        }
+        "a map keyed by a record is refused" in {
+            wireRefuses[SchemaNotSerializableException](WCValues.mapByRecord, summon[Schema[WCMapByRecord]])
+        }
+        "a map keyed by a string-backed type" in {
+            wirePin(WCValues.mapById, "eade62070a03696431100eeade62070a036964321010", summon[Schema[WCMapById]])
+        }
+        "fields holding their defaults" in {
+            wirePin(WCValues.defaultsAll, "9aa5b6060164e0956d0eba86d1010178b894a30106", summon[Schema[WCDefaults]])
+        }
+        "fields overriding their defaults: the bytes written" in {
+            wireWrites(WCValues.defaultsSet, "9aa5b6060164e0956d02ba86d1010179f2ccc402016e", summon[Schema[WCDefaults]])
+        }
+        "present optional fields" in {
+            wirePin(WCValues.maybePresent, "a8f1cc0402ba86d6050173b289ce020b90d7d60204ba86d1010163d8bf950208", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields" in {
+            wirePin(WCValues.maybeAbsent, "", summon[Schema[WCMaybe]])
+        }
+        "absent optional fields under omitNone" in {
+            wirePin(WCValues.maybeAbsent, "", WCMaybes.omitNone)
+        }
+        "a numbered variant under a discriminator" in {
+            wirePin(WCNumA(5): WCNumbered, "c884e4030290d7d6020a", summon[Schema[WCNumbered]])
+        }
+        "a second numbered variant under a discriminator" in {
+            wirePin(WCNumB("b"): WCNumbered, "c884e40304e29cfa050162", summon[Schema[WCNumbered]])
+        }
+        "a tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCLow: WCLevel, summon[Schema[WCLevel]])
+        }
+        "a renamed tagOnly variant is refused" in {
+            wireRefuses[RepresentationUnsupportedException](WCHigh: WCLevel, summon[Schema[WCLevel]])
+        }
+    }
+
+    private def outcome(result: Result[DecodeException, Any]): String = result match
+        case Result.Success(value) => s"decoded $value"
+        case Result.Failure(e)     => s"failed with ${e.getClass.getSimpleName}"
+        case Result.Panic(t)       => s"panicked with ${t.getClass.getSimpleName}"
+
+    "a field under a naming convention round-trips" in {
+        val decoded = Protobuf.decode[WCCased](Protobuf.encode(WCValues.cased))
+        assert(decoded == Result.succeed(WCValues.cased), outcome(decoded))
+    }
+
+    "the nested form of a flattened record under a naming convention decodes" in {
+        val nested  = "b293820607416e6e204c6565e2bcfc0117bac6d90208506f72746c616e64b2b1fd02053937323031"
+        val decoded = Protobuf.decode[WCPersonCased](CodecTestSupport.unhex(nested))
+        assert(decoded == Result.succeed(WCValues.personC), outcome(decoded))
+    }
+
+    "an Absent field whose default is Present round-trips as Absent" in {
+        val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(WCValues.defaultsSet))
+        assert(decoded == Result.succeed(WCValues.defaultsSet), outcome(decoded))
+    }
+
+    "a renamed field read from the bytes keeps its value over its configured default" in {
+        given Schema[PBRenamedDefault] = Schema[PBRenamedDefault].default(_.name)(Present("configured"))
+        val value                      = PBRenamedDefault(1, Present("wire"))
+        val decoded                    = Protobuf.decode[PBRenamedDefault](Protobuf.encode(value))
+        assert(decoded == Result.succeed(value), outcome(decoded))
+    }
+
+    "an optional field missing from the bytes is absent, and its present default is written" - {
+        "missing reads as Absent though the default is Present" in {
+            val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(PBDefaultsName("d")))
+            assert(decoded == Result.succeed(WCDefaults("d", 7, "x", Absent, Absent)), outcome(decoded))
+        }
+        "the default round-trips, since a Present value is written" in {
+            val decoded = Protobuf.decode[WCDefaults](Protobuf.encode(WCValues.defaultsAll))
+            assert(decoded == Result.succeed(WCValues.defaultsAll), outcome(decoded))
+        }
+        "the field is declared optional, so other proto3 code reads the same presence" in {
+            val proto = ProtoSchema.from[WCDefaults]
+            assert(proto.contains(s"optional sint32 size = ${kyo.internal.CodecMacro.fieldId("size")};"), proto)
+        }
+    }
+
+    "a numbered variant under the wrapper form round-trips" in {
+        val variant: WCNumberedWrapped = WCWrapA(3)
+        val decoded                    = Protobuf.decode[WCNumberedWrapped](Protobuf.encode(variant))
+        assert(decoded == Result.succeed(variant), outcome(decoded))
+    }
+
+    "a numbered case object under the wrapper form round-trips" in {
+        val variant: WCNumberedWrapped = WCWrapB
+        val written                    = Protobuf.encode(variant)
+        val decoded                    = Protobuf.decode[WCNumberedWrapped](written)
+        assert(decoded == Result.succeed(variant), s"wrote ${written.size} bytes, ${outcome(decoded)}")
+    }
+
+    "a known variant of a sum with a catch-all decodes, never as a panic" in {
+        val variant: WCOpen = WCKnown(1)
+        val decoded         = Protobuf.decode[WCOpen](Protobuf.encode(variant))
+        assert(decoded == Result.succeed(variant), outcome(decoded))
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions
@@ -1949,3 +2144,12 @@ case class PB1716SeqStr(items: Seq[String]) derives Schema, CanEqual
 // Fixtures for rename Protobuf round-trip regression tests.
 case class PBRenameSimple(id: Int, label: String) derives Schema, CanEqual
 case class PBRenameAnnotated(@rename("wire_id") id: Int, @rename("wire_label") label: String) derives Schema, CanEqual
+
+// A pinned record nested in a renamed one, and the same wire shape with no transform.
+case class PBNestedPinned(@proto.fieldNumber(5) x: Int, y: String) derives Schema, CanEqual
+case class PBRenamedHolder(@rename("wire_label") label: String, inner: PBNestedPinned) derives Schema, CanEqual
+case class PBMirrorHolder(wire_label: String, inner: PBNestedPinned) derives Schema, CanEqual
+
+// Writes only the `name` field of WCDefaults, as a producer that leaves the others out.
+case class PBDefaultsName(name: String) derives Schema, CanEqual
+case class PBRenamedDefault(id: Int, @rename("wire_name") name: Maybe[String]) derives CanEqual
