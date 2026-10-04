@@ -3201,6 +3201,7 @@ lazy val `kyo-http` =
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema-json`, `kyo-crypto`)
         .dependsOn(`kyo-net` % "compile->compile;test->test")
+        .dependsOn(`kyo-test-prop` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`

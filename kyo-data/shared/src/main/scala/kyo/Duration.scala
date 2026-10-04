@@ -81,7 +81,9 @@ object Duration:
       *   A Duration instance
       */
     def fromUnits(value: Long, unit: Units): Duration =
-        if value <= 0 then Duration.Zero else Duration.*(value)(unit.factor).min(Infinity)
+        if value <= 0 then Duration.Zero
+        else if value > Long.MaxValue / unit.nanosPerUnit then Infinity
+        else value * unit.nanosPerUnit
 
     /** Converts a Java Duration to a Duration.
       *
@@ -124,6 +126,9 @@ object Duration:
 
         /** Returns the factor for converting this unit to nanoseconds. */
         val factor: Double = chronoUnit.getDuration.toNanos.toDouble
+
+        /** The factor as the whole number of nanoseconds it is for every unit; a `Double` is exact only up to 2^53. */
+        private[kyo] val nanosPerUnit: Long = chronoUnit.getDuration.toNanos
     end Units
 
     object Units:

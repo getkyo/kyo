@@ -119,7 +119,30 @@ object HttpCodec:
     given HttpCodec[BigDecimal] = HttpCodec(_.toString, BigDecimal(_))
     given HttpCodec[BigInt]     = HttpCodec(_.toString, BigInt(_))
     given HttpCodec[UUID]       = HttpCodec(_.toString, UUID.fromString)
-    given HttpCodec[Duration]   = HttpCodec(_.show, s => Duration.parse(s)(using Frame.internal).getOrThrow)
+    given HttpCodec[Duration]   = HttpCodec(encodeDuration, s => Duration.parse(s)(using Frame.internal).getOrThrow)
     given HttpCodec[Instant]    = HttpCodec(_.show, s => Instant.parse(s).getOrThrow)
+
+    /** A duration in the coarsest unit that holds it exactly, spelled so `Duration.parse` reads it back as that same value: `show` is
+      * neither (it writes `5.seconds`, which `parse` refuses, and rounds past four digits). Every spelling names one unit under `parse`'s
+      * prefix lookup; a bare `m` is never written, since that lookup reads it as micros.
+      */
+    private def encodeDuration(d: Duration): String =
+        if d == Duration.Infinity then "infinity"
+        else
+            val nanos = d.toNanos
+            DurationSpellings.find((perUnit, _) => nanos % perUnit == 0) match
+                case Some((perUnit, unit)) => s"${nanos / perUnit}$unit"
+                case None                  => s"${nanos}ns"
+    end encodeDuration
+
+    private val DurationSpellings: Seq[(Long, String)] = Seq(
+        86_400_000_000_000L -> "d",
+        3_600_000_000_000L  -> "h",
+        60_000_000_000L     -> "minutes",
+        1_000_000_000L      -> "s",
+        1_000_000L          -> "ms",
+        1_000L              -> "micros",
+        1L                  -> "ns"
+    )
 
 end HttpCodec

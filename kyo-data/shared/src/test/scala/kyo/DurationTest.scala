@@ -180,6 +180,23 @@ class DurationTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Duration.fromUnits" - {
+        // 2^53 + 1 is the first count a Double cannot hold exactly.
+        val past53 = (1L << 53) + 1
+
+        "is exact past 2^53 nanoseconds" in {
+            assert(Duration.fromUnits(past53, Duration.Units.Nanos).toNanos == past53)
+            assert(Duration.fromUnits(past53 / 1000, Duration.Units.Micros).toNanos == past53 / 1000 * 1000)
+            assert(Duration.parse(s"${past53}ns") == Result.succeed(Duration.fromNanos(past53)))
+        }
+
+        "saturates at Infinity past the Long range" in {
+            assert(Duration.fromUnits(Long.MaxValue / 1000 + 1, Duration.Units.Micros) == Duration.Infinity)
+            assert(Duration.fromUnits(Long.MaxValue, Duration.Units.Days) == Duration.Infinity)
+            assert(Duration.fromUnits(Long.MaxValue - 1, Duration.Units.Nanos).toNanos == Long.MaxValue - 1)
+        }
+    }
+
     "Duration.show" - {
         "zero duration" in {
             assert(Duration.Zero.show == "Duration.Zero")

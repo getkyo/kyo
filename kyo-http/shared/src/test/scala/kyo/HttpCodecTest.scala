@@ -136,6 +136,20 @@ class HttpCodecTest extends BaseHttpTest:
         }
     }
 
+    "Duration codec" - {
+        val codec = summon[HttpCodec[Duration]]
+
+        "decodes what it encodes, for values show renders with a unit suffix or rounds" in {
+            val values = Seq(5.seconds, 90.seconds, 1.nanos, 14031085.micros, 26.hours, Duration.Zero, Duration.Infinity)
+            assert(values.map(d => codec.decode(codec.encode(d))) == values.map(Result.succeed))
+        }
+
+        "never encodes a bare m, whose unit the decoder reads as micros" in {
+            assert(codec.encode(3.minutes) != "3m")
+            assert(codec.decode(codec.encode(3.minutes)) == Result.succeed(3.minutes))
+        }
+    }
+
     "custom codec via apply" - {
         "creates working codec" in {
             given HttpCodec[List[Int]] = HttpCodec(
