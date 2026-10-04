@@ -360,4 +360,20 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    "registry credentials" - {
+        "a credential that is not base64 fails as an auth error before any command runs" in {
+            val image = ContainerImage("team/app", "1").withRegistry(ContainerImage.Registry("registry.example"))
+            val auth  = ContainerImage.RegistryAuth(Dict(ContainerImage.Registry("registry.example") -> "not*base64"))
+            // A command that cannot exist: reaching it would fail as a command error, not an auth error.
+            val backend = new ShellBackend("/nonexistent/kyo-pod/podman")
+            Abort.run[kyo.ContainerException](backend.imagePull(image, Absent, Present(auth))).map {
+                case Result.Failure(error: kyo.ContainerAuthException) =>
+                    assert(error.registry == "registry.example")
+                    assert(!error.getMessage.contains("not*base64"), s"the credential must not be echoed: ${error.getMessage}")
+                case other =>
+                    fail(s"expected a ContainerAuthException, got $other")
+            }
+        }
+    }
+
 end ShellBackendTest

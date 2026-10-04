@@ -1225,21 +1225,30 @@ final private[kyo] class HttpContainerBackend(
             case Result.Success(resp) =>
                 resp.headers.get("X-Docker-Container-Path-Stat") match
                     case Present(encoded) =>
-                        val decoded = new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
-                        Json.decode[FileStatDto](decoded) match
-                            case Result.Success(dto) =>
-                                val modifiedAt = parseInstantOrEpoch(dto.mtime)
-                                FileStat(
-                                    name = dto.name,
-                                    size = dto.size,
-                                    mode = dto.mode,
-                                    modifiedAt = modifiedAt,
-                                    linkTarget = if dto.linkTarget.nonEmpty then Present(dto.linkTarget) else Absent
-                                )
-                            case Result.Failure(_) =>
+                        Base64.decode(encoded) match
+                            case Result.Success(bytes) =>
+                                val decoded = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                Json.decode[FileStatDto](decoded) match
+                                    case Result.Success(dto) =>
+                                        val modifiedAt = parseInstantOrEpoch(dto.mtime)
+                                        FileStat(
+                                            name = dto.name,
+                                            size = dto.size,
+                                            mode = dto.mode,
+                                            modifiedAt = modifiedAt,
+                                            linkTarget = if dto.linkTarget.nonEmpty then Present(dto.linkTarget) else Absent
+                                        )
+                                    case Result.Failure(_) =>
+                                        Abort.fail(ContainerDecodeException(
+                                            "Parse error in stat",
+                                            s"Failed to parse file stat JSON for container ${id.value}"
+                                        ))
+                                    case Result.Panic(t) => Abort.panic(t)
+                                end match
+                            case Result.Failure(failure) =>
                                 Abort.fail(ContainerDecodeException(
                                     "Parse error in stat",
-                                    s"Failed to parse file stat JSON for container ${id.value}"
+                                    s"X-Docker-Container-Path-Stat header for container ${id.value} is not base64: ${failure.message}"
                                 ))
                             case Result.Panic(t) => Abort.panic(t)
                         end match

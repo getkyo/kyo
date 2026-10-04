@@ -1348,16 +1348,30 @@ final private[kyo] class ShellBackend(
     private def withRegistryAuth(image: ContainerImage, auth: Maybe[ContainerImage.RegistryAuth], ctx: ResourceContext)(
         run: Maybe[String] => Unit < (Async & Abort[ContainerException])
     )(using Frame): Unit < (Async & Abort[ContainerException]) =
-        val creds: Maybe[String] = auth.flatMap { a =>
+        val encodedCreds: Maybe[String] = auth.flatMap { a =>
             val key = image.registry.getOrElse(ContainerImage.Registry.DockerHub)
             a.auths.get(key).orElse {
                 if key == ContainerImage.Registry.DockerHub then
                     a.auths.get(ContainerImage.Registry("https://index.docker.io/v1/"))
                 else Absent
             }
-        }.map { encoded =>
-            new String(java.util.Base64.getDecoder.decode(encoded), java.nio.charset.StandardCharsets.UTF_8)
         }
+        val decodedCreds: Result[Base64.Failure, Maybe[String]] = encodedCreds match
+            case Absent           => Result.succeed(Absent)
+            case Present(encoded) =>
+                Base64.decode(encoded).map(bytes => Present(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)))
+        decodedCreds match
+            case Result.Failure(failure) =>
+                val server = image.registry.map(_.value).getOrElse("docker.io")
+                Abort.fail(ContainerAuthException(server, s"the stored credential is not base64: ${failure.message}"))
+            case Result.Panic(ex)      => Abort.panic(ex)
+            case Result.Success(creds) => withDecodedCreds(creds, image, ctx)(run)
+        end match
+    end withRegistryAuth
+
+    private def withDecodedCreds(creds: Maybe[String], image: ContainerImage, ctx: ResourceContext)(
+        run: Maybe[String] => Unit < (Async & Abort[ContainerException])
+    )(using Frame): Unit < (Async & Abort[ContainerException]) =
         creds match
             case Absent                               => run(Absent)
             case Present(c) if cmd.endsWith("podman") =>
@@ -1399,7 +1413,7 @@ final private[kyo] class ShellBackend(
                         Abort.fail[ContainerException](ContainerBackendException(s"docker login panicked for $server", ex))
                 }
         end match
-    end withRegistryAuth
+    end withDecodedCreds
 
     def imagePullWithProgress(image: ContainerImage, platform: Maybe[Container.Platform], auth: Maybe[ContainerImage.RegistryAuth])(
         using Frame

@@ -281,6 +281,25 @@ class HttpContainerBackendTest extends BasePodTest:
         }
     }
 
+    "stat" - {
+        "a path-stat header that is not base64 fails as a decode error" in {
+            Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
+                val socket = (dir / "d.sock").toString
+                val route  = HttpRoute.headRaw("v1.43" / "containers" / "c1" / "archive")
+                    .response(_.header[String]("X-Docker-Container-Path-Stat"))
+                val daemon = route.handler(_ => HttpResponse.ok.addField("X-Docker-Container-Path-Stat", "not*base64"))
+                HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
+                    Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/etc/hosts"))).map {
+                        case Result.Failure(error: ContainerDecodeException) =>
+                            assert(error.getMessage.contains("c1"), s"expected the container id in: ${error.getMessage}")
+                        case other =>
+                            fail(s"expected a ContainerDecodeException, got $other")
+                    }
+                }
+            })
+        }
+    }
+
     /** A failing registry must not be reported as a missing image.
       *
       * The pull path deliberately collapses every no-credentials failure into
