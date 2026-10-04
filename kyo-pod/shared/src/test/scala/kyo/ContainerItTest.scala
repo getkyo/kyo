@@ -940,6 +940,40 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
+        // busybox wget reports a non-2xx reply twice: the header line, then "wget: server returned error: HTTP/1.1 503 ...".
+        "HealthCheck.httpGet matches a non-2xx expected status" - runBackends {
+            val cfg = Container.Config(ContainerImage("nginx", "alpine"))
+                .command(
+                    "sh",
+                    "-c",
+                    "printf 'events {} http { server { listen 8080; location / { return 503; } } }' > /tmp/s.conf && " +
+                        "exec nginx -c /tmp/s.conf -g 'daemon off;'"
+                )
+                .stopTimeout(0.seconds)
+                .healthCheck(Container.HealthCheck.httpGet(port = 8080, expectedStatus = 503))
+            Abort.run[ContainerException](Container.init(cfg)).map {
+                case Result.Success(c) => c.state.map(s => assert(s == Container.State.Running))
+                case other             => fail(s"expected the health check to accept the 503 it asked for, got $other")
+            }
+        }
+
+        // A server bound to IPv4 alone, in a container that also has IPv6 loopback: `localhost` resolves to ::1 first there.
+        "HealthCheck.httpGet reaches a server listening on IPv4 only" - runBackends {
+            val cfg = Container.Config(ContainerImage("nginx", "alpine"))
+                .command(
+                    "sh",
+                    "-c",
+                    "printf 'events {} http { server { listen 0.0.0.0:8080; location / { return 204; } } }' > /tmp/v4.conf && " +
+                        "exec nginx -c /tmp/v4.conf -g 'daemon off;'"
+                )
+                .stopTimeout(0.seconds)
+                .healthCheck(Container.HealthCheck.httpGet(port = 8080, expectedStatus = 204))
+            Abort.run[ContainerException](Container.init(cfg)).map {
+                case Result.Success(c) => c.state.map(s => assert(s == Container.State.Running))
+                case other             => fail(s"expected the health check to reach the IPv4 listener, got $other")
+            }
+        }
+
         "HealthCheck.exec recovers after transient failures" - runBackends {
             // Container creates the sentinel file after 500ms; healthcheck fails before that, succeeds after.
             val cfg = Container.Config("alpine")

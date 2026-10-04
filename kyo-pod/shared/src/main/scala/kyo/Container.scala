@@ -1303,7 +1303,12 @@ object Container:
             end new
         end port
 
-        /** Health check via HTTP GET inside the container (using `wget`). Fails if the request does not succeed. */
+        /** Health check via HTTP GET inside the container (using `wget`), passing when the reply's status is `expectedStatus`.
+          *
+          * It dials `127.0.0.1` and then `[::1]` rather than `localhost`, which resolves to `::1` first in a container with IPv6 loopback
+          * and so never reaches a server bound to IPv4 alone. The status is read from wget's header line only: busybox wget also prints a
+          * non-2xx reply as "wget: server returned error: HTTP/1.1 503 ...", whose second field is not the status.
+          */
         def httpGet(
             port: Int,
             path: String = "/",
@@ -1319,12 +1324,12 @@ object Container:
                     container.exec(
                         "sh",
                         "-c",
-                        s"""code=$$(wget -q -O /dev/null --server-response http://localhost:$p$pth 2>&1 | awk '/HTTP\\//' | awk '{print $$2}' | tail -1) && [ "$$code" = "$expectedSt" ]"""
+                        s"""for h in 127.0.0.1 '[::1]'; do code=$$(wget -q -O /dev/null --server-response http://$$h:$p$pth 2>&1 | awk '$$1 ~ /^HTTP\\// {print $$2}' | tail -1); [ -n "$$code" ] && break; done; [ "$$code" = "$expectedSt" ]"""
                     ).map { result =>
                         if !result.isSuccess then
                             Abort.fail(ContainerHealthCheckException(
                                 container.id,
-                                s"HTTP GET http://localhost:$p$pth returned unexpected status (expected $expectedSt)",
+                                s"HTTP GET of port $p$pth on the container's loopback returned unexpected status (expected $expectedSt)",
                                 attempts = 1
                             ))
                         else ()
