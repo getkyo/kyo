@@ -3075,15 +3075,24 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
         // The handler settles before any of its body arrives, so the decode cannot have reached the terminal chunk: the body and the GET
         // pipelined behind it are the rest of a request the server will not use, read and discarded, and the GET is never answered.
+        //
+        // The answer reaches `outbound` before the dispatch settles the decode: a body sent on seeing the answer can still be decoded to its
+        // terminal chunk, and then the GET is well framed and answered (the leaf below). The body is sent once the drain has begun, which
+        // arms a sleeper of exactly `lingeringTimeout` on the server's clock, and the drain begins only after the settle stopped the decode.
         "a handler that answers before its body arrives: the body and a GET pipelined behind it are drained, and the connection is closed" in {
             val idleTimeout = 200.millis
+            val lingering   = 700.millis
             Clock.withTimeControl { tc =>
                 Clock.use { clock =>
-                    val (inbound, outbound, probe) = serveWith(defaultConfig.idleTimeout(idleTimeout), clock)(sink, hello)
+                    val (inbound, outbound, probe) =
+                        serveWith(defaultConfig.idleTimeout(idleTimeout).lingeringTimeout(lingering), clock)(sink, hello)
                     sendRequest(inbound, chunkedHead("sink"))
                     collectResponse(outbound).map { first =>
                         assert(first.startsWith("HTTP/1.1 200 OK") && first.endsWith("sunk"), s"observed: $first")
-                        sendRequest(inbound, "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                        tc.awaitPendingSleeper(lingering).andThen {
+                            sendRequest(inbound, "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                        }
+                    }.andThen {
                         pollUntil(inbound.size().contains(0)).map { drained =>
                             assert(drained, "the bytes behind the answer are read and discarded")
                             tc.advance(idleTimeout).andThen(tc.advance(idleTimeout)).andThen {
@@ -3092,6 +3101,28 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                                     assert(outbound.size().contains(0) || outbound.closed(), "the GET behind the body is never answered")
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The other side of that race: a body that reaches its terminal chunk before the dispatch settles is fully framed, so the GET behind
+        // it is the next request and is answered. The handler reads its body to the end before answering, and the stream ends only once the
+        // decode has recorded the terminal chunk, so the settle always finds the body decoded.
+        "a handler that answers once its body's terminal chunk is decoded: the GET pipelined behind it is answered, and the connection stays open" in {
+            val swallowRoute = HttpRoute.postRaw("swallow").request(_.bodyStream).response(_.bodyText)
+            val swallow      = swallowRoute.handler(req => req.fields.body.run.map(_ => HttpResponse.ok("sunk")))
+            Clock.withTimeControl { _ =>
+                Clock.use { clock =>
+                    val (inbound, outbound, _) = serveWith(defaultConfig, clock)(swallow, hello)
+                    sendRequest(inbound, chunkedHead("swallow"))
+                    sendRequest(inbound, "5\r\nhello\r\n0\r\n\r\n" + "GET /hello HTTP/1.1\r\nHost: h\r\n\r\n")
+                    collectResponse(outbound).map { first =>
+                        assert(first.startsWith("HTTP/1.1 200 OK") && first.endsWith("sunk"), s"observed: $first")
+                        collectResponse(outbound).map { second =>
+                            assert(second.startsWith("HTTP/1.1 200 OK") && second.endsWith("world"), s"observed: $second")
+                            assert(!inbound.closed())
                         }
                     }
                 }

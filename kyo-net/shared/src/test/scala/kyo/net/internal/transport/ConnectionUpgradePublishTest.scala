@@ -33,9 +33,13 @@ class ConnectionUpgradePublishTest extends Test:
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
-        def close()(using AllowUnsafe, Frame): Unit                                            = ()
-        def label: String                                                                      = "NoopDriver"
-        def handleLabel(handle: Unit): String                                                  = "noop"
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
+        def close()(using AllowUnsafe, Frame): Unit = ()
+        def label: String                           = "NoopDriver"
+        def handleLabel(handle: Unit): String       = "noop"
     end NoopDriver
 
     "upgrade observes the published upgradeFn and isServerOrigin across a carrier handoff" in {
