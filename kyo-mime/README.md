@@ -11,10 +11,10 @@ import kyo.mime.*
 val disposition = Disposition.init("attachment", "filename" -> "€ rates.csv")
 
 // For an HTTP response header: RFC 8187, one unit, the browser decodes it
-disposition.flatMap(_.render)                          // Result.succeed("attachment; filename*=UTF-8''%E2%82%AC%20rates.csv")
+disposition.flatMap(_.render) // Result.succeed("attachment; filename*=UTF-8''%E2%82%AC%20rates.csv")
 
 // For a mail header that will be folded: RFC 2231, units of at most 76 octets
-disposition.flatMap(_.render(Parameters.Style.Mime))   // Result.succeed("attachment; filename*=utf-8''%E2%82%AC%20rates.csv")
+disposition.flatMap(_.render(Parameters.Style.Mime)) // Result.succeed("attachment; filename*=utf-8''%E2%82%AC%20rates.csv")
 
 Disposition.parse("attachment; filename=\"EURO rates\"; filename*=utf-8''%e2%82%ac%20rates").map(_.filename)
 // Result.succeed(Present("€ rates")): filename* wins over filename (RFC 6266)
@@ -37,7 +37,7 @@ MediaType.parse("multipart/form-data; boundary=\"----x \"").map(_.parameter("bou
 MediaType.parse("text").map(_.baseType)
 // Result.fail(MimeInvalidMediaTypeException(NotWellFormed("text")))
 
-MediaType.init("application", "json").flatMap(_.render)   // Result.succeed("application/json")
+MediaType.init("application", "json").flatMap(_.render) // Result.succeed("application/json")
 ```
 
 `MediaType.init` builds a media type from its parts and returns the violation for a part that is not a token or a name given twice; `Disposition.init` does the same for a disposition. Both types have a `Schema`, decoding through the same checks, so a media type in a JSON configuration is validated where it is read.
@@ -72,10 +72,10 @@ A mail reader passes its own `decode` to `MediaType.parse` and `Disposition.pars
 import kyo.*
 import kyo.mime.*
 
-Parameters.write("filename", "a b", Parameters.Style.Http)         // Result.succeed(Chunk("filename=\"a b\""))
-Parameters.write("filename", "€", Parameters.Style.Http)           // Result.succeed(Chunk("filename*=UTF-8''%E2%82%AC"))
-Parameters.write("name", "a" * 100, Parameters.Style.Mime).map(_.size)   // Result.succeed(2)
-Parameters.write("name*0", "x", Parameters.Style.Http)             // Result.fail(MimeInvalidParameterException(UnwritableParameterName("name*0")))
+Parameters.write("filename", "a b", Parameters.Style.Http)             // Result.succeed(Chunk("filename=\"a b\""))
+Parameters.write("filename", "€", Parameters.Style.Http)               // Result.succeed(Chunk("filename*=UTF-8''%E2%82%AC"))
+Parameters.write("name", "a" * 100, Parameters.Style.Mime).map(_.size) // Result.succeed(2)
+Parameters.write("name*0", "x", Parameters.Style.Http) // Result.fail(MimeInvalidParameterException(UnwritableParameterName("name*0")))
 ```
 
 A hostile value such as `a"\r\nX-Injected: yes` is percent-encoded in both styles, so a file name from a request can never end the header line early.
@@ -106,13 +106,13 @@ import kyo.mime.*
 val boundary = Span.from("b".getBytes("UTF-8"))
 val body     = Span.from("--b\r\nhello --b there\r\n--b--".getBytes("UTF-8"))
 
-val first  = Multipart.findDelimiter(body, boundary, 0)                    // 0
-val second = Multipart.findDelimiter(body, boundary, first + 1)            // 22: the mid-line "--b" is data
-val start  = Multipart.delimiterLineEnd(body, boundary, first)             // 5: the part's first byte
-val end    = Multipart.partEndBefore(body, second)                         // 20: the CRLF before a delimiter is not part of the part
-Multipart.isCloseDelimiter(body, boundary, second)                         // true
+val first  = Multipart.findDelimiter(body, boundary, 0)         // 0
+val second = Multipart.findDelimiter(body, boundary, first + 1) // 22: the mid-line "--b" is data
+val start  = Multipart.delimiterLineEnd(body, boundary, first)  // 5: the part's first byte
+val end    = Multipart.partEndBefore(body, second)              // 20: the CRLF before a delimiter is not part of the part
+Multipart.isCloseDelimiter(body, boundary, second) // true
 
-Multipart.isValidBoundary("simple boundary")                               // true: 1 to 70 bchars, not ending in a space
+Multipart.isValidBoundary("simple boundary") // true: 1 to 70 bchars, not ending in a space
 Multipart.boundary("=_kyo0_", Chunk(Chunk(Span.from("--=_kyo0_0\r\n".getBytes("UTF-8")))))
 // "=_kyo0_1": the least number no line of an enclosed part starts with, so a writer needs no randomness
 ```

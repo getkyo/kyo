@@ -52,6 +52,8 @@ class NextSuiteB extends TestBase[Any]:
     "test-b" in assert(1 == 2)
 end NextSuiteB
 
+class NextEmptySuite extends TestBase[Any]
+
 // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────
 
 class CapturingEventHandler extends EventHandler:
@@ -181,6 +183,33 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
     test("a runner that was never given tasks returns no summary") {
         val summary = makeRunner().done()
         assert(summary == "", s"expected no summary, got: $summary")
+    }
+
+    // sbt scores a selected suite by the events it emits, and a suite with none counts as passed with Total 0. Each way a
+    // selection can run nothing must therefore fail on its own.
+
+    test("a selected suite that registers no leaves fails, naming the suite") {
+        val runner  = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false)
+        val handler = new CapturingEventHandler
+        runner.tasks(Array(taskDefFor(classOf[NextEmptySuite])))(0).execute(handler, loggers)
+        val failures = handler.events.filter(_.status().equals(Status.Failure))
+        assert(failures.map(_.fullyQualifiedName()) == List(classOf[NextEmptySuite].getName), s"got ${handler.events}"): Unit
+    }
+
+    test("a filter that matches no leaf of the selection fails the run, naming the suites") {
+        val runner = new SbtRunner(Array("--filter=no-such-leaf"), Array.empty, getClass.getClassLoader, forked = false)
+        runner.tasks(Array(taskDefFor(classOf[NextSingleLeafSuite])))(0).execute(new CapturingEventHandler, loggers)
+        val failure = intercept[IllegalStateException](runner.done())
+        assert(failure.getMessage.contains(classOf[NextSingleLeafSuite].getName), failure.getMessage): Unit
+    }
+
+    test("a selected suite whose task never ran fails the run, naming the suite") {
+        val runner = new SbtRunner(Array.empty, Array.empty, getClass.getClassLoader, forked = false)
+        val tasks  = runner.tasks(Array(taskDefFor(classOf[NextSuiteA]), taskDefFor(classOf[NextMultiLeafSuite])))
+        tasks(0).execute(new CapturingEventHandler, loggers)
+        val failure = intercept[IllegalStateException](runner.done())
+        assert(failure.getMessage.contains(classOf[NextMultiLeafSuite].getName), failure.getMessage): Unit
+        assert(!failure.getMessage.contains(classOf[NextSuiteA].getName), failure.getMessage): Unit
     }
 
     private def runnerWritingTo(bytes: java.io.ByteArrayOutputStream, forked: Boolean): SbtRunner =

@@ -32,3 +32,11 @@ Compile / unmanagedSourceDirectories +=
 // publishes the plugin."
 Compile / unmanagedSourceDirectories +=
     baseDirectory.value.getParentFile / "kyo-doctest" / "plugin" / "src" / "main" / "scala"
+
+// The doctest formatter calls scalafmt-core in-process, at the version .scalafmt.conf pins, since scalafmt refuses a config
+// naming another version. It cannot fetch one at run time: the scalafmt-dynamic-core sbt-scalafmt brings has no downloader.
+libraryDependencies += "org.scalameta" %% "scalafmt-core" % {
+    val conf = IO.read(baseDirectory.value.getParentFile / ".scalafmt.conf")
+    """(?m)^\s*version\s*=\s*"?([^"\s]+)"?""".r.findFirstMatchIn(conf).map(_.group(1))
+        .getOrElse(sys.error("no version in .scalafmt.conf"))
+}

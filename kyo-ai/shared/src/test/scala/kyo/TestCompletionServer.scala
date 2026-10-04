@@ -52,6 +52,12 @@ final class TestCompletionServer private (
     def enqueueStreamStall(chunks: Chunk[String])(using Frame): Unit < Async =
         scripts.updateAndGet(_.append(TestCompletionServer.Scripted.SseStall(chunks))).unit
 
+    /** Enqueues a streaming response whose connection is cut after `chunks`, with no terminator and no last chunk, so the client reads
+      * a body ended before its framing was complete.
+      */
+    def enqueueStreamCut(chunks: Chunk[String])(using Frame): Unit < Async =
+        scripts.updateAndGet(_.append(TestCompletionServer.Scripted.SseCut(chunks))).unit
+
     /** The requests the server received, in order, for asserting the outgoing request DTO shape. */
     def captured(using Frame): Chunk[TestCompletionServer.Captured] < Async =
         received.get
@@ -71,6 +77,9 @@ object TestCompletionServer:
         // Emits its chunks and then stalls without a terminator, the shape of a provider that stops
         // producing mid-stream while the connection stays open.
         case SseStall(chunks: Chunk[String])
+        // Emits its chunks and then fails the response stream, which the server answers by closing the
+        // connection with the chunked body unterminated: the shape of a provider connection cut mid-stream.
+        case SseCut(chunks: Chunk[String])
     end Scripted
 
     /** A captured request: the path it hit and the raw request body. */
@@ -154,7 +163,7 @@ object TestCompletionServer:
                         headers.foldLeft(HttpResponse(HttpStatus(code)))((r, h) => r.addHeader(h._1, h._2)).addField("body", body)
                     // A stall script reaching the non-streaming route means the test bound the wrong server;
                     // holding the connection surfaces that as the caller's timeout rather than a handler panic.
-                    case Present(Scripted.Never) | Present(Scripted.SseStall(_)) =>
+                    case Present(Scripted.Never) | Present(Scripted.SseStall(_)) | Present(Scripted.SseCut(_)) =>
                         Latch.init(1).map(_.await).andThen(HttpResponse.ok(""))
                     case Present(Scripted.Body(b)) => HttpResponse.ok(b)
                     case Present(Scripted.Sse(cs)) => HttpResponse.ok(cs.headMaybe.getOrElse("""{"choices":[]}"""))
@@ -186,6 +195,11 @@ object TestCompletionServer:
                         // stream stays open and the consumer waits forever without a deadline.
                         val events = Stream.init(cs).map(HttpSseEvent(_)).concat(
                             Stream.unwrap(Latch.init(1).map(_.await).andThen(Stream.empty[HttpSseEvent[String]]))
+                        )
+                        HttpResponse.ok.addField("body", events)
+                    case Present(Scripted.SseCut(cs)) =>
+                        val events = Stream.init(cs).map(HttpSseEvent(_)).concat(
+                            Stream.unwrap(Abort.fail(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated)))
                         )
                         HttpResponse.ok.addField("body", events)
                     case other =>

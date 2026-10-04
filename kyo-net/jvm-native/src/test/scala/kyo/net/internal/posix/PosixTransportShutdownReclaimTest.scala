@@ -106,16 +106,19 @@ class PosixTransportShutdownReclaimTest extends Test:
                 assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, got ${engine.freeCount.get()}")
                 // The FD half of the same obligation. The discharge exists to reclaim the fd AND the engine, but only the engine was
                 // pinned above, so an accepted fd that is shut down (or never touched) but never closed passed this leaf while leaking
-                // the descriptor for the process lifetime. Assert the close syscall itself, through the spy that records it.
-                assert(
-                    spy.closeCounts.getOrDefault(accepted, 0) == 1,
-                    s"the discharge must close the accepted fd exactly once, got ${spy.closeCounts.getOrDefault(accepted, 0)} " +
-                        s"(closeCounts=${spy.closeCounts})"
-                )
-                driver.close()
-                // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
-                // end-of-run leak check samples the scheduler.
-                closeWakeDone.safe.get.map(_ => succeed)
+                // the descriptor for the process lifetime. Assert the close syscall itself, through the spy that records it. The close
+                // runs once the poll carrier has withdrawn the fd, so it is awaited rather than read at a fixed point.
+                spy.closed(accepted).safe.get.map { _ =>
+                    assert(
+                        spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                        s"the discharge must close the accepted fd exactly once, got ${spy.closeCounts.getOrDefault(accepted, 0)} " +
+                            s"(closeCounts=${spy.closeCounts})"
+                    )
+                    driver.close()
+                    // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
+                    // end-of-run leak check samples the scheduler.
+                    closeWakeDone.safe.get.map(_ => succeed)
+                }
             }
         }
     }

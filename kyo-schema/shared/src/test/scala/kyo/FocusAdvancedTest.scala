@@ -387,7 +387,6 @@ class FocusAdvancedTest extends kyo.test.Test[Any]:
             case class Inner(name: String, value: Int)
             case class Outer(name: String, inner: Inner)
             given Schema[Inner] = Schema.derived[Inner]
-            given Schema[Outer] = Schema.derived[Outer]
 
             val schema = Schema[Outer]
                 .doc(_.name)("outer name doc")
@@ -404,7 +403,6 @@ class FocusAdvancedTest extends kyo.test.Test[Any]:
             case class Inner(name: String, value: Int)
             case class Outer(name: String, inner: Inner)
             given Schema[Inner] = Schema.derived[Inner]
-            given Schema[Outer] = Schema.derived[Outer]
 
             val schema = Schema[Outer]
                 .deprecated(_.name)("root deprecated")
@@ -421,7 +419,6 @@ class FocusAdvancedTest extends kyo.test.Test[Any]:
             case class Inner(score: Int)
             case class Outer(score: Int, inner: Inner)
             given Schema[Inner] = Schema.derived[Inner]
-            given Schema[Outer] = Schema.derived[Outer]
 
             val schema = Schema[Outer]
                 .checkMin(_.score)(0.0)
@@ -444,7 +441,6 @@ class FocusAdvancedTest extends kyo.test.Test[Any]:
             case class Inner(id: Int, value: String)
             case class Outer(id: Int, inner: Inner)
             given Schema[Inner] = Schema.derived[Inner]
-            given Schema[Outer] = Schema.derived[Outer]
 
             val schema = Schema[Outer]
                 .fieldId(_.id)(100)

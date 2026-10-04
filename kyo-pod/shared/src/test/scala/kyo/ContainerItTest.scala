@@ -2005,9 +2005,10 @@ class ContainerItTest extends BasePodTest:
                         assert(info.repoTags.exists(_.reference.contains("alpine")))
                         assert(info.size > 0)
                     }
-                case Result.Failure(_: ContainerImageMissingException) =>
-                    // Registry may be unreachable (TLS cert, network, etc.)
-                    // Verify the image is at least available locally via ensure
+                // A pull always asks Docker Hub, even for an image already present, so a registry that could not be reached is the one
+                // failure this leaf cannot prevent. Both backends report it as registry-unavailable; a missing image would be a real
+                // fault for alpine:latest, so it fails the leaf below.
+                case Result.Failure(_: ContainerRegistryUnavailableException) =>
                     ensureImage(img).andThen {
                         ContainerImage.inspect(img).map { imgInfo =>
                             assert(imgInfo.repoTags.exists(_.reference.contains("alpine")))
@@ -3632,7 +3633,7 @@ class ContainerItTest extends BasePodTest:
                 c.exec("whoami").map { r =>
                     assert(
                         r.stdout.trim == "nobody",
-                        s"Expected 'nobody', got: '${r.stdout.trim}'"
+                        s"Expected 'nobody', got: '${r.stdout.trim}' (exit ${r.exitCode}, stderr '${r.stderr.trim}')"
                     )
                 }
             }
@@ -3977,6 +3978,53 @@ class ContainerItTest extends BasePodTest:
                         succeed("awaitHealthy returned; reaching here means the container became healthy")
                     }
                 }
+            }
+        }
+    }
+
+    // The leak check runs on a daemon other processes share (other suites, other builds on the same machine), so it
+    // must count what the leaf caused the daemon to create and nothing else, through every path kyo-pod creates by.
+    "leak check" - {
+
+        // The foreign container is created through the backend under test, so it lands on the daemon the leak check
+        // lists, with the ambient labels cleared: to the check it is any other process's container. A runtime CLI
+        // would reach whatever daemon the CLI is configured for, which need not be the one the backend talks to.
+        "a container created outside kyo-pod during the leaf is not its leak" - runBackendsUnchecked { _ =>
+            leafCandidates(Container.ambientLabels.let(Dict.empty)(Container.initUnscoped(alpine))).map { (foreign, candidates) =>
+                Scope.ensure(Abort.run[ContainerException](foreign.remove(force = true)).unit).andThen {
+                    assert(!candidates.map(_.id).contains(foreign.id))
+                }
+            }
+        }
+
+        "a container leaked through initUnscoped is caught" - runBackendsUnchecked { _ =>
+            leafCandidates(Container.initUnscoped(alpine)).map { (c, candidates) =>
+                Scope.ensure(Abort.run[ContainerException](c.remove(force = true)).unit).andThen {
+                    stillPresent(candidates).map(leaked => assert(leaked.map(_.id).contains(c.id)))
+                }
+            }
+        }
+
+        "a container leaked through restore is caught" - runBackendsUnchecked { _ =>
+            leafCandidates {
+                Container.initUnscoped(alpinePersistent(alpine)).map { original =>
+                    // A podman import restores under the original's id, so a removal of the original that ran at the leaf's scope exit
+                    // would remove the restored container before the check could list it. The original's scope closes before the restore.
+                    Scope.run {
+                        Scope.ensure(Abort.run[ContainerException](original.remove(force = true)).unit)
+                            .andThen(Abort.run[ContainerException](original.checkpoint(uniqueName("kyo-ckpt"))))
+                    }.map(checkpointed => Abort.run[ContainerException](Abort.get(checkpointed).map(original.restore)))
+                }
+            }.map { (result, candidates) =>
+                result match
+                    case Result.Success(_) =>
+                        stillPresent(candidates).map { leaked =>
+                            Kyo.foreach(leaked)(s => Abort.run[ContainerException](s.attach.map(_.remove(force = true))).unit)
+                                .andThen(assert(leaked.nonEmpty))
+                        }
+                    case Result.Failure(e) =>
+                        cancel(s"checkpoint/restore is not available on this runtime: ${e.getMessage}")
+                    case Result.Panic(t) => Abort.panic(t)
             }
         }
     }

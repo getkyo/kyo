@@ -4,15 +4,17 @@ set -uo pipefail
 # First-class local entry point for the shared runner.
 #
 # Usage:
-#   build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] <action> <platform...>
+#   build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] [--role <role>] <action> <platform...>
 #
-# --env  direct     host sbt (relies on the repo .jvmopts for the driver heap)
+# --env  direct     host sbt
 #        podman      a Linux container running ci-test.sh over a clean snapshot
 #        podman-ci   the podman container plus CI memory/CPU caps + CI=true +
-#                    SBT_TASK_LIMIT=1 + the -Xmx12G driver, reproducing CI
+#                    SBT_TASK_LIMIT=1, reproducing CI
 # --arch native|x86|arm  container architecture (podman/podman-ci only); sets
 #        podman --platform. native = host arch, x86 = linux/amd64, arm =
 #        linux/arm64; qemu-emulated when it differs from the host arch.
+# --role <role>  the sbt-heap-lib.sh heap role of a raw `sbt` command (default:
+#        compile); the other actions take each process's role from ci-test.sh.
 # <action>    one of test, testDiff, compile, link (default: test), or
 #             `sbt <raw command>` to run one arbitrary sbt command in the env
 #             (e.g. build.sh --env direct sbt 'kyo-netJVM/test'); no platform arg
@@ -36,31 +38,25 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Make the JVM heap deterministic. The runner defines the driver heap via the repo .jvmopts (direct)
-# or CI_DRIVER_OPTS (podman-ci). An ambient SBT_OPTS (e.g. a developer's "-Xms32G -Xmx32G" eager
-# reservation) otherwise overrides .jvmopts on every sbt launch and, stacked across the driver, forked
-# test JVMs, and phase processes a run spawns, oversubscribes the machine into OOM-kills and boot hangs.
-# Clear it so the runner's own heap always wins; the podman envs never inherit it.
-if [ -n "${SBT_OPTS:-}" ]; then
-    echo "build.sh: clearing inherited SBT_OPTS so the runner controls the JVM heap (was: $SBT_OPTS)" >&2
-    unset SBT_OPTS
-fi
+# Every sbt this script starts takes its heap from the role table; sourcing it also clears an inherited
+# SBT_OPTS, whose options the launcher would otherwise place after the role's heap.
+. "$SCRIPT_DIR/sbt-heap-lib.sh"
 
 # CI-faithful resource caps for --env podman-ci. GitHub standard public-repo
 # runners are 4 vCPU / 16 GB on both linux-x64 and linux-arm64. One place.
 CI_MEMORY="${CI_MEMORY:-16g}"
 CI_CPUS="${CI_CPUS:-4}"
-CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
 apt_mirror="${KYO_APT_MIRROR:-}"
 
 ENV_KIND="direct"
 ARCH="native"
+RAW_ROLE="compile"
 ACTIONS="test testDiff compile link"
 PLATFORMS="JVM JS Native Wasm"
 
 usage() {
-    echo "Usage: build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] <action> <platform...>" >&2
+    echo "Usage: build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] [--role <role>] <action> <platform...>" >&2
 }
 
 contains_word() {
@@ -76,6 +72,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --env)  ENV_KIND="${2:-}"; shift 2 ;;
         --arch) ARCH="${2:-}"; shift 2 ;;
+        --role) RAW_ROLE="${2:-}"; shift 2 ;;
         --) shift; break ;;
         -*) die_usage "unknown flag '$1'" ;;
         *) break ;;
@@ -84,6 +81,7 @@ done
 
 case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_KIND'" ;; esac
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
+sbt_heap_role_mb "$RAW_ROLE" >/dev/null || die_usage "unknown role '$RAW_ROLE'"
 
 # The CI setup action stages BoringSSL and Aeron unconditionally (kyo-aeronJVM's ffiCompile links
 # -laeron_driver_static and the kyo-net TLS tests link real libssl/libcrypto), so the CI-faithful
@@ -286,8 +284,8 @@ if command -v node >/dev/null 2>&1; then
 fi
 if [ "$node_ok" != 1 ]; then
     case $(uname -m) in aarch64) node_arch=linux-arm64 ;; *) node_arch=linux-x64 ;; esac
-    fetch_url "https://nodejs.org/dist/v24.16.0/node-v24.16.0-${node_arch}.tar.gz" /tmp/node.tar.gz
-    tar xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 && rm -f /tmp/node.tar.gz
+    fetch_url "https://nodejs.org/dist/v24.16.0/node-v24.16.0-${node_arch}.tar.gz" "$TMPDIR/node.tar.gz"
+    tar xzf "$TMPDIR/node.tar.gz" -C /usr/local --strip-components=1 && rm -f "$TMPDIR/node.tar.gz"
 fi'
     fi
     # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
@@ -334,8 +332,8 @@ if [ "$cmake_ok" != 1 ]; then
         exit 1
     fi
     case $(uname -m) in aarch64) cmake_arch=linux-aarch64 ;; *) cmake_arch=linux-x86_64 ;; esac
-    fetch_url "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" /tmp/cmake.tar.gz
-    tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1 && rm -f /tmp/cmake.tar.gz
+    fetch_url "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-${cmake_arch}.tar.gz" "$TMPDIR/cmake.tar.gz"
+    tar xzf "$TMPDIR/cmake.tar.gz" -C /usr/local --strip-components=1 && rm -f "$TMPDIR/cmake.tar.gz"
 fi'
     fi
     cat <<PROVISION
@@ -374,8 +372,8 @@ if command -v apk >/dev/null 2>&1; then
     if ! command -v sbt >/dev/null 2>&1; then
         # The version comes from the host: provisioning runs before the source snapshot is
         # extracted, so project/build.properties is not readable here yet.
-        fetch_url "https://github.com/sbt/sbt/releases/download/v$sbt_version/sbt-$sbt_version.tgz" /tmp/sbt.tgz
-        tar -xzf /tmp/sbt.tgz -C /opt && rm -f /tmp/sbt.tgz
+        fetch_url "https://github.com/sbt/sbt/releases/download/v$sbt_version/sbt-$sbt_version.tgz" "\$TMPDIR/sbt.tgz"
+        tar -xzf "\$TMPDIR/sbt.tgz" -C /opt && rm -f "\$TMPDIR/sbt.tgz"
     fi
     export PATH="/opt/sbt/bin:\$PATH"
 elif ! command -v cs >/dev/null 2>&1; then
@@ -387,8 +385,8 @@ elif ! command -v cs >/dev/null 2>&1; then
     else
         cs_url="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
     fi
-    fetch_url "\$cs_url" /tmp/cs.gz
-    gzip -dc /tmp/cs.gz > /usr/local/bin/cs && chmod +x /usr/local/bin/cs && rm -f /tmp/cs.gz
+    fetch_url "\$cs_url" "\$TMPDIR/cs.gz"
+    gzip -dc "\$TMPDIR/cs.gz" > /usr/local/bin/cs && chmod +x /usr/local/bin/cs && rm -f "\$TMPDIR/cs.gz"
 fi
 if command -v cs >/dev/null 2>&1; then
     eval "\$(cs java --jvm corretto:25 --env)"
@@ -476,9 +474,7 @@ run_in_container() {
     [ -n "${KYO_NET_SUCCESS_ONLY:-}" ] && envs+=(-e "KYO_NET_SUCCESS_ONLY=$KYO_NET_SUCCESS_ONLY")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
-        envs+=(-e CI=true -e SBT_TASK_LIMIT=1
-               -e "JAVA_OPTS=$CI_DRIVER_OPTS"
-               -e "JVM_OPTS=$CI_DRIVER_OPTS")
+        envs+=(-e CI=true -e SBT_TASK_LIMIT=1)
         # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging:
         # the link CPU cap and the pool batch sizes carry the workflow's values. NATIVE_SKIP (the
         # app/integration tier dropped from the Native leg) is forwarded so a host value reproduces the
@@ -505,8 +501,8 @@ run_in_container() {
     # otherwise the inner command is the standard per-platform ci-test.sh runner.
     local inner
     if [ "$RAW_MODE" = yes ]; then
-        envs+=(-e "RAW_SBT=$RAW_SBT")
-        inner='sbt "$RAW_SBT"'
+        envs+=(-e "RAW_SBT=$RAW_SBT" -e "RAW_ROLE=$RAW_ROLE")
+        inner='./scripts/sbt.sh "$RAW_ROLE" "$RAW_SBT"'
     else
         inner="./scripts/ci-test.sh '$platform' '$ACTION'"
     fi
@@ -529,14 +525,23 @@ run_in_container() {
     # through it. A `curl | tar` pipe cannot be retried: curl restarts its output on a retry and tar
     # has already consumed the first bytes.
     local provision; provision=$(cat "$PROJECT_DIR/scripts/fetch-lib.sh" && container_provision "$platform")
+    # Named after the snapshot directory, which mktemp made unique on this host. Concurrent runs share state through two paths that
+    # are the same in every container: /tmp, which the socket passthrough mounts from the podman VM, held the downloads and the
+    # BoringSSL and Aeron staging trees, so two runs truncated each other's files; and the project directory, by which sbt keys its
+    # boot server socket under the shared /root/.sbt, so the second run failed with ServerAlreadyBootingException. Each run gets
+    # its own TMPDIR under /tmp, keeping the same path on both sides of the passthrough, and its own project directory.
+    local run_id; run_id=$(basename "$snap")
     # `sh`, not `bash`: a musl JDK image ships busybox sh and no bash, and provisioning is what
     # installs bash there, so a bash entrypoint cannot get far enough to install it. This prelude is
     # POSIX throughout; the two staging scripts genuinely need bash and are invoked as `bash <script>`
     # below, by which point the package step has provided it.
     podman "${args[@]}" "${envs[@]}" "$CONTAINER_IMAGE" \
         sh -c "set -e
+export TMPDIR=/tmp/kyo-build-$run_id
+mkdir -p \"\$TMPDIR\"
+trap 'rm -rf \"\$TMPDIR\"' EXIT
 $provision
-mkdir -p /work && cd /work && tar xf /build-input/src.tar \
+mkdir -p /work/$run_id && cd /work/$run_id && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
     && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh; fi \
     && if [ \"\${STAGE_AERON:-}\" = 1 ]; then bash kyo-aeron/scripts/build-aeron.sh; fi \
@@ -554,7 +559,7 @@ exit \${__rc:-1}"
 # -- raw sbt escape hatch (no platform loop), or fail-fast across platforms --
 if [ "$RAW_MODE" = yes ]; then
     case "$ENV_KIND" in
-        direct)            ( cd "$PROJECT_DIR" && sbt "$RAW_SBT" ); exit $? ;;
+        direct)            ( cd "$PROJECT_DIR" && "$SCRIPT_DIR/sbt.sh" "$RAW_ROLE" "$RAW_SBT" ); exit $? ;;
         podman|podman-ci)  run_in_container all; exit $? ;;
     esac
 fi

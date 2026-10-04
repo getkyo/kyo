@@ -101,6 +101,38 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
     }
 
+    "an error object decodes straight from JSON text, data included" in {
+        val err = JsonRpcCustomError(409, "Conflict", Present(Structure.Value.Str("details")))
+        Json.decode[JsonRpcError](Json.encode[JsonRpcError](err)) match
+            case Result.Success(decoded) =>
+                assert(decoded.code == 409)
+                assert(decoded.message == "Conflict")
+                assert(decoded.data == Present(Structure.Value.Str("details")))
+            case other => fail(s"expected a decoded error, got $other")
+        end match
+        Json.decode[JsonRpcError]("""{"message":"Method not found","code":-32601,"extra":[1]}""") match
+            case Result.Success(decoded) =>
+                assert(decoded.code == -32601)
+                assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
+                assert(decoded.data == Absent)
+            case other => fail(s"expected a decoded error, got $other")
+        end match
+    }
+
+    "an error read off the wire carries the decode call's Frame" in {
+        val decodeSite = summon[Frame]
+        Json.decode[JsonRpcError]("""{"code":-32601,"message":"Method not found"}""")(using
+            summon[Json],
+            summon[Schema[JsonRpcError]],
+            decodeSite
+        ) match
+            case Result.Success(err) =>
+                assert(err.code == -32601)
+                assert(err.frame == decodeSite, s"built at ${err.frame}, decoded at $decodeSite")
+            case other => fail(s"expected a decoded error, got $other")
+        end match
+    }
+
     "Schema[JsonRpcError] round-trips code/message/data triple" in {
         val err     = JsonRpcCustomError(409, "Conflict", Present(Structure.Value.Str("details")))
         val encoded = Structure.encode[JsonRpcError](err)

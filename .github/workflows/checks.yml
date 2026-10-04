@@ -6,7 +6,7 @@ name: checks
 # also shares one checkout, one JDK and sbt install, and one coursier cache.
 #
 # Steps run cheapest first, so a formatting or lint error surfaces in ~3 minutes instead of
-# after the ~42 minute doctest step. The cost is that those cheap checks are serial with
+# after the doctest step (~36 minutes on main, where it compiles every module). The cost is that those cheap checks are serial with
 # each other, which only pays while the queue wait dominates the work. On an uncontended
 # pool, three parallel jobs would be the better shape.
 on:
@@ -37,13 +37,6 @@ jobs:
     # 60 cold. The cap leaves room for the cold run. Uncapped, a hang would hold a slot for GitHub's
     # 360-minute default, which is the resource this job is shaped to conserve.
     timeout-minutes: 90
-    env:
-      # No -Xmx here: the checked-in .jvmopts governs the driver heap (12G). The sbt launcher
-      # appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx wins and one
-      # set here would be silently inert. Change the heap in .jvmopts. build.yml carries the same
-      # constraint.
-      JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
       # Full history is required by `sbt doctest` and by the workflow-change gate below, which
       # resolves a base commit a shallow clone does not carry. Shallowing this fails quietly:
@@ -80,6 +73,15 @@ jobs:
         if: steps.workflow-changes.outputs.changed == 'true'
         uses: rhysd/actionlint@v1.7.12
 
+      # A pull request runs on its merge ref, whose first parent is the main commit the change merges onto. The doctest and scaladoc
+      # steps validate only what the diff against it reaches (`testKyo --phase`), so a pull request compiles the modules it can
+      # affect rather than the whole build. A push to main validates everything.
+      - name: Merge base
+        id: base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+
       # --- then formatting (~3m) ---
       # Same key namespace as .github/actions/setup, rather than coursier/cache-action's own. That action
       # mints a cache entry per job name, each around 1.6 GB and each holding the same coursier tree the
@@ -94,38 +96,43 @@ jobs:
       # it. This job resolves scalafmt, actionlint and the doctest set, which is not the whole dependency
       # tree a ci leg on this pole pulls, and minting the key from it would lock out the fuller save for
       # that hash. The ci legs are the writers; every consumer here restores.
-      - uses: actions/cache/restore@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-arm64-
+          os: linux-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
           apps: sbt
 
-      # scalafmtAll aggregates from the CURRENT project, and build.sbt makes that kyoJVM unless
-      # -Dplatform says otherwise, so a bare `sbt scalafmtAll` only ever reaches the JVM project set:
-      # every js/, native/ and js-wasm/ source stays unformatted and undetected. All four aggregates
-      # exist in every session regardless of -Dplatform, so naming them covers the whole tree in one
-      # project load (seconds, not a fourfold job).
+      # Every sbt driver heap comes from scripts/sbt-heap-lib.sh; the check fails on a heap flag set
+      # anywhere else and on an sbt started without it.
+      - name: sbt driver heaps
+        run: |
+          scripts/sbt-heap-check.sh --self-test
+          scripts/sbt-heap-lib-test.sh
+          scripts/sbt-heap-check.sh
+
+      - name: Self-test the build scripts
+        run: |
+          scripts/ci-test.sh --self-test
+          scripts/build-selftest.sh
+
+      - name: Self-test the format script
+        run: scripts/format.sh --self-test
+
+      # The same script the pre-push hook and contributors run, over the whole tree: all four platform
+      # aggregates (a bare scalafmtAll reaches only the JVM set), the build definition, and every README's
+      # scala blocks, so what passes locally passes here.
       - name: Check formatting
         run: |
-          sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt
-          if ! git diff --quiet; then
-            echo "::error::Files are not formatted. Run 'sbt kyoJVM/scalafmtAll kyoJS/scalafmtAll kyoNative/scalafmtAll kyoWasm/scalafmtAll scalafmtSbt' locally."
-            git diff
+          scripts/format.sh --check || {
+            echo "::error::Files are not formatted. Run 'scripts/format.sh' locally."
             exit 1
-          fi
+          }
 
-      # --- then the expensive one (~42m) ---
+      # --- then the expensive one (~36m on main) ---
       # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
       # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.
       - name: Install liburing (Linux)
@@ -157,7 +164,13 @@ jobs:
             doctest-${{ runner.os }}-${{ runner.arch }}-
 
       - name: README doctests
-        run: sbt doctest
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            scripts/sbt.sh docs "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
+          else
+            scripts/sbt.sh docs doctest
+          fi
 
       # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
       # ref, readable by nothing but re-runs of the same PR, so it would cost upload time for no
@@ -181,7 +194,13 @@ jobs:
       # `kyoNative / update` cannot resolve the aggregate's own dependencies, so a Native row would fail
       # on that rather than on a link.
       - name: Scaladoc links
-        run: sbt kyoJVM/doc
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            scripts/sbt.sh docs "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
+          else
+            scripts/sbt.sh docs kyoJVM/doc
+          fi
 
       # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
       # both the Scala.js and Scala Native linkers keep the first class on the classpath and drop the rest.
@@ -190,7 +209,50 @@ jobs:
       # and Wasm rows compile every module of their platform from nothing, 67 to 74 min together on
       # ubuntu-24.04-arm, more than half of this job. A name declared only in `js`, `js-wasm`, `native` or
       # `wasm` sources is therefore not checked in CI.
+      #
+      # Main checks every project and records each one's classes in an index keyed by its commit. A pull
+      # request restores the newest index and compiles only the projects that differ between that index's
+      # commit and this tree, reading every other project's classes from the index. Planning against the
+      # index's commit rather than the merge base keeps that exact whichever main commit the index is from.
+      # With no index, or a commit this clone cannot fetch, the check compiles everything.
+      - name: Restore class-name index
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            target/classnames-index.tsv
+            target/classnames-index.sha
+          key: classnames-index-${{ runner.os }}-${{ runner.arch }}-${{ steps.base.outputs.sha }}
+          restore-keys: |
+            classnames-index-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Class names
+        shell: bash
         run: |
-          sbt 'checkClassNames --self-test'
-          sbt 'checkClassNames JVM'
+          scripts/sbt.sh tool 'checkClassNames --self-test'
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            scripts/sbt.sh classnames 'checkClassNames JVM --write-index target/classnames-index.tsv'
+            git rev-parse HEAD > target/classnames-index.sha
+            exit 0
+          fi
+          indexed="$(cat target/classnames-index.sha 2>/dev/null || true)"
+          if [ -n "$indexed" ] && { git cat-file -e "$indexed^{commit}" 2>/dev/null || git fetch -q origin "$indexed"; }; then
+            scripts/sbt.sh tool "testKyo --dry-run --plan-file target/classnames-plan $indexed JVM"
+            if [ ! -s target/classnames-plan ]; then
+              echo "No JVM project differs from $indexed; no class can have changed."
+              exit 0
+            fi
+            scripts/sbt.sh classnames "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
+          else
+            echo "No usable class-name index; checking every project."
+            scripts/sbt.sh classnames 'checkClassNames JVM'
+          fi
+
+      - name: Save class-name index
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target/classnames-index.tsv
+            target/classnames-index.sha
+          key: classnames-index-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}

@@ -196,6 +196,17 @@ class HttpContainerBackendTest extends BasePodTest:
         })
     end claimLegacyFixture
 
+    "endpoint URLs" - {
+
+        "a socket path with a space and a '+' reaches the daemon unchanged, as do query values" in {
+            val backend = new HttpContainerBackend("/tmp/a b+c/docker.sock", "v1.43", Meter.Noop)
+            val url     = HttpUrl.parse(backend.url("/containers/x/archive", "path" -> "/a b+c")).getOrThrow
+            assert(url.unixSocket == Present("/tmp/a b+c/docker.sock"))
+            assert(url.path == "/v1.43/containers/x/archive")
+            assert(url.query("path") == Present("/a b+c"))
+        }
+    }
+
     "create payload" - {
         // Regression guard for the podman 5.x compat API: docker and podman 4.x treat
         // PidsLimit 0 as "no limit configured", but podman 5.8.4 applies it as a literal
@@ -364,6 +375,20 @@ class HttpContainerBackendTest extends BasePodTest:
                 assert(
                     result.failure.exists(_.isInstanceOf[ContainerImageMissingException]),
                     s"an explicit absence claim must still read as missing, got $result"
+                )
+            }
+        }
+
+        // Whatever status the daemon chose, a body reporting that its connection to the registry failed says nothing about the image,
+        // and must read as the registry fault the shell backend reports for the same failure.
+        "a failed connection to the registry quoted under a 4xx is a registry fault" in {
+            classify(
+                404,
+                """{"message":"Get \"https://auth.docker.io/token\": read tcp 172.17.0.2:41234->3.94.224.37:443: read: connection reset by peer"}"""
+            ).map { result =>
+                assert(
+                    result.failure.exists(_.isInstanceOf[ContainerRegistryUnavailableException]),
+                    s"a failed registry connection must not be classified as a missing image, got $result"
                 )
             }
         }

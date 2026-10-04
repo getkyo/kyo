@@ -46,8 +46,8 @@ object HttpFormCodec:
                         val pair  = pairs(i)
                         val eqIdx = pair.indexOf('=')
                         if eqIdx >= 0 then
-                            val key   = java.net.URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8")
-                            val value = java.net.URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8")
+                            val key   = internal.PercentEncoding.decode(pair.substring(0, eqIdx), internal.PercentEncoding.Mode.Form)
+                            val value = internal.PercentEncoding.decode(pair.substring(eqIdx + 1), internal.PercentEncoding.Mode.Form)
                             kyo.discard(map.put(key, value))
                         end if
                         parsePairs(i + 1)
@@ -74,9 +74,12 @@ object HttpFormCodec:
             @tailrec def loop(i: Int): Unit =
                 if i < fieldNames.length then
                     if i > 0 then kyo.discard(sb.append('&'))
-                    sb.append(java.net.URLEncoder.encode(fieldNames(i), "UTF-8"))
+                    sb.append(internal.PercentEncoding.encode(fieldNames(i), internal.PercentEncoding.Mode.Form))
                     sb.append('=')
-                    sb.append(java.net.URLEncoder.encode(fieldCodecs(i).encode(a.productElement(i)), "UTF-8"))
+                    sb.append(internal.PercentEncoding.encode(
+                        fieldCodecs(i).encode(a.productElement(i)),
+                        internal.PercentEncoding.Mode.Form
+                    ))
                     loop(i + 1)
             loop(0)
             sb.toString

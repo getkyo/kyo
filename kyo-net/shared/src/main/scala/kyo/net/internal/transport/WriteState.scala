@@ -23,4 +23,8 @@ private[kyo] enum WriteState derives CanEqual:
     case AwaitingWritable(pending: Span[Byte], offset: Int)
     case Backpressured(pending: Span[Byte], offset: Int)
     case TornDown
+
+    def holdsSpan: Boolean = this match
+        case Flushing(_, _) | AwaitingWritable(_, _) | Backpressured(_, _) => true
+        case Idle | TornDown                                               => false
 end WriteState

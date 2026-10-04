@@ -211,7 +211,19 @@ object KyoFfiPlugin extends AutoPlugin {
 
     import autoImport._
 
-    /** Compiles the natives of EVERY project that enables this plugin, so a release producer runs one
+    /** The projects that enable this plugin, narrowed to `only` when it names any. A project enables it
+      * exactly when its settings carry ffiLibraries, which the plugin defaults for every project it is
+      * enabled on and nothing else defines. Naming a project that does not enable it selects nothing for
+      * it, so a caller can pass any module list and get its FFI subset.
+      */
+    private def ffiProjects(state: State, only: Seq[String]): Seq[ProjectRef] = {
+        val extracted = Project.extract(state)
+        extracted.structure.allProjectRefs.filter { ref =>
+            (ref / ffiLibraries).get(extracted.structure.data).isDefined && (only.isEmpty || only.contains(ref.project))
+        }
+    }
+
+    /** Compiles the natives of EVERY project that enables this plugin, or of the named ones among them, so a release producer runs one
       * command instead of naming each FFI module.
       *
       * The workflow's producer jobs previously carried a hand-written block per module: one `ffiCompile`
@@ -223,15 +235,11 @@ object KyoFfiPlugin extends AutoPlugin {
       * A project whose `ffiLibraries` resolve to nothing compilable on this host is skipped rather than
       * failed: a darwin-only shim on a Linux producer is the expected case, not an error.
       */
-    private def ffiCompileAllCommand: Command = Command.command("ffiCompileAll") { state =>
-        val extracted = Project.extract(state)
-        // A project enables this plugin exactly when its settings carry ffiLibraries, which the plugin
-        // defaults for every project it is enabled on and nothing else defines.
-        val projects = extracted.structure.allProjectRefs.filter { ref =>
-            (ref / ffiLibraries).get(extracted.structure.data).isDefined
-        }
+    private def ffiCompileAllCommand: Command = Command.args("ffiCompileAll", "<project>*") { (state, only) =>
+        val projects = ffiProjects(state, only)
         if (projects.isEmpty) {
-            state.log.warn("[kyo-ffi-plugin] ffiCompileAll: no project enables KyoFfiPlugin; nothing to compile.")
+            if (only.isEmpty) state.log.warn("[kyo-ffi-plugin] ffiCompileAll: no project enables KyoFfiPlugin; nothing to compile.")
+            else state.log.info("[kyo-ffi-plugin] ffiCompileAll: none of the named projects enables KyoFfiPlugin; nothing to compile.")
             state
         } else {
             state.log.info(
@@ -262,11 +270,8 @@ object KyoFfiPlugin extends AutoPlugin {
       * cannot pass on one host. This is the half a single host can answer, which is what makes it
       * runnable on a pull request: it catches a native filed under a platform it is not for.
       */
-    private def ffiPackagingFormatCheckAllCommand: Command = Command.command("ffiPackagingFormatCheckAll") { state =>
-        val extracted = Project.extract(state)
-        val projects  = extracted.structure.allProjectRefs.filter { ref =>
-            (ref / ffiLibraries).get(extracted.structure.data).isDefined
-        }
+    private def ffiPackagingFormatCheckAllCommand: Command = Command.args("ffiPackagingFormatCheckAll", "<project>*") { (state, only) =>
+        val projects             = ffiProjects(state, only)
         val (finalState, failed) =
             projects.foldLeft((state, Seq.empty[String])) { case ((st, bad), ref) =>
                 val ex = Project.extract(st)
@@ -1004,7 +1009,7 @@ object KyoFfiPlugin extends AutoPlugin {
             val platform = ffiTargetPlatform.value
             val libs     = ffiLibrariesResolved.value
             if (platform != "Native") Nil
-            else libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}")
+            else nativeCompileOptions(libs)
         },
 
         // The flags this project's DEPENDENCIES declare, read off their manifests. Without these a consumer
@@ -1445,6 +1450,16 @@ object KyoFfiPlugin extends AutoPlugin {
       * The dropped flags are not lost to the build that produced them; they are written to the in-build manifests, which
       * `ffiPackageBinFlagsFilter` keeps out of the jar.
       */
+    /** The Scala Native compileOptions `libs` need: their include dirs, then the preprocessor defines among their `cFlags`.
+      *
+      * The defines are forwarded and nothing else is. A define changes what the C means, a header it includes or a feature it compiles in,
+      * so a Native binary built without one is a different program from the shared library the other transports load. Every other flag
+      * tunes one compiler (MSVC's `/MD`, an optimisation level) and is not this compile's to apply.
+      */
+    private[sbt] def nativeCompileOptions(libs: Seq[FfiLibrary]): Seq[String] =
+        libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}") ++
+            libs.flatMap(_.cFlags).filter(f => f.startsWith("-D") || f.startsWith("-U")).distinct
+
     private[sbt] def partitionPortableFlags(flags: Seq[String], vendoredLinkLibs: Set[String] = Set.empty): (Seq[String], Seq[String]) =
         flags.partition { flag =>
             val namesVendoredLib = flag.startsWith("-l") && vendoredLinkLibs.contains(flag.drop(2))

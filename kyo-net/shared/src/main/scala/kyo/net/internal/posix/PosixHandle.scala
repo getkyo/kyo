@@ -38,6 +38,8 @@ final private[net] class PosixHandle private (
     // (see markDeferredFdClose / consumeDeferredFdClose), so the later closeNow that owes the real close(fd) can still run it despite
     // claimFdClose already being spent.
     deferredFdClose: AtomicBoolean.Unsafe,
+    // Orders close(fd) after the poller's withdrawal of the fd (see FdWithdrawal).
+    fdWithdrawal: AtomicRef.Unsafe[PosixHandle.FdWithdrawal],
     // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
     // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
     guard: HandleGuard,
@@ -64,6 +66,10 @@ final private[net] class PosixHandle private (
     // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
     // skips.
     val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]],
+    // Bytes of writes already accepted with Done whose append to the tail still waits on the engine FIFO. The write-tail bound must count them:
+    // on single-threaded JS and Wasm the WritePump issues many writes before the FIFO runs any of their appends, so a bound over the appended
+    // tail alone never trips and the tail grows without limit. Incremented by the writing carrier, decremented by the FIFO op, hence atomic.
+    queuedWriteBytes: AtomicInt.Unsafe,
     val createdAt: Frame
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
@@ -92,6 +98,9 @@ final private[net] class PosixHandle private (
       * in-place STARTTLS upgrade (same fd) inherits it without re-threading; left at `Duration.Infinity` (no reclaim) for a handle with no config (stdio).
       */
     @volatile var peerCloseGrace: Duration = Duration.Infinity
+
+    /** Close-flush grace window (see [[kyo.net.NetConfig.closeFlushGrace]]), on the handle for the same reason as [[peerCloseGrace]]. */
+    @volatile var closeFlushGrace: Duration = Duration.Infinity
 
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
@@ -190,6 +199,15 @@ final private[net] class PosixHandle private (
       */
     private[posix] def fdCloseIsClaimed(using AllowUnsafe): Boolean = fdCloseClaimed.get()
 
+    /** Whether this handle may still arm an fd-keyed operation (a registration, an accept, a connect): the one gate every driver arm checks.
+      * False once the close was requested, the fd close claimed, or a poller's closing withdrawal of the fd begun. Every path that closes a
+      * handle's fd claims it first, the claim lands before `close(fd)`, and an arm applied after the claim is rejected, so no arm can run
+      * against a number the kernel has handed to another socket. Each condition is needed: a close is requested before any closer wins the
+      * claim, a listener's fd is closed by a claim with no request, and a poller withdrawal begins before either, in the submit that its
+      * close waits on (see [[PosixHandle.FdWithdrawal]]).
+      */
+    private[posix] def ownsFd()(using AllowUnsafe): Boolean = !guard.isClosing() && !fdCloseClaimed.get() && !fdWithdrawalBegun
+
     /** Record that a [[claimFdClose]] win was spent guarding [[IoUringDriver.registerDeferredClose]]'s deferred `shutdown(SHUT_RD)`, not the
       * real `close(fd)` syscall: that call still owes the actual close once the in-flight recv drains, but its own `claimFdClose()` attempt
       * would lose (the claim is already spent). Set by the winner right after winning; consumed exactly once via [[consumeDeferredFdClose]].
@@ -201,6 +219,37 @@ final private[net] class PosixHandle private (
       * (nothing was deferred, or another discharge already consumed it).
       */
     private[posix] def consumeDeferredFdClose()(using AllowUnsafe): Boolean = deferredFdClose.compareAndSet(true, false)
+
+    /** Start withdrawing this handle's fds from a poller ahead of closing them. From here on no registration of the handle may reach the
+      * kernel, and [[runAfterFdWithdrawal]] holds the close until [[completeFdWithdrawal]].
+      */
+    private[posix] def beginFdWithdrawal()(using AllowUnsafe): Unit =
+        discard(fdWithdrawal.compareAndSet(PosixHandle.FdWithdrawal.Open, PosixHandle.FdWithdrawal.Withdrawing(Absent)))
+
+    private[posix] def fdWithdrawalBegun(using AllowUnsafe): Boolean = fdWithdrawal.get() != PosixHandle.FdWithdrawal.Open
+
+    /** Run `close` now, or once the withdrawal begun by [[beginFdWithdrawal]] completes. */
+    @scala.annotation.tailrec
+    final private[posix] def runAfterFdWithdrawal(close: () => Unit)(using AllowUnsafe): Unit =
+        fdWithdrawal.get() match
+            case current @ PosixHandle.FdWithdrawal.Withdrawing(waiting) =>
+                val next = waiting match
+                    case Absent           => close
+                    case Present(earlier) =>
+                        () =>
+                            try earlier()
+                            finally close()
+                if !fdWithdrawal.compareAndSet(current, PosixHandle.FdWithdrawal.Withdrawing(Present(next))) then
+                    runAfterFdWithdrawal(close)
+            case _ => close()
+        end match
+    end runAfterFdWithdrawal
+
+    /** Mark the poller's withdrawal of this handle's fds as applied and run any close held for it. Idempotent. */
+    private[posix] def completeFdWithdrawal()(using AllowUnsafe): Unit =
+        fdWithdrawal.getAndSet(PosixHandle.FdWithdrawal.Withdrawn) match
+            case PosixHandle.FdWithdrawal.Withdrawing(Present(close)) => close()
+            case _                                                    => ()
 
     /** How the TLS engine's `free()` is run when the handle's resources are released (see [[PosixHandle.freeResources]]). The driver installs
       * its `submitEngineOp` here in `closeHandle` so the engine free is enqueued on the per-driver engine FIFO and therefore serialized AFTER
@@ -556,8 +605,10 @@ final private[net] class PosixHandle private (
       * backpressure instead of appending), and by `awaitWritable` to decide whether the parked WritePump promise may complete now or must wait for the
       * tail to drain below [[PosixHandle.WriteTailLowWater]]. The fields are mutated only on the engine FIFO worker and read here off `@volatile`s, so
       * this is a coherent snapshot of the tail at the moment of the read (a coarse bound is sufficient: the high-water gate is hysteretic, not exact).
+      * It includes the bytes of accepted writes still queued on the engine FIFO ([[queueWrite]]), which are part of the tail the bound caps even
+      * though no append has run for them yet.
       */
-    private[posix] def unsentTailBytes: Int =
+    private[posix] def unsentTailBytes(using AllowUnsafe): Int =
         val cipher = pendingCipher match
             case Present(b) => b.size - pendingCipherSent
             case Absent     => 0
@@ -566,8 +617,16 @@ final private[net] class PosixHandle private (
             case Absent     => 0
         val cipherUnsent = if cipher > 0 then cipher else 0
         val rawUnsent    = if raw > 0 then raw else 0
-        cipherUnsent + rawUnsent
+        cipherUnsent + rawUnsent + queuedWriteBytes.get()
     end unsentTailBytes
+
+    /** Count `bytes` of a write accepted with Done before its append is submitted to the engine FIFO. The FIFO op MUST call [[landQueuedWrite]]
+      * with the same count exactly once, whether or not it appends, or the bound stays tripped for the handle's lifetime.
+      */
+    private[posix] def queueWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(bytes))
+
+    /** Uncount the bytes of a queued write once its FIFO op has appended them to the tail (or dropped them on a closed handle). */
+    private[posix] def landQueuedWrite(bytes: Int)(using AllowUnsafe): Unit = discard(queuedWriteBytes.addAndGet(-bytes))
 
     /** Complete the parked backpressure promise ([[backpressurePromise]]) if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the
       * WritePump retries the write that the high-water bound previously deferred. A no-op when no promise is parked or the tail is still over the mark.
@@ -627,6 +686,18 @@ private[net] object PosixHandle:
       */
     final val WriteTailLowWater = WriteTailHighWater / 2
 
+    /** Where a poller stands in withdrawing a handle's fds ahead of their close.
+      *
+      * XNU's close(2) can spin in the kernel forever when a kevent EV_ADD for the same fd runs concurrently on another thread, so on a poller
+      * the close must wait until the poll carrier, which applies every registration in order, has applied the fd's closing deregister.
+      * `Withdrawing` carries the close that arrived first. A handle no poller withdraws stays `Open` and closes at once.
+      */
+    private[posix] enum FdWithdrawal derives CanEqual:
+        case Open
+        case Withdrawing(waiting: Maybe[() => Unit])
+        case Withdrawn
+    end FdWithdrawal
+
     /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
       * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
       * different carriers; this one state, swung by CAS, gives them mutual exclusion. Two separate `@volatile` slots with an independent
@@ -673,10 +744,12 @@ private[net] object PosixHandle:
             connectTarget,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
+            fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
     end socket
@@ -693,10 +766,12 @@ private[net] object PosixHandle:
             Absent,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
             deferredFdClose = AtomicBoolean.Unsafe.init(false),
+            fdWithdrawal = AtomicRef.Unsafe.init(PosixHandle.FdWithdrawal.Open),
             guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
             pendingReadPromise = AtomicRef.Unsafe.init(Absent),
             lastPlaintextRead = AtomicRef.Unsafe.init(Absent),
+            queuedWriteBytes = AtomicInt.Unsafe.init(0),
             createdAt = createdAt
         )
 
@@ -817,7 +892,7 @@ private[net] object PosixHandle:
                 given Frame = Frame.internal
                 Log.live.unsafe.debug(s"fd=${h.readFd} handle=${h.id} close(fd) deferred past the $holder hold")
             }
-            closeFd()
+            h.runAfterFdWithdrawal(closeFd)
         }
         h.fdCloseSink = Absent
     end freeResources
@@ -852,6 +927,8 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = unbound
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                               = unbound
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                          = unbound
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = unbound
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   = unbound
     def close()(using AllowUnsafe, Frame): Unit                                                   = unbound
     def label: String                                                                             = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"

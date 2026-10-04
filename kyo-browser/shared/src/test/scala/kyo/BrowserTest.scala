@@ -220,8 +220,7 @@ abstract class BrowserTest extends BaseChromeTest:
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Browser.goto(page(html)).andThen(body)
 
-    def page(html: String): String =
-        s"data:text/html;charset=utf-8,${BrowserTest.percentEncode(html)}"
+    def page(html: String): String = Browser.dataUrl(html)
 
     /** Builds a `data:` URL whose page contains an `<iframe srcdoc="...">` carrying `srcdoc`'s HTML. The iframe inherits the parent's
       * origin, which is sufficient for [[Browser.IFrame.of]] / [[Browser.withIFrame]] to scope actions into the inline document without
@@ -278,10 +277,5 @@ object BrowserTest:
             case c   => c.toString
         }.mkString
     end htmlAttributeEscape
-
-    /** Cross-platform RFC-3986 percent-encoder used to embed a page's HTML inside a `data:` URL. Thin alias for
-      * [[kyo.internal.PercentEncode]].
-      */
-    private[kyo] def percentEncode(s: String): String = kyo.internal.PercentEncode(s)
 
 end BrowserTest

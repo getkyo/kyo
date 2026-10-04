@@ -18,19 +18,16 @@ private[kyo] enum IonValue derives CanEqual:
     case ListVal(values: Vector[IonValue])
     case StructVal(fields: Vector[(String, IonValue)])
 
-    def display: String =
+    def kind: Codec.Kind =
         this match
-            case NullValue    => "null"
-            case Bool(_)      => "bool"
-            case IntNum(_)    => "int"
-            case DecNum(_)    => "decimal"
-            case FloatNum(_)  => "float"
-            case Str(_)       => "string"
-            case Symbol(_)    => "symbol"
-            case Timestamp(_) => "timestamp"
-            case Blob(_)      => "blob"
-            case ListVal(_)   => "list"
-            case StructVal(_) => "struct"
+            case NullValue                           => Codec.Kind.Null
+            case Bool(_)                             => Codec.Kind.Boolean
+            case IntNum(_) | DecNum(_) | FloatNum(_) => Codec.Kind.Number
+            case Str(_) | Symbol(_)                  => Codec.Kind.String
+            case Timestamp(_)                        => Codec.Kind.Timestamp
+            case Blob(_)                             => Codec.Kind.Bytes
+            case ListVal(_)                          => Codec.Kind.Array
+            case StructVal(_)                        => Codec.Kind.Object
 end IonValue
 
 final class IonReader private (
@@ -62,7 +59,7 @@ final class IonReader private (
                 checkDepth()
                 stack = Obj(fields, 0) :: stack
                 fields.size
-            case other => mismatch("struct", other)
+            case other => mismatch(Codec.Kind.Object, other)
     end objectStart
 
     def objectEnd(): Unit =
@@ -80,7 +77,7 @@ final class IonReader private (
                 checkDepth()
                 stack = Arr(values, 0) :: stack
                 values.size
-            case other => mismatch("list", other)
+            case other => mismatch(Codec.Kind.Array, other)
     end arrayStart
 
     def arrayEnd(): Unit =
@@ -138,21 +135,21 @@ final class IonReader private (
             case Str(v)       => v
             case Symbol(v)    => v
             case Timestamp(v) => v
-            case other        => mismatch("string", other)
+            case other        => mismatch(Codec.Kind.String, other)
 
-    def int(): Int =
-        val v = integer()
-        if v < BigInt(Int.MinValue) || v > BigInt(Int.MaxValue) then
-            throw RangeException(v.toLong, "Int", Int.MinValue.toLong, Int.MaxValue.toLong)(using _frame)
-        v.toInt
-    end int
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def long(): Long =
-        val v = integer()
-        if v < BigInt(Long.MinValue) || v > BigInt(Long.MaxValue) then
-            throw ParseException(Ion(), v.toString, "Long")(using _frame)
-        v.toLong
-    end long
+    def long(): Long = integral(Numeric.Target.Int64)
+
+    private def integral(target: Numeric.Target): Long =
+        given Frame = _frame
+        value match
+            case IntNum(v)   => Numeric.whole(v, target)
+            case DecNum(v)   => Numeric.whole(v, target)
+            case FloatNum(v) => Numeric.whole(v, target)
+            case other       => mismatch(Codec.Kind.Number, other)
+        end match
+    end integral
 
     def float(): Float =
         double().toFloat
@@ -162,26 +159,16 @@ final class IonReader private (
             case FloatNum(v) => v
             case DecNum(v)   => v.toDouble
             case IntNum(v)   => v.toDouble
-            case other       => mismatch("float", other)
+            case other       => mismatch(Codec.Kind.Number, other)
 
     def boolean(): Boolean =
         value match
             case Bool(v) => v
-            case other   => mismatch("bool", other)
+            case other   => mismatch(Codec.Kind.Boolean, other)
 
-    def short(): Short =
-        val v = int()
-        if v < Short.MinValue || v > Short.MaxValue then
-            throw RangeException(v.toLong, "Short", Short.MinValue.toLong, Short.MaxValue.toLong)(using _frame)
-        v.toShort
-    end short
+    def short(): Short = integral(Numeric.Target.Int16).toShort
 
-    def byte(): Byte =
-        val v = int()
-        if v < Byte.MinValue || v > Byte.MaxValue then
-            throw RangeException(v.toLong, "Byte", Byte.MinValue.toLong, Byte.MaxValue.toLong)(using _frame)
-        v.toByte
-    end byte
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
 
     def char(): Char =
         val s = string()
@@ -209,7 +196,7 @@ final class IonReader private (
                 catch
                     case e: IllegalArgumentException =>
                         throw ParseException(Ion(), v, s"Base64 (${e.getMessage})")(using _frame)
-            case other => mismatch("blob", other)
+            case other => mismatch(Codec.Kind.Bytes, other)
         end match
     end bytes
 
@@ -221,9 +208,9 @@ final class IonReader private (
             case DecNum(v)   => v
             case IntNum(v)   => BigDecimal(v)
             case FloatNum(v) =>
-                if v.isNaN || v.isInfinite then mismatch("finite decimal", FloatNum(v))
+                if v.isNaN || v.isInfinite then throw TypeMismatchException(Seq.empty, "finite decimal", "float")(using _frame)
                 else BigDecimal(v)
-            case other => mismatch("decimal", other)
+            case other => mismatch(Codec.Kind.Number, other)
 
     def instant(): java.time.Instant =
         val text =
@@ -231,21 +218,13 @@ final class IonReader private (
                 case Timestamp(v) => v
                 case Str(v)       => v
                 case Symbol(v)    => v
-                case other        => mismatch("timestamp", other)
-        try java.time.Instant.parse(text)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                throw ParseException(Ion(), text, s"Instant (${e.getMessage})")(using _frame)
-        end try
+                case other        => mismatch(Codec.Kind.Timestamp, other)
+        TimeText.instant(text).foldOrThrow(identity, reason => throw ParseException(Ion(), text, s"Instant ($reason)")(using _frame))
     end instant
 
     def duration(): java.time.Duration =
         val text = string()
-        try java.time.Duration.parse(text)
-        catch
-            case e: java.time.format.DateTimeParseException =>
-                throw ParseException(Ion(), text, s"Duration (${e.getMessage})")(using _frame)
-        end try
+        TimeText.duration(text).foldOrThrow(identity, reason => throw ParseException(Ion(), text, s"Duration ($reason)")(using _frame))
     end duration
 
     override def captureValue(): Reader =
@@ -265,20 +244,20 @@ final class IonReader private (
     private def integer(): BigInt =
         value match
             case IntNum(v) => v
-            case other     => mismatch("int", other)
+            case other     => mismatch(Codec.Kind.Number, other)
 
     override def readStructure(): Structure.Value =
         def toValue(v: IonValue): Structure.Value = v match
-            case IonValue.NullValue     => Structure.Value.Null
-            case IonValue.Bool(b)       => Structure.Value.Bool(b)
-            case IonValue.IntNum(i)     => Structure.Value.BigNum(BigDecimal(i))
-            case IonValue.DecNum(d)     => Structure.Value.BigNum(d)
-            case IonValue.FloatNum(d)   => Structure.Value.Decimal(d)
-            case IonValue.Str(s)        => Structure.Value.Str(s)
-            case IonValue.Symbol(s)     => Structure.Value.Str(s)
-            case IonValue.Timestamp(s)  => Structure.Value.Str(s)
-            case IonValue.Blob(_)       => Structure.Value.Str(v.display)
-            case IonValue.ListVal(vs)   => Structure.Value.Sequence(Chunk.from(vs.map(toValue)))
+            case IonValue.NullValue    => Structure.Value.Null
+            case IonValue.Bool(b)      => Structure.Value.Bool(b)
+            case IonValue.IntNum(i)    => if i.isValidLong then Structure.Value.Integer(i.toLong) else Structure.Value.BigNum(BigDecimal(i))
+            case IonValue.DecNum(d)    => Structure.Value.BigNum(d)
+            case IonValue.FloatNum(d)  => Structure.Value.Decimal(d)
+            case IonValue.Str(s)       => Structure.Value.Str(s)
+            case IonValue.Symbol(s)    => Structure.Value.Str(s)
+            case IonValue.Timestamp(s) => Structure.Value.Str(s)
+            case IonValue.Blob(bytes)  => Structure.Value.Bytes(bytes)
+            case IonValue.ListVal(vs)  => Structure.Value.Sequence(Chunk.from(vs.map(toValue)))
             case IonValue.StructVal(fs) => Structure.Value.Record(Chunk.from(fs.map((k, x) => (k, toValue(x)))))
         toValue(value)
     end readStructure
@@ -296,8 +275,8 @@ final class IonReader private (
         }
     end value
 
-    private def mismatch(expected: String, actual: IonValue): Nothing =
-        throw TypeMismatchException(Seq.empty, expected, actual.display)(using _frame)
+    private def mismatch(expected: Codec.Kind, actual: IonValue): Nothing =
+        throw Codec.kindMismatch(expected, actual.kind)(using _frame)
 
 end IonReader
 

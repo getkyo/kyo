@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.Codec.Writer
+import kyo.Frame
 import kyo.Span
 import scala.annotation.tailrec
 
@@ -17,7 +18,9 @@ import scala.annotation.tailrec
   * Repeated fields write each element with its own tag (standard protobuf packed=false). A map is written as a repeated `MapEntry`
   * message under the map field number, with the key at field 1 and the value at field 2 (standard proto3 `map<K, V>`).
   */
-final class ProtobufWriter extends Writer:
+final class ProtobufWriter()(using site: Frame) extends Writer:
+
+    override def frame: Frame = site
 
     override def codecName: String = "Protobuf"
 

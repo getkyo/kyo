@@ -224,8 +224,8 @@ class BrowserDownloadTest extends BrowserTest:
         // loopback finishes faster than Chromium's download-progress tick, so only the terminal
         // "completed" event fires and the "at least one prior Progress" assertion below races (it failed
         // on Native CI). Streaming the body slowly guarantees at least one in-progress tick.
-        val chunkBytes                            = Span.fromUnsafe(new Array[Byte](64 * 1024)) // 64 KB
-        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+        val chunkBytes                                                   = Span.fromUnsafe(new Array[Byte](64 * 1024)) // 64 KB
+        val bodyStream: Stream[Span[Byte], Async & Abort[HttpException]] = Stream[Span[Byte], Async] {
             Loop(0) { i =>
                 if i >= 16 then Loop.done(())
                 else Async.delay(100.millis)(Emit.valueWith(Chunk(chunkBytes))(Loop.continue(i + 1)))

@@ -115,7 +115,7 @@ val messages = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L))
 Topic.run {
     for
         started <- Latch.init(1)
-        fiber <- Fiber.initUnscoped(
+        fiber   <- Fiber.initUnscoped(
             started.release.andThen(
                 Topic.stream[Tick]("aeron:ipc").take(messages.size).run
             )
@@ -207,7 +207,7 @@ val trades = Seq(Trade("AAPL", 100, 19023L))
 
 Topic.run {
     for
-        started <- Latch.init(2)
+        started   <- Latch.init(2)
         tickFiber <- Fiber.initUnscoped(
             started.release.andThen(Topic.stream[Tick]("aeron:ipc").take(ticks.size).run)
         )

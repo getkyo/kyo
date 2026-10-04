@@ -68,7 +68,7 @@ private[internal] object DaemonErrorPhrases:
     /** Phrases by which a daemon quotes a status the registry gave it, rather than answering about the resource itself.
       *
       * Both daemons relay the registry's wording under a status of their own choosing, so the quoted status is the only reliable signal
-      * that the failure is the registry's and therefore transient. HTTP: `HttpContainerBackend.bodyNamesServerError` reads the response
+      * that the failure is the registry's and therefore transient. HTTP: `HttpContainerBackend.bodyNamesRegistryFault` reads the response
       * body. Shell: `ShellBackend.mapError` reads the command's output, where podman prints the same sentence.
       */
     val ServerError: Seq[String] = Seq(
@@ -76,6 +76,23 @@ private[internal] object DaemonErrorPhrases:
         "502 bad gateway",
         "503 service unavailable",
         "504 gateway timeout"
+    )
+
+    /** Phrases by which a daemon reports that its connection to the registry failed, from Go's network errors.
+      *
+      * The registry never answered, so nothing was said about the image: the failure is as transient as a quoted server status. Podman
+      * prefixes these with `initializing source`, the same opening it uses for an absent image, and the docker CLI prints them as the
+      * daemon's message with no status at all, so without these phrases a dropped connection reads as a missing image on one and as an
+      * unclassified failure on the other.
+      *
+      * "connection refused" stays out: the shell backend reads it as the daemon's own socket refusing (`ErrorPatterns.BackendUnavailable`),
+      * and a registry that refused arrives over HTTP as the daemon's 5xx, which the status already classifies.
+      */
+    val RegistryUnreachable: Seq[String] = Seq(
+        "connection reset by peer",
+        "i/o timeout",
+        "tls handshake timeout",
+        "no such host"
     )
 
     /** Phrases matching the "conflict / already in use" condition shared by both backends.

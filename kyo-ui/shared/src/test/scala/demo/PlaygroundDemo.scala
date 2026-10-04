@@ -24,10 +24,6 @@ object PlaygroundDemo extends KyoApp:
           |  <button onclick="this.textContent='clicked!'">Click me</button>
           |</body>""".stripMargin
 
-    /** Encode HTML as a data: URL. Replace '+' (form-encoding space) with %20 so the data payload decodes correctly. */
-    private def dataUrl(html: String): String =
-        "data:text/html;charset=utf-8," + java.net.URLEncoder.encode(html, "UTF-8").replace("+", "%20")
-
     private val pageStyle   = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(12.px)
     private val subtitle    = Style.color(Color.gray).fontSize(14.px)
     private val columns     = Style.row.gap(16.px)
@@ -49,7 +45,7 @@ object PlaygroundDemo extends KyoApp:
                 ),
                 div.style(panel)(
                     h2("Preview").style(panelTitle),
-                    iframe("about:blank").title("Live preview").style(previewStyle).src(html.map(dataUrl))
+                    iframe("about:blank").title("Live preview").style(previewStyle).src(html.map(Browser.dataUrl))
                 )
             )
         )

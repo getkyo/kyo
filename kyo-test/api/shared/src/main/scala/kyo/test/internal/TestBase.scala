@@ -274,6 +274,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                             case _                              => regCtx.visitLeafWithBuilder[S](b.name, b, body)
                 end match
             else
+                regCtx.noteExcluded()
                 discardScoped[S](body)
         end in
 
@@ -289,6 +290,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
                             case _                              => regCtx.visitGroupWithBuilder[S](b.name, b, body)
                 end match
             else
+                regCtx.noteExcluded()
                 discardGroup[S](body)
         end -
 

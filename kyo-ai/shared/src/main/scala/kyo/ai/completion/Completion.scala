@@ -143,7 +143,7 @@ object Completion:
             // the correction just as for an endpoint that returns the malformed call. FAIL CLOSED: any
             // doubt (no declaration, absent/undecodable body, absent/different code) stays an ordinary
             // rejected request, so a genuinely bad request is never respun as repairable.
-            case e: HttpStatusException if e.status.code == 400 && rejectedToolCall(config, e) =>
+            case e: HttpStatusException if e.status == HttpStatus.BadRequest && rejectedToolCall(config, e) =>
                 AIToolCallRejectedException(config.provider.name, e.getMessage)
             case e => classifyHttp(config.provider.name, e)
 
@@ -156,7 +156,7 @@ object Completion:
     private[kyo] def classifyHttp(provider: String, e: HttpException)(using Frame): AIGenException & AIStreamException =
         e match
             case e: HttpTimeoutException => AICompletionTimeoutException(provider, e.duration)
-            case e: HttpStatusException  => classifyStatus(provider, e.status.code, e.getMessage, Absent)
+            case e: HttpStatusException  => classifyStatus(provider, e.status, e.getMessage, Absent)
             case e                       => AITransportException(e)
         end match
     end classifyHttp
@@ -174,7 +174,7 @@ object Completion:
         prefix: String
     )(using Frame): (AIGenException & AIStreamException) < Sync =
         val message = HttpStatusException(response.status, method, url, prefix + response.fields.body).getMessage
-        Clock.now.map(now => classifyStatus(provider, response.status.code, message, retryAfterOf(response.headers, now)))
+        Clock.now.map(now => classifyStatus(provider, response.status, message, retryAfterOf(response.headers, now)))
     end statusFailure
 
     /** Posts a completion request and returns the response body; a non-2xx response is classified with
@@ -188,22 +188,22 @@ object Completion:
             if response.status.isSuccess then response.fields.body
             else
                 val status = HttpStatusException(response.status, "POST", url, response.fields.body)
-                if response.status.code == 400 && rejectedToolCall(config, status) then
+                if response.status == HttpStatus.BadRequest && rejectedToolCall(config, status) then
                     Abort.fail(AIToolCallRejectedException(config.provider.name, status.getMessage))
                 else statusFailure(config.provider.name, "POST", url, response, "").map(Abort.fail(_))
         }
 
     // 408 (the server gave up waiting for the request) and 429 are transient like 5xx; the vendor SDKs
     // retry exactly this set.
-    private def classifyStatus(provider: String, code: Int, message: String, retryAfter: Maybe[Duration])(using
+    private def classifyStatus(provider: String, status: HttpStatus, message: String, retryAfter: Maybe[Duration])(using
         Frame
     ): AIGenException & AIStreamException =
-        code match
-            case 401 | 403     => AIProviderAuthException(provider, message)
-            case 408           => AIProviderUnavailableException(provider, message)
-            case 429           => AIRateLimitException(provider, message, retryAfter)
-            case c if c >= 500 => AIProviderUnavailableException(provider, message)
-            case c             => AIRequestRejectedException(provider, c, message)
+        status match
+            case HttpStatus.Unauthorized | HttpStatus.Forbidden => AIProviderAuthException(provider, message)
+            case HttpStatus.RequestTimeout                      => AIProviderUnavailableException(provider, message)
+            case HttpStatus.TooManyRequests                     => AIRateLimitException(provider, message, retryAfter)
+            case s if s.isServerError                           => AIProviderUnavailableException(provider, message)
+            case s                                              => AIRequestRejectedException(provider, s.code, message)
 
     /** The wait a rate-limited response asks for: `retry-after-ms`, else `retry-after` as delta-seconds or
       * as an HTTP-date (read against the response's own `date` header when it has one, so clock skew
@@ -276,11 +276,14 @@ object Completion:
                 if rejected then AIToolCallRejectedException(provider, message)
                 else
                     detail.status_code match
-                        case Present(401) | Present(403)      => AIProviderAuthException(provider, message)
-                        case Present(429)                     => AIRateLimitException(provider, message)
-                        case Present(status) if status >= 500 => AIProviderUnavailableException(provider, message)
-                        case Present(status)                  => AIRequestRejectedException(provider, status, message)
-                        case Absent                           => AIRequestRejectedException(provider, 0, message)
+                        case Present(code) if HttpStatus.isValid(code) =>
+                            HttpStatus(code) match
+                                case HttpStatus.Unauthorized | HttpStatus.Forbidden => AIProviderAuthException(provider, message)
+                                case HttpStatus.TooManyRequests                     => AIRateLimitException(provider, message)
+                                case s if s.isServerError                           => AIProviderUnavailableException(provider, message)
+                                case s                                              => AIRequestRejectedException(provider, s.code, message)
+                        case Present(code) => AIRequestRejectedException(provider, code, message)
+                        case Absent        => AIRequestRejectedException(provider, 0, message)
             exc
         }
 
@@ -400,13 +403,20 @@ object Completion:
                                                 }
                                             yield sseStream
                                         }
-                                        _ <- Abort.recover[Closed](_ => ()) {
+                                        // A carrier closed by the consumer ends production quietly; the body stream's own
+                                        // failure (a connection cut mid-stream) is classified like a failure to fetch it.
+                                        _ <- Abort.recover[Closed | HttpException] {
+                                            case _: Closed        => ()
+                                            case e: HttpException => Abort.fail(classifyHttp(config, e))
+                                        } {
                                             sseStream.map { event =>
                                                 // Trace, not debug: the raw SSE payload shows whether a turn
                                                 // emitted a tool-call delta or, as some providers do under a
                                                 // forced tool choice, only reasoning/content deltas that leave
                                                 // the result buffer empty and fail the generation.
-                                                Log.trace(s"kyo-ai stream event ${config.provider.name} ${elideBody(event.data)}").andThen {
+                                                Log.trace(
+                                                    s"kyo-ai stream event ${config.provider.name} ${elideBody(event.data)}"
+                                                ).andThen {
                                                     // An empty event carries no element. A stream may hold the
                                                     // connection open with a keepalive between fragments; handing
                                                     // that to a decoder expecting a chunk fails a healthy generation.
@@ -417,7 +427,8 @@ object Completion:
                                                         // parser skip it into an empty buffer. The substring guard
                                                         // keeps the decode off the hot path for ordinary deltas.
                                                         val streamError =
-                                                            if event.data.contains("\"error\"") then classifyStreamError(config, event.data)
+                                                            if event.data.contains("\"error\"") then
+                                                                classifyStreamError(config, event.data)
                                                             else Absent
                                                         streamError match
                                                             case Present(exc) => Abort.fail(exc)

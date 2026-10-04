@@ -442,11 +442,17 @@ final private[kyo] case class ExecutionContextDestroyedParams(
     executionContextId: Int
 ) derives Schema
 
-/** Settlement-status JSON returned from the navigation gate's polling JS. */
+/** Settlement-status JSON returned from the navigation gate's polling JS. The three timings are the document's
+  * PerformanceNavigationTiming marks in milliseconds, 0 until the mark is reached, as the browser reports them.
+  */
 final private[kyo] case class NavigationSettleState(
     ready: Boolean = false,
     url: String = "(unknown)",
-    status: Int = 0
+    status: Int = 0,
+    readyState: String = "(unknown)",
+    responseStart: Double = 0,
+    responseEnd: Double = 0,
+    domInteractive: Double = 0
 ) derives Schema
 
 /** `rect` payload of the actionability JS reply. Default-zero so a malformed wire payload (e.g. `actionable: true` with `rect: null`) still
