@@ -1307,13 +1307,21 @@ final private[net] class PollerIoDriver private[posix] (
         // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
         deregisterFds(handle, fdClosing = false)
 
+    /** Claims inline: a registration applies on the poll carrier, after this claim if it reads the claim at all, and every registration for a
+      * recycled number comes from its new owner and applies later on that carrier, overwriting any entry a racing dead arm left behind. The
+      * close itself then waits for the fd's closing withdrawal when one has begun, so no interest change for the fd reaches the kernel
+      * alongside close(2) (see [[PosixHandle.FdWithdrawal]]).
+      */
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        if handle.claimFdClose() then handle.runAfterFdWithdrawal(closeFd)
+
     /** The listen fd closes once the poll carrier has applied its closing deregister, and the close removes its kqueue/epoll interest.
       * Withdrawing it as live instead would have the poll carrier issue an EV_DELETE for the same fd at any point relative to that close,
       * and closing it before the apply would let a queued accept arm's EV_ADD run during the close (see [[PosixHandle.FdWithdrawal]]).
       */
-    override def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
         try deregisterFds(handle, fdClosing = true)
-        finally handle.runAfterFdWithdrawal(closeFd)
+        finally releaseFd(handle, closeFd)
 
     /** Release the close(fd) held for this handle's withdrawal. Called on the poll carrier once the handle's last closing deregister is
       * applied, and by the teardown paths for a withdrawal the loop will never apply.
@@ -2506,14 +2514,17 @@ final private[net] class PollerIoDriver private[posix] (
         Maybe(takeRegistration(fd, kind)) match
             case Present(reg) =>
                 val handle = reg.handle
-                if handle.isClosing() || handle.fdWithdrawalBegun then
-                    // A closing handle must never (re-)claim its fd. The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
-                    // race the connection close: by the time this registration applies on the poll carrier, the handle's fd may already be closed
-                    // and recycled into a NEW connection. Applying it would overwrite the new owner's activeFds/pendingReads entry and (epoll)
-                    // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
-                    // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
-                    // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
-                    // dispatchRead's beginDispatch guard and the OpDeregister id-guard; a live handle still registers normally below.
+                if !handle.ownsFd() then
+                    // A handle that no longer owns its fd must never (re-)claim it. A read re-arm (ReadPump.requestNextRead always re-arms) or an
+                    // accept re-arm (the accept loop's isClosed check is not atomic with the close) can race the close: by the time this
+                    // registration applies on the poll carrier, the fd may already be closed and recycled into a NEW connection or listener.
+                    // Applying it would overwrite the new owner's activeFds/pending entry and (epoll) MOD-re-encode the kernel event under the
+                    // dead handle's id, so the new owner's events go to the dead handle; on kqueue its EV_ADD could also run during close(2) of
+                    // the fd, which XNU can livelock on. Skip the registration entirely: fail the dangling promise Closed so its consumer tears
+                    // down instead of hanging, then return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch.
+                    // This is the register-side dual of dispatchRead's beginDispatch guard and the OpDeregister id-guard. Every later
+                    // registration for the number comes from its new owner and applies after this one on this carrier, so the check needs no
+                    // ordering beyond the claim or withdrawal landing before close(fd).
                     val res = kind match
                         case RegKind.Accept => s"listener ${handleLabel(handle)}"
                         case _              => s"connection ${handleLabel(handle)}"

@@ -1491,6 +1491,23 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
         }
+
+        // A close that returns while the listen descriptor is still open leaves the port accepting for a moment, so the connect right
+        // after it gets through instead of being refused and the rebind right after it fails as the port in use.
+        "a closed server's port is free once close returns: a connect is refused and a rebind succeeds".times(50) in {
+            val route   = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler = route.handler(_ => HttpResponse.ok("ok"))
+            for
+                port    <- Scope.run(HttpServer.init(loopback)(handler).map(server => server.closeNow.andThen(server.port)))
+                refused <- Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:$port/test"))
+                rebound <- Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit))
+            yield
+                refused match
+                    case Result.Failure(e: HttpConnectException) => assert(e.port == port)
+                    case other                                   => fail(s"a connect right after close must be refused; got $other")
+                assert(rebound.isSuccess, s"a rebind right after close must succeed; got $rebound")
+            end for
+        }
     }
 
     "HttpServer convenience APIs" - {
