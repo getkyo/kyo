@@ -702,12 +702,13 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
       *
       * The ordering is staged rather than raced: `DeferredConnectTransport` parks the connect until `release()`, so the caller's promise
       * is settled FIRST and the connect lands SECOND, which is exactly the interleaving an interrupted caller produces. Nothing here
-      * depends on timing.
+      * depends on timing. The caller's interrupt also reaches the transport's connect; this connect ignores it, as one completing in the
+      * same instant does, since otherwise it would never land.
       */
     "a connect whose caller already settled closes the connection it established" in {
         val (clientConn, _) = TransportConnection.inMemoryPair()
         val recording       = new RecordingConnection(clientConn)
-        val transport       = new DeferredConnectTransport(recording)
+        val transport       = new DeferredConnectTransport(recording, interruptible = false)
         val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
         val connectFiber    = backend.connect(HttpUrl.parse("http://test.invalid/").getOrThrow, 60.seconds, HttpTlsConfig.default)
         // Settle the caller before the connect can hand anything over: from here the handoff is guaranteed to fail.
@@ -720,6 +721,53 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                     )
                 }
             }
+        }
+    }
+
+    /** A caller that leaves a connect still in flight must stop it, not just stop waiting for it.
+      *
+      * The lost-handoff close above only acts once the connect completes. A connect that never completes on its own, such as a TLS
+      * handshake the peer never answers, holds its socket until the transport's own deadline (`NetTlsConfig.handshakeTimeout`, 30 seconds
+      * by default and possibly infinite), long after a request timeout gave up on it. A real transport closes the socket when its connect
+      * is interrupted, so the client has to interrupt it.
+      */
+    "a caller that leaves a connect still in flight interrupts the transport's connect" - {
+
+        val url = HttpUrl.parse("http://test.invalid/ping").getOrThrow
+
+        def abandoned(start: HttpClientBackend => Any < (Async & Abort[Any] & Scope))(using
+            Frame,
+            kyo.test.AssertScope
+        ): Unit < (Async & Abort[Any]) =
+            val (clientConn, _) = TransportConnection.inMemoryPair()
+            val transport       = new DeferredConnectTransport(clientConn)
+            val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
+            for
+                fiber       <- Fiber.initUnscoped(Scope.run(start(backend)))
+                _           <- pollUntil(transport.connectRequested)
+                _           <- fiber.interrupt
+                _           <- fiber.getResult
+                interrupted <- pollUntil(transport.connectInterrupted, maxPolls = 10000)
+                _           <- backend.closeFiber(Duration.Zero).safe.get
+            yield assert(interrupted, "the caller left, but the transport's connect was never interrupted, so its socket stays open")
+            end for
+        end abandoned
+
+        "a pooled request's fresh connection" in {
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            abandoned(_.sendWithConfig(route, HttpRequest.getRaw(url), HttpClientConfig(timeout = Duration.Infinity))(identity))
+        }
+
+        "connectWith" in {
+            abandoned(_.connectWith(url, Duration.Infinity, HttpTlsConfig.default)(_ => Kyo.unit))
+        }
+
+        "connectWebSocket" in {
+            abandoned(_.connectWebSocket(url, HttpHeaders.empty, HttpWebSocket.Config())(_ => Kyo.unit))
+        }
+
+        "connectRaw" in {
+            abandoned(_.connectRaw(url, HttpMethod.GET, Span.empty, HttpHeaders.empty, Duration.Infinity))
         }
     }
 

@@ -76,6 +76,13 @@ final private[kyo] class HttpClientBackend private (
                 NetConfigTranslation.connectTls(transport, url.host, url.port, effectiveTls, connectTimeout, transportConfig)
             case _ => transport.connect(url.host, url.port, connectTimeout, netConfig)
         val resultPromise = Promise.Unsafe.init[HttpConnection, Abort[HttpException]]()
+        // A caller that leaves interrupts `resultPromise`, which is not the transport's connect. Left running, that connect keeps its
+        // socket until it ends on its own: a TLS handshake the peer never answers holds it for NetTlsConfig.handshakeTimeout, or forever
+        // when that is infinite. The transport closes the socket of a connect it is interrupted out of, and a connect that already
+        // completed ignores the interrupt, so the lost-handoff close below still owns that case.
+        resultPromise.onInterrupt(_ =>
+            connectFiber.interruptDiscard(Result.Panic(Interrupted(summon[Frame], "the caller left the connect")))
+        )
         // Cast to IOPromise to get Result[NetException, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
         connectFiber.asInstanceOf[IOPromise[kyo.net.NetException, kyo.net.Connection]].onComplete { result =>
@@ -1135,8 +1142,9 @@ final private[kyo] class HttpClientBackend private (
         discard(registry.register(conn)(c => closeUnsafe(c, closingGracePeriod)))
     end trackConn
 
-    /** Releases a connect the caller is leaving: one still in flight is interrupted, so `connect` closes what it completes with as a lost
-      * handoff, and one that already completed has its connection closed by `close`. Exactly one of the two holds, since the interrupt fails
+    /** Releases a connect the caller is leaving: one still in flight is interrupted, which stops the transport's connect and closes its
+      * socket, or, when the connect completes anyway, has `connect` close what it completes with as a lost handoff; one that already
+      * completed has its connection closed by `close`. Exactly one of the two holds, since the interrupt fails
       * only on a promise that has already completed.
       */
     private def releaseConnect[C, E](connecting: Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(using
