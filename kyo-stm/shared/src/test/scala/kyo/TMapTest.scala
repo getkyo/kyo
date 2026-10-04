@@ -406,7 +406,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 writeFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to size, size)(i =>
-                            STM.run(map.put(i, i * 2))
+                            STM.run(STM.defaultRetrySchedule.forever)(map.put(i, i * 2))
                         )
                     )
                 )
@@ -414,7 +414,7 @@ class TMapTest extends kyo.test.Test[Any]:
                 readFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
                         Async.foreach(1 to size, size)(i =>
-                            STM.run(map.get(i))
+                            STM.run(STM.defaultRetrySchedule.forever)(map.get(i))
                         )
                     )
                 )
@@ -463,7 +463,7 @@ class TMapTest extends kyo.test.Test[Any]:
                     Kyo.foreachDiscard((1 to size))(i => map.put(i, i))
                 }
                 _ <- Async.foreach(1 to size, size)(i =>
-                    STM.run(map.removeDiscard(i))
+                    STM.run(STM.defaultRetrySchedule.forever)(map.removeDiscard(i))
                 )
                 snapshot <- STM.run(map.snapshot)
             yield assert(snapshot.isEmpty))
