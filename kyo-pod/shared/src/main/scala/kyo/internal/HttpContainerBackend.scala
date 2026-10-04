@@ -1225,7 +1225,7 @@ final private[kyo] class HttpContainerBackend(
             case Result.Success(resp) =>
                 resp.headers.get("X-Docker-Container-Path-Stat") match
                     case Present(encoded) =>
-                        Base64.decode(encoded) match
+                        ContainerBackend.decodeBase64(encoded) match
                             case Result.Success(bytes) =>
                                 val decoded = new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
                                 Json.decode[FileStatDto](decoded) match

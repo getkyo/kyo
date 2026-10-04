@@ -374,6 +374,23 @@ class ShellBackendTest extends kyo.BasePodTest:
                     fail(s"expected a ContainerAuthException, got $other")
             }
         }
+
+        // RFC 4648 section 3.2: padding may be omitted when the length is known. `RegistryAuth` is public and `fromConfig` copies a config
+        // file's `auth` verbatim, so a hand-written credential can arrive unpadded.
+        "an unpadded credential is decoded and reaches the command" in {
+            val image = ContainerImage("team/app", "1").withRegistry(ContainerImage.Registry("registry.example"))
+            // "alice:pw" is "YWxpY2U6cHc=" padded.
+            val auth    = ContainerImage.RegistryAuth(Dict(ContainerImage.Registry("registry.example") -> "YWxpY2U6cHc"))
+            val backend = new ShellBackend("/nonexistent/kyo-pod/podman")
+            Abort.run[kyo.ContainerException](backend.imagePull(image, Absent, Present(auth))).map {
+                case Result.Failure(error: kyo.ContainerAuthException) =>
+                    fail(s"an unpadded credential must decode, got $error")
+                case Result.Failure(_) =>
+                    succeed("decoded, then failed at the command that does not exist")
+                case other =>
+                    fail(s"expected the missing command to fail the pull, got $other")
+            }
+        }
     }
 
 end ShellBackendTest

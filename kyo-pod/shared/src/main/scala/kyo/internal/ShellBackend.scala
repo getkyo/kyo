@@ -1359,7 +1359,9 @@ final private[kyo] class ShellBackend(
         val decodedCreds: Result[Base64.Failure, Maybe[String]] = encodedCreds match
             case Absent           => Result.succeed(Absent)
             case Present(encoded) =>
-                Base64.decode(encoded).map(bytes => Present(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)))
+                ContainerBackend.decodeBase64(encoded).map(bytes =>
+                    Present(new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
+                )
         decodedCreds match
             case Result.Failure(failure) =>
                 val server = image.registry.map(_.value).getOrElse("docker.io")

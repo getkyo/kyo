@@ -345,6 +345,21 @@ private[kyo] object ContainerBackend:
       */
     def checkpointArchive(name: String): Path = Path("/tmp", s"$name.tar")
 
+    /** The bytes of base64 `text` from a daemon or a credential, in either alphabet and with or without padding.
+      *
+      * Podman encodes `X-Docker-Container-Path-Stat` with the URL-safe alphabet, where docker uses the standard one. A registry credential
+      * can be written by hand, since `RegistryAuth` is public and `fromConfig` copies a config file's `auth` verbatim, and RFC 4648 section
+      * 3.2 allows the padding to be omitted.
+      */
+    def decodeBase64(text: String): Result[Base64.Failure, Span[Byte]] =
+        val standard = text.replace('-', '+').replace('_', '/')
+        val padded   = standard.length % 4 match
+            case 2 => standard + "=="
+            case 3 => standard + "="
+            case _ => standard
+        Base64.decode(padded)
+    end decodeBase64
+
     /** Parse a container state string (from Docker/Podman API) to the State enum.
       *
       * `configured` and `initialized` are podman-specific pre-start states that map to `Created`. Unknown states default to `Stopped` since

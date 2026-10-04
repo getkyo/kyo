@@ -282,21 +282,41 @@ class HttpContainerBackendTest extends BasePodTest:
     }
 
     "stat" - {
-        "a path-stat header that is not base64 fails as a decode error" in {
+
+        /** `stat` of container `c1` against a fake daemon on a unix socket that answers with `header` as the path stat. */
+        def statWith(header: String)(using
+            Frame
+        ): Result[ContainerException, Container.FileStat] < (Async & Scope & Abort[FileSystemException | HttpBindException]) =
             Path.run(Path.tempDir("kyo-pod-stat-").map { dir =>
                 val socket = (dir / "d.sock").toString
                 val route  = HttpRoute.headRaw("v1.43" / "containers" / "c1" / "archive")
                     .response(_.header[String]("X-Docker-Container-Path-Stat"))
-                val daemon = route.handler(_ => HttpResponse.ok.addField("X-Docker-Container-Path-Stat", "not*base64"))
+                val daemon = route.handler(_ => HttpResponse.ok.addField("X-Docker-Container-Path-Stat", header))
                 HttpServer.init(HttpServerConfig.default.unixSocket(socket))(daemon).andThen {
-                    Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/etc/hosts"))).map {
-                        case Result.Failure(error: ContainerDecodeException) =>
-                            assert(error.getMessage.contains("c1"), s"expected the container id in: ${error.getMessage}")
-                        case other =>
-                            fail(s"expected a ContainerDecodeException, got $other")
-                    }
+                    Abort.run[ContainerException](new HttpContainerBackend(socket).stat(Container.Id("c1"), Path("/tmp/x")))
                 }
             })
+
+        "a path-stat header that is not base64 fails as a decode error" in {
+            statWith("not*base64").map {
+                case Result.Failure(error: ContainerDecodeException) =>
+                    assert(error.getMessage.contains("c1"), s"expected the container id in: ${error.getMessage}")
+                case other =>
+                    fail(s"expected a ContainerDecodeException, got $other")
+            }
+        }
+
+        // Podman encodes the header with the URL-safe alphabet: the stat of `/tmp/~~~` carries `-` where the standard alphabet has `+`.
+        "a path-stat header in the URL-safe alphabet, as podman sends it, decodes" in {
+            val podmanHeader =
+                "eyJuYW1lIjoifn5-Iiwic2l6ZSI6MCwibW9kZSI6NDIwLCJtdGltZSI6IjIwMjYtMTAtMDNUMjI6NDg6NDAuMzM2ODQ4MDQyLTA3OjAwIiwiaXNEaXIiOmZhbHNlLCJsaW5rVGFyZ2V0IjoiL3RtcC9-fn4ifQ=="
+            statWith(podmanHeader).map {
+                case Result.Success(stat) =>
+                    assert(stat.name == "~~~")
+                    assert(stat.linkTarget == Present("/tmp/~~~"))
+                case other =>
+                    fail(s"expected the stat of /tmp/~~~, got $other")
+            }
         }
     }
 
