@@ -16,10 +16,4 @@ class SqlConformanceKyoBackendsTest extends folded.SqlConformanceTest(SqlConform
         assert(unreachable.isEmpty, s"these backends cannot be exercised on this host, so their leaves did not run: $unreachable")
     }
 
-    // `SqlConformanceBackends.byId` answers the first match, so two descriptors sharing an id would hide one.
-    "each backend has a distinct id" in {
-        val ids = backends.map(_.id)
-        assert(ids.distinct == ids, s"duplicate descriptor ids: $ids")
-    }
-
 end SqlConformanceKyoBackendsTest

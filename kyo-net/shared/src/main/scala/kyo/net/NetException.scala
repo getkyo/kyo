@@ -41,6 +41,12 @@ end NetException
   */
 final class NetErrno(val code: Int) extends RuntimeException(s"errno=$code") with NoStackTrace
 
+/** A configuration value kyo-net refused: a [[NetConfig.Grace]]. `setting` names it, `value` is what was given, and `rule` is what it must
+  * be.
+  */
+final case class NetConfigException private[kyo] (setting: String, value: String, rule: String)(using Frame)
+    extends NetException(s"Invalid $setting: $value. It must be $rule.")
+
 /** A connection could not be established or was lost. Recover the whole family with `Abort.recover[NetConnectionException]`. */
 sealed abstract class NetConnectionException(message: String, cause: String | Throwable = "")(using Frame)
     extends NetException(message, cause)

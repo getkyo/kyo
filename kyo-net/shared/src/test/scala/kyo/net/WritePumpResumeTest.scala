@@ -63,11 +63,15 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
-                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
-                def close()(using AllowUnsafe, Frame): Unit                   = ()
-                def label: String                                             = "PartialFirstDriver"
-                def handleLabel(handle: Unit): String                         = "stub"
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
+                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+                    try cancel(handle)
+                    finally releaseFd(handle, closeFd)
+                def close()(using AllowUnsafe, Frame): Unit = ()
+                def label: String                           = "PartialFirstDriver"
+                def handleLabel(handle: Unit): String       = "stub"
             end PartialFirstDriver
 
             val driver    = new PartialFirstDriver
@@ -156,11 +160,15 @@ class WritePumpResumeTest extends Test:
                         WriteResult.Done
                     end if
                 end write
-                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
-                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
-                def close()(using AllowUnsafe, Frame): Unit                   = ()
-                def label: String                                             = "TailPartialFirstDriver"
-                def handleLabel(handle: Unit): String                         = "stub"
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
+                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+                    try cancel(handle)
+                    finally releaseFd(handle, closeFd)
+                def close()(using AllowUnsafe, Frame): Unit = ()
+                def label: String                           = "TailPartialFirstDriver"
+                def handleLabel(handle: Unit): String       = "stub"
             end TailPartialFirstDriver
 
             val driver  = new TailPartialFirstDriver

@@ -46,29 +46,32 @@ class PollerIoDriverCloseDuringIoTest extends Test:
                     driver.closeHandle(handle)
                     closeCountAtSendTime.set(spy.closeCounts.getOrDefault(accepted, 0))
                 val result = driver.write(handle, Span.fromUnsafe(Array[Byte](1, 2)), 0)
-                discard(sock.close(client))
-                driver.close()
-                assert(
-                    closeCountAtSendTime.get() == 0,
-                    s"the real close(fd) must not run while the write's send syscall is still in flight, was ${closeCountAtSendTime.get()}"
-                )
-                assert(
-                    spy.closeCounts.getOrDefault(accepted, 0) == 1,
-                    s"the deferred close must run exactly once after the write releases the guard, counts=${spy.closeCounts}"
-                )
-                assert(
-                    spy.shutdownCalls.contains((accepted, PosixConstants.SHUT_RDWR)),
-                    s"the claim winner must shut the fd down (SHUT_RDWR) immediately, shutdownCalls=${spy.shutdownCalls}"
-                )
-                val shutdownIdx = spy.order.indexOf(s"shutdown($accepted)")
-                val sendIdx     = spy.order.indexOf(s"send($accepted)")
-                val closeIdx    = spy.order.indexOf(s"close($accepted)")
-                assert(
-                    shutdownIdx >= 0 && sendIdx > shutdownIdx && closeIdx > sendIdx,
-                    s"expected shutdown, send, close in that order, was ${spy.order}"
-                )
-                // The write itself observes the shut-down fd (send after a local SHUT_RDWR fails), not a hang or a silently-dropped byte count.
-                assert(result != WriteResult.Done, s"expected the write to observe the shutdown (not a clean Done), got $result")
+                // The real close also waits for the poll carrier to withdraw the fd, so it runs on that carrier: await it, not a fixed point.
+                spy.closed(accepted).safe.get.map { _ =>
+                    discard(sock.close(client))
+                    driver.close()
+                    assert(
+                        closeCountAtSendTime.get() == 0,
+                        s"the real close(fd) must not run while the write's send syscall is still in flight, was ${closeCountAtSendTime.get()}"
+                    )
+                    assert(
+                        spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                        s"the deferred close must run exactly once after the write releases the guard, counts=${spy.closeCounts}"
+                    )
+                    assert(
+                        spy.shutdownCalls.contains((accepted, PosixConstants.SHUT_RDWR)),
+                        s"the claim winner must shut the fd down (SHUT_RDWR) immediately, shutdownCalls=${spy.shutdownCalls}"
+                    )
+                    val shutdownIdx = spy.order.indexOf(s"shutdown($accepted)")
+                    val sendIdx     = spy.order.indexOf(s"send($accepted)")
+                    val closeIdx    = spy.order.indexOf(s"close($accepted)")
+                    assert(
+                        shutdownIdx >= 0 && sendIdx > shutdownIdx && closeIdx > sendIdx,
+                        s"expected shutdown, send, close in that order, was ${spy.order}"
+                    )
+                    // The write itself observes the shut-down fd (send after a local SHUT_RDWR fails), not a hang or a silently-dropped byte count.
+                    assert(result != WriteResult.Done, s"expected the write to observe the shutdown (not a clean Done), got $result")
+                }
             }
         }
 

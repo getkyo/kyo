@@ -170,18 +170,90 @@ class NavigationWatcherTest extends kyo.BrowserTest:
         assert(decision == NavigationWatcher.PendingDecision.DegradeToLoad, s"expected DegradeToLoad but got $decision")
     }
 
-    "NavigationWatcher.decidePending: NetworkIdle + Pending → AbortLoadEventNeverFired" in {
+    "NavigationWatcher.decidePending: NetworkIdle + Pending → AbortLoadEventNeverFired carrying the probe's document progress" in {
+        val progress = NavigationWatcher.DocumentProgress("loading", Present(12.millis), Absent, Absent)
         val decision = NavigationWatcher.decidePending(
             expectedDifferentFrom = Present(snap),
             settle = Browser.Settle.NetworkIdle,
             urlHint = "https://example.com/loading",
-            loadProbe = Present(NavigationWatcher.SettleStatus.Pending("https://example.com/loading")),
+            loadProbe = Present(NavigationWatcher.SettleStatus.Pending("https://example.com/loading", progress)),
             throwOnFailure = true
         )
         assert(
-            decision == NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("https://example.com/loading"),
-            s"expected AbortLoadEventNeverFired(loading) but got $decision"
+            decision == NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("https://example.com/loading", Present(progress)),
+            s"expected AbortLoadEventNeverFired(loading, progress) but got $decision"
         )
+    }
+
+    "NavigationWatcher.interpretPendingDecision: a load that never fired names how far the document got" - {
+
+        def errorOf(progress: NavigationWatcher.DocumentProgress)(using Frame, kyo.test.AssertScope): String < Async =
+            Abort.run[BrowserReadException] {
+                NavigationWatcher.interpretPendingDecision(
+                    NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("http://127.0.0.1:1/", Present(progress)),
+                    Duration.Zero
+                )
+            }.map {
+                case Result.Failure(ex: BrowserNavigationFailedException) => ex.error
+                case other => fail(s"expected BrowserNavigationFailedException but got $other")
+            }
+
+        "no response yet" in {
+            errorOf(NavigationWatcher.DocumentProgress("loading", Absent, Absent, Absent)).map { error =>
+                assert(
+                    error == "settle timeout after NetworkIdle (load event also never fired): readyState=loading, no response started",
+                    s"error was `$error`"
+                )
+            }
+        }
+
+        "a response that started and never finished" in {
+            errorOf(NavigationWatcher.DocumentProgress("loading", Present(12.millis), Absent, Absent)).map { error =>
+                assert(
+                    error ==
+                        "settle timeout after NetworkIdle (load event also never fired): " +
+                        "readyState=loading, response started at 12 ms and never finished",
+                    s"error was `$error`"
+                )
+            }
+        }
+
+        "a finished response the browser never made interactive" in {
+            errorOf(NavigationWatcher.DocumentProgress("loading", Present(12.millis), Present(15.millis), Absent)).map { error =>
+                assert(
+                    error ==
+                        "settle timeout after NetworkIdle (load event also never fired): " +
+                        "readyState=loading, response finished at 15 ms, document never interactive",
+                    s"error was `$error`"
+                )
+            }
+        }
+
+        "an interactive document whose load never fired" in {
+            errorOf(NavigationWatcher.DocumentProgress("interactive", Present(12.millis), Present(15.millis), Present(40.millis))).map {
+                error =>
+                    assert(
+                        error ==
+                            "settle timeout after NetworkIdle (load event also never fired): " +
+                            "readyState=interactive, response finished at 15 ms, interactive at 40 ms",
+                        s"error was `$error`"
+                    )
+            }
+        }
+    }
+
+    "NavigationWatcher.decodeSettleState reads a pending document's readyState and response timing" in {
+        val raw =
+            """{"ready":false,"url":"http://127.0.0.1:1/","status":0,"readyState":"loading","responseStart":12.6,"responseEnd":0,"domInteractive":0}"""
+        NavigationWatcher.decodeSettleState(raw).map { status =>
+            assert(
+                status == NavigationWatcher.SettleStatus.Pending(
+                    "http://127.0.0.1:1/",
+                    NavigationWatcher.DocumentProgress("loading", Present(12600.micros), Absent, Absent)
+                ),
+                s"status was $status"
+            )
+        }
     }
 
     "NavigationWatcher.decidePending: Settle.Load + Absent loadProbe → AbortSettleTimeout (non-NetworkIdle modes skip the degrade path)" in {

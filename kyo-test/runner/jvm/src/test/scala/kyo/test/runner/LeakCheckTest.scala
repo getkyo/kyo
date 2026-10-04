@@ -101,6 +101,52 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = false, checkFileDescriptors = false).isEmpty)
     }
 
+    /** One `/proc/net/tcp` row in the kernel's column layout, loopback on both ends. */
+    private def tcpRow(sl: Int, localPort: Int, remotePort: Int, state: String, tx: Long, rx: Long, inode: String): String =
+        f"  $sl%3d: 0100007F:$localPort%04X 0100007F:$remotePort%04X $state $tx%08X:$rx%08X 00:00000000 00000000  1000        0 " +
+            s"$inode 1 0000000000000000 20 4 30 10 -1"
+
+    private val tcpHeader =
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode"
+
+    test("describeTcpRow reports a connection's queues and an orphaned peer still holding bytes") {
+        val lines = Seq(
+            tcpHeader,
+            tcpRow(0, 48058, 37407, "01", tx = 0, rx = 1234, inode = "126291"),
+            tcpRow(1, 37407, 48058, "04", tx = 2080, rx = 0, inode = "0")
+        )
+        assert(
+            LeakCheck.describeTcpRow(lines, "126291") ==
+                Maybe(" [ESTABLISHED local:48058 remote:37407 tx:0 rx:1234; peer FIN_WAIT1 tx:2080 rx:0 orphan (no fd)]")
+        )
+    }
+
+    test("describeTcpRow names a peer that still has an fd by its inode") {
+        val lines = Seq(
+            tcpHeader,
+            tcpRow(0, 48058, 37407, "01", tx = 0, rx = 0, inode = "126291"),
+            tcpRow(1, 37407, 48058, "01", tx = 0, rx = 0, inode = "555")
+        )
+        assert(
+            LeakCheck.describeTcpRow(lines, "126291") ==
+                Maybe(" [ESTABLISHED local:48058 remote:37407 tx:0 rx:0; peer ESTABLISHED tx:0 rx:0 inode:555]")
+        )
+    }
+
+    test("describeTcpRow says when the peer has no row on this host") {
+        val lines = Seq(tcpHeader, tcpRow(0, 48058, 37407, "01", tx = 0, rx = 0, inode = "126291"))
+        assert(
+            LeakCheck.describeTcpRow(lines, "126291") ==
+                Maybe(" [ESTABLISHED local:48058 remote:37407 tx:0 rx:0; peer: no row]")
+        )
+    }
+
+    test("describeTcpRow looks up no peer for a listener, and nothing for an inode the table lacks") {
+        val lines = Seq(tcpHeader, tcpRow(0, 8080, 0, "0A", tx = 0, rx = 3, inode = "42"))
+        assert(LeakCheck.describeTcpRow(lines, "42") == Maybe(" [LISTEN local:8080 remote:0 tx:0 rx:3]"))
+        assert(LeakCheck.describeTcpRow(lines, "43") == Maybe.empty)
+    }
+
     test("awaitFdDrain drops a descriptor that closes within the budget") {
         // leaksNow reports the socket on the first two samples, then empty: an async deferred close that completes mid-window.
         var n   = 0
@@ -213,6 +259,32 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             case LeakCheck.IdleResult.Accounted(_) => true
             case _                                 => false
         assert(ok && n >= 2, s"the settle window must restart after an unaccounted sample, got $verdict after $n probes")
+    }
+
+    test("describeSocket reads a real connection's unread bytes and its live peer (Linux only)") {
+        LeakCheck.openFdTargets() match
+            case Maybe.Absent =>
+                cancel("/proc/self/fd unavailable on this OS; socket descriptions are a no-op here")
+            case Maybe.Present(before) =>
+                val server   = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress)
+                val client   = new java.net.Socket(java.net.InetAddress.getLoopbackAddress, server.getLocalPort)
+                val accepted = server.accept()
+                try
+                    // One write lands as one segment, so the blocking one-byte read proves the other five are queued on the accepted side.
+                    client.getOutputStream.write(Array[Byte](1, 2, 3, 4, 5, 6))
+                    client.getOutputStream.flush()
+                    assert(accepted.getInputStream.read() == 1)
+                    val after       = LeakCheck.openFdTargets().getOrElse(fail("openFdTargets became Absent mid-test"))
+                    val described   = LeakCheck.fdLeaks(before, after, Chunk.empty).map(LeakCheck.describeSocket)
+                    val acceptedRow =
+                        s"local:${server.getLocalPort} remote:${client.getLocalPort} tx:0 rx:5; peer ESTABLISHED tx:0 rx:0 inode:"
+                    assert(described.exists(_.contains(acceptedRow)), s"expected a row containing '$acceptedRow'; got $described")
+                finally
+                    accepted.close()
+                    client.close()
+                    server.close()
+                end try
+        end match
     }
 
     test("openFdTargets enumerates real descriptors and the diff clears on close (Linux only)") {

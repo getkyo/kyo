@@ -101,7 +101,11 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
             TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
                 // A finite 1s handshake deadline: long enough that the test registers its reap latch before the deadline fires.
                 val serverTls =
-                    NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
+                    NetTlsConfig(
+                        certChainPath = Present(certPath),
+                        privateKeyPath = Present(keyPath),
+                        handshakeTimeout = 1.second
+                    )
                 withRecordingTransport { (transport, recording) =>
                     // A finite, short handshakeTimeout so the deadline reaps the stalled server handshake. The plaintext raw client never sends a
                     // ClientHello, so the server handshake parks in awaitReadCiphertext with exactly ONE in-flight io_uring op: the recv SQE into

@@ -145,10 +145,15 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                 val clientEngine    = TlsRealEngines.singleEngine(isServer = false)
                 val serverEngine    = TlsRealEngines.singleEngine(isServer = true)
                 val recordingServer = RecordingTlsEngine(serverEngine)
-                val driver          = PollerIoDriver.init()
-                discard(driver.start())
+                // The leaf closes its own fds through the driver's bindings, so one count covers every close of each number.
+                val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+                val backend  = PollerBackend.default()
+                val driver   = TestDrivers.forBackend(backend, backend.create(), spy)
+                val loopDone = driver.start()
+                val pair     = AtomicRef.Unsafe.init(Maybe.empty[(Int, Int)])
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                        pair.set(Present((client, accepted)))
                         val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         acceptedH.tls = Present(recordingServer)
                         val readBufferSize = acceptedH.readBufferSize
@@ -187,7 +192,6 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                             driver.submitEngineOp(() => clientEngine.free())
                                             driver.closeHandle(acceptedH)
                                             driver.closeHandle(clientH)
-                                            discard(sock.close(client))
                                             outcome match
                                                 case Result.Success(()) =>
                                                     // Byte-exact, in-order plaintext: the bound did not cost correctness.
@@ -232,6 +236,19 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                                 }
                             }
                         }
+                    }
+                }.map { result =>
+                    // The loop's terminal exit runs every withdrawal still pending, so the handles' deferred close(fd) calls have run once it is done.
+                    loopDone.safe.get.map { _ =>
+                        pair.get().foreach { (client, accepted) =>
+                            Seq(client, accepted).foreach { fd =>
+                                assert(
+                                    spy.closeCounts.getOrDefault(fd, 0) == 1,
+                                    s"fd $fd must be closed exactly once, by the driver that owns it: ${spy.closeCounts.getOrDefault(fd, 0)} closes"
+                                )
+                            }
+                        }
+                        result
                     }
                 }
         }

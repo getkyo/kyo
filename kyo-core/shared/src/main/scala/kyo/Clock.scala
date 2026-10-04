@@ -410,6 +410,14 @@ object Clock:
           */
         def awaitPendingSleepers(count: Int): Unit < Async
 
+        /** Suspends until a sleep armed for exactly `duration` is registered and not yet triggered.
+          *
+          * A count fence cannot tell which sleeper it saw: a timeout, a pool's idle timer or any other sleep on the same clock satisfies it
+          * before the one a test waits for is armed, and an `advance` taken then fires nothing for that one. Fencing on the duration waits for
+          * the sleeper itself, whatever else shares the clock.
+          */
+        def awaitPendingSleeper(duration: Duration): Unit < Async
+
     end TimeControl
 
     /** Runs an effect with a controlled Clock that allows manual time manipulation. This is primarily intended for testing scenarios where
@@ -433,24 +441,25 @@ object Clock:
                             new Unsafe with TimeControl:
                                 @volatile var current = Instant.Epoch
 
-                                case class Task(deadline: Instant) extends IOPromise[Nothing, Unit < Any]
+                                case class Task(deadline: Instant, duration: Duration) extends IOPromise[Nothing, Unit < Any]
                                 val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
-                                // Test seam: a waiter installed by awaitPendingSleepers, completed by the next sleep enqueue.
-                                // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick.
-                                var armWaiter: Maybe[IOPromise[Nothing, Unit < Any]] = Maybe.empty
+                                // Test seam: waiters installed by the pending-sleeper fences, each completed by the next sleep enqueue.
+                                // Guarded by the queue monitor; the completion runs outside the lock, mirroring tick. A list, so two fences
+                                // waiting at once both wake.
+                                var armWaiters: Chunk[IOPromise[Nothing, Unit < Any]] = Chunk.empty
 
                                 def now()(using AllowUnsafe) = current
 
                                 def nowMonotonic()(using AllowUnsafe) = current.toDuration
 
                                 def sleep(duration: Duration): Fiber.Unsafe[Unit, Any] =
-                                    val task     = new Task(current + duration)
+                                    val task     = new Task(current + duration, duration)
                                     val toSignal =
                                         queue.synchronized {
                                             queue.enqueue(task)
-                                            val w = armWaiter
-                                            armWaiter = Maybe.empty
+                                            val w = armWaiters
+                                            armWaiters = Chunk.empty
                                             w
                                         }
                                     toSignal.foreach(_.completeDiscard(Result.succeed(())))
@@ -458,13 +467,20 @@ object Clock:
                                 end sleep
 
                                 def awaitPendingSleepers(count: Int): Unit < Async =
+                                    awaitPending(pending => pending.count(!_.done()) >= count)
+
+                                def awaitPendingSleeper(duration: Duration): Unit < Async =
+                                    awaitPending(pending => pending.exists(task => !task.done() && task.duration == duration))
+
+                                // Re-checks after every sleep enqueue until `satisfied` holds for the queue.
+                                def awaitPending(satisfied: PriorityQueue[Task] => Boolean): Unit < Async =
                                     Loop.foreach {
                                         val waiter: Maybe[IOPromise[Nothing, Unit < Any]] =
                                             queue.synchronized {
-                                                if queue.count(!_.done()) >= count then Maybe.empty
+                                                if satisfied(queue) then Maybe.empty
                                                 else
                                                     val w = new IOPromise[Nothing, Unit < Any]()
-                                                    armWaiter = Present(w)
+                                                    armWaiters = armWaiters.append(w)
                                                     Present(w)
                                             }
                                         waiter match
@@ -698,8 +714,9 @@ object Clock:
 
     /** Repeatedly executes a task at fixed time intervals.
       *
-      * Unlike repeatWithDelay, this ensures consistent execution intervals regardless of task duration. If a task takes longer than the
-      * interval, the next execution will start immediately after completion.
+      * Unlike repeatWithDelay, the interval is measured between scheduled starts, so the time a task takes does not shift the runs after
+      * it. If a task takes longer than the interval, the next execution starts immediately after it completes and the one after that
+      * returns to the interval; starts missed meanwhile are not replayed.
       *
       * @param interval
       *   The fixed time interval between task starts
@@ -774,9 +791,13 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        repeatAtInterval(Schedule.delay(startAfter).andThen(Schedule.fixed(interval)), state)(f)
+        repeatAtInterval(Schedule.internal.FixedRate(startAfter, interval, Absent), state)(f)
 
     /** Repeatedly executes a task with intervals determined by a custom schedule.
+      *
+      * Before each run this sleeps exactly the delay the schedule answers, asked with the time the previous run ended. A schedule that
+      * measures from that time, such as `Schedule.anchored`, keeps a fixed rate; one that does not, such as `Schedule.fixed`, measures from
+      * the end of the previous run, as repeatWithDelay does.
       *
       * @param intervalSchedule
       *   A schedule that determines the timing between executions
@@ -823,21 +844,7 @@ object Clock:
         frame: Frame,
         reduce: Reducible[Abort[E]]
     ): Fiber[A, reduce.SReduced] < (Sync & S) =
-        Fiber.initUnscoped {
-            Clock.use { clock =>
-                clock.now.map { now =>
-                    Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
-                        clock.now.map { now =>
-                            period.next(now) match
-                                case Absent                            => Loop.done(state)
-                                case Present((duration, nextSchedule)) =>
-                                    val nextExecution = lastExecution + duration
-                                    clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
-                        }
-                    }
-                }
-            }
-        }
+        repeatWithDelay(intervalSchedule, state)(f)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:

@@ -18,6 +18,17 @@ class McpResourceContentsTest extends Test:
 
     val sampleUri: McpResourceUri = McpResourceUri.apply("file:///x")
 
+    "both variants decode straight from their JSON text" in {
+        val contents = Seq[McpHandler.ResourceContents](
+            McpHandler.ResourceContents.Text(sampleUri, Present(McpMimeType("text/plain")), "hello"),
+            McpHandler.ResourceContents.Blob(sampleUri, Absent, "<b64>")
+        )
+        contents.foreach { rc =>
+            val decoded = Json.decode[McpHandler.ResourceContents](encodedJson[McpHandler.ResourceContents](rc))
+            assert(decoded == Result.succeed(rc), s"decoded $decoded")
+        }
+    }
+
     "Text: wire JSON contains type:text" in {
         val rc   = McpHandler.ResourceContents.Text(sampleUri, Absent, "hello")
         val json = encodedJson[McpHandler.ResourceContents](rc)

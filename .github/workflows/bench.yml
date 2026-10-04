@@ -57,7 +57,13 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: coursier/cache-action@v8.1.1
+      # Restore only, from the deps-linux-x64- namespace the ci legs write, not coursier/cache-action, which
+      # saves its own ~1.6 GB entry per job name.
+      - uses: ./.github/actions/caches
+        with:
+          os: linux-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -79,10 +85,10 @@ jobs:
           for EVENT in "${array[@]}"
           do
             ESCAPED_EVENT=$(printf '%q' "$EVENT")
-            sbt "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
+            scripts/sbt.sh compile "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
           done
           
-          sbt "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof gc -rf json $SE"
+          scripts/sbt.sh compile "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof gc -rf json $SE"
 
       - name: prepare results
         run: |

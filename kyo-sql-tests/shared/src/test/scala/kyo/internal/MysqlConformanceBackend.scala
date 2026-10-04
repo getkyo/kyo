@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import kyo.db.Backend
 import kyo.internal.mysql.MysqlBackendFactory
 import kyo.internal.mysql.MysqlConnection
 
@@ -13,13 +12,9 @@ import kyo.internal.mysql.MysqlConnection
   * `performance_schema` override [[containerConfig]] documents, so this descriptor and the engine suites share one container for the id
   * whichever inits first.
   */
-final class MysqlConformanceBackend extends ContainerConformanceBackend:
+final class MysqlConformanceBackend extends ContainerConformanceBackend(new MysqlBackendFactory()):
 
-    def id: String        = "mysql"
-    def label: String     = "mysql"
-    def urlScheme: String = "mysql"
-
-    def backend: Backend = new MysqlBackendFactory()
+    def label: SqlConformanceBackend.Label = SqlConformanceBackend.Label("mysql")
 
     /** MySQL quotes identifiers with backticks. */
     // Matches MysqlDialect.quoteIdent. Without the doubling, a name carrying a backtick closes the quoting early.

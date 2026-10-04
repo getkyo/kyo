@@ -24,10 +24,10 @@ sbt '<module-sbt-name>/doctest' 2>&1 | tee /tmp/doctest-verify.log
 
 For kyo-data that is `sbt 'kyo-dataJVM/doctest'`. For kyo-http that is `sbt 'kyo-httpJVM/doctest'`. Use the project name `git grep -nE "^lazy val ..kyo-<name>." build.sbt` resolves to ; do not invent the sbt module name.
 
-Parse the log's last summary line:
+Parse the summary line that names the README under verification:
 
 ```
-[info] doctest: total=N compiled=N cacheHits=N failures=N
+[info] doctest: <module>/README.md: total=N compiled=N cacheHits=N warnings=N failures=N
 ```
 
 Pass conditions (ALL must hold):

@@ -72,6 +72,12 @@ class IoDriverPoolTest extends Test:
         def closeHandle(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
             real.closeHandle(handle)
 
+        def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+            real.releaseFd(handle, closeFd)
+
+        def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+            real.closeListener(handle, closeFd)
+
         def close()(using AllowUnsafe, Frame): Unit =
             discard(closeCalls.getAndIncrement())
             val hook = onClose

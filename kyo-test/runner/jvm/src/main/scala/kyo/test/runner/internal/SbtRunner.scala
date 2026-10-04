@@ -2,6 +2,7 @@ package kyo.test.runner.internal
 
 import java.util.concurrent.atomic.AtomicReference
 import kyo.Chunk
+import kyo.discard
 import kyo.test.RunConfig
 import kyo.test.TestReport
 import sbt.testing.Runner
@@ -93,12 +94,19 @@ final private[runner] class SbtRunner(
     private[runner] val discoveryErrors: AtomicReference[Chunk[String]] =
         new AtomicReference(Chunk.empty)
 
+    // The suites handed to this runner and the ones whose task produced a report; done() fails the run on the difference.
+    private val selected  = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
+    private val completed = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
+
+    private val selectionChecked = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     def tasks(taskDefs: Array[TaskDef]): Array[Task] =
         tasksRequested.set(true)
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
-                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, forked))
+                taskDefs.foreach(td => discard(selected.add(td.fullyQualifiedName())))
+                taskDefs.map(td => new SbtTask(td, baseOverlay, testClassLoader, results, completed, forked))
             case _ =>
                 Array.empty
         end match
@@ -116,9 +124,28 @@ final private[runner] class SbtRunner(
                         import scala.jdk.CollectionConverters.*
                         Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
         if forked && summary.nonEmpty && summaryWritten.compareAndSet(false, true) then summaryOut.println(summary)
+        checkSelectionRan()
         runEndOfRunChecks()
         summary
     end done
+
+    /** Fails the run when the selection ran nothing. sbt scores a suite by the events its task emits and counts a suite with none as
+      * passed, so a selected suite whose task never produced a report, or a selection whose filter matched no leaf, would otherwise
+      * finish green with Total 0. A suite that registers no leaves is failed by the runner itself, as a leaf of its report. Throws once,
+      * after the summary is written, like the end-of-run checks.
+      */
+    private def checkSelectionRan(): Unit =
+        val countOnly = baseOverlay(RunConfig.default).countOnly
+        if !countOnly && !selected.isEmpty && selectionChecked.compareAndSet(false, true) then
+            import scala.jdk.CollectionConverters.*
+            val neverRan = selected.asScala.toSeq.filterNot(completed.contains).sorted
+            if neverRan.nonEmpty then
+                throw new IllegalStateException(s"kyo-test: selected suite(s) never ran: ${neverRan.mkString(", ")}")
+            val leaves = results.asScala.iterator.flatMap(_.suiteReports.iterator).map(_.leafResults.size).sum
+            if leaves == 0 then
+                throw new IllegalStateException(s"kyo-test: the selection ran 0 tests: ${selected.asScala.toSeq.sorted.mkString(", ")}")
+        end if
+    end checkSelectionRan
 
     /** Runs the end-of-run leak and stranded-op probes once, only inside a forked test JVM, throwing on the first one that finds
       * something so sbt fails the test task. The leak settings are aggregated from the suites that ran in this fork (each

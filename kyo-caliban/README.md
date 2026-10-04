@@ -223,7 +223,7 @@ case class Query(
     currentUser: User < AppEnv // new: needs a CalibanRunner
 ) derives schema.SemiAuto
 
-val database = Database(User(1, "alice"))
+val database                      = Database(User(1, "alice"))
 val runner: CalibanRunner[AppEnv] = new CalibanRunner[AppEnv]:
     def apply[A](v: A < AppEnv): A < (Abort[Throwable] & Async) =
         Var.run(RequestId.fresh)(Env.run(database)(v))
@@ -271,7 +271,7 @@ case class Query(
     currentUser: User < AppEnv
 ) derives schema.SemiAuto
 
-val database = Database(User(1, "alice"))
+val database                      = Database(User(1, "alice"))
 val runner: CalibanRunner[AppEnv] = new CalibanRunner[AppEnv]:
     def apply[A](v: A < AppEnv): A < (Abort[Throwable] & Async) =
         Var.run(RequestId.fresh)(Env.run(database)(v))
@@ -292,7 +292,7 @@ val api = caliban.graphQL(
 val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(api)
-        server <- Resolvers.run(
+        server      <- Resolvers.run(
             interpreter,
             runner,
             Resolvers.Config.default.path("graphql")
@@ -657,7 +657,7 @@ val program: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[H
 val custom: HttpServer < (Async & Scope & Abort[caliban.CalibanError] & Abort[HttpBindException]) =
     for
         interpreter <- Resolvers.get(caliban.graphQL(root, Nil, Nil, None))
-        server <- Resolvers.run(
+        server      <- Resolvers.run(
             interpreter,
             Resolvers.Config.default
                 .path("graphql")

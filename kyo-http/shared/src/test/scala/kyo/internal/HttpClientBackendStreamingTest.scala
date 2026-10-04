@@ -162,7 +162,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
+            val config                     = HttpClientConfig(timeout = Duration.Infinity)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(streamHeaders, chunk1)).andThen {
                     f1.get.map { resp1 =>
@@ -198,7 +198,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
+            val config                     = HttpClientConfig(timeout = Duration.Infinity)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, Seq(streamHeaders, chunk1, chunk2AndEnd)).andThen {
                     f1.get.map { resp1 =>
@@ -219,6 +219,33 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             }
         }
 
+        "a drained streamed body on a Connection: close response is discarded, not released" in {
+            val (clientConn1, serverConn1) = TransportConnection.inMemoryPair()
+            val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
+            val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
+            val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
+            val config                     = HttpClientConfig(timeout = Duration.Infinity)
+            val closingHeaders             = "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+            Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
+                serveOnce(serverConn1, Seq(closingHeaders, chunk1, chunk2AndEnd)).andThen {
+                    f1.get.map { resp1 =>
+                        resp1.fields.body.run.map { chunks =>
+                            assert(chunks.foldLeft("")(_ + spanToString(_)) == "chunk1chunk2")
+                            Fiber.init(serveOnce(serverConn2, Seq(plainHeaders, plainBody))).map { _ =>
+                                backend.sendWithConfig(plainRoute, plainReq, config)(r => r).map { resp2 =>
+                                    assert(resp2.fields.body == plainBody)
+                                    assert(
+                                        transport.connectCount == 2,
+                                        "the connection of a Connection: close response must be discarded after its body drains, not pooled"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Interruption variant: a mid-stream interrupt closes the decoded channel via the finalizer, so the decoder's next
         // delivery taints the connection, the pool discards it, and the next request opens a fresh one.
         "an interrupted consumer discards the connection instead of pooling it" in {
@@ -226,7 +253,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val (clientConn2, serverConn2) = TransportConnection.inMemoryPair()
             val transport                  = new TestChannelTransport(Seq(clientConn1, clientConn2))
             val backend                    = HttpClientBackend.init(transport, 2, 60.seconds)
-            val config                     = HttpClientConfig(timeout = 60.seconds)
+            val config                     = HttpClientConfig(timeout = Duration.Infinity)
             Fiber.init(backend.sendWithConfig(dripRoute, dripReq, config)(r => r)).map { f1 =>
                 serveOnce(serverConn1, streamHeaders +: Seq.fill(backlogChunks)(chunk1)).andThen {
                     f1.get.map { resp1 =>

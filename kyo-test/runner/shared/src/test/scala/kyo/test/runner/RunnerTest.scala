@@ -67,6 +67,13 @@ object RTTimeoutSuite:
     def reset(): Unit          = escaped.set(0)
 end RTTimeoutSuite
 
+class RTEmptySuite extends TestBase[Any]
+
+/** A leaf with no limit of its own whose body times out an inner computation. */
+class RTInnerTimeoutSuite extends TestBase[Any]:
+    "inner" in Async.timeout(10.millis)(Async.sleep(30.seconds)).andThen(succeed)
+end RTInnerTimeoutSuite
+
 /** Two leaves each acquiring a release-tracked resource to confirm per-leaf Scope.run releases. */
 class RTScopeSuite extends TestBase[Any]:
     "acquires" in Scope.acquireRelease(())(_ => Sync.defer { RTScopeSuite.released.incrementAndGet(): Unit })
@@ -358,6 +365,50 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             yield
                 assert(isTimedOut(leafByPath(report, Chunk("slow"))), s"got $report")
                 assert(RTTimeoutSuite.escaped.get() == 0)
+        })
+    }
+
+    "a suite that registers no leaves reports one failure naming it, never an empty pass" in {
+        discharge(Scope.run(TestRunner.runReport(classOf[RTEmptySuite])).map { report =>
+            val leaves = report.suiteReports.flatMap(_.leafResults)
+            assert(leaves.map(_._1) == Chunk(Chunk("<no leaves>")), s"got $report")
+            assert(
+                leaves.forall {
+                    case (_, failed: TestResult.Failed) => failed.diagram.contains(classOf[RTEmptySuite].getName)
+                    case _                              => false
+                },
+                s"got $report"
+            )
+        })
+    }
+
+    "a timed-out leaf reports its configured limit, not the time it ran" in {
+        // Under virtual time the leaf's limit passes while almost no real time does, so the two cannot coincide.
+        RTTimeoutSuite.reset()
+        discharge(Clock.withTimeControl { control =>
+            for
+                run    <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTTimeoutSuite])))
+                _      <- control.awaitPendingSleepers(3)
+                _      <- control.advance(50.millis, Duration.Zero)
+                report <- run.get
+            yield assert(leafByPath(report, Chunk("slow")) == Some(TestResult.TimedOut(50.millis)), s"got $report")
+        })
+    }
+
+    "a Timeout the body raises itself fails the leaf rather than reporting a limit it never had" in {
+        discharge(Clock.withTimeControl { control =>
+            for
+                run    <- Fiber.initUnscoped(Scope.run(TestRunner.runReport(classOf[RTInnerTimeoutSuite])))
+                _      <- control.awaitPendingSleepers(3)
+                _      <- control.advance(10.millis, Duration.Zero)
+                report <- run.get
+            yield assert(
+                leafByPath(report, Chunk("inner")).exists {
+                    case failed: TestResult.Failed => failed.diagram.contains("Computation has timed out")
+                    case _                         => false
+                },
+                s"got $report"
+            )
         })
     }
 

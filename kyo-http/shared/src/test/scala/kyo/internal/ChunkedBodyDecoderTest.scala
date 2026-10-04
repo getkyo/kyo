@@ -478,5 +478,79 @@ class ChunkedBodyDecoderTest extends kyo.BaseHttpTest:
                 armThenOffer("5\r\nhel", Seq("lo\r\n", "0\r\n\r\n"), "hello")
             }
         }
+
+        // RFC 9112 section 7.1: chunk-size = 1*HEXDIG, and every line of the chunked framing, the trailer section included, ends in
+        // CRLF. A decoder that ends the body at a line a stricter upstream reads as an error, or as more body, hands the bytes after
+        // its own end to the next request parse, which is the smuggling precondition the size line's own bare-LF check exists for.
+        "framing RFC 9112 section 7.1 does not admit" - {
+
+            /** Decodes `body` in one read, with the bytes the decoder did not consume. */
+            def decodedWithPending(reads: String*)
+                : (Result[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException, String], String) < Async =
+                val inbound = Channel.Unsafe.init[Span[Byte]](16)
+                reads.drop(1).foreach(r => discard(inbound.offer(spanOfBytes(r.getBytes(StandardCharsets.ISO_8859_1)))))
+                val state = new ChunkedBodyDecoder.DecoderState
+                Abort.run[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException](
+                    ChunkedBodyDecoder.readBuffered(
+                        inbound,
+                        spanOfBytes(reads.head.getBytes(StandardCharsets.ISO_8859_1)),
+                        maxBytes = Int.MaxValue,
+                        state
+                    )
+                ).map(result => (result.map(spanToString), spanToString(state.takePending())))
+            end decodedWithPending
+
+            def malformed(result: Result[Any, String], detail: String)(using kyo.test.AssertScope): Unit =
+                result match
+                    case Result.Failure(e: HttpMalformedBodyException) => assert(e.detail == detail, s"observed: ${e.detail}")
+                    case other                                         => fail(s"expected the framing to be refused, observed: $other")
+
+            "an empty chunk-size line is refused, not read as the last chunk" in {
+                decodedWithPending("5\r\nhello\r\n\r\nGET /admin HTTP/1.1\r\n\r\n").map { (result, _) =>
+                    malformed(result, "invalid chunk size")
+                }
+            }
+
+            "a chunk-size line holding only an extension is refused" in {
+                decodedWithPending("5\r\nhello\r\n;x=y\r\n0\r\n\r\n").map { (result, _) =>
+                    malformed(result, "invalid chunk size")
+                }
+            }
+
+            "a bare LF ending the trailer section is refused, and the bytes after it are not pending" in {
+                decodedWithPending("5\r\nhello\r\n0\r\n\nGET /admin HTTP/1.1\r\n\r\n").map { (result, _) =>
+                    malformed(result, "trailer line ended with a bare LF")
+                }
+            }
+
+            "a bare LF ending a trailer line is refused" in {
+                decodedWithPending("5\r\nhello\r\n0\r\nX-T: v\nY: w\r\n\r\n").map { (result, _) =>
+                    malformed(result, "trailer line ended with a bare LF")
+                }
+            }
+
+            "a bare CR inside a trailer line is refused" in {
+                decodedWithPending("5\r\nhello\r\n0\r\nX-T: a\rb\r\n\r\n").map { (result, _) =>
+                    malformed(result, "embedded CR in trailer line")
+                }
+            }
+
+            "CRLF-terminated trailer lines end the body, and the bytes after the section are pending" in {
+                decodedWithPending("5\r\nhello\r\n0\r\nX-T: v\r\nY: w\r\n\r\nGET /next HTTP/1.1\r\n\r\n").map { (result, pending) =>
+                    assert(result == Result.succeed("hello"), s"observed: $result")
+                    assert(pending == "GET /next HTTP/1.1\r\n\r\n", s"observed pending: $pending")
+                }
+            }
+
+            "a trailer section split at every byte across two reads ends the body" in {
+                val framed = "5\r\nhello\r\n0\r\nX-T: v\r\n\r\n"
+                Kyo.foreach((1 until framed.length).toSeq) { at =>
+                    decodedWithPending(framed.take(at), framed.drop(at)).map { (result, pending) =>
+                        assert(result == Result.succeed("hello"), s"split at $at, observed: $result")
+                        assert(pending == "", s"split at $at, observed pending: $pending")
+                    }
+                }.map(_ => succeed)
+            }
+        }
     }
 end ChunkedBodyDecoderTest

@@ -61,11 +61,14 @@ private[completion] object HarnessCompletion:
       */
     private def classify(provider: String, status: Maybe[Int], detail: String)(using Frame): AIGenException & AIStreamException =
         status match
-            case Present(429)                 => AIRateLimitException(provider, detail)
-            case Present(401) | Present(403)  => AIProviderAuthException(provider, detail)
-            case Present(code) if code >= 500 => AIProviderUnavailableException(provider, detail)
-            case Present(code)                => AIRequestRejectedException(provider, code, detail)
-            case Absent                       => AIHarnessException(provider, detail)
+            case Present(code) if HttpStatus.isValid(code) =>
+                HttpStatus(code) match
+                    case HttpStatus.TooManyRequests                     => AIRateLimitException(provider, detail)
+                    case HttpStatus.Unauthorized | HttpStatus.Forbidden => AIProviderAuthException(provider, detail)
+                    case s if s.isServerError                           => AIProviderUnavailableException(provider, detail)
+                    case s                                              => AIRequestRejectedException(provider, s.code, detail)
+            case Present(code) => AIRequestRejectedException(provider, code, detail)
+            case Absent        => AIHarnessException(provider, detail)
     end classify
 
     private[kyo] def commandFailure(provider: String, status: Maybe[Int], detail: String)(using Frame): AIGenException =

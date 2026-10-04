@@ -231,7 +231,11 @@ class TransportStartTlsTest extends Test:
                     _ <- conn.inbound.safe.take
                     first = transport.upgradeToTls(conn, cli, 16).safe
                     second <-
-                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(conn, cli, 16).safe.get))
+                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(
+                            conn,
+                            cli,
+                            16
+                        ).safe.get))
                     _ = conn.close()
                     firstOutcome <- Abort.run[NetException | Closed | Timeout](Async.timeout(10.seconds)(first.get))
                 yield
@@ -383,7 +387,11 @@ class TransportStartTlsTest extends Test:
                     transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                         Scope.ensure(Sync.defer(conn.close())).andThen {
                             val clientTls =
-                                NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
+                                NetTlsConfig(
+                                    trustAll = true,
+                                    sniHostname = Present("localhost"),
+                                    handshakeTimeout = 150.millis
+                                )
                             Abort.run[NetException | Closed | Timeout](
                                 Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
                             ).map { outcome =>

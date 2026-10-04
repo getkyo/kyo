@@ -41,6 +41,10 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
     // `mine == target`. The runner's `peekWasGroup` reads it during discovery.
     private val wasGroup: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // True once the constructor meets a leaf or group its platform gate compiled out. Such a registration leaves nothing behind, so
+    // without it a suite whose leaves all target another platform would look like one that registered nothing.
+    private val excluded: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // Buffered baseline-row leaf body thunks awaiting runner discharge. Keyed by the leaf's full name path.
     // The body's residual `S` row is discharged by the suite's `.handle` chain before reaching here; for a raw
     // `Test[Any]` suite the body is already baseline-shaped (S = Any unions to the baseline). The thunk returns the baseline
@@ -168,6 +172,9 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
             producedLeaf.set(Maybe.Present((Chunk.from(nameStack) :+ name, TestResult.Skipped(reason))))
     end registerSkipped
 
+    /** Record that a platform-gated leaf or group was compiled out on this platform. Takes no cursor position. */
+    def noteExcluded(): Unit = excluded.set(true)
+
     // ── Accessors ─────────────────────────────────────────────────────────────────────────────
 
     /** Signal that the constructor has finished and no more registrations are coming. The runner wires completion. */
@@ -180,6 +187,9 @@ final class TestContext private[test] (val target: Chunk[Int], private val disco
       * cursor's children (group) or treat a `producedLeaf`-absent cursor as past-end.
       */
     private[test] def peekWasGroup: Boolean = wasGroup.get()
+
+    /** Runner accessor: true when the constructor met a registration its platform gate compiled out. */
+    private[test] def peekExcluded: Boolean = excluded.get()
 
     /** Runner accessor: the deferred baseline-row leaf body buffered at the target cursor, or a unit no-op when none was registered
       * (past-end / group / terminal marker). The runner discharges this under its `Scope` / `Fiber.initUnscoped` / `Abort.run` pipeline.

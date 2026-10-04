@@ -19,9 +19,6 @@ class ParsedRequestBuilderTest extends kyo.BaseHttpTest:
         ((arr(offset + 2) & 0xff) << 8) |
         (arr(offset + 3) & 0xff)
 
-    // Helper: extract the raw byte array from a ParsedRequest via headersAsPacked
-    // We'll use a different approach: build and read fields using ParsedRequest accessors
-
     "ParsedRequestBuilder" - {
 
         // Test 1: Set method and verify flag encoding
@@ -133,9 +130,6 @@ class ParsedRequestBuilderTest extends kyo.BaseHttpTest:
             val req = builder.build()
             // Verify via high-level API
             assert(req.pathAsString == pathStr)
-            // Verify pathLen is encoded correctly at positions [8..9]
-            // We access via headersAsPacked indirect check: pathSegmentCount is at [14..15]
-            // Direct check via ParsedRequest is the cleanest
             assert(req.pathSegmentCount == 0) // no segments added
         }
 

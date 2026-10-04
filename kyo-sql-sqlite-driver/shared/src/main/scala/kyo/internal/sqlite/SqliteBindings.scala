@@ -134,6 +134,22 @@ private[kyo] trait SqliteBindings extends Ffi:
       */
     def libversionNumber()(using AllowUnsafe): Int
 
+    /** Nonzero when running `stmt` takes no write lock. COMMIT, ROLLBACK and a deferred BEGIN answer nonzero, while BEGIN IMMEDIATE and
+      * BEGIN EXCLUSIVE answer zero: the engine computes it from the prepared program, and theirs takes the write lock.
+      */
+    def stmtReadonly(stmt: Ffi.Handle[SqliteStmt])(using AllowUnsafe): Int
+
+    /** Nonzero while no transaction is open on `db`. Whatever ended the last one (COMMIT, ROLLBACK, a failed statement rolling it back, an
+      * interrupt) leaves it nonzero.
+      */
+    def getAutocommit(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** The highest transaction state across every schema on `db`: 0 none, 1 reading, 2 holding a write lock. */
+    def txnState(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** The absolute path of the file behind `schema`, `""` for an in-memory or temporary database and for a schema not attached. */
+    def dbFilename(db: Ffi.Handle[SqliteDb], schema: String)(using AllowUnsafe): Ffi.Borrowed[String]
+
 end SqliteBindings
 
 /** Tag for a `sqlite3 *`. */

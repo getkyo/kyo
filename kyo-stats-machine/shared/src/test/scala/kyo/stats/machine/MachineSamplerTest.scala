@@ -35,7 +35,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     discard(identities += java.lang.System.identityHashCode(this))
             Scope.run(Path.run {
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     dir     <- Path.tempDir("kyo-stats-machine-sampler-identity")
                     file = dir / "small.txt"
                     _ <- file.write("hello")
@@ -63,7 +63,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val content = "0123456789" * 2000 // 20000 bytes, larger than the sampler's 8192-byte initial slot
             Scope.run(Path.run {
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     dir     <- Path.tempDir("kyo-stats-machine-sampler-large")
                     file = dir / "large.txt"
                     _ <- file.write(content)
@@ -83,7 +83,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
     "disk in-flight guard" - {
 
         "admits exactly one disk read and refuses a second while it is outstanding" in {
-            for handles <- MachineHandles.init
+            for handles <- MachineHandlesOwners.init
             yield
                 val sampler                    = new MachineSampler(handles)
                 val first                      = sampler.diskReadBegin()
@@ -112,7 +112,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     closed.release()
             Clock.withTimeControl { tc =>
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     clock   <- Clock.get
                     fiber   <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
                     // Wait for both schedules (fast + disk) to arm before advancing.
@@ -143,7 +143,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val parkedLatch  = Latch.Unsafe.init(1) // readDisks releases it as it parks; the test awaits it, no settle
             Clock.withTimeControl { tc =>
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     clock   <- Clock.get
                     machine = new Machine:
                         def read()(using AllowUnsafe): Unit =
@@ -209,7 +209,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val recorded = AtomicRef.Unsafe.init(Chunk.empty[Duration])
             Clock.withTimeControl { tc =>
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     clock   <- Clock.get
                     machine = new Machine:
                         def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))
@@ -233,7 +233,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             val recorded = AtomicRef.Unsafe.init(Chunk.empty[Duration])
             Clock.withTimeControl { tc =>
                 for
-                    handles <- MachineHandles.init
+                    handles <- MachineHandlesOwners.init
                     clock   <- Clock.get
                     machine = new Machine:
                         def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))

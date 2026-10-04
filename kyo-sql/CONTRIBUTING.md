@@ -130,7 +130,7 @@ The wrong form appeared in the battery in fifteen places across three files, and
 
 **A skip reason nobody re-reads is wrong for as long as it exists.** Both of those had been sitting in the battery reading as considered judgements. That is the failure this rule exists to prevent, and it is why the gate is applied per branch rather than to the group.
 
-A source scan enforces this now: `SqlBackendNeutralitySourceTest` fails on any engine name reaching any file of `kyo-sql-conformance`, with the banned list derived from the descriptors so a new backend extends it by existing.
+Construction enforces this: a descriptor holds nothing a body can compare against an engine name. Its `label` is a `SqlConformanceBackend.Label`, which renders in a leaf name and a failure message but has no `CanEqual`, so under strict equality `backend.label == "postgres"` and a `match` on it do not compile. The `kyo.db.Backend` it opens clients through is a constructor parameter, so its `scheme` is out of reach, and there is no id or URL scheme member. `SqlConformanceBackendTest` pins each of these shapes as a compile error. What remains reachable is a string a body legitimately holds, such as the schema URL or the label's `toString`; reading an engine out of one is a deliberate circumvention, and review is what catches it.
 
 This matters more than which file the test lives in. An inline `if` on an engine name is written in a second and read by nobody. A capability is declared in one place, carries a scaladoc saying **why this is a capability difference**, and every existing backend has to answer it when it is added. That review is the gate.
 
@@ -176,10 +176,10 @@ The inversion also removed a passthrough that had been an exception to the parse
 
 Two further mechanisms belong with it, both now built as well:
 
-- **`SqlConformanceBackend.id` is out of every conformance body.** Fifteen such branches existed; each became a named capability or a descriptor hook, and two turned out to need no branch at all.
-- **The shared battery is scanned for engine identifiers** by `SqlBackendNeutralitySourceTest`, with the banned list derived from the descriptors rather than hardcoded, so a new backend extends it automatically and the check cannot go stale.
+- **A descriptor has no identity to branch on.** Fifteen branches on an engine name existed; each became a named capability or a descriptor hook, and two turned out to need no branch at all.
+- **The label compares with nothing.** It is an opaque `Label` with no `CanEqual`, so the type system refuses the comparison a branch would need.
 
-Note what the second one concedes: construction cannot catch an inline DDL literal, so a scan covers the gap. Prefer construction, fall back to a check, and treat a check as a sign that the shape could be better.
+Prefer construction to a check, and treat a check as a sign that the shape could be better.
 
 ## Neutral types must span the union of the engines' domains
 
