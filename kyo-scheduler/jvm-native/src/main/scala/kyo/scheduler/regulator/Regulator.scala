@@ -44,6 +44,7 @@ import kyo.scheduler.util.*
   *
   * @note
   *   Implementations must provide probe() and update() methods to define measurement collection and adjustment application respectively.
+  *   Nothing runs until start() is called on the constructed regulator.
   *
   * @see
   *   Config for configuration parameters
@@ -104,23 +105,39 @@ abstract class Regulator(
         synchronized(measurements.observe(v))
     }
 
+    // Scheduled by `start`, never by the constructor: a task scheduled during construction can run before a subclass body is
+    // initialized, and `probe` and `update` read subclass state (Admission's `admissionPercent` would read 0).
+    private var collectTask: InternalTimer.TimerTask  = null
+    private var regulateTask: InternalTimer.TimerTask = null
+
+    /** Start the periodic probes and adjustments.
+      *
+      * Called once the regulator is fully constructed. Later calls, and calls after `stop`, do nothing.
+      *
+      * @return
+      *   This regulator
+      */
+    final def start(): this.type = {
+        synchronized {
+            if (!stopped && collectTask == null) {
+                collectTask = timer.schedule(collectInterval)(collect())
+                regulateTask = timer.schedule(regulateInterval)(adjust())
+            }
+        }
+        this
+    }
+
     /** Stop the regulator.
       *
       * Cancels all scheduled tasks and cleans up resources.
       */
-    def stop(): Unit = {
+    def stop(): Unit = synchronized {
         def discard(v: Any) = {}
         stopped = true
-        discard(collectTask.cancel())
-        discard(regulateTask.cancel())
+        if (collectTask != null) discard(collectTask.cancel())
+        if (regulateTask != null) discard(regulateTask.cancel())
     }
 
-    // Stats must be initialized BEFORE collectTask and regulateTask are scheduled.
-    // Otherwise the timer may fire `collect()` (or `adjust()`) on another thread
-    // before `statsScope` is assigned, observing it as null and tripping an NPE
-    // inside the lazy `stats` object's first field access. The race is narrow but
-    // real under load (high contention at JVM start, e.g. inside a dotty driver
-    // fork running its own kyo runtime).
     protected val statsScope = kyo.scheduler.statsScope.scope("regulator", getClass.getSimpleName().toLowerCase())
 
     private object stats {
@@ -135,12 +152,6 @@ abstract class Regulator(
             statsScope.gauge("updates")(updates.sum.toDouble)
         )
     }
-
-    private val collectTask =
-        timer.schedule(collectInterval)(collect())
-
-    private val regulateTask =
-        timer.schedule(regulateInterval)(adjust())
 
     final private def collect(): Unit = {
         try {

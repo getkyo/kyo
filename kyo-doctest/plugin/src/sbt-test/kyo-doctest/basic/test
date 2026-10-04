@@ -1,2 +1,3 @@
-# Basic: one passing fence, doctest exits 0.
+# Basic: one passing fence, doctest exits 0, and its summary names the README.
 > doctest
+> checkSummaryNamesSource

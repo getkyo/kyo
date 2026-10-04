@@ -288,13 +288,17 @@ class PosixTransportTest extends Test:
             Scope.run {
                 transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
                     Scope.ensure(Sync.defer(listener.close())).andThen {
-                        transport.connect("127.0.0.1", listener.port, config = kyo.net.NetConfig(readChunkSize = 1024)).safe.get.map {
+                        transport.connect(
+                            "127.0.0.1",
+                            listener.port,
+                            config = kyo.net.NetConfig(readChunkSize = 1.kib)
+                        ).safe.get.map {
                             small =>
                                 Scope.ensure(Sync.defer(small.close())).andThen {
                                     transport.connect(
                                         "127.0.0.1",
                                         listener.port,
-                                        config = kyo.net.NetConfig(readChunkSize = 65536)
+                                        config = kyo.net.NetConfig(readChunkSize = 64.kib)
                                     ).safe.get.map { large =>
                                         Scope.ensure(Sync.defer(large.close())).andThen {
                                             Sync.defer {
