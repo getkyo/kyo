@@ -38,9 +38,36 @@ class AbiCheckTest extends Test:
         assert(AbiCheck.compareVersions("1.10.0", "1.2.0") > 0)
         // A trailing zero component and a missing one are equal (padding).
         assert(AbiCheck.compareVersions("1.0", "1.0.0") == 0)
-        // A pre-release suffix does not derail the numeric comparison.
-        assert(AbiCheck.compareVersions("1.0.0-RC1", "1.0.0") == 0)
         assert(AbiCheck.compareVersions("0.20.0", "0.21.0") < 0)
+    }
+
+    "compareVersions ranks pre-releases by SemVer 2.0.0 precedence" in {
+        // Each version is older than the next (SemVer 2.0.0 section 11).
+        val ascending = Seq(
+            "1.0.0-alpha",
+            "1.0.0-alpha.1",
+            "1.0.0-alpha.beta",
+            "1.0.0-beta",
+            "1.0.0-beta.2",
+            "1.0.0-beta.11",
+            "1.0.0-rc.1",
+            "1.0.0"
+        )
+        val pairs = ascending.zip(ascending.tail)
+        assert(pairs.filterNot((older, newer) => AbiCheck.compareVersions(older, newer) < 0).isEmpty)
+        assert(pairs.filterNot((older, newer) => AbiCheck.compareVersions(newer, older) > 0).isEmpty)
+        // The release floor a native declares is not met by an earlier pre-release of the same version.
+        assert(AbiCheck.compareVersions("1.0.0-RC7", "1.0.0-RC8") < 0)
+        assert(AbiCheck.compareVersions("1.0.0-RC1", "1.0.0") < 0)
+    }
+
+    "compareVersions ignores build metadata and reads long components exactly" in {
+        // sbt-dynver writes a build after a tag as `<tag>+<distance>-<sha>`, which ranks as the tag itself.
+        assert(AbiCheck.compareVersions("1.0.0-RC8+12-abcdef12-SNAPSHOT", "1.0.0-RC8") == 0)
+        assert(AbiCheck.compareVersions("1.0.0+20261004", "1.0.0") == 0)
+        // A component past Int range is compared as the number it is, not as zero.
+        assert(AbiCheck.compareVersions("1.99999999999.0", "1.2.0") > 0)
+        assert(AbiCheck.compareVersions("1.0.0-99999999999", "1.0.0-2") > 0)
     }
 
     "verifyRuntimeFloor is a no-op when the runtime version cannot be determined" in {
