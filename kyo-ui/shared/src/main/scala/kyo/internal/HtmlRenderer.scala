@@ -524,6 +524,8 @@ private[kyo] object HtmlRenderer:
         case _: Th             => "th"
         case _: Label          => "label"
         case _: Form           => "form"
+        case _: Fieldset       => "fieldset"
+        case _: Legend         => "legend"
         case _: Textarea       => "textarea"
         case _: Select         => "select"
         case _: Opt            => "option"
@@ -658,6 +660,8 @@ private[kyo] object HtmlRenderer:
             case b: Button =>
                 w(sb, " type=\"submit\"")
                 boolAttr(sb, "disabled", b.disabled)
+            case fs: Fieldset =>
+                boolAttr(sb, "disabled", fs.disabled)
             case cb: Checkbox =>
                 w(sb, " type=\"checkbox\"")
                 boolAttr(sb, "disabled", cb.disabled)
