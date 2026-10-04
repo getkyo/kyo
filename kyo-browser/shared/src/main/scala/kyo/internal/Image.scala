@@ -89,7 +89,7 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
                         s"width=${charsWidth}ch;"
                     else
                         ""
-                s"]1337;File=inline=1;${sizeSpec}preserveAspectRatio=1:${base64Image}"
+                s"\u001b]1337;File=inline=1;${sizeSpec}preserveAspectRatio=1:${base64Image}\u0007"
             case ConsoleType.kitty =>
                 val sizeParams =
                     if charsWidth > 0 && charsHeight > 0 then
@@ -98,7 +98,7 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
                         s"s=${charsWidth},"
                     else
                         ""
-                s"_Gf=100,${sizeParams}m=1;${base64Image}\\"
+                s"\u001b_Gf=100,${sizeParams}m=1;${base64Image}\u001b\\"
         end match
     end renderWith
 end Image

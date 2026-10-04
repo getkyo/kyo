@@ -1359,7 +1359,8 @@ class BrowserCoreTest extends BrowserTest:
                     <img id='img' src='/img'>
                 </body></html>""",
                 // 1×1 transparent GIF; small but a real network resource the browser must wait on for `load`.
-                "/img" -> "GIF87a          ,       D ;"
+                "/img" ->
+                    "GIF87a\u0001\u0000\u0001\u0000\u0080\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000,\u0000\u0000\u0000\u0000\u0001\u0000\u0001\u0000\u0000\u0002\u0002D\u0001\u0000;"
             )) { (host, port) =>
                 for
                     _      <- Browser.goto(s"http://$host:$port/main", Browser.Settle.Load)

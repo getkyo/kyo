@@ -168,8 +168,8 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         val out = capture(useColors = false) { r =>
             r.onLeafComplete(leaf("i"), TestResult.Failed("x", Maybe.empty, 1L.millis))
         }
-        // ANSI color sequences use ESC (U+001B, "") followed by '['; plain [FAIL] brackets are separate.
-        val noAnsiEsc = !out.contains("[")
+        // ANSI color sequences use ESC (U+001B, "\u001b") followed by '['; plain [FAIL] brackets are separate.
+        val noAnsiEsc = !out.contains("\u001b[")
         assert(noAnsiEsc, s"Expected no ANSI color sequences in plain-text output:\n$out")
         assert(out.contains("[FAIL]"), s"Expected plain [FAIL] label in output:\n$out")
     }
@@ -178,8 +178,8 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         val out = capture(useColors = true) { r =>
             r.onLeafComplete(leaf("j"), TestResult.Passed(1L.millis))
         }
-        // ANSI color sequences use ESC (U+001B, "") followed by '['; verify they appear in colored mode.
-        val hasAnsiEsc = out.contains("[")
+        // ANSI color sequences use ESC (U+001B, "\u001b") followed by '['; verify they appear in colored mode.
+        val hasAnsiEsc = out.contains("\u001b[")
         assert(hasAnsiEsc, s"Expected ANSI color sequences in colored output:\n$out")
     }
 

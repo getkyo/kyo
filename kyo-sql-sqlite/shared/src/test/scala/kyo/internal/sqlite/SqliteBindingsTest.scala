@@ -156,7 +156,7 @@ class SqliteBindingsTest extends Test:
                 _        <- exec(b, db, "CREATE TABLE t(i INTEGER, d REAL, s TEXT, blob BLOB)")
                 inserted <- prepare(b, db, "INSERT INTO t VALUES(?, ?, ?, ?)")
                 stmtIn = inserted.getOrElse(throw new AssertionError("the insert did not prepare"))
-                _      = Buffer.useArray("a b".getBytes("UTF-8")) { buf =>
+                _      = Buffer.useArray("a\u0000b".getBytes("UTF-8")) { buf =>
                     // Parameter indices are ONE-based, unlike the zero-based column indices read back below.
                     discard(b.bindInt64(stmtIn, 1, Long.MaxValue))
                     discard(b.bindDouble(stmtIn, 2, 0.1))
@@ -181,7 +181,7 @@ class SqliteBindingsTest extends Test:
                 // The embedded NUL is the point: read as a C string this is one byte, not three.
                 val text = readBytes(b, stmt, 2, textual = true)
                 assert(text.length == 3, s"expected 3 bytes of text, got ${text.length}")
-                assert(text.sameElements("a b".getBytes("UTF-8")), "text with an embedded NUL did not round-trip")
+                assert(text.sameElements("a\u0000b".getBytes("UTF-8")), "text with an embedded NUL did not round-trip")
 
                 val blob = readBytes(b, stmt, 3, textual = false)
                 assert(blob.sameElements(Array[Byte](0x00, 0xff.toByte, 0x00, 0x41)), "blob did not round-trip")

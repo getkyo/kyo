@@ -237,8 +237,8 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
 
     "xmlEscape replaces control characters with ?" in {
         val reporter = JUnitXmlReporter(Files.createTempDirectory("unused"))
-        //  and   are control chars below ' '
-        val result = reporter.xmlEscape("hello ")
+        // \u0001 and \u0000 are control chars below ' '
+        val result = reporter.xmlEscape("\u0001hello\u0000")
         assert(result == "?hello?", s"Expected '?hello?' but got: '$result'")
     }
 

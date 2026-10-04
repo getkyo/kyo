@@ -122,7 +122,7 @@ class ImageTest extends BaseBrowserTest:
     "Image.renderWith(ConsoleType.iterm) starts with ]1337;File=" in {
         // iTerm2 OSC 1337 protocol: ESC + ']' prefix, so the escape sequence is ESC + ]1337;File=
         val result = fixtureImage.renderWith(0, 0, Browser.Image.ConsoleType.iterm)
-        assert(result.startsWith("]1337;File="))
+        assert(result.startsWith("\u001b]1337;File="))
     }
 
     // ---- renderToConsole with kitty ----
@@ -130,7 +130,7 @@ class ImageTest extends BaseBrowserTest:
     "Image.renderWith(ConsoleType.kitty) starts with _G" in {
         // Kitty graphics protocol: ESC + '_G' APC sequence
         val result = fixtureImage.renderWith(0, 0, Browser.Image.ConsoleType.kitty)
-        assert(result.startsWith("_G"))
+        assert(result.startsWith("\u001b_G"))
     }
 
     // ---- renderToConsole with Absent ----

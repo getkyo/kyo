@@ -330,7 +330,7 @@ class YamlWriterTest extends kyo.test.Test[Any]:
 
         "double-quotes strings containing control characters newlines tabs backslash and quote" in {
             val fastConfig = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
-            assert(Yaml.encode("", fastConfig) == "\"\\u0001\"\n")
+            assert(Yaml.encode("\u0001", fastConfig) == "\"\\u0001\"\n")
             assert(Yaml.encode("line1\nline2", fastConfig) == "\"line1\\nline2\"\n")
             assert(Yaml.encode("col1\tcol2", fastConfig) == "\"col1\\tcol2\"\n")
             assert(Yaml.encode("\\", fastConfig) == "\"\\\\\"\n")

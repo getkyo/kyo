@@ -1560,7 +1560,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         // other special-char cases: backslash, double-quote, \n, \r, \t.
         // These all pass through escJson when the module title is serialized into the
         // search-index.json "title" field.
-        val ctrl1   = 0x01.toChar.toString // should become 
+        val ctrl1   = 0x01.toChar.toString // should become \u0001
         val ctrl1f  = 0x1f.toChar.toString // should become
         val title   = s"x${ctrl1}y${ctrl1f}z"
         val readme  = s"# $title\n"

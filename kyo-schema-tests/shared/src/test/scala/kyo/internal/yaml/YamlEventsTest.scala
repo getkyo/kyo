@@ -687,7 +687,7 @@ class YamlEventsTest extends kyo.test.Test[Any]:
         "writes double-quoted strings for control chars through events writer" in {
             val fastCfg    = Yaml.WriterConfig.Fast.copy(trailingNewline = true)
             val obtained11 = (
-                controlChar = write("", fastCfg),
+                controlChar = write("\u0001", fastCfg),
                 newline = write("line1\nline2", fastCfg),
                 backslash = write("\\", fastCfg)
             )

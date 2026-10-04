@@ -232,7 +232,7 @@ object DocsSearch:
     private[website] def camelParts(w: String): List[String] =
         val parts = scala.collection.mutable.ListBuffer.empty[String]
         val cur   = new StringBuilder
-        var prev  = ' '
+        var prev  = '\u0000'
         w.foreach { ch =>
             val boundary =
                 cur.nonEmpty && (

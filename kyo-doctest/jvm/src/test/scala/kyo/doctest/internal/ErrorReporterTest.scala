@@ -78,15 +78,15 @@ class ErrorReporterTest extends kyo.test.Test[Any]:
         val result = ErrorReporter.renderDiagnostic(d, sampleSource, useAnsi = true)
 
         // ANSI escape sequences start with ESC (0x1b) followed by '['.
-        val hasAnsi = result.contains("[")
-        assert(hasAnsi, s"expected ANSI escape codes in: ${result.replace("", "ESC")}")
+        val hasAnsi = result.contains("\u001b[")
+        assert(hasAnsi, s"expected ANSI escape codes in: ${result.replace("\u001b", "ESC")}")
     }
 
     "useAnsi=false produces no ANSI escape codes" in {
         val d      = makeDiagnostic(severity = Driver.Diagnostic.Severity.Error)
         val result = ErrorReporter.renderDiagnostic(d, sampleSource, useAnsi = false)
 
-        assert(!result.contains("["), s"expected no ANSI codes in: $result")
+        assert(!result.contains("\u001b["), s"expected no ANSI codes in: $result")
     }
 
     "Visible carrier produces no carrier prefix" in {

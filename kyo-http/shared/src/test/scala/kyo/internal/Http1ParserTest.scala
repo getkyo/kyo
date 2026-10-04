@@ -568,7 +568,7 @@ class Http1ParserTest extends kyo.BaseHttpTest:
         // (SKIP_CONTROL_CHARS over all 256 values), so "\x00\x00GET /..." was served as a request a strict front end
         // would frame differently, a smuggling desync.
         "rejects control bytes before the request line (CVE-2026-50020)" in {
-            val req = parseRequest("  GET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            val req = parseRequest("\u0000\u0000GET /admin HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req == null, "leading control bytes before the request line must be refused, not skipped")
         }
 

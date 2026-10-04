@@ -220,7 +220,7 @@ lazy val `kyo-settings` = Seq(
             val found    = List.newBuilder[String]
             var where    = project
             said.foreach { raw =>
-                val line = raw.replaceAll("\\[[0-9;]*m", "")
+                val line = raw.replaceAll("\u001b\\[[0-9;]*m", "")
                 position.findFirstMatchIn(line.trim).foreach(m => where = m.group(1))
                 val at = math.max(
                     line.indexOf("Couldn't resolve a member for the given link query"),
