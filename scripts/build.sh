@@ -4,15 +4,17 @@ set -uo pipefail
 # First-class local entry point for the shared runner.
 #
 # Usage:
-#   build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] <action> <platform...>
+#   build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] [--role <role>] <action> <platform...>
 #
-# --env  direct     host sbt (relies on the repo .jvmopts for the driver heap)
+# --env  direct     host sbt
 #        podman      a Linux container running ci-test.sh over a clean snapshot
 #        podman-ci   the podman container plus CI memory/CPU caps + CI=true +
-#                    SBT_TASK_LIMIT=1 + the -Xmx12G driver, reproducing CI
+#                    SBT_TASK_LIMIT=1, reproducing CI
 # --arch native|x86|arm  container architecture (podman/podman-ci only); sets
 #        podman --platform. native = host arch, x86 = linux/amd64, arm =
 #        linux/arm64; qemu-emulated when it differs from the host arch.
+# --role <role>  the sbt-heap-lib.sh heap role of a raw `sbt` command (default:
+#        compile); the other actions take each process's role from ci-test.sh.
 # <action>    one of test, testDiff, compile, link (default: test), or
 #             `sbt <raw command>` to run one arbitrary sbt command in the env
 #             (e.g. build.sh --env direct sbt 'kyo-netJVM/test'); no platform arg
@@ -36,31 +38,25 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Make the JVM heap deterministic. The runner defines the driver heap via the repo .jvmopts (direct)
-# or CI_DRIVER_OPTS (podman-ci). An ambient SBT_OPTS (e.g. a developer's "-Xms32G -Xmx32G" eager
-# reservation) otherwise overrides .jvmopts on every sbt launch and, stacked across the driver, forked
-# test JVMs, and phase processes a run spawns, oversubscribes the machine into OOM-kills and boot hangs.
-# Clear it so the runner's own heap always wins; the podman envs never inherit it.
-if [ -n "${SBT_OPTS:-}" ]; then
-    echo "build.sh: clearing inherited SBT_OPTS so the runner controls the JVM heap (was: $SBT_OPTS)" >&2
-    unset SBT_OPTS
-fi
+# Every sbt this script starts takes its heap from the role table; sourcing it also clears an inherited
+# SBT_OPTS, whose options the launcher would otherwise place after the role's heap.
+. "$SCRIPT_DIR/sbt-heap-lib.sh"
 
 # CI-faithful resource caps for --env podman-ci. GitHub standard public-repo
 # runners are 4 vCPU / 16 GB on both linux-x64 and linux-arm64. One place.
 CI_MEMORY="${CI_MEMORY:-16g}"
 CI_CPUS="${CI_CPUS:-4}"
-CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
 apt_mirror="${KYO_APT_MIRROR:-}"
 
 ENV_KIND="direct"
 ARCH="native"
+RAW_ROLE="compile"
 ACTIONS="test testDiff compile link"
 PLATFORMS="JVM JS Native Wasm"
 
 usage() {
-    echo "Usage: build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] <action> <platform...>" >&2
+    echo "Usage: build.sh [--env direct|podman|podman-ci] [--arch native|x86|arm] [--role <role>] <action> <platform...>" >&2
 }
 
 contains_word() {
@@ -76,6 +72,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --env)  ENV_KIND="${2:-}"; shift 2 ;;
         --arch) ARCH="${2:-}"; shift 2 ;;
+        --role) RAW_ROLE="${2:-}"; shift 2 ;;
         --) shift; break ;;
         -*) die_usage "unknown flag '$1'" ;;
         *) break ;;
@@ -84,6 +81,7 @@ done
 
 case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_KIND'" ;; esac
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
+sbt_heap_role_mb "$RAW_ROLE" >/dev/null || die_usage "unknown role '$RAW_ROLE'"
 
 # The CI setup action stages BoringSSL and Aeron unconditionally (kyo-aeronJVM's ffiCompile links
 # -laeron_driver_static and the kyo-net TLS tests link real libssl/libcrypto), so the CI-faithful
@@ -476,9 +474,7 @@ run_in_container() {
     [ -n "${KYO_NET_SUCCESS_ONLY:-}" ] && envs+=(-e "KYO_NET_SUCCESS_ONLY=$KYO_NET_SUCCESS_ONLY")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
-        envs+=(-e CI=true -e SBT_TASK_LIMIT=1
-               -e "JAVA_OPTS=$CI_DRIVER_OPTS"
-               -e "JVM_OPTS=$CI_DRIVER_OPTS")
+        envs+=(-e CI=true -e SBT_TASK_LIMIT=1)
         # Mirror build.yml's Native env so a podman-ci Native run reproduces the row's link staging:
         # the link CPU cap and the pool batch sizes carry the workflow's values. NATIVE_SKIP (the
         # app/integration tier dropped from the Native leg) is forwarded so a host value reproduces the
@@ -505,8 +501,8 @@ run_in_container() {
     # otherwise the inner command is the standard per-platform ci-test.sh runner.
     local inner
     if [ "$RAW_MODE" = yes ]; then
-        envs+=(-e "RAW_SBT=$RAW_SBT")
-        inner='sbt "$RAW_SBT"'
+        envs+=(-e "RAW_SBT=$RAW_SBT" -e "RAW_ROLE=$RAW_ROLE")
+        inner='./scripts/sbt.sh "$RAW_ROLE" "$RAW_SBT"'
     else
         inner="./scripts/ci-test.sh '$platform' '$ACTION'"
     fi
@@ -563,7 +559,7 @@ exit \${__rc:-1}"
 # -- raw sbt escape hatch (no platform loop), or fail-fast across platforms --
 if [ "$RAW_MODE" = yes ]; then
     case "$ENV_KIND" in
-        direct)            ( cd "$PROJECT_DIR" && sbt "$RAW_SBT" ); exit $? ;;
+        direct)            ( cd "$PROJECT_DIR" && "$SCRIPT_DIR/sbt.sh" "$RAW_ROLE" "$RAW_SBT" ); exit $? ;;
         podman|podman-ci)  run_in_container all; exit $? ;;
     esac
 fi
