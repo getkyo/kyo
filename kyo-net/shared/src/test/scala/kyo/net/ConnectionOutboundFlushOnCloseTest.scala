@@ -39,6 +39,10 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit =
             closeHandleSeen.set(true)
             discard(closeHandleDone.complete(Result.succeed(())))
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
         def close()(using AllowUnsafe, Frame): Unit = ()
         def label: String                           = "SpyDriver"
         def handleLabel(handle: Unit): String       = "spy"
@@ -93,10 +97,14 @@ class ConnectionOutboundFlushOnCloseTest extends Test:
                     parked = Absent
                     p.completeDiscard(Result.fail(Closed("stalled peer", summon[Frame], "canceled")))
                 }
-            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
-            def close()(using AllowUnsafe, Frame): Unit                   = ()
-            def label: String                                             = "StalledPeerDriver"
-            def handleLabel(handle: Unit): String                         = "stalled"
+            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                    = discard(closeHandleCalls.incrementAndGet())
+            def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
+            def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+                try cancel(handle)
+                finally releaseFd(handle, closeFd)
+            def close()(using AllowUnsafe, Frame): Unit = ()
+            def label: String                           = "StalledPeerDriver"
+            def handleLabel(handle: Unit): String       = "stalled"
         end StalledPeerDriver
 
         "the tail of a span parked mid-write reaches the peer before the fd closes" in {

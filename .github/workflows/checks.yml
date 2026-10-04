@@ -37,13 +37,6 @@ jobs:
     # 60 cold. The cap leaves room for the cold run. Uncapped, a hang would hold a slot for GitHub's
     # 360-minute default, which is the resource this job is shaped to conserve.
     timeout-minutes: 90
-    env:
-      # No -Xmx here: the checked-in .jvmopts governs the driver heap (12G). The sbt launcher
-      # appends .jvmopts after JAVA_OPTS on the java command line, so the last -Xmx wins and one
-      # set here would be silently inert. Change the heap in .jvmopts. build.yml carries the same
-      # constraint.
-      JAVA_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS: -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
       # Full history is required by `sbt doctest` and by the workflow-change gate below, which
       # resolves a base commit a shallow clone does not carry. Shallowing this fails quietly:
@@ -113,6 +106,19 @@ jobs:
           jvm: corretto:25
           apps: sbt
 
+      # Every sbt driver heap comes from scripts/sbt-heap-lib.sh; the check fails on a heap flag set
+      # anywhere else and on an sbt started without it.
+      - name: sbt driver heaps
+        run: |
+          scripts/sbt-heap-check.sh --self-test
+          scripts/sbt-heap-lib-test.sh
+          scripts/sbt-heap-check.sh
+
+      - name: Self-test the build scripts
+        run: |
+          scripts/ci-test.sh --self-test
+          scripts/build-selftest.sh
+
       - name: Self-test the format script
         run: scripts/format.sh --self-test
 
@@ -161,9 +167,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            sbt "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
+            scripts/sbt.sh docs "testKyo --phase doctest ${{ steps.base.outputs.sha }} JVM"
           else
-            sbt doctest
+            scripts/sbt.sh docs doctest
           fi
 
       # main writes, PRs only restore. A cache written on a PR run is scoped to that PR's merge
@@ -191,9 +197,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            sbt "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
+            scripts/sbt.sh docs "testKyo --phase scaladoc ${{ steps.base.outputs.sha }} JVM"
           else
-            sbt kyoJVM/doc
+            scripts/sbt.sh docs kyoJVM/doc
           fi
 
       # Two modules declaring one fully qualified name is silent everywhere else: the JVM classloader and
@@ -223,23 +229,23 @@ jobs:
       - name: Class names
         shell: bash
         run: |
-          sbt 'checkClassNames --self-test'
+          scripts/sbt.sh tool 'checkClassNames --self-test'
           if [ "${{ github.event_name }}" != pull_request ]; then
-            sbt 'checkClassNames JVM --write-index target/classnames-index.tsv'
+            scripts/sbt.sh compile 'checkClassNames JVM --write-index target/classnames-index.tsv'
             git rev-parse HEAD > target/classnames-index.sha
             exit 0
           fi
           indexed="$(cat target/classnames-index.sha 2>/dev/null || true)"
           if [ -n "$indexed" ] && { git cat-file -e "$indexed^{commit}" 2>/dev/null || git fetch -q origin "$indexed"; }; then
-            sbt "testKyo --dry-run --plan-file target/classnames-plan $indexed JVM"
+            scripts/sbt.sh tool "testKyo --dry-run --plan-file target/classnames-plan $indexed JVM"
             if [ ! -s target/classnames-plan ]; then
               echo "No JVM project differs from $indexed; no class can have changed."
               exit 0
             fi
-            sbt "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
+            scripts/sbt.sh compile "checkClassNames JVM --modules $(paste -sd, target/classnames-plan) --index target/classnames-index.tsv"
           else
             echo "No usable class-name index; checking every project."
-            sbt 'checkClassNames JVM'
+            scripts/sbt.sh compile 'checkClassNames JVM'
           fi
 
       - name: Save class-name index

@@ -44,7 +44,7 @@ class TransportCloseFlushTest extends Test:
     end fillUntilStalled
 
     "a closing connection whose peer never reads releases its descriptor after closeFlushGrace" - eachBackend { transport =>
-        val config   = NetConfig(closeFlushGrace = 200.millis)
+        val config   = NetConfig(closeFlushGrace = 200.millis.grace)
         val accepted = Promise.Unsafe.init[Connection, Any]()
         for
             listener <- transport.listen("127.0.0.1", 0, 128, config)(conn => accepted.completeDiscard(Result.succeed(conn))).safe.get
@@ -62,7 +62,7 @@ class TransportCloseFlushTest extends Test:
     }
 
     "a closing connection whose peer reads everything delivers every queued byte" - eachBackend { transport =>
-        val config   = NetConfig(closeFlushGrace = 200.millis)
+        val config   = NetConfig(closeFlushGrace = 200.millis.grace)
         val accepted = Promise.Unsafe.init[Connection, Any]()
         val payload  = Array.tabulate[Byte](1024 * 1024)(i => (i % 251).toByte)
         for

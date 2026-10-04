@@ -1571,10 +1571,11 @@ class ContainerTest extends BasePodTest:
 
         "reports false for a port nothing is serving" in {
             // Bind then close: the port was real and is now free, so the connect is refused outright,
-            // which is the shape of a container whose forwarder never came up at all.
+            // which is the shape of a container whose forwarder never came up at all. The close returns
+            // before the descriptor is released, so the probe waits for `released`.
             withListener(_ => ()) { listener =>
                 val port = listener.port
-                Sync.defer(listener.close()).andThen {
+                Sync.defer { listener.close(); listener.released.safe }.map(_.get).andThen {
                     Container.probeHostPort("127.0.0.1", port).map { reachable =>
                         assert(!reachable, s"port $port has no listener and must not read as ready")
                     }

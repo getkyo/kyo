@@ -95,8 +95,9 @@ Global / concurrentRestrictions := {
     // Forked-test cap: how many forked test JVMs run concurrently. kyo-pod splits each suite into a
     // podman fork and a docker fork (KYO_POD_RUNTIME pinning), so this bounds container-daemon
     // contention. It is a numeric, daemon-blind cap (it does NOT guarantee one fork per daemon); real
-    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). CI caps at 2; locally cores/2.
-    val forkLimit = if (isCI) 2 else 1 max cores / 2
+    // CI additionally serializes via SBT_TASK_LIMIT=1 (limitAll below). 2 everywhere: each fork's heap
+    // is 5GB (Test / javaOptions), so the cap is what bounds the forks' memory on any machine.
+    val forkLimit = 2
     Seq(
         Tags.limitAll(if (taskLimit != "0") taskLimit.toInt else cores),
         Tags.limit(Tags.Update, if (updateLimit != "0") updateLimit.toInt else 1),
@@ -193,7 +194,7 @@ lazy val `kyo-settings` = Seq(
                 }
             }
             // Named so a module that documents locally documents on a runner: the JVM default is a
-            // quarter of physical RAM, 4G beside the 12G driver on the 16G runner that runs this.
+            // quarter of physical RAM, 4G beside the driver on the 16G runner that runs this.
             val exit = Fork.java(
                 ForkOptions()
                     .withRunJVMOptions(Vector("-Xmx2G", "-cp", tool.mkString(sep)))
@@ -256,16 +257,16 @@ lazy val `kyo-settings` = Seq(
     // concurrency + pervasive arraycopy (Chunk/Span) + G1GC hit JDK-8380060 and a G1 concurrent-mark
     // metadata corruption, surfacing as a rare ClassNotFoundError for a class present on disk (the
     // io_uring test flake). Force COH OFF in the forks explicitly so it stays off regardless of the
-    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts / CI JAVA_OPTS): it runs no forked-test
+    // driver's opts. The DRIVER JVM keeps COH ON (.jvmopts): it runs no forked-test
     // workload, only compile and the Scala.js/Wasm linker, whose large graph needs COH's header
-    // savings to fit the 12 GB driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
+    // savings to fit the driver heap (without it the kyo-ui Wasm linker GC-thrashes to a hang).
     Test / javaOptions += "-XX:-UseCompactObjectHeaders",
-    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
-    // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
-    // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
-    // ForkedTestGroup cap at 2, two 5GB forks plus the floor-less driver fit the 16GB box. Local dev
-    // keeps the auto-scaling default so small machines are not over-committed.
-    Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM: 4GB on the 16GB CI
+    // runners, too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
+    // classpaths under globalK-way leaf concurrency), and 24GB on a 96GB workstation, where a few
+    // concurrent forks saturate the machine. With the ForkedTestGroup cap at 2, two 5GB forks plus the
+    // driver fit a 16GB box.
+    Test / javaOptions += "-Xmx5g",
     doctestPredef := Seq("import kyo.*"),
     // Scala 3.9 modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. Scala 3.3 modules must NOT have kyo-doctest on the Test
@@ -512,6 +513,7 @@ lazy val kyoJVM: Project = project
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
         `kyo-slack`.jvm,
+        `kyo-telegram`.jvm,
         `kyo-ui`.jvm,
         `kyo-markdown`.jvm,
         `kyo-i18n`.jvm,
@@ -608,6 +610,7 @@ lazy val kyoJS = project
         `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
+        `kyo-telegram`.js,
         `kyo-ui`.js,
         `kyo-markdown`.js,
         `kyo-i18n`.js,
@@ -693,6 +696,7 @@ lazy val kyoNative = project
         `kyo-whatsapp`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
+        `kyo-telegram`.native,
         `kyo-ui`.native,
         `kyo-markdown`.native,
         `kyo-i18n`.native,
@@ -776,6 +780,7 @@ lazy val kyoWasm = project
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
+        `kyo-telegram`.wasm,
         `kyo-ui`.wasm,
         `kyo-markdown`.wasm,
         `kyo-i18n`.wasm,
@@ -3881,6 +3886,29 @@ lazy val `kyo-slack` =
         )
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-telegram` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-telegram"))
+        .dependsOn(`kyo-http` % "compile->compile;test->test", `kyo-schema-json`, `kyo-charset`, `kyo-crypto`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .withKyoTest
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-markdown` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -4333,7 +4361,7 @@ lazy val `js-settings` = Seq(
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
     // CI links every module's test binary in one sbt process; retaining each module's incremental
-    // linker state overflows the 12G sbt heap now that the schema family links per-format
+    // linker state overflows the driver heap now that the schema family links per-format
     // binaries. Batch mode drops that state after each link: incremental relink speed is
     // irrelevant in CI, footprint is what matters.
     scalaJSLinkerConfig := {

@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import java.net.InetSocketAddress
+import java.net.StandardSocketOptions
 import java.nio.ByteBuffer
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
@@ -273,6 +274,67 @@ class NioIoDriverTest extends Test:
             succeed
         finally
             given Frame = Frame.internal
+            driver.close()
+        end try
+    }
+
+    "a TLS write whose last record only partly fit the socket is not Done until that record's tail is written" in {
+        val (clientEngine, serverEngine) = handshakedEnginePair()
+        val driver                       = NioIoDriver.init()
+        val listener                     = ServerSocketChannel.open()
+        listener.setOption(StandardSocketOptions.SO_RCVBUF, Integer.valueOf(4096))
+        listener.bind(new InetSocketAddress("127.0.0.1", 0))
+        val writer = SocketChannel.open()
+        writer.setOption(StandardSocketOptions.SO_SNDBUF, Integer.valueOf(4096))
+        writer.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+        writer.connect(new InetSocketAddress("127.0.0.1", listener.socket().getLocalPort))
+        writer.configureBlocking(false)
+        val peer = listener.accept()
+        peer.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+        listener.close()
+        val handle = NioHandle.initTls(writer, 4096, clientEngine, Duration.Infinity, Duration.Infinity, Frame.internal)
+        // 16384 plaintext bytes are one TLS record, so the first write the unread peer cannot absorb wraps the whole span and leaves part of
+        // its only record unsent: Partial at the span's end.
+        val record = Span.fromUnsafe(Array.tabulate[Byte](16384)(i => (i % 251).toByte))
+        @scala.annotation.tailrec
+        def fill(written: Int): (Int, WriteResult) =
+            driver.write(handle, record, 0) match
+                case WriteResult.Done if written < 10000 => fill(written + 1)
+                case other                               => (written, other)
+        val (written, first) = fill(0)
+        def pending: Boolean = handle.tls.exists(_.pendingCiphertext)
+        try
+            if first != WriteResult.Partial(record, record.size) then fail(s"after $written whole records, got $first")
+            // The pump's retry once the socket is writable.
+            val retry = driver.write(handle, record, record.size)
+            if retry == WriteResult.Done && pending then fail("Done while the last record's ciphertext is still unsent")
+            // The peer drains and decrypts everything, the pump retrying while ciphertext is held back: every record arrives whole.
+            val netIn    = ByteBuffer.allocate(serverEngine.getSession.getPacketBufferSize * 4)
+            val app      = ByteBuffer.allocate(serverEngine.getSession.getApplicationBufferSize)
+            val expected = (written + 1).toLong * record.size
+            @scala.annotation.tailrec
+            def unwrapAll(plain: Long): Long =
+                app.clear()
+                val result = serverEngine.unwrap(netIn, app)
+                if result.getStatus eq SSLEngineResult.Status.OK then unwrapAll(plain + result.bytesProduced())
+                else plain
+            end unwrapAll
+            @scala.annotation.tailrec
+            def drain(plain: Long): Long =
+                if plain >= expected then plain
+                else
+                    if pending then discard(driver.write(handle, record, record.size))
+                    discard(peer.read(netIn))
+                    netIn.flip()
+                    val more = unwrapAll(plain)
+                    discard(netIn.compact())
+                    drain(more)
+            assert(drain(0L) == expected)
+            assert(!pending)
+        finally
+            given Frame = Frame.internal
+            writer.close()
+            peer.close()
             driver.close()
         end try
     }

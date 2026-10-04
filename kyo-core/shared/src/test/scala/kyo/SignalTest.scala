@@ -958,36 +958,54 @@ class SignalTest extends kyo.test.Test[Any]:
     private def recordValue[A](seen: AtomicRef[Chunk[A]], v: A)(using Frame): Unit < Async =
         seen.updateAndGet(_.append(v)).unit
 
-    // Leaf and `map`-over-leaf `observe` use the repairing path (the exact register-before-read override was removed
-    // because it miscompiled on Scala Native; see SignalRef in Signal.scala). The guarantee is that the final value is
-    // never lost: a write that lands in the read/register window is reconciled within `repairInterval`. Drive
-    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and take what the observer hands over
-    // until the final value arrives. The handoff is a channel rather than a polled reference because a poll's sleep
-    // costs a timer tick per iteration, and on a platform whose tick is 15ms that alone is over the leaf's budget at
-    // 5000 iterations; a take returns the instant the value is put. Each wait is bounded so a genuinely lost value
-    // ends the iteration as a miss instead of hanging the leaf, and the bound is wide enough that a starved repair
-    // fiber that is merely late is not miscounted as a loss.
+    // Leaf and `map`-over-leaf `observe` use the repairing path (see SignalRef in Signal.scala for why there is no
+    // exact register-before-read override). The guarantee is that the final value is never lost: a write that lands
+    // in the read/register window is reconciled within `repairInterval`, which is all the design promises about
+    // latency. The loop runs under virtual time so a write that takes the repair path costs
+    // no wall time: after back-to-back set(a);set(b) it drains what the observer handed over, and while `b` is missing
+    // it fences on the observer's armed repair sleep and advances virtual time past it. The observer arms that sleep
+    // only after running `f` for the value it read, and an advance fires every armed sleep, so two advances after the
+    // final write force a read that sees `b`, and the fence after them proves `f(b)` already ran. An iteration with no
+    // `b` at that point is a lost value, never a slow one.
     private def observeNeverLosesFinalValue(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
-        for
-            ref <- Signal.initRef("")
-            sig = if useMap then ref.map(v => v) else ref
-            seen   <- Channel.initUnscoped[String](16)
-            fiber  <- Fiber.initUnscoped(sig.observe(50.millis)(v => Abort.run[Closed](seen.put(v)).unit))
-            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
-                val a                                          = s"a$i"
-                val b                                          = s"b$i"
-                def untilFinal: Unit < (Async & Abort[Closed]) =
-                    seen.take.map(v => if v == b then () else untilFinal)
-                for
-                    _   <- ref.set(a)
-                    _   <- ref.set(b)
-                    got <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(untilFinal))
-                yield if got.isSuccess then 0 else 1
-                end for
-            }
-            _ <- fiber.interrupt
-            _ <- seen.close
-        yield misses.foldLeft(0)(_ + _)
+        val repairInterval = 50.millis
+        Clock.withTimeControl { control =>
+            for
+                ref <- Signal.initRef("")
+                sig = if useMap then ref.map(v => v) else ref
+                seen   <- Channel.initUnscoped[String](16)
+                fiber  <- Fiber.initUnscoped(sig.observe(repairInterval)(v => Abort.run[Closed](seen.put(v)).unit))
+                misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+                    val b                                         = s"b$i"
+                    def drained: Boolean < (Sync & Abort[Closed]) =
+                        seen.poll.map {
+                            case Present(v) => if v == b then true else drained
+                            case Absent     => false
+                        }
+                    def awaitFinal(advances: Int): Boolean < (Async & Abort[Closed]) =
+                        drained.map {
+                            case true  => true
+                            case false =>
+                                control.awaitPendingSleeper(repairInterval).andThen(drained).map {
+                                    case true                   => true
+                                    case false if advances == 2 => false
+                                    case false => control.advance(repairInterval, Duration.Zero).andThen(awaitFinal(advances + 1))
+                                }
+                        }
+                    for
+                        _   <- ref.set(s"a$i")
+                        _   <- ref.set(b)
+                        got <- Abort.run[Closed](awaitFinal(advances = 0))
+                    yield got match
+                        case Result.Success(true) => 0
+                        case _                    => 1
+                    end for
+                }
+                _ <- fiber.interrupt
+                _ <- seen.close
+            yield misses.foldLeft(0)(_ + _)
+        }
+    end observeNeverLosesFinalValue
 
     "observe" - {
         "emits the current value on subscription" in {

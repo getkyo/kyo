@@ -33,36 +33,60 @@ import kyo.*
   *     descriptor is held until they are written, so a peer that has stopped reading would hold it forever; a full window in which not one
   *     byte reaches the socket releases it and drops the unwritten bytes. Any write resets the window, so a slow peer that keeps reading
   *     receives everything. `Duration.Infinity` waits for the peer indefinitely.
+  *
+  * The byte sizes are each a [[kyo.ByteSize]] and are narrowed where the transport uses them, as kyo-core's stream reads narrow theirs: zero
+  * becomes one byte and a size beyond `Int.MaxValue` becomes `Int.MaxValue`, so no byte size is refused. A `channelCapacity` of zero or
+  * less makes the pump channels rendezvous channels, as kyo-core's `Channel.init` does: each chunk passes straight from producer to
+  * consumer with none staged. The two graces are each a [[NetConfig.Grace]] (positive or `Duration.Infinity`); a value known only at
+  * runtime goes through `Grace.init`, which fails with a [[NetConfigException]].
   */
 case class NetConfig(
     channelCapacity: Int = NetConfig.DefaultChannelCapacity,
-    readChunkSize: Int = NetConfig.DefaultReadChunkSize,
-    soRcvBuf: Maybe[Int] = Absent,
-    soSndBuf: Maybe[Int] = Absent,
-    peerCloseGrace: Duration = NetConfig.DefaultPeerCloseGrace,
-    closeFlushGrace: Duration = NetConfig.DefaultCloseFlushGrace
-) derives CanEqual:
-    require(channelCapacity > 0, s"channelCapacity must be positive: $channelCapacity")
-    require(readChunkSize > 0, s"readChunkSize must be positive: $readChunkSize")
-    soRcvBuf.foreach(n => require(n > 0, s"soRcvBuf must be positive: $n"))
-    soSndBuf.foreach(n => require(n > 0, s"soSndBuf must be positive: $n"))
-    require(peerCloseGrace > Duration.Zero, s"peerCloseGrace must be positive (or Duration.Infinity to disable): $peerCloseGrace")
-    require(closeFlushGrace > Duration.Zero, s"closeFlushGrace must be positive (or Duration.Infinity to disable): $closeFlushGrace")
-end NetConfig
+    readChunkSize: ByteSize = NetConfig.DefaultReadChunkSize,
+    soRcvBuf: Maybe[ByteSize] = Absent,
+    soSndBuf: Maybe[ByteSize] = Absent,
+    peerCloseGrace: NetConfig.Grace = NetConfig.DefaultPeerCloseGrace,
+    closeFlushGrace: NetConfig.Grace = NetConfig.DefaultCloseFlushGrace
+) derives CanEqual
 
 object NetConfig:
     /** Default inbound/outbound pump channel depth. */
     val DefaultChannelCapacity: Int = 4
 
-    /** Default initial per-connection read buffer size, in bytes. */
-    val DefaultReadChunkSize: Int = 8192
+    /** Default initial per-connection read buffer size. */
+    val DefaultReadChunkSize: ByteSize = 8.kib
+
+    /** `size` as the `Int` byte count a buffer or socket option takes: zero becomes one byte, and a size beyond `Int.MaxValue` becomes
+      * `Int.MaxValue`, the rule kyo-core's stream reads apply to their own `ByteSize` buffers.
+      */
+    private[net] def bytesAtUse(size: ByteSize): Int = readBufferCapacity(size)
 
     /** Default peer-close grace window (see [[NetConfig.peerCloseGrace]]). */
-    val DefaultPeerCloseGrace: Duration = 30.seconds
+    val DefaultPeerCloseGrace: Grace = 30.seconds
 
     /** Default close-flush grace window (see [[NetConfig.closeFlushGrace]]). */
-    val DefaultCloseFlushGrace: Duration = 30.seconds
+    val DefaultCloseFlushGrace: Grace = 30.seconds
 
     /** The settings every operation applies when its caller passes none. */
     val default: NetConfig = NetConfig()
+
+    /** How long a connection may go without progress before it is released: positive, or `Duration.Infinity` for no limit. Zero would
+      * release every such connection on the first check, so it is refused rather than held.
+      */
+    opaque type Grace = Duration
+
+    object Grace:
+        val unlimited: Grace = Duration.Infinity
+
+        /** `d` as a grace window, or the [[NetConfigException]] refusing a zero duration. */
+        def init(d: Duration)(using Frame): Result[NetConfigException, Grace] = check("grace", d)
+
+        private[kyo] def check(setting: String, d: Duration)(using Frame): Result[NetConfigException, Grace] =
+            if d > Duration.Zero then Result.succeed(d)
+            else Result.fail(NetConfigException(setting, d.show, "positive, or Duration.Infinity for no limit"))
+
+        given CanEqual[Grace, Grace] = CanEqual.derived
+
+        extension (self: Grace) def duration: Duration = self
+    end Grace
 end NetConfig

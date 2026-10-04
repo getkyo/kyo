@@ -117,6 +117,12 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         real.closeHandle(handle)
 
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.releaseFd(handle, closeFd)
+
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.closeListener(handle, closeFd)
+
     def close()(using AllowUnsafe, Frame): Unit =
         real.close()
 
