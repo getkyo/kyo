@@ -71,9 +71,19 @@ class StartTlsUpgradeTest extends Test:
                             signal.andThen {
                                 // Drive both upgrades concurrently (the handshake is a two-party exchange over the fds).
                                 val serverUpgrade =
-                                    transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity, isServer = true).safe
+                                    transport.upgradeRole(
+                                        serverPlain,
+                                        serverTls,
+                                        transportConfig.channelCapacity,
+                                        isServer = true
+                                    ).safe
                                 val clientUpgrade =
-                                    transport.upgradeRole(clientPlain, clientTls, transportConfig.channelCapacity, isServer = false).safe
+                                    transport.upgradeRole(
+                                        clientPlain,
+                                        clientTls,
+                                        transportConfig.channelCapacity,
+                                        isServer = false
+                                    ).safe
                                 Async.zip(clientUpgrade.get, serverUpgrade.get)
                             }.map { case (clientTlsConn, serverTlsConn) =>
                                 Scope.ensure(Sync.defer(clientTlsConn.close())).andThen {

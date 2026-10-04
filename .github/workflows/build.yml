@@ -65,16 +65,10 @@ jobs:
     env:
       # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run
       # in-process in the sbt driver heap, and the Native optimizer plus forked LLVM/podman/chrome
-      # run alongside it; on the 16GB runners two of those at once either exhaust the 12GB heap
+      # run alongside it; on the 16GB runners two of those at once either exhaust the driver heap
       # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:4
       # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
       SBT_TASK_LIMIT: 1
-      # The sbt driver heap is governed by the checked-in .jvmopts (12G): the sbt runner appends
-      # .jvmopts after these env opts on the java command line, so an -Xmx set here would never
-      # take effect. The env therefore carries only the non-heap flags, which do reach the JVM
-      # because .jvmopts holds no conflicting duplicates for them.
-      JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       # No heavy-module pre-link on Native: the previous heavy (kyo-schema-tests, whose whole-program
       # optimize needed its own ~12G driver) is dropped from the Native leg via NATIVE_SKIP below, and the
       # link pool already gives every remaining (KEPT) module a driver carrying at most NATIVE_LINK_BATCH

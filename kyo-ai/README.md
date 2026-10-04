@@ -750,10 +750,10 @@ Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test
 Self-contained commands for the harness smoke demo, assuming API keys and command harness auth are already available in the environment:
 
 ```sh
-JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=claude-code sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
-JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=codex sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
-JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=anthropic sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
-JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=openai sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+KYO_AI_PROVIDER=claude-code scripts/sbt.sh compile -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+KYO_AI_PROVIDER=codex scripts/sbt.sh compile -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+KYO_AI_PROVIDER=anthropic scripts/sbt.sh compile -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+KYO_AI_PROVIDER=openai scripts/sbt.sh compile -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
 ```
 
 Use the same command shape with `demo.ToolCallDemo` for tool calling and `demo.StreamingDemo` for both streaming modes.

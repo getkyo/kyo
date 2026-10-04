@@ -22,6 +22,11 @@ abstract class Test extends kyo.test.Test[Any]:
     // deadlock still fails loudly rather than hanging.
     override def timeout = Duration.fromJava(java.time.Duration.ofSeconds(60))
 
+    // A grace literal goes through `init`, so a zero literal fails the leaf that wrote it.
+    extension (d: Duration)
+        def grace(using Frame): NetConfig.Grace = NetConfig.Grace.init(d).getOrThrow
+    end extension
+
     /** Register one leaf test per registered I/O backend, each running `scenario` against a freshly built [[Transport]] over that backend.
       *
       * Use as the body of a FreeSpec `-` branch, exactly as kyo-pod's `runBackends` is used:
