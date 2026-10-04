@@ -63,6 +63,16 @@ private[net] object EpollPollerBackend extends PollerBackend:
         rc
     end registerRead
 
+    def registerAccept(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
+        val union     = addInterest(scratch, fd, PosixConstants.EPOLLIN)
+        // reReport=true: the accept side has no missed-edge recovery, so the MOD must re-queue a listen fd whose backlog is already non-empty. A
+        // forced dispatch instead would spin, since every drain to EAGAIN re-arms; the MOD reports only a connection actually pending.
+        val rc = arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true, id)
+        if rc >= 0 then discard(scratch.armedId.put(fd, id))
+        rc
+    end registerAccept
+
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLOUT)
@@ -211,12 +221,15 @@ private[net] object EpollPollerBackend extends PollerBackend:
       * loses nothing (the edge-triggered kernel state a signal interrupts is un-consumed, so a later successful `epoll_wait` still reports it),
       * so it is silently retried. Anything else is logged: mirrors `IoUringDriver.reapRcContinues`'s rc classification (an unrecognized/fatal rc
       * there gets a named log line instead of a silent swallow), so a genuine backend error here leaves a trace instead of presenting as an
-      * unexplained stalled connection.
+      * unexplained stalled connection. `EBADF` and `EINVAL` are permanent: the epoll fd itself is gone or no longer an epoll fd, so they also
+      * mark [[PollScratch.pollerLost]] for the driver to stop rather than re-poll.
       */
     private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val raw = outcome.value
         if raw < 0 && outcome.errorCode != PosixConstants.EINTR then
             Log.live.unsafe.error(s"epoll_wait failed errno=${outcome.errorCode}")
+        if raw < 0 && (outcome.errorCode == PosixConstants.EBADF || outcome.errorCode == PosixConstants.EINVAL) then
+            scratch.pollerLost = true
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags

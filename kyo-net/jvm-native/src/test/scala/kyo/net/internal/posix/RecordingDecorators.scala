@@ -608,6 +608,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         real.create()
 
     def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        recordRead(fd, scratch)(real.registerRead(pollerFd, fd, id, scratch))
+
+    // An accept arm is read interest on the listen fd, so it records exactly as registerRead does.
+    def registerAccept(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        recordRead(fd, scratch)(real.registerAccept(pollerFd, fd, id, scratch))
+
+    private def recordRead(fd: Int, scratch: PollScratch)(register: => Int)(using AllowUnsafe): Int =
         val hook = onRegisterRead
         if hook != null && onRegisterRead.eq(hook) then
             onRegisterRead = null
@@ -617,10 +624,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         registeredReadFds.add(fd)
         registerReadArmBufs.add(scratch.armBuf)
         discard(callLogQueue.add(s"registerRead($fd)"))
-        val rc = real.registerRead(pollerFd, fd, id, scratch)
+        val rc = register
         registeredRead(fd).completeDiscard(Result.succeed(()))
         rc
-    end registerRead
+    end recordRead
 
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         discard(registerWriteCount.getAndIncrement())
@@ -667,7 +674,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         // Consume the one-shot synthetic injection atomically before delegating so the CAS wins exactly once.
         val injFd     = syntheticErrorFd.get()
         val hasInject = injFd >= 0 && syntheticErrorFd.compareAndSet(injFd, -1)
-        val realFiber = real.poll(pollerFd, timeoutMs, changelist, nChanges, scratch)
+        // Once set, every wait runs the real syscall against fd -1, which kevent and epoll_wait refuse with EBADF: the poller fd is gone, with no
+        // recycled fd number for a concurrent leaf to land on.
+        val waitFd    = if pollerLost.get() then -1 else pollerFd
+        val realFiber = real.poll(waitFd, timeoutMs, changelist, nChanges, scratch)
         if hasInject then
             // After the real poll returns n events, append one synthetic error-flag entry at index n for the target fd, guarded to stay
             // within the scratch arrays (MaxEvents). The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the
@@ -730,6 +740,10 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     val throwOnPoll: java.util.concurrent.atomic.AtomicBoolean =
         new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // When true, every later poll() waits on an invalid poller fd (see poll).
+    val pollerLost: java.util.concurrent.atomic.AtomicBoolean =
+        new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // When true, the next registerWake returns false (forced failure) without calling real. CAS to false on use so it fires once.
     val forceRegisterWakeFail: java.util.concurrent.atomic.AtomicBoolean =
         new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -766,8 +780,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         if p != null then p.asInstanceOf[Promise.Unsafe[Unit, Any]].completeDiscard(Result.succeed(()))
     end closeWake
 
+    // Every close(pollerFd) call, recorded before delegating.
+    val closedPollerFds: java.util.concurrent.ConcurrentLinkedQueue[Int] = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =
+        discard(closedPollerFds.add(pollerFd))
         real.close(pollerFd)
+    end close
 
 end RecordingPollerBackend
 
