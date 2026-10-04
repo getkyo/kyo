@@ -251,7 +251,6 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "concurrent reads and writes" in {
-            assume(Runtime.getRuntime.availableProcessors() > 4, "Needs >4 cores for 20 concurrent fibers")
             // Native scheduler has limited preemption — 20 busy-wait fibers
             // contending on CAS need fewer repetitions to avoid starvation timeout
             val effectiveRepeats = if Platform.isNative then 5 else repeats
