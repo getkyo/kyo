@@ -8,9 +8,12 @@ import kyo.internal.CdpTypes.*
   * [[CdpBackend]] / [[JsonRpcHandler]] boundary, asserting each failure mode:
   *
   *   - CDP error responses surface as [[BrowserProtocolErrorException]] to the pending caller.
-  *   - Malformed envelopes surface as [[BrowserProtocolErrorException]] (via [[JsonRpcError.invalidRequest]]) when an id matches, or are
-  *     silently dropped (caller times out) when the id is absent.
+  *   - Malformed envelopes surface as [[BrowserProtocolErrorException]] (via [[JsonRpcError.invalidRequest]]) when an id matches a
+  *     pending call, or are silently dropped when the id is absent, leaving the call to complete with the peer's real reply.
   *   - Non-Object and truly-malformed JSON frames are silently dropped by the envelope schema.
+  *
+  * A frame is injected only once the server route holding the call has received it: the client registers a call before sending it,
+  * so receipt proves the call is pending.
   *   - Notifications with no registered route are silently dropped by the [[JsonRpcHandler]] unknown-method policy.
   */
 class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
@@ -48,6 +51,48 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
             }
         }
 
+    /** A server route that opens `received` when the request arrives, then holds it until `release` opens and replies `reply`. */
+    private def heldRoute[In: Schema, Out: Schema](method: String, received: Latch, release: Latch, reply: Out)(using
+        Frame
+    ): JsonRpcRoute[In, Out, Nothing] =
+        JsonRpcRoute.request[In, Out](method)[Nothing] { (_, _) =>
+            received.release.andThen(release.await).andThen(reply)
+        }
+
+    /** The malformed frame a peer sends for `{"id":2,"error":"not-an-object"}`; id 2 is the first call after the connect probe. */
+    private val malformedErrorForCall2 = JsonRpcMalformedMessage(
+        Present(JsonRpcId.Num(2L)),
+        "error field is not a Record",
+        Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
+    )
+
+    /** Injects `frame` while a `Target.getTargets` call is pending, then lets the server reply. The in-memory transport delivers in
+      * order, so the client reads the frame before the reply: the call completing with the reply proves the frame was dropped
+      * without failing the call or the endpoint.
+      */
+    private def assertDroppedWhilePending(frame: JsonRpcEnvelope)(using Frame, kyo.test.AssertScope) =
+        val reply = GetTargetsResult(Seq(TargetInfo("t1", "page", "about:blank")))
+        Scope.run {
+            for
+                received <- Latch.init(1)
+                release  <- Latch.init(1)
+                held = heldRoute[CdpNoParams, GetTargetsResult]("Target.getTargets", received, release, reply)
+                (backend, serverTransport) <- mkBackendAndServerTransport(Seq(held))
+                fiber                      <- Fiber.initUnscoped(Abort.run[BrowserReadException](CdpBackend.getTargets(backend)))
+                _                          <- received.await
+                _                          <- Abort.run[Closed](serverTransport.send(frame))
+                _                          <- release.release
+                result                     <- fiber.get
+            yield result match
+                case Result.Success(targets) =>
+                    assert(
+                        targets.targetInfos.map(_.targetId) == Seq("t1"),
+                        s"expected the server's reply after the dropped frame, got $targets"
+                    )
+                case other => fail(s"expected the server's reply after the dropped frame, got $other")
+        }
+    end assertDroppedWhilePending
+
     // ─────────────────────────────────────────────────────────────────────────
     // 1. CDP error-response pipeline; well-formed
     // ─────────────────────────────────────────────────────────────────────────
@@ -84,38 +129,22 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
         // triggers `JsonRpcError.invalidRequest("malformed response: <reason>")` at the pending caller.
         // Equivalent to the old fallback path for `{"id": 2, "error": "not-an-object"}`.
         Scope.run {
-            mkBackendAndServerTransport().map { (backend, serverTransport) =>
-                // Start a call so there is a pending id in the client endpoint's caller registry.
-                val callFiber = Fiber.initUnscoped(
-                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
-                )
-                callFiber.map { fiber =>
-                    // Give the call time to register with the endpoint's caller registry.
-                    Async.delay(50.millis)(Kyo.unit).andThen {
-                        // Inject a Malformed envelope from the server transport with a numeric id.
-                        // The client endpoint routes Malformed(Present(id), ...) to the pending caller as invalidRequest.
-                        Abort.run[Closed](
-                            serverTransport.send(
-                                JsonRpcMalformedMessage(
-                                    Present(JsonRpcId.Num(2L)),
-                                    "error field is not a Record",
-                                    Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
-                                )
-                            )
-                        ).andThen {
-                            fiber.get.map {
-                                case Result.Failure(_: BrowserProtocolErrorException) =>
-                                    succeed
-                                case Result.Failure(_: BrowserConnectionLostException) =>
-                                    succeed // timeout from mismatched-id malformed response
-                                case Result.Success(_) =>
-                                    fail("Malformed error must surface as failure; call must NOT succeed")
-                                case other => fail(s"Unexpected result: $other")
-                            }
-                        }
-                    }
-                }
-            }
+            for
+                received <- Latch.init(1)
+                release  <- Latch.init(1)
+                held = heldRoute[CdpNoParams, GetTargetsResult]("Target.getTargets", received, release, GetTargetsResult(Seq.empty))
+                (backend, serverTransport) <- mkBackendAndServerTransport(Seq(held))
+                fiber                      <- Fiber.initUnscoped(Abort.run[BrowserReadException](CdpBackend.getTargets(backend)))
+                _                          <- received.await
+                _                          <- Abort.run[Closed](serverTransport.send(malformedErrorForCall2))
+                result                     <- fiber.get
+            yield result match
+                case Result.Failure(e: BrowserProtocolErrorException) =>
+                    assert(e.method == "Target.getTargets")
+                    // Invalid Request (-32600) is how the endpoint fails a call whose response arrived malformed; the held
+                    // route never replies, so nothing else can complete the call.
+                    assert(e.code == Present(-32600), s"expected code Present(-32600) but got ${e.code}")
+                case other => fail(s"Expected BrowserProtocolErrorException from the malformed frame but got $other")
         }
     }
 
@@ -154,33 +183,24 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     "inbound frame: malformed error JSON falls back to BrowserProtocolErrorException" in {
         // Same shape as case 2; verifies the fallback pipeline at a different method site.
         Scope.run {
-            mkBackendAndServerTransport().map { (backend, serverTransport) =>
-                val callFiber = Fiber.initUnscoped(
-                    Abort.run[BrowserReadException](
-                        CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true))
-                    )
+            for
+                received <- Latch.init(1)
+                release  <- Latch.init(1)
+                held = heldRoute[AttachParams, AttachResult]("Target.attachToTarget", received, release, AttachResult("s1"))
+                (backend, serverTransport) <- mkBackendAndServerTransport(Seq(held))
+                fiber                      <- Fiber.initUnscoped(
+                    Abort.run[BrowserReadException](CdpBackend.attachToTarget(backend, AttachParams("t1", flatten = true)))
                 )
-                callFiber.map { fiber =>
-                    Async.delay(50.millis)(Kyo.unit).andThen {
-                        Abort.run[Closed](
-                            serverTransport.send(
-                                JsonRpcMalformedMessage(
-                                    Present(JsonRpcId.Num(2L)),
-                                    "error field is not a Record",
-                                    Structure.Value.Str("""{"id":2,"error":"not-an-object"}""")
-                                )
-                            )
-                        ).andThen {
-                            fiber.get.map {
-                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
-                                case Result.Failure(_: BrowserConnectionLostException) => succeed
-                                case Result.Success(_)                                 => fail("Expected failure but got success")
-                                case other                                             => fail(s"Unexpected: $other")
-                            }
-                        }
-                    }
-                }
-            }
+                _      <- received.await
+                _      <- Abort.run[Closed](serverTransport.send(malformedErrorForCall2))
+                result <- fiber.get
+            yield result match
+                case Result.Failure(e: BrowserProtocolErrorException) =>
+                    assert(e.method == "Target.attachToTarget")
+                    // Invalid Request (-32600) is how the endpoint fails a call whose response arrived malformed; the held
+                    // route never replies, so nothing else can complete the call.
+                    assert(e.code == Present(-32600), s"expected code Present(-32600) but got ${e.code}")
+                case other => fail(s"Expected BrowserProtocolErrorException from the malformed frame but got $other")
         }
     }
 
@@ -189,40 +209,17 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "inbound frame: non-Object frame (JSON array) is silently dropped" in {
-        // A Malformed envelope with no id (Absent) is skipped silently by the endpoint.
-        // The pending call times out.
-        Scope.run {
-            mkBackendAndServerTransport().map { (backend, serverTransport) =>
-                val callFiber = Fiber.initUnscoped(
-                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
-                )
-                callFiber.map { fiber =>
-                    Async.delay(50.millis)(Kyo.unit).andThen {
-                        Abort.run[Closed](
-                            serverTransport.send(
-                                JsonRpcMalformedMessage(
-                                    Absent,
-                                    "expected a Record",
-                                    Structure.Value.Sequence(Chunk(
-                                        Structure.Value.Integer(1L),
-                                        Structure.Value.Integer(2L),
-                                        Structure.Value.Integer(3L)
-                                    ))
-                                )
-                            )
-                        ).andThen {
-                            // The call must NOT succeed because the non-Object frame is dropped.
-                            fiber.get.map {
-                                case Result.Failure(_: BrowserConnectionLostException) => succeed // timed out
-                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
-                                case Result.Success(_) => fail("Non-Object frame must be dropped; call must NOT succeed")
-                                case Result.Panic(ex)  => fail(s"Unexpected panic: ${ex.getMessage}")
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        assertDroppedWhilePending(
+            JsonRpcMalformedMessage(
+                Absent,
+                "expected a Record",
+                Structure.Value.Sequence(Chunk(
+                    Structure.Value.Integer(1L),
+                    Structure.Value.Integer(2L),
+                    Structure.Value.Integer(3L)
+                ))
+            )
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -230,34 +227,7 @@ class CdpBackendDecoderTest extends kyo.BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "inbound frame: truly malformed JSON is silently dropped" in {
-        // Same shape as the non-Object frame: no id, so nothing to correlate and the pending call times out.
-        Scope.run {
-            mkBackendAndServerTransport().map { (backend, serverTransport) =>
-                val callFiber = Fiber.initUnscoped(
-                    Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
-                )
-                callFiber.map { fiber =>
-                    Async.delay(50.millis)(Kyo.unit).andThen {
-                        Abort.run[Closed](
-                            serverTransport.send(
-                                JsonRpcMalformedMessage(
-                                    Absent,
-                                    "json parse failed",
-                                    Structure.Value.Str("not-json")
-                                )
-                            )
-                        ).andThen {
-                            fiber.get.map {
-                                case Result.Failure(_: BrowserConnectionLostException) => succeed
-                                case Result.Failure(_: BrowserProtocolErrorException)  => succeed
-                                case Result.Success(_) => fail("Malformed frame must be dropped; call must NOT succeed")
-                                case Result.Panic(ex)  => fail(s"Unexpected panic: ${ex.getMessage}")
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        assertDroppedWhilePending(JsonRpcMalformedMessage(Absent, "json parse failed", Structure.Value.Str("not-json")))
     }
 
     // ─────────────────────────────────────────────────────────────────────────

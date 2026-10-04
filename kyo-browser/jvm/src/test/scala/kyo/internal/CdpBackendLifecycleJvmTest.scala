@@ -26,11 +26,14 @@ private[kyo] object CdpBackendFixtureServer:
         case DropMidRequest
     end Behavior
 
-    /** Started fixture handle. */
+    /** Started fixture handle. `awaitDelayedRequest` completes once a [[Behavior.SlowResponses]] fixture has received a request it is
+      * delaying, so the caller's send is in flight.
+      */
     final case class FixtureHandle(
         wsUrl: String,
         triggerDialog: () => Unit < Async,
-        triggerCrash: () => Unit < Async
+        triggerCrash: () => Unit < Async,
+        awaitDelayedRequest: () => Unit < Async
     )
 
     /** Starts an ephemeral-port WS server bound to localhost serving the given Behavior. Lifecycle bound to `Scope`.
@@ -40,29 +43,32 @@ private[kyo] object CdpBackendFixtureServer:
       */
     def start(behavior: Behavior)(using Frame): FixtureHandle < (Async & Scope & Abort[HttpBindException]) =
         AtomicRef.initWith(Absent: Maybe[HttpWebSocket]) { wsRef =>
-            val handler = HttpHandler.webSocket("devtools/browser/fixture") {
-                (_: HttpRequest[Any], ws: HttpWebSocket) =>
-                    wsRef.set(Present(ws)).andThen(runBehavior(behavior, ws))
-            }
-            HttpServer.init(0, "localhost")(handler).map { server =>
-                val wsUrl = s"ws://localhost:${server.port}/devtools/browser/fixture"
-                FixtureHandle(
-                    wsUrl = wsUrl,
-                    triggerDialog = () => emitDialog(wsRef),
-                    triggerCrash = () => forceClose(wsRef)
-                )
+            Latch.initWith(1) { delayedRequest =>
+                val handler = HttpHandler.webSocket("devtools/browser/fixture") {
+                    (_: HttpRequest[Any], ws: HttpWebSocket) =>
+                        wsRef.set(Present(ws)).andThen(runBehavior(behavior, ws, delayedRequest))
+                }
+                HttpServer.init(0, "localhost")(handler).map { server =>
+                    val wsUrl = s"ws://localhost:${server.port}/devtools/browser/fixture"
+                    FixtureHandle(
+                        wsUrl = wsUrl,
+                        triggerDialog = () => emitDialog(wsRef),
+                        triggerCrash = () => forceClose(wsRef),
+                        awaitDelayedRequest = () => delayedRequest.await
+                    )
+                }
             }
         }
 
     // ----- internals -----
 
-    private def runBehavior(behavior: Behavior, ws: HttpWebSocket)(using
+    private def runBehavior(behavior: Behavior, ws: HttpWebSocket, delayedRequest: Latch)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
         behavior match
             case Behavior.Echo                 => loopEcho(ws)
             case Behavior.CrashAfterFirstFrame => crashAfterFirst(ws)
-            case Behavior.SlowResponses(delay) => loopSlow(ws, delay)
+            case Behavior.SlowResponses(delay) => loopSlow(ws, delay, delayedRequest)
             case Behavior.DropMidRequest       => dropOnFirst(ws)
 
     private def loopEcho(ws: HttpWebSocket)(using Frame): Unit < (Async & Abort[Closed]) =
@@ -74,13 +80,13 @@ private[kyo] object CdpBackendFixtureServer:
     /** Slow-response loop: always responds to Browser.getVersion immediately; applies the delay for all other requests. This ensures the
       * connect probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
       */
-    private def loopSlow(ws: HttpWebSocket, delay: Duration)(using
+    private def loopSlow(ws: HttpWebSocket, delay: Duration, delayedRequest: Latch)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
         ws.stream.foreach {
             case HttpWebSocket.Payload.Text(s) =>
                 if s.contains("Browser.getVersion") then replyOk(ws, s)
-                else Async.delay(delay)(replyOk(ws, s))
+                else delayedRequest.release.andThen(Async.delay(delay)(replyOk(ws, s)))
             case _ => Kyo.unit
         }
 
@@ -204,14 +210,21 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             _ <- CdpBackend.getTargets(backend)
                             // Server side closes 1006; endpoint reader observes and exits.
                             _ <- fixture.triggerCrash()
-                            // Brief settle: allow the WS close to propagate through the transport layer.
-                            _ <- Async.delay(200.millis)(Kyo.unit)
+                            // A send failing ConnectionLost proves the backend has observed the drop before close runs.
+                            afterDrop <- Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
                             // close() must not throw or hang post-crash.
                             closeRes <- Abort.run[Timeout](Async.timeout(5.seconds)(backend.close(30.seconds)))
-                        yield closeRes match
-                            case Result.Success(_)          => succeed
-                            case Result.Failure(_: Timeout) => fail("backend.close hung after the peer dropped the connection")
-                            case Result.Panic(ex)           => fail(s"Panic from backend.close: ${ex.getMessage}")
+                        yield
+                            afterDrop match
+                                // A request timeout also maps to ConnectionLost; it would mean the drop went unobserved.
+                                case Result.Failure(e: BrowserConnectionLostException) if !e.message.startsWith("Request timeout") => ()
+                                case other => fail(s"expected ConnectionLost on a send after the peer dropped, got $other")
+                            end match
+                            closeRes match
+                                case Result.Success(_)          => succeed
+                                case Result.Failure(_: Timeout) => fail("backend.close hung after the peer dropped the connection")
+                                case Result.Panic(ex)           => fail(s"Panic from backend.close: ${ex.getMessage}")
+                            end match
                     }
                 }
             }
@@ -231,8 +244,8 @@ class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
                             slowFiber <- Fiber.initUnscoped(
                                 Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
                             )
-                            // Brief settle: allow the slow in-flight send to register before close starts.
-                            _ <- Async.delay(100.millis)(Kyo.unit)
+                            // The fixture holding the request proves the send is in flight before close starts.
+                            _ <- fixture.awaitDelayedRequest()
                             // close(500ms): grace expires while send is in-flight, falls back to closeNow.
                             _          <- backend.close(500.millis)
                             slowResult <- slowFiber.getResult
