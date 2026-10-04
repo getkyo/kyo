@@ -4561,12 +4561,33 @@ lazy val `kyo-test-runner` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
+            kyoTestRunnerLinkedModuleEnv(List("--max_old_space_size=5120"))
         )
         .wasmSettings(
             `wasm-settings`,
-            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided
+            libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
+            kyoTestRunnerLinkedModuleEnv(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
         )
+
+// The leaf watchdog ends the Node process it runs in, so its test loads this project's linked test module again in a child Node
+// process; the jsEnv tells it where that module is and how it loads. The arguments repeat the platform settings' Node flags, which
+// this jsEnv replaces.
+def kyoTestRunnerLinkedModuleEnv(nodeArgs: List[String]) =
+    Test / jsEnv := {
+        val outputDir = (Test / scalaJSStage).value match {
+            case FullOptStage => (Test / fullLinkJS / scalaJSLinkerOutputDirectory).value
+            case _            => (Test / fastLinkJS / scalaJSLinkerOutputDirectory).value
+        }
+        new NodeJSEnv(
+            NodeJSEnv.Config()
+                .withArgs(nodeArgs)
+                .withEnv(Map(
+                    "KYO_TEST_LINKED_MODULE"      -> (outputDir / "main.js").getAbsolutePath,
+                    "KYO_TEST_LINKED_MODULE_KIND" -> (Test / scalaJSLinkerConfig).value.moduleKind.toString
+                ))
+        )
+    }
 
 lazy val `kyo-test-prop` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

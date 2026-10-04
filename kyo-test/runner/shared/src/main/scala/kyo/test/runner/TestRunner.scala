@@ -35,6 +35,7 @@ import kyo.test.runner.ConsoleReporter
 import kyo.test.runner.internal.Glob
 import kyo.test.runner.internal.Instantiate
 import kyo.test.runner.internal.LeafPool
+import kyo.test.runner.internal.LeafWatchdog
 import kyo.test.runner.internal.LeakDebug
 import kyo.test.runner.internal.Randomize
 import scala.concurrent.Future
@@ -509,8 +510,14 @@ object TestRunner:
         // time, and a `Timeout` the body raises from its own `Async.timeout` stays the body's failure.
         val timed: Unit < (Async & Abort[Throwable] & Scope) =
             builder.timeout match
-                case Maybe.Present(d) => Async.timeoutWithError(d, Result.Failure(LeafTimedOut(d)))(retried)
-                case Maybe.Absent     => retried
+                case Maybe.Present(d) =>
+                    // Armed right before the timeout's own timer and disarmed once it returns, so the watchdog's deadline is the timer's.
+                    Sync.defer(LeafWatchdog.arm(instance.getClass.getName, path, d)).map { token =>
+                        Sync.ensure(Sync.defer(LeafWatchdog.disarm(token)))(
+                            Async.timeoutWithError(d, Result.Failure(LeafTimedOut(d)))(retried)
+                        )
+                    }
+                case Maybe.Absent => retried
 
         // Apply the suite's `aroundLeaf` hook from OUTSIDE the timeout, so any setup it performs (a resource
         // acquisition, a browser warm-up) runs untimed and does not consume the leaf's timeout budget; only the wrapped
