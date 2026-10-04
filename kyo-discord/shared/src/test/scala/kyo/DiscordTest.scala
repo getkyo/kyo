@@ -1108,6 +1108,9 @@ object DiscordTest:
 
     /** A peer that answers every connection with `response`, queued on accept, and counts the connections it accepted. The leaf
       * runs under `Clock.withTimeControl`, as on [[withLocal]].
+      *
+      * Closing the listener does not close what it accepted, so each accepted connection is closed when the test's Scope ends;
+      * otherwise its socket outlives the leaf and the run's leak check reports it.
       */
     def withCountingPeer[A](response: String)(test: (Int, AtomicInt) => A < (Async & Abort[Any] & Scope))(using
         Frame
@@ -1115,16 +1118,25 @@ object DiscordTest:
         val bytes = response.getBytes(UTF_8)
         Clock.withTimeControl { _ =>
             AtomicInt.init.map { accepted =>
-                Sync.Unsafe.defer {
-                    kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
-                        // Unsafe: the accept callback runs outside the effect system; it counts the connection and queues the answer,
-                        // which HTTP/1.1 lets a server send before it has read the request.
-                        discard(accepted.unsafe.incrementAndGet())
-                        discard(conn.outbound.offer(Span.fromUnsafe(bytes)))
+                AtomicRef.init(Chunk.empty[kyo.net.Connection]).map { open =>
+                    Sync.Unsafe.defer {
+                        kyo.net.NetPlatform.transport.listen("127.0.0.1", 0, 16) { conn =>
+                            // Unsafe: the accept callback runs outside the effect system; it counts and keeps the connection and
+                            // queues the answer, which HTTP/1.1 lets a server send before it has read the request.
+                            discard(accepted.unsafe.incrementAndGet())
+                            discard(open.unsafe.updateAndGet(_.append(conn)))
+                            discard(conn.outbound.offer(Span.fromUnsafe(bytes)))
+                        }
+                    }.map { fiber =>
+                        // Unsafe: the listener and the connections it accepted are kyo-net's raw tier; all are closed when the test's
+                        // Scope ends, the listener first so nothing is accepted after the connections are closed.
+                        fiber.safe.use { listener =>
+                            Scope.ensure(Sync.Unsafe.defer {
+                                listener.close()
+                                open.unsafe.get().foreach(_.close())
+                            }).andThen(test(listener.port, accepted))
+                        }
                     }
-                }.map { fiber =>
-                    // Unsafe: the listener is kyo-net's raw tier; it is closed when the test's Scope ends.
-                    fiber.safe.use(listener => Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen(test(listener.port, accepted)))
                 }
             }
         }
