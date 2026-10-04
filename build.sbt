@@ -3711,18 +3711,25 @@ lazy val `kyo-pod` =
                 // leaf for it. One fork per daemon puts all those leaves in a single process, where BasePodTest's
                 // `globallySequential` orders them into one stream and no two ever overlap. The single-leg helpers
                 // (`runBackend`, `runBackendLong`) are matched too: they register no `[runtime]` marker, but they
-                // reach the daemon, which is what decides this. A fork pinned to a runtime that is a duplicate of
-                // another registers no leaves at all (see ContainerRuntimeBase.available), so it costs an idle JVM.
+                // reach the daemon, which is what decides this. Only a runtime whose daemon answers gets a fork (see
+                // PodRuntimeForks). With none, the suites still run once, pinned to no runtime, so their daemon-free
+                // leaves are not lost.
                 val daemonGroups =
                     if (daemonTests.isEmpty) Seq.empty
-                    else
-                        Seq("podman", "docker").map { runtime =>
+                    else {
+                        val runtimes = PodRuntimeForks.select(
+                            sys.env.get("KYO_POD_EXPECTED_RUNTIMES"),
+                            sys.env.get("KYO_POD_RUNTIME"),
+                            streams.value.log
+                        )
+                        (if (runtimes.isEmpty) Seq("none") else runtimes).map { runtime =>
                             Tests.Group(
                                 name = s"container#$runtime",
                                 tests = daemonTests,
                                 runPolicy = Tests.SubProcess(baseFork(Map("KYO_POD_RUNTIME" -> runtime)))
                             )
                         }
+                    }
                 // Suites that never reach a daemon keep a fork each and stay parallel; they contend for nothing.
                 val plainGroups = plainTests.map { test =>
                     Tests.Group(

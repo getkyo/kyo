@@ -27,7 +27,11 @@ set -uo pipefail
 # budget. Those pulls are best-effort: a failed pre-pull warns and leaves first-use pulling to
 # the suite, exactly as before.
 #
-# Both runtime checks always run, so one broken runtime does not hide the state of the other. By
+# The runtimes checked are exactly KYO_POD_EXPECTED_RUNTIMES, which the setup action declares and
+# kyo-pod's build reads to decide which runtimes a test run must have; one list keeps the gate and
+# the build from disagreeing. An unset variable is an error: it would gate nothing.
+#
+# Every declared runtime's checks run, so one broken runtime does not hide the state of the other. By
 # default any failed check fails the job. With --warn-only the same checks and diagnostics run,
 # but the script emits a GitHub warning annotation and exits 0: the switch for maintainers who
 # later decide the gate should be loud instead of fatal, without restructuring the workflow.
@@ -209,14 +213,34 @@ prepull_fixture_images() {
     done
 }
 
-check_podman
-podman_ok=$([ -z "$failed" ] && echo 1 || echo "")
-check_podman_teardown
-check_docker
+if [ -z "${KYO_POD_EXPECTED_RUNTIMES+set}" ]; then
+    echo "KYO_POD_EXPECTED_RUNTIMES is unset; the setup action's 'Declare container runtimes' step sets it." >&2
+    exit 2
+fi
+expects() {
+    case " $KYO_POD_EXPECTED_RUNTIMES " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+for runtime in $KYO_POD_EXPECTED_RUNTIMES; do
+    case "$runtime" in
+        podman | docker) ;;
+        *) echo "KYO_POD_EXPECTED_RUNTIMES names '$runtime'; this gate knows podman and docker." >&2; exit 2 ;;
+    esac
+done
+
+podman_ok=""
+if expects podman; then
+    check_podman
+    podman_ok=$([ -z "$failed" ] && echo 1 || echo "")
+    check_podman_teardown
+fi
+if expects docker; then
+    check_docker
+fi
 
 runtimes=""
 [ -n "$podman_ok" ] && runtimes="podman"
-docker version >/dev/null 2>&1 && runtimes="$runtimes docker"
+expects docker && docker version >/dev/null 2>&1 && runtimes="$runtimes docker"
 # shellcheck disable=SC2086
 [ -n "$runtimes" ] && prepull_fixture_images $runtimes
 
