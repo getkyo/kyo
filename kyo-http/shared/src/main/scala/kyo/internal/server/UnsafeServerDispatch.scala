@@ -1132,7 +1132,7 @@ private[kyo] object UnsafeServerDispatch:
         val status = error match
             case _: HttpUnsupportedMediaTypeException => HttpStatus.UnsupportedMediaType
             case _                                    => HttpStatus.BadRequest
-        val bodyBytes = RouteUtil.encodeErrorBodyWithMessage(status, error.getMessage)
+        val bodyBytes = RouteUtil.encodeDecodeErrorBody(status, error)
         Sync.Unsafe.defer(writeErrorAnswer(streamCtx, status, bodyBytes))
     end writeDecodeError
 

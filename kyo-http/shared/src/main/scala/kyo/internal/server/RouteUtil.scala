@@ -1642,8 +1642,30 @@ private[kyo] object RouteUtil:
         stringToSpan(Json.encode(ErrorBody(status.code, status.toString)))
     end encodeErrorBody
 
-    private[kyo] def encodeErrorBodyWithMessage(status: HttpStatus, message: String)(using Frame): Span[Byte] =
-        stringToSpan(Json.encode(ErrorBody(status.code, message)))
-    end encodeErrorBodyWithMessage
+    private case class DecodeErrorBody(
+        status: Int,
+        error: String,
+        field: Maybe[String],
+        location: Maybe[String],
+        `type`: Maybe[String]
+    ) derives Schema
+
+    /** The answer to a request that did not decode, built only from the failure's typed fields. An exception's message is never sent: it
+      * renders the server's source around its frame, with terminal escapes, and a decoder's text can quote what the client sent.
+      */
+    private[kyo] def encodeDecodeErrorBody(status: HttpStatus, error: HttpException)(using Frame): Span[Byte] =
+        def body(field: Maybe[String], location: Maybe[String], tpe: Maybe[String]) =
+            DecodeErrorBody(status.code, status.toString, field, location, tpe)
+        val shape = error match
+            case e: HttpFieldDecodeException          => body(Present(e.fieldName), Present(e.fieldType), e.typeName)
+            case e: HttpMissingFieldException         => body(Present(e.fieldName), Present(e.fieldType), Absent)
+            case e: HttpPathDecodeException           => body(Present(e.fieldName), Present("path"), Absent)
+            case e: HttpUnsupportedMediaTypeException => body(Absent, Present("body"), Present(e.expected))
+            case _: HttpJsonDecodeException | _: HttpFormDecodeException | _: HttpMalformedBodyException | _: HttpStreamingDecodeException |
+                _: HttpMissingBoundaryException | _: HttpPayloadTooLargeException =>
+                body(Absent, Present("body"), Absent)
+            case _ => body(Absent, Absent, Absent)
+        stringToSpan(Json.encode(shape))
+    end encodeDecodeErrorBody
 
 end RouteUtil

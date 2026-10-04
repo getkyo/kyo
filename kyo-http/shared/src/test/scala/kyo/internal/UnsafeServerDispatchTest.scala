@@ -121,6 +121,65 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
+        // A decode failure's answer is a fixed JSON body built from the failure's typed fields, its `error` the status name every other
+        // error body carries. An exception's message renders the server's source around its frame, with terminal escapes, and can quote
+        // what the decoder was given, so it never reaches a client.
+        "a decode failure is answered with a fixed body" - {
+            val paged = HttpRoute.getRaw("paged").request(_.query[Int]("page")).response(_.bodyText).handler(_ => HttpResponse.ok("paged"))
+            val json  = HttpRoute.postRaw("json").request(_.bodyJson[Int]).response(_.bodyText).handler(_ => HttpResponse.ok("json"))
+
+            def answer(request: String)(using Frame): String < (Async & Abort[Closed]) =
+                val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                sendRequest(inbound, request)
+                UnsafeServerDispatch.serve(HttpRouter(Seq(paged, json), Absent), inbound, outbound, defaultConfig)
+                collectResponse(outbound)
+            end answer
+
+            def body(response: String): String = response.substring(response.indexOf("\r\n\r\n") + 4)
+
+            "a field that does not decode names the field, its location and its type" in {
+                answer("GET /paged?page=abc HTTP/1.1\r\nHost: h\r\n\r\n").map { response =>
+                    assert(response.startsWith("HTTP/1.1 400 Bad Request"), s"observed: $response")
+                    assert(
+                        body(response) == """{"status":400,"error":"BadRequest","field":"page","location":"query","type":"Int"}""",
+                        s"observed: ${body(response)}"
+                    )
+                }
+            }
+
+            "a missing field names the field and its location" in {
+                answer("GET /paged HTTP/1.1\r\nHost: h\r\n\r\n").map { response =>
+                    assert(response.startsWith("HTTP/1.1 400 Bad Request"), s"observed: $response")
+                    assert(
+                        body(response) == """{"status":400,"error":"BadRequest","field":"page","location":"query"}""",
+                        s"observed: ${body(response)}"
+                    )
+                }
+            }
+
+            "a body that does not decode names the body as the location" in {
+                answer("POST /json HTTP/1.1\r\nHost: h\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\n\"abc\"").map {
+                    response =>
+                        assert(response.startsWith("HTTP/1.1 400 Bad Request"), s"observed: $response")
+                        assert(
+                            body(response) == """{"status":400,"error":"BadRequest","location":"body"}""",
+                            s"observed: ${body(response)}"
+                        )
+                }
+            }
+
+            "a content type the route does not take is answered 415 with the type it takes" in {
+                answer("POST /json HTTP/1.1\r\nHost: h\r\nContent-Type: text/plain\r\nContent-Length: 1\r\n\r\n1").map { response =>
+                    assert(response.startsWith("HTTP/1.1 415 Unsupported Media Type"), s"observed: $response")
+                    assert(
+                        body(response) == """{"status":415,"error":"UnsupportedMediaType","location":"body","type":"application/json"}""",
+                        s"observed: ${body(response)}"
+                    )
+                }
+            }
+        }
+
         // A graceful close discards no request the server already received: the one pipelined behind the request in flight is served,
         // and the connection ends once its parser would wait on the peer.
         "a graceful close serves a request already pipelined behind the one in flight, then closes" in {
