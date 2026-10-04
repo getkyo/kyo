@@ -14,13 +14,13 @@ import kyo.*
   *   4. Loop the base capture until two consecutive frames share a `frameHash` or
   *      `captureHoldStillTimeout` elapses; returns the last frame.
   *
-  * The cross-CDP per-frame loop (paced by `Clock.sleep(captureHoldStillInterval)`) is exempt from
+  * The cross-CDP per-frame loop (paced by `Async.sleep(captureHoldStillInterval)`) is exempt from
   * the in-page `awaitPromise` single-eval constraint: that constraint binds only
   * in-page transient loops. The JS-side font/freeze evals are each a single non-splitting eval.
   * The hold-still loop is NOT an in-page transient loop; each iteration issues a full CDP
   * round-trip.
   *
-  * `Async` used internally (`Clock.sleep`, capture suspension) is absorbed by the `Browser` effect
+  * `Async` used internally (`Async.sleep`, capture suspension) is absorbed by the `Browser` effect
   * at the `Browser.run` boundary and does not appear in callers' public rows (`Browser <:
   * Async` at the run boundary; the locked public signatures stay `Browser &
   * Abort[BrowserReadException]` without `Async`).
@@ -110,28 +110,31 @@ private[kyo] object HoldStill:
     private[kyo] def holdStillFrame[S](
         capture: => Image < (Browser & Abort[BrowserReadException] & S)
     )(using Frame): Image < (Browser & Abort[BrowserReadException] & S) =
-        Browser.configLocal.use { cfg =>
-            val timeout  = cfg.captureHoldStillTimeout
-            val interval = cfg.captureHoldStillInterval
-            Clock.nowMonotonic.map { start =>
-                capture.map { first =>
-                    Loop(first, frameHash(first)) { (prev, prevHash) =>
-                        Clock.nowMonotonic.map { now =>
-                            if now.minusOrZero(start) >= timeout then Loop.done(prev)
-                            else
-                                Clock.sleep(interval).andThen {
-                                    capture.map { next =>
-                                        val h = frameHash(next)
-                                        if h == prevHash then Loop.done(next)
-                                        else Loop.continue(next, h)
-                                    }
+        Browser.configLocal.use(cfg => holdStill(cfg.captureHoldStillTimeout, cfg.captureHoldStillInterval)(capture))
+    end holdStillFrame
+
+    /** The hold-still loop itself, over any capture: captures until two consecutive frames share a `frameHash` or `timeout` has
+      * elapsed since the first capture, waiting `interval` between captures. Returns the last frame; never aborts on timeout.
+      */
+    private[kyo] def holdStill[S](timeout: Duration, interval: Duration)(capture: => Image < S)(using Frame): Image < (S & Async) =
+        Clock.nowMonotonic.map { start =>
+            capture.map { first =>
+                Loop(first, frameHash(first)) { (prev, prevHash) =>
+                    Clock.nowMonotonic.map { now =>
+                        if now.minusOrZero(start) >= timeout then Loop.done(prev)
+                        else
+                            Async.sleep(interval).andThen {
+                                capture.map { next =>
+                                    val h = frameHash(next)
+                                    if h == prevHash then Loop.done(next)
+                                    else Loop.continue(next, h)
                                 }
-                        }
+                            }
                     }
                 }
             }
         }
-    end holdStillFrame
+    end holdStill
 
     /** Awaits fonts.ready, injects the freeze style (removed on scope exit), then loops `capture`
       * until `frameHash` repeats or `captureHoldStillTimeout` elapses; returns the last captured
