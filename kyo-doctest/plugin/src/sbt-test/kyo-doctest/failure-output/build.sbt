@@ -15,6 +15,9 @@ lazy val root = (project in file("."))
             val log = if (out.exists) IO.read(out) else ""
             if (!log.contains("Required: String"))
                 sys.error(s"the doctest task's log at $out does not hold the compiler error; it holds:\n$log")
+            // Each relayed line names the Markdown it came from, so a concurrent project's lines cannot be mistaken for it.
+            if (!log.linesIterator.exists(l => l.contains("Required: String") && l.contains("doctest: README.md: ")))
+                sys.error(s"the compiler error line in $out does not name README.md; the log holds:\n$log")
         }
     )
 
