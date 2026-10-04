@@ -1,70 +1,75 @@
 package kyo.internal
 
-/** Pure unit tests for [[JsStringUtil.escapeJsString]].
+import kyo.*
+
+/** [[JsStringUtil.escapeJsString]] against what its callers need: the escaped text, placed between single quotes in JavaScript, evaluates
+  * back to the original string.
   *
-  * All scenarios are pure (no browser, no I/O) and complete in < 50 ms total.
-  *
-  * ==LOAD-BEARING test (scenario 5)==
-  * The ` ` (non-breaking space / U+00A0) survival test MUST NOT be deleted or weakened. [[kyo.internal.NavigationWatcher]] embeds captured
-  * URLs inside a JS single-quoted string using `escapeJsString`, then parses the result with ` ` as a field delimiter. If `escapeJsString`
-  * were ever changed to drop or transform ` `, `parseNavMeta` would silently produce wrong field counts and navigation tracking would fail
-  * with no loud error.
+  * ==LOAD-BEARING==
+  * The navigation-watcher leaf must not be deleted or weakened. [[NavigationWatcher]] decides whether a trigger navigated by evaluating
+  * `location.href !== '<escaped snapshot url>'`. If the escape stopped round-tripping a character a URL can carry, that comparison would
+  * report every poll as a URL change, and every click would wait out a settle it never needed.
   */
-class JsStringUtilTest extends kyo.BaseBrowserTest:
+class JsStringUtilTest extends kyo.BrowserTest:
 
-    /** Inverse of escapeJsString: interpret only the JS escape sequences that escapeJsString produces.
-      *
-      * The double-backslash case is handled via a sentinel to avoid order-of-operation issues.
-      */
-    private def unescapeJsString(s: String): String =
-        s.replace("\\\\", "\u0000BACKSLASH\u0000")
-            .replace("\\'", "'")
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\u0000BACKSLASH\u0000", "\\")
+    // Built from code points so the source stays ASCII: these characters are invisible or ambiguous in an editor.
+    private val nbsp     = 0xa0.toChar.toString
+    private val lineSep  = 0x2028.toChar.toString
+    private val paraSep  = 0x2029.toChar.toString
+    private val grinning = new String(Character.toChars(0x1f600))
 
-    "JsStringUtil.escapeJsString" - {
+    "escapeJsString output" - {
 
-        // empty-string round-trip
-        "escapeJsString(\"\") round-trip returns empty string" in {
-            val escaped   = JsStringUtil.escapeJsString("")
-            val recovered = unescapeJsString(escaped)
-            assert(recovered == "")
-        }
-
-        // pure-ASCII no-special-char identity
-        "escapeJsString(\"hello\") returns \"hello\" unchanged" in {
+        "leaves a string with nothing to escape unchanged" in {
             assert(JsStringUtil.escapeJsString("hello") == "hello")
         }
 
-        // two backslashes: each becomes two backslashes
-        "escapeJsString(\"\\\\\\\\\") escapes to four backslashes and round-trips" in {
-            val input   = "\\\\" // two backslashes
-            val escaped = JsStringUtil.escapeJsString(input)
-            assert(escaped == "\\\\\\\\")
-            assert(unescapeJsString(escaped) == input)
+        "escapes backslash, single quote, newline, carriage return and tab, and nothing else" in {
+            val raw = s"tab=\twindows=\r\nquote='back\\slash \"double\" nbsp=$nbsp"
+            assert(JsStringUtil.escapeJsString(raw) == s"tab=\\twindows=\\r\\nquote=\\'back\\\\slash \"double\" nbsp=$nbsp")
         }
+    }
 
-        // two single-quotes: each becomes \'
-        "escapeJsString(\"''\") escapes consistently and round-trips" in {
-            val input   = "''"
-            val escaped = JsStringUtil.escapeJsString(input)
-            assert(escaped == "\\'\\'")
-            assert(unescapeJsString(escaped) == input)
+    "a single-quoted JS literal of the escaped text evaluates to the original" - {
+
+        val inputs = Seq(
+            "empty"                            -> "",
+            "plain"                            -> "plain",
+            "a single quote"                   -> "it's",
+            "two single quotes"                -> "''",
+            "a backslash"                      -> "\\",
+            "backslashes before a quote"       -> "\\\\'",
+            "a newline"                        -> "line\nbreak",
+            "CRLF"                             -> "crlf\r\nend",
+            "a tab"                            -> "tab\there",
+            "double quotes"                    -> "\"double\"",
+            "a no-break space"                 -> s"nbsp${nbsp}sep",
+            "line and paragraph separators"    -> s"line${lineSep}para${paraSep}sep",
+            "a supplementary-plane code point" -> s"emoji $grinning"
+        )
+
+        inputs.foreach { (label, input) =>
+            label in {
+                withBrowser {
+                    Browser.eval(s"'${JsStringUtil.escapeJsString(input)}'").map { out =>
+                        assert(out == input, s"expected '$input' back but got '$out'")
+                    }
+                }
+            }
         }
+    }
 
-        /** LOAD-BEARING - see file-level scaladoc for rationale.
-          *
-          * Direct equality assertion only; no regex, no contains. NavigationWatcher.snapshotState uses ` ` as a field delimiter. This test
-          * guards against any future change that would map ` ` to empty.
-          */
-        // LOAD-BEARING: space must survive unchanged
-        "escapeJsString(\" \") survives round-trip - LOAD-BEARING" in {
-            val input   = " " // the delimiter used by NavigationWatcher.snapshotState
-            val escaped = JsStringUtil.escapeJsString(input)
-            assert(escaped == " ")
-            assert(unescapeJsString(escaped) == input)
+    // LOAD-BEARING: see the class scaladoc.
+    "a URL carrying a quote and a backslash compares unchanged in NavigationWatcher's check" in {
+        withBrowser {
+            for
+                _    <- Browser.goto(page("<p>nav</p>"))
+                _    <- Browser.eval("""(() => { history.pushState({}, '', "#it's\\here"); return 'ok'; })()""")
+                href <- Browser.eval("location.href")
+                same <- Browser.eval(s"location.href !== '${JsStringUtil.escapeJsString(href)}' ? 'changed' : 'same'")
+            yield
+                assert(href.endsWith("#it's\\here"), s"the fragment must keep the quote and the backslash raw, got '$href'")
+                assert(same == "same", s"an unchanged URL compared as changed: '$href'")
         }
     }
 
