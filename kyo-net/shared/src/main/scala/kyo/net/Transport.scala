@@ -32,8 +32,8 @@ abstract class Transport:
       *
       * @param connectTimeout
       *   Deadline for the OS to deliver a connect outcome (connected or refused). When finite the transport arms a `Clock`-driven deadline as
-      *   the connect is issued and fails with [[NetConnectTimeoutException]] on expiry; `Duration.Infinity` arms none. Must be positive or
-      *   `Duration.Infinity`.
+      *   the connect is issued and fails with [[NetConnectTimeoutException]] on expiry, so a zero deadline fails the connect at once;
+      *   `Duration.Infinity` arms none.
       */
     def connect(
         host: String,
@@ -75,7 +75,7 @@ abstract class Transport:
       */
     def stdio(
         channelCapacity: Int = NetConfig.DefaultChannelCapacity,
-        readChunkSize: Int = NetConfig.DefaultReadChunkSize
+        readChunkSize: ByteSize = NetConfig.DefaultReadChunkSize
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** Listen for incoming TCP connections.
@@ -158,17 +158,6 @@ end Transport
 object Transport:
     /** Default deadline for a connect to complete, applied by the connect operations when the caller passes none. */
     val DefaultConnectTimeout: Duration = 30.seconds
-
-    /** Enforce the `connectTimeout` contract at an operation's entry.
-      *
-      * The connect deadline is a loose parameter rather than a [[NetConfig]] field, so no case-class `require` guards it; each implementation
-      * calls this on entry instead, keeping one message and one rule across the three transports.
-      */
-    private[net] def checkConnectTimeout(connectTimeout: Duration): Unit =
-        require(
-            connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
-            s"connectTimeout must be positive or Infinity: $connectTimeout"
-        )
 end Transport
 
 /** A bound server socket returned by [[Transport.listen]] / [[Transport.listenUnix]], accepting connections and dispatching each to the handler
