@@ -4308,14 +4308,13 @@ lazy val `js-settings` = Seq(
     // always reaches, so any binary with it on the classpath links 40MB of tables.
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
-    // CI links every module's test binary in one sbt process; retaining each module's incremental
-    // linker state overflows the 12G sbt heap now that the schema family links per-format
-    // binaries. Batch mode drops that state after each link: incremental relink speed is
-    // irrelevant in CI, footprint is what matters.
-    scalaJSLinkerConfig := {
-        val c = scalaJSLinkerConfig.value
-        if (insideCI.value) c.withBatchMode(true) else c
-    }
+    // Batch mode drops the incremental linker's state after each link, for two reasons. Scala.js 1.22's incremental
+    // optimizer keeps state that is stale after a recompile renumbers a source's anonymous classes: the next link
+    // combines a class's previous and rewritten IR and fails with "Referring to non-existent method", while the link
+    // after it passes. The optimizer alone is the stale part (with it off, the same sequence links), and turning it
+    // off would link different code than CI does. And CI links every module's test binary in one sbt process, where
+    // retaining each module's linker state overflows the 12G sbt heap.
+    scalaJSLinkerConfig ~= (_.withBatchMode(true))
 )
 
 // WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
@@ -4345,11 +4344,8 @@ lazy val `wasm-settings` = Seq(
     // always reaches, so any binary with it on the classpath links 40MB of tables.
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time-tzdb" % "2.7.0",
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-locales"   % "1.5.4",
-    // Same CI heap rationale as `js-settings`: the WASM rows are Scala.js links too.
-    scalaJSLinkerConfig := {
-        val c = scalaJSLinkerConfig.value
-        if (insideCI.value) c.withBatchMode(true) else c
-    }
+    // Same rationale as `js-settings`: the WASM rows are Scala.js links too.
+    scalaJSLinkerConfig ~= (_.withBatchMode(true))
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
