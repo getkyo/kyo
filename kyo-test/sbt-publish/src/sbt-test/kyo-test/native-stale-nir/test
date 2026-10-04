@@ -1,0 +1,27 @@
+# Zinc deletes a removed class's .class and .tasty but not the .nir Scala Native writes beside them. A
+# suite left behind that way is still linked, since every suite's reflective-instantiation module is,
+# and fails the link on whatever it referenced.
+> Test/compile
+$ exists target/test-classes/GoneSuite.nir
+$ exists target/test-classes/GoneSuite$scalanative$ReflectivelyInstantiate$.nir
+$ exists target/test-classes/Pair$Inner.nir
+
+# Delete the suite and the member it used, as switching to a branch without them does.
+$ delete src/test/scala/GoneSuite.scala
+$ copy-file changes/Helpers.scala src/test/scala/Helpers.scala
+> testOnly KeptSuite
+$ absent target/test-classes/GoneSuite.nir
+$ absent target/test-classes/GoneSuite$scalanative$ReflectivelyInstantiate$.nir
+
+# A class removed from a source that still compiles loses its IR, and the IR that source still produces
+# stays.
+$ copy-file changes/Pair.scala src/test/scala/Pair.scala
+> Test/compile
+$ absent target/test-classes/Pair$Inner.nir
+$ exists target/test-classes/Pair$.nir
+> testOnly KeptSuite
+
+# Test/clean removes the IR along with the classes it was compiled with.
+> Test/clean
+$ absent target/test-classes/Pair$.nir
+$ absent target/test-classes/KeptSuite.nir

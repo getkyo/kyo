@@ -4211,7 +4211,7 @@ def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String], inBuil
 // Everything a Native row needs that does not assume the project is itself a Scala Native module, so
 // the kyoNative aggregate (which has no native sources, hence no Test / nativeLink to transform) can
 // take these without the per-module link hook below.
-lazy val `native-settings-base` = Seq(
+lazy val `native-settings-base` = kyo.test.sbt.KyoTestNativePlugin.staleIrSettings ++ Seq(
     fork := false,
     // Native test binaries do not consume JVM process options.
     Test / javaOptions := Nil,
