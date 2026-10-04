@@ -286,7 +286,18 @@ class WhatsAppLiveTest extends BaseWhatsAppTest:
                 // The handler only records what arrives, so the client it hands the callback calls nothing.
                 val placeholder = configOf("unused", WhatsAppId.PhoneNumberId("0"), url("http://127.0.0.1"))
                 served(placeholder, webhookConfigOf(WhatsAppLiveServer.AppSecret, WhatsAppLiveServer.VerifyToken, Path), Wildcard) {
-                    server => emulator(Present((server.port, Path))).map(Target.Emulator(_))
+                    server =>
+                        // A container whose host alias resolves can still fail to connect to it, as under a daemon that itself runs in a
+                        // container; the handshake proves the callback path before a leaf waits on a webhook that cannot arrive.
+                        emulator(Present((server.port, Path))).map { emulator =>
+                            emulator.handshake.map { h =>
+                                if h.status.isEmpty then
+                                    cancel(
+                                        "whaloc cannot reach the host's webhook from its container (a container daemon running inside a container does not route its host alias back to this host); run on a host daemon or set KYO_WHATSAPP_TOKEN"
+                                    )
+                                else Target.Emulator(emulator)
+                            }
+                        }
                 }(v)
         }
 
