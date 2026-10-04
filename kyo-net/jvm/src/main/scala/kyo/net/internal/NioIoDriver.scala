@@ -1084,6 +1084,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
         }
     end cleanupPending
 
+    // NIO keys every registration by its channel object, never by fd number, so a recycled number cannot reach a closed handle's state.
+    def releaseFd(handle: NioHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
+
+    def closeListener(handle: NioHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        try cancel(handle)
+        finally releaseFd(handle, closeFd)
+
     def cancel(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         try
             val key = handle.channel.keyFor(selector)

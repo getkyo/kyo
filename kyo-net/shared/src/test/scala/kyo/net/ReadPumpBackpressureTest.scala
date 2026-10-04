@@ -43,11 +43,15 @@ class ReadPumpBackpressureTest extends Test:
             if !captured then WriteResult.Partial(data, math.max(1, data.size / 2))
             else WriteResult.Done
         end write
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = ()
-        def close()(using AllowUnsafe, Frame): Unit                   = ()
-        def label: String                                             = "ParkingWriteDriver"
-        def handleLabel(handle: Unit): String                         = "stub"
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                             = ()
+        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                        = ()
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
+        def close()(using AllowUnsafe, Frame): Unit = ()
+        def label: String                           = "ParkingWriteDriver"
+        def handleLabel(handle: Unit): String       = "stub"
     end ParkingWriteDriver
 
     "write backpressure does not deadlock inbound" - {
@@ -122,9 +126,13 @@ class ReadPumpBackpressureTest extends Test:
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
-                def close()(using AllowUnsafe, Frame): Unit                                            = ()
-                def label: String                                                                      = "CountingReadDriver"
-                def handleLabel(handle: Unit): String                                                  = "stub"
+                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
+                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+                    try cancel(handle)
+                    finally releaseFd(handle, closeFd)
+                def close()(using AllowUnsafe, Frame): Unit = ()
+                def label: String                           = "CountingReadDriver"
+                def handleLabel(handle: Unit): String       = "stub"
             end CountingReadDriver
 
             val driver = new CountingReadDriver
@@ -190,9 +198,13 @@ class ReadPumpBackpressureTest extends Test:
                 def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
                 def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
                 def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
-                def close()(using AllowUnsafe, Frame): Unit                   = ()
-                def label: String                                             = "BackpressureFinDriver"
-                def handleLabel(handle: Unit): String                         = "stub"
+                def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit     = closeFd()
+                def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+                    try cancel(handle)
+                    finally releaseFd(handle, closeFd)
+                def close()(using AllowUnsafe, Frame): Unit = ()
+                def label: String                           = "BackpressureFinDriver"
+                def handleLabel(handle: Unit): String       = "stub"
             end BackpressureFinDriver
 
             val driver = new BackpressureFinDriver
@@ -256,10 +268,14 @@ class ReadPumpBackpressureTest extends Test:
             def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed | NetException]])(using AllowUnsafe, Frame): Unit   = ()
             def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
             def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
-            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCalls.incrementAndGet())
-            def close()(using AllowUnsafe, Frame): Unit                   = ()
-            def label: String                                             = "WatchDriver"
-            def handleLabel(handle: Unit): String                         = "stub"
+            def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                    = discard(closeHandleCalls.incrementAndGet())
+            def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
+            def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+                try cancel(handle)
+                finally releaseFd(handle, closeFd)
+            def close()(using AllowUnsafe, Frame): Unit = ()
+            def label: String                           = "WatchDriver"
+            def handleLabel(handle: Unit): String       = "stub"
         end WatchDriver
 
         // Abandoned case with a zero grace: the pump parks and watches, the peer FIN arrives, and the observed close reclaims at once. No timer

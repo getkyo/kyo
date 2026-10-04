@@ -125,13 +125,13 @@ On `PollerIoDriver`, `close(2)` of a fd runs only after the poll carrier has app
 The mechanism:
 
 - `deregisterFds(handle, fdClosing = true)` begins the handle's `FdWithdrawal` before submitting the deregister. From then on `applyRegistration` skips the handle's registrations and fails their promises `Closed`.
-- The deregister's apply completes the withdrawal. The fd close waits on it through `runAfterFdWithdrawal`: `freeResources` routes the connection's `fdCloseSink` that way, and `closeListener` its `closeFd`.
+- The deregister's apply completes the withdrawal. The fd close waits on it through `runAfterFdWithdrawal`: `freeResources` routes the connection's `fdCloseSink` that way, and `releaseFd`, after taking the handle's fd-close claim, the `closeFd` of `closeListener` and of the transport's connect-phase close.
 - `KqueuePollerBackend` stages registrations into a changelist that the next poll submits, so a closing deregister flushes the staged changes first when one of them is for the fd.
 - The terminal teardown, and `close()` on a driver that never started, complete any withdrawal the loop will never apply.
 
 Rules that follow:
 
-- Never close a fd the poller may hold except through `fdCloseSink` or `closeListener`. A raw `close(2)` is safe only before the fd's first registration.
+- Never close a fd the poller may hold except through `fdCloseSink` or `releaseFd`. A raw `close(2)` is safe only before the fd's first registration.
 - `shutdown(SHUT_RDWR)` stays immediate: it wakes carriers mid-syscall and does not race a registration.
 - A test that observes the close must await it (`RecordingSocketBindings.closed(fd)`), since the close runs on the poll carrier after `closeHandle` returns.
 

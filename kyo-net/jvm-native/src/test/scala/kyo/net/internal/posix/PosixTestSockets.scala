@@ -114,6 +114,29 @@ object PosixTestSockets:
         }
     end loopbackPair
 
+    /** A non-blocking TCP listener on 127.0.0.1 at an ephemeral port; returns (serverFd, port). */
+    def listening()(using AllowUnsafe): (Int, Int) =
+        val sockets = sock
+        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
+        try
+            assert(sockets.bind(server, a, l).value == 0)
+            assert(sockets.listen(server, 4).value == 0)
+        finally a.close()
+        end try
+        assert(Ffi.load[PosixShimBindings].kyo_posix_set_nonblocking(server) == 0, "set_nonblocking(server) failed")
+        val out = Buffer.alloc[Byte](SockAddr.inet4Size)
+        val ol  = Buffer.alloc[Int](1)
+        ol.set(0, SockAddr.inet4Size)
+        try
+            assert(sockets.getsockname(server, out, ol).value == 0)
+            (server, ((out.get(2) & 0xff) << 8) | (out.get(3) & 0xff))
+        finally
+            out.close()
+            ol.close()
+        end try
+    end listening
+
     /** Accept exactly one connection on the given already-bound and listening fd. */
     def acceptOne(serverFd: Int)(using Frame, AllowUnsafe): Int < Async =
         val sockets = sock

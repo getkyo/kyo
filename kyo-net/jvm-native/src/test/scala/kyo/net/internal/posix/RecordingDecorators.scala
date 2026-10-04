@@ -41,7 +41,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // Recorded before delegating, mirroring closeCounts.
     val shutdownCalls: ConcurrentLinkedQueue[(Int, Int)] = new ConcurrentLinkedQueue[(Int, Int)]()
 
-    // Unified call-order log across shutdown/send/sendNow/close for this spy instance, in execution order (each entry recorded before
+    // Unified call-order log across shutdown/send/sendNow/recvNow/acceptNow/close for this spy instance, in execution order (each entry recorded before
     // delegating to real, mirroring RecordingTlsEngine.entries/order below). A close-during-io race test uses this to assert the exact
     // interleaving of a claimed fd-close credit (shutdown, deferred) against the in-flight syscall it was deferred past (send) and the
     // eventual real close it unblocks (close).
@@ -220,8 +220,23 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         r
     end recvNow
 
+    // One-shot hook fired after an acceptNow that returned a connection, with the listen fd, for races against an accept drain's next
+    // acceptNow. null means no hook set; CAS to null before firing so it fires exactly once.
+    @volatile var onAccepted: Int => Unit = null
+
     def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
-        real.acceptNow(fd, addr, addrlen)
+        discard(callOrder.add(s"accept($fd)"))
+        val r = real.acceptNow(fd, addr, addrlen)
+        if r.value >= 0 then
+            val hook = onAccepted
+            if hook != null then
+                if onAccepted.eq(hook) then
+                    onAccepted = null
+                    hook(fd)
+            end if
+        end if
+        r
+    end acceptNow
 
     def connectNow(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.connectNow(fd, addr, addrlen)
@@ -1077,6 +1092,12 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         if hook != null then hook()
         real.closeHandle(handle)
     end closeHandle
+
+    def releaseFd(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.releaseFd(handle, closeFd)
+
+    def closeListener(handle: PosixHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        real.closeListener(handle, closeFd)
 
     def close()(using AllowUnsafe, Frame): Unit =
         discard(closeCalls.getAndIncrement())

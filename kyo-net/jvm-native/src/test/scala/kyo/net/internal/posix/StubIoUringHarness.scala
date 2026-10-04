@@ -98,6 +98,11 @@ class StubIoUringBindings extends IoUringBindings:
       */
     def setConnectBarrierFd(fd: Int): Unit = connectBarrierFd = fd
 
+    /** Completed with the target key of the first cancel SQE prepped. The stub never reaps on its own, so a test standing in for the kernel's
+      * retirement of a cancelled op awaits this and injects the target's CQE.
+      */
+    val cancelBarrierP: Promise.Unsafe[Long, Any] = Promise.Unsafe.init[Long, Any]()
+
     // When true, the next kyo_uring_submit_and_wait_timeout throws instead of parking. CAS to false on use so it fires exactly once.
     // The authorized injection for the crash-containment guard: a reap cycle must contain a Throwable from anywhere in its body, run its
     // terminal teardown, and complete its done-fiber as a panic, rather than dying silently and leaving the ring held.
@@ -187,6 +192,7 @@ class StubIoUringBindings extends IoUringBindings:
     // that a stranded connect gets reclaimed has to be able to see whether the cancel was actually submitted and for which op.
     override def kyo_uring_prep_cancel64(sqe: Ffi.Handle[IoUringSqe], userData: Long, flags: Int)(using AllowUnsafe): Unit =
         discard(prepCancelKeyQueue.add(userData))
+        cancelBarrierP.completeDiscard(Result.succeed(userData))
     end kyo_uring_prep_cancel64
 
     override def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit = ()
