@@ -85,10 +85,10 @@ jobs:
           for EVENT in "${array[@]}"
           do
             ESCAPED_EVENT=$(printf '%q' "$EVENT")
-            sbt "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
+            scripts/sbt.sh compile "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
           done
           
-          sbt "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof gc -rf json $SE"
+          scripts/sbt.sh compile "kyo-benchJVM/jmh:clean;kyo-benchJVM/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof gc -rf json $SE"
 
       - name: prepare results
         run: |

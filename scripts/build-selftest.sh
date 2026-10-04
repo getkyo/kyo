@@ -22,7 +22,16 @@ trap 'rm -rf "$STUBDIR"' EXIT
 # in STUBDIR is picked up for --env direct, while the podman stub in STUBDIR is
 # intercepted via PATH for --env podman/podman-ci.
 ln -s "$REAL_BUILD" "$STUBDIR/build.sh"
+ln -s "$SELF_DIR/sbt-heap-lib.sh" "$STUBDIR/sbt-heap-lib.sh"
 BUILD="$STUBDIR/build.sh"
+SBTSH_LOG="$STUBDIR/sbtsh.log"
+
+# A scripts/sbt.sh stub for the direct raw mode, which runs it from $SCRIPT_DIR.
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" "$*" >> "%s"\n' "$SBTSH_LOG"
+} > "$STUBDIR/sbt.sh"
+chmod +x "$STUBDIR/sbt.sh"
 
 PODMAN_LOG="$STUBDIR/podman.log"
 CITEST_LOG="$STUBDIR/citest.log"
@@ -57,6 +66,7 @@ reset_logs() {
     : > "$PODMAN_LOG"
     : > "$CITEST_LOG"
     : > "$ENV_LOG"
+    : > "$SBTSH_LOG"
 }
 
 # Run build.sh with stubs visible (podman stub via PATH; ci-test.sh stub via SCRIPT_DIR symlink).
@@ -83,19 +93,57 @@ record() {
 
 echo "Running build-selftest.sh..."
 
-# 1. podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the -Xmx12G driver into the container
+# 1. podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options: ci-test.sh sizes each driver
 make_podman_stub 0; reset_logs
 run_build --env podman-ci test JVM >/dev/null 2>&1 || true
-if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" && podman_log_has "JAVA_OPTS=-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-then record ok "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"
-else record no "podman-ci exports CI=true, SBT_TASK_LIMIT=1, and the full CI driver opts"; fi
+if podman_log_has "-e CI=true" && podman_log_has "-e SBT_TASK_LIMIT=1" \
+   && podman_log_lacks "JAVA_OPTS=" && podman_log_lacks "JVM_OPTS="
+then record ok "podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options"
+else record no "podman-ci exports CI=true and SBT_TASK_LIMIT=1, and no JVM options"; fi
 
-# 2. direct leaves CI unset
+# 1a. a raw direct command runs through scripts/sbt.sh with the compile role unless --role says otherwise
+make_podman_stub 0; reset_logs
+run_build --env direct sbt 'kyo-coreJVM/test' >/dev/null 2>&1 || true
+run_build --env direct --role publish sbt '+publishLocal' >/dev/null 2>&1 || true
+if [ "$(sed -n 1p "$SBTSH_LOG")" = "compile kyo-coreJVM/test" ] && [ "$(sed -n 2p "$SBTSH_LOG")" = "publish +publishLocal" ]
+then record ok "a raw direct command runs through sbt.sh with its role"
+else record no "a raw direct command runs through sbt.sh with its role"; fi
+
+# 1b. a raw container command hands the role to scripts/sbt.sh inside the container
+make_podman_stub 0; reset_logs
+run_build --env podman --role tool sbt 'ffiCompileAll' >/dev/null 2>&1 || true
+if podman_log_has "-e RAW_ROLE=tool" && podman_log_has './scripts/sbt.sh "$RAW_ROLE" "$RAW_SBT"'
+then record ok "a raw container command runs through sbt.sh with its role"
+else record no "a raw container command runs through sbt.sh with its role"; fi
+
+# 1c. an unknown role is a usage error before anything runs
+make_podman_stub 0; reset_logs
+run_build --env direct --role huge sbt 'about' >/dev/null 2>&1
+rc=$?
+if [ "$rc" = 2 ] && [ ! -s "$SBTSH_LOG" ] && [ "$(podman_call_count)" = 0 ]
+then record ok "an unknown role exits 2 before anything runs"
+else record no "an unknown role exits 2 before anything runs"; fi
+
+# 1d. an inherited SBT_OPTS never reaches the runner, since the launcher would place it after the role's heap
 make_citest_stub 0; reset_logs
-run_build --env direct test JVM >/dev/null 2>&1 || true
+SBT_OPTS="-Dx=1" run_build --env direct test JVM >/dev/null 2>&1 || true
+if env_log_lacks "SBT_OPTS="
+then record ok "an inherited SBT_OPTS never reaches the runner"
+else record no "an inherited SBT_OPTS never reaches the runner"; fi
+
+# 2. direct adds no CI: run without one, since a CI runner exports CI=true and direct passes the caller's environment through
+make_citest_stub 0; reset_logs
+(unset CI; run_build --env direct test JVM >/dev/null 2>&1) || true
 if env_log_lacks "CI=true"
-then record ok "direct leaves CI unset"
-else record no "direct leaves CI unset"; fi
+then record ok "direct adds no CI"
+else record no "direct adds no CI"; fi
+
+# 2a. direct keeps a caller's CI, which selects the build's CI-only settings
+make_citest_stub 0; reset_logs
+CI=true run_build --env direct test JVM >/dev/null 2>&1 || true
+if env_log_has "CI=true"
+then record ok "direct keeps a caller's CI"
+else record no "direct keeps a caller's CI"; fi
 
 # 3. podman (non-CI) leaves CI unset and SBT_TASK_LIMIT unset
 make_podman_stub 0; reset_logs
@@ -211,5 +259,5 @@ then echo "  SELFTEST-BUG: negative control passed (vacuous harness)"; FAIL=$((F
 
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 14 ]
+[ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 19 ]
 exit $?

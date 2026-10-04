@@ -93,4 +93,20 @@ class TransportConnectTimeoutProducedTest extends Test:
         }
     }
 
+    // A listener that accepts is what makes this a test of the deadline: without it firing first, the connect would succeed.
+    "a zero connect deadline fails the connect with NetConnectTimeoutException even when the peer would accept" - eachBackend { transport =>
+        for
+            listener <- transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
+            outcome  <- Abort.run[NetException](transport.connect("127.0.0.1", listener.port, Duration.Zero).safe.get)
+        yield outcome match
+            case Result.Failure(e: NetConnectTimeoutException) =>
+                assert((e.port, e.timeout) == (listener.port, Duration.Zero))
+            case Result.Success(conn) =>
+                conn.close()
+                fail("a zero connect deadline let the connect complete")
+            case other => fail(s"expected NetConnectTimeoutException(${Duration.Zero}), got $other")
+        end for
+    }
+
 end TransportConnectTimeoutProducedTest

@@ -40,7 +40,7 @@ final class TestChannelTransport(conns: Seq[Connection], tlsCloseReason: Boolean
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")
@@ -162,7 +162,7 @@ final class DeferredConnectTransport(conn: Connection, interruptible: Boolean = 
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("connectUnix")
 
-    def stdio(channelCapacity: Int, readChunkSize: Int)(using
+    def stdio(channelCapacity: Int, readChunkSize: ByteSize)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] = unsupported("stdio")

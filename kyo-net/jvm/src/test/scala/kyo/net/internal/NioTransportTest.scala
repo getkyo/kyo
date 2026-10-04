@@ -139,7 +139,11 @@ class NioTransportTest extends Test:
                 ))
                 Abort.run[kyo.net.NetException | Timeout](
                     Async.timeout(5.seconds)(
-                        transport.upgradeToTls(conn, kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")), 16).safe.get
+                        transport.upgradeToTls(
+                            conn,
+                            kyo.net.NetTlsConfig(trustAll = true, sniHostname = Present("localhost")),
+                            16
+                        ).safe.get
                     )
                 ).map { second =>
                     latch.countDown()
@@ -534,8 +538,8 @@ class NioTransportTest extends Test:
     "socket receive buffer is applied to the listen socket, per listen" in {
         val transport = NioTransport.init()
         Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
-            val smallReq                        = 16384
-            val largeReq                        = 262144
+            val smallReq                        = 16.kib
+            val largeReq                        = 256.kib
             def rcvOf(l: kyo.net.Listener): Int =
                 l.asInstanceOf[NioListener].serverChannel.getOption(java.net.StandardSocketOptions.SO_RCVBUF).intValue
             Abort.run[NetException | Closed] {
@@ -566,8 +570,8 @@ class NioTransportTest extends Test:
     "socket buffer sizes are applied per connect" in {
         val transport = NioTransport.init()
         Scope.ensure(Sync.defer { import kyo.AllowUnsafe.embrace.danger; transport.pool.next().close() }).andThen {
-            val smallReq                             = 16384
-            val largeReq                             = 262144
+            val smallReq                             = 16.kib
+            val largeReq                             = 256.kib
             def sndOf(conn: kyo.net.Connection): Int =
                 conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.channel
                     .getOption(java.net.StandardSocketOptions.SO_SNDBUF).intValue
@@ -692,7 +696,8 @@ class NioTransportTest extends Test:
         // Cap-1 inbound + 64-byte read chunk so a 128-byte client write becomes two reads, the second overflowing the channel and parking the
         // accepted-side ReadPump with no armed read. Short grace so the reclaim fires promptly. Without NioTransport threading config.peerCloseGrace
         // into the handle and the Connection, the grace defaults to Infinity and the abandoned connection is never reclaimed (isOpen stays true).
-        val config    = NetConfig(channelCapacity = 1, readChunkSize = 64, peerCloseGrace = 200.millis)
+        val config =
+            NetConfig(channelCapacity = 1, readChunkSize = 64.bytes, peerCloseGrace = 200.millis.grace)
         val acceptedP = new IOPromise[Closed, kyo.net.Connection]
         mkTransport().map { transport =>
             for

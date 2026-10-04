@@ -213,8 +213,10 @@ class PollerIoDriverRecycledFdTest extends Test:
         val (server, port) = PosixTestSockets.listening()
         val real           = PollerBackend.default()
         val pollerFd       = real.create()
-        val driver         = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, RecordingSocketBindings(sock))
-        discard(driver.start())
+        // The leaf closes its own fds through the driver's bindings, so one count covers every close of each number.
+        val spy      = RecordingSocketBindings(sock)
+        val driver   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd, spy)
+        val loopDone = driver.start()
 
         val dead = PosixHandle.socket(server, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
         val live = PosixHandle.socket(server, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
@@ -231,9 +233,14 @@ class PollerIoDriverRecycledFdTest extends Test:
         connecting.andThen(Abort.run[Timeout | Closed | NetException](Async.timeout(5.seconds)(liveAccept.safe.get))).map { outcome =>
             Abort.run[Closed | NetException](deadAccept.safe.get).map { deadOutcome =>
                 driver.closeHandle(live)
-                discard(sock.close(client))
-                discard(sock.close(server))
-                Sync.defer(driver.close()).map { _ =>
+                discard(spy.close(client))
+                outcome.foreach(accepted => discard(spy.close(accepted)))
+                // The loop's terminal exit runs every withdrawal still pending, so the deferred close(fd) of `live` has run once it is done.
+                Sync.defer(driver.close()).andThen(loopDone.safe.get).map { _ =>
+                    assert(
+                        spy.closeCounts.getOrDefault(server, 0) == 1,
+                        s"fd $server must be closed exactly once, by the driver that owns it: ${spy.closeCounts.getOrDefault(server, 0)} closes"
+                    )
                     assert(deadOutcome.isFailure, s"the closed listener's late accept must be failed Closed, got $deadOutcome")
                     outcome match
                         case Result.Success(_)          => succeed
