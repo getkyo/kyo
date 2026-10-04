@@ -210,8 +210,49 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         }
     }
 
+    // Every platform: the earliest cancel a single-threaded runtime can issue is a fiber the extras encoder starts with the id it was
+    // just handed, which runs once the encoder returns and before or after the request is enqueued depending on the scheduler.
+    "a cancel started from inside the extras encoder reaches the peer and ends the call" in {
+        val cancelFiber = AtomicRef.Unsafe.init[Maybe[Fiber[Unit, Abort[Closed]]]](Absent)(using AllowUnsafe.embrace.danger)
+        val echoOnB     = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+            (req, ctx) =>
+                ctx.cancelled.get.andThen(EchoResp(req.text))
+        }
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            val capA = new CapturingTransport(ta)
+            JsonRpcHandler.init(capA, Seq.empty, expectReplyConfig).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(echoOnB), expectReplyConfig).map { _ =>
+                    val cancelOnId = JsonRpcExtrasEncoder(id =>
+                        Fiber.initUnscoped(endpointA.cancel(id, Absent)).map { fiber =>
+                            Sync.defer(cancelFiber.set(Present(fiber))(using AllowUnsafe.embrace.danger)).andThen(Absent)
+                        }
+                    )
+                    for
+                        result <- Abort.run[JsonRpcError | Closed](endpointA.call[EchoReq, EchoResp]("echo", EchoReq("hello"), cancelOnId))
+                        _      <- Sync.defer(cancelFiber.get()(using AllowUnsafe.embrace.danger)).map {
+                            case Present(fiber) => Abort.run[Closed](fiber.get).unit
+                            case Absent         => Kyo.unit
+                        }
+                        _ <- flush(endpointA)
+                        cancelSent = capA.sentList.exists {
+                            case JsonRpcNotification(method, _, _) => method == "$/cancelRequest"
+                            case _                                 => false
+                        }
+                    yield
+                        assert(cancelSent, "the cancel started from the extras encoder was never sent")
+                        result match
+                            case Result.Failure(e: JsonRpcError) => assert(e.code == -32800, s"expected -32800, got ${e.code}")
+                            case other                           => fail(s"expected the cancelled call to end with -32800, got $other")
+                        end match
+                    end for
+                }
+            }
+        }
+    }
+
     // JVM and Native: the extras encoder holds its thread on a latch to keep the call inside the moment it learns its id, which a
-    // single-threaded runtime cannot do.
+    // single-threaded runtime cannot do: the encoder runs inside the handler's synchronous encode step, so only a blocked thread can
+    // hold it there. The leaf above covers the earliest cancel a single-threaded runtime can issue.
     "a cancel issued as soon as the extras encoder has the id reaches the peer".notJs.notWasm in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
