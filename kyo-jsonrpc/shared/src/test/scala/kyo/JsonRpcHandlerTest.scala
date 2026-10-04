@@ -749,6 +749,123 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
+    "a peer's malformed frame over a wire transport" - {
+
+        /** A client endpoint over `fromWire` whose peer is the test: `toPeer` carries the client's framed requests, and the test
+          * writes raw lines into `fromPeer`.
+          */
+        def wirePeer(using Frame) =
+            for
+                toPeer   <- Channel.initUnscoped[Chunk[Byte]](64)
+                fromPeer <- Channel.initUnscoped[Chunk[Byte]](64)
+                wire = new JsonRpcWireTransport:
+                    def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) = toPeer.put(bytes)
+                    def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]]     = fromPeer.stream()
+                    def close(using Frame): Unit < Async                                      = toPeer.close.andThen(fromPeer.close).unit
+                transport <- JsonRpcTransport.fromWire(wire, JsonRpcFramer.lineDelimited)
+                client    <- JsonRpcHandler.init(transport, Seq.empty)
+            yield (client, toPeer, fromPeer)
+
+        // The id of the request the client wrote, as wire JSON; taking the request also proves the call is registered.
+        def takeRequestId(toPeer: Channel[Chunk[Byte]])(using Frame): String < (Async & Abort[Closed]) =
+            toPeer.take.map { bytes =>
+                Json.decode[Structure.Value](new String(bytes.toArray, "UTF-8").trim) match
+                    case Result.Success(Structure.Value.Record(fields)) =>
+                        fields.collectFirst { case ("id", id) => Json.encode(id) }.getOrElse("null")
+                    case _ => "null"
+            }
+
+        def line(s: String): Chunk[Byte] = Chunk.from((s + "\n").getBytes("UTF-8"))
+
+        def droppedWhilePending(garbage: String)(using Frame, kyo.test.AssertScope) =
+            for
+                (client, toPeer, fromPeer) <- wirePeer
+                call                       <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](client.call[Unit, Int]("answer", ())))
+                id                         <- takeRequestId(toPeer)
+                _                          <- fromPeer.put(line(garbage))
+                _                          <- fromPeer.put(line(s"""{"jsonrpc":"2.0","id":$id,"result":42}"""))
+                result                     <- call.get
+            yield assert(result == Result.Success(42), s"expected the peer's reply after the dropped frame, got $result")
+
+        "an unparseable frame is dropped and the pending call completes with the real reply" in {
+            droppedWhilePending("not-json")
+        }
+
+        "a non-object frame is dropped and the pending call completes with the real reply" in {
+            droppedWhilePending("[1,2,3]")
+        }
+
+        "a response-shaped frame without an id is dropped and the pending call completes with the real reply" in {
+            droppedWhilePending("""{"jsonrpc":"2.0","error":"not-an-object"}""")
+        }
+
+        "a misshapen response carrying a call's id fails that call with malformed response, and the endpoint keeps serving" in {
+            for
+                (client, toPeer, fromPeer) <- wirePeer
+                first                      <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](client.call[Unit, Int]("answer", ())))
+                firstId                    <- takeRequestId(toPeer)
+                _                          <- fromPeer.put(line(s"""{"jsonrpc":"2.0","id":$firstId,"error":"not-an-object"}"""))
+                firstResult                <- first.get
+                second                     <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](client.call[Unit, Int]("answer", ())))
+                secondId                   <- takeRequestId(toPeer)
+                _                          <- fromPeer.put(line(s"""{"jsonrpc":"2.0","id":$secondId,"result":7}"""))
+                secondResult               <- second.get
+            yield
+                firstResult match
+                    case Result.Failure(err: JsonRpcError) =>
+                        assert(err.code == -32600, s"code was ${err.code}")
+                        assert(
+                            err.data.exists {
+                                case Structure.Value.Str(s) => s.contains("malformed response")
+                                case _                      => false
+                            },
+                            s"data was ${err.data}"
+                        )
+                    case other => fail(s"expected the misshapen response to fail the call, got $other")
+                end match
+                assert(secondResult == Result.Success(7), s"expected the endpoint to keep serving, got $secondResult")
+        }
+    }
+
+    "an inbound response the handler's codec cannot encode fails that call with malformed response, and the endpoint keeps serving" in {
+        // The lenient codec flattens extras to the top level and rejects a reserved key; a peer on an in-memory transport can still
+        // deliver such an envelope, and only that call may fail for it.
+        val lenientConfig = JsonRpcHandler.Config(codec = JsonRpcEnvelope.lenientSchema)
+        val collides      = Structure.Value.Record(Chunk("result" -> Structure.Value.Integer(0L)))
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            for
+                client   <- JsonRpcHandler.init(ta, Seq.empty, lenientConfig)
+                first    <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](client.call[Unit, Int]("answer", ())))
+                firstReq <- tb.incoming.take(1).run.map(_.head)
+                firstId = firstReq.asInstanceOf[JsonRpcRequest].id
+                _           <- tb.send(JsonRpcResponse(firstId, Present(Structure.Value.Integer(1L)), Absent, Present(collides)))
+                firstResult <- first.get
+                second      <- Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](client.call[Unit, Int]("answer", ())))
+                secondReq   <- tb.incoming.take(1).run.map(_.head)
+                _           <- tb.send(JsonRpcResponse(
+                    secondReq.asInstanceOf[JsonRpcRequest].id,
+                    Present(Structure.Value.Integer(7L)),
+                    Absent,
+                    Absent
+                ))
+                secondResult <- second.get
+            yield
+                firstResult match
+                    case Result.Failure(err: JsonRpcError) =>
+                        assert(err.code == -32600, s"code was ${err.code}")
+                        assert(
+                            err.data.exists {
+                                case Structure.Value.Str(s) => s.contains("malformed response")
+                                case _                      => false
+                            },
+                            s"data was ${err.data}"
+                        )
+                    case other => fail(s"expected the unencodable response to fail the call, got $other")
+                end match
+                assert(secondResult == Result.Success(7), s"expected the endpoint to keep serving, got $secondResult")
+        }
+    }
+
     "close(0) is equivalent to closeNow" in {
         // The handler blocks on a never-completed gate so the first call stays in-flight when close(0) fires;
         // close(0) is the immediate (no-drain) path. The test never completes the gate.
