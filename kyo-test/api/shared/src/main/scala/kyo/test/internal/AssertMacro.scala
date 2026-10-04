@@ -56,22 +56,142 @@ object AssertMacro:
       *
       * Recording before the throw is what lets a failure raised by a detached or leaked fiber reach the
       * leaf sink even when its throw never returns to the joined body.
-      *
-      * The source text comes from the frame the assert already carries, so the path that does not compile
-      * in the power-assert instrumentation needs no macro of its own. The frame's marker sits at the end
-      * of the `assert(...)` call it was taken at, so the text before it, last line, is that call.
       */
-    def raise(msg: Maybe[String], frame: Frame, scope: AssertScope): Nothing =
-        val sourceText =
-            frame.snippet.split("📍")(0).linesIterator.toList.lastOption.getOrElse("").trim
+    def raise(msg: Maybe[String], source: String, frame: Frame, scope: AssertScope): Nothing =
         val diagram =
             msg match
-                case Maybe.Present(m) if m.nonEmpty => s"$sourceText\n// message: $m"
-                case _                              => sourceText
+                case Maybe.Present(m) if m.nonEmpty => s"$source\n// message: $m"
+                case _                              => source
         val failure = new kyo.test.AssertionFailed(diagram, frame, msg, Maybe.empty[Throwable])
         scope.record(failure)
         throw failure
     end raise
+
+    /** [[raise]] for an `==` whose operands were captured: the diagram adds the structural diff of the left operand against the right. */
+    def raiseEquality(msg: Maybe[String], source: String, left: Any, right: Any, frame: Frame, scope: AssertScope): Nothing =
+        raise(msg, s"$source\n${Diff.render[Any](left, right)}", frame, scope)
+
+    /** The whole `assert(...)` call as written, its continuation lines de-indented to the call's own column.
+      *
+      * Read from the macro-expansion position, which is the caller's `assert(...)` even though the macro is spliced inside `assert`'s
+      * inline body. The frame's snippet cannot stand in: it keeps a context line on each side and drops blank lines, so the call's own
+      * lines cannot be told apart in it.
+      */
+    inline def callSource: String = ${ callSourceImpl }
+
+    private def callSourceImpl(using Quotes): Expr[String] =
+        import quotes.reflect.*
+        val pos  = Position.ofMacroExpansion
+        val text =
+            pos.sourceCode.getOrElse("").linesIterator.toList match
+                case first :: rest =>
+                    (first :: rest.map(l => l.drop(math.min(pos.startColumn, l.takeWhile(_ == ' ').length)))).mkString("\n")
+                case Nil => ""
+        Expr(text)
+    end callSourceImpl
+
+    /** Whether `cond` is a top-level `==` whose operands can be captured: neither operand's type mentions an opaque type, and neither
+      * operand holds the expansion of an inline call.
+      *
+      * Returns a literal and never `cond`, so `assert` can branch on it with an `inline if` while the condition stays outside any macro
+      * expansion. Only the branch it selects puts `cond` inside one, and it selects that branch only where `-Xcheck-macros` re-checks the
+      * operands soundly: re-checking a nested opaque type such as `A < S` or a staged `Record` fails (see [[powerAssertCompiledIn]]).
+      */
+    transparent inline def isPlainEquality(inline cond: Boolean): Boolean = ${ isPlainEqualityImpl('cond) }
+
+    private def isPlainEqualityImpl(cond: Expr[Boolean])(using Quotes): Expr[Boolean] =
+        import quotes.reflect.*
+        // Bounded: a recursive type would otherwise unfold forever. A type deeper than the bound is treated as opaque, which only keeps
+        // its assert on the path that does not capture the operands.
+        def mentionsOpaque(t: TypeRepr, depth: Int): Boolean =
+            if depth > 32 then true
+            else
+                val d = depth + 1
+                t match
+                    case AppliedType(tycon, args)    => mentionsOpaque(tycon, d) || args.exists(mentionsOpaque(_, d))
+                    case AndType(a, b)               => mentionsOpaque(a, d) || mentionsOpaque(b, d)
+                    case OrType(a, b)                => mentionsOpaque(a, d) || mentionsOpaque(b, d)
+                    case Refinement(parent, _, info) => mentionsOpaque(parent, d) || mentionsOpaque(info, d)
+                    case AnnotatedType(under, _)     => mentionsOpaque(under, d)
+                    case ByNameType(under)           => mentionsOpaque(under, d)
+                    case TypeBounds(lo, hi)          => mentionsOpaque(lo, d) || mentionsOpaque(hi, d)
+                    case _                           =>
+                        val sym = t.typeSymbol
+                        if sym.flags.is(Flags.Opaque) then true
+                        else if sym.isAliasType then
+                            val dealiased = t.dealias
+                            !(dealiased =:= t) && mentionsOpaque(dealiased, d)
+                        else false
+                        end if
+                end match
+        end mentionsOpaque
+        // An inline call in an operand leaves its expansion behind, with proxies for the opaque types and mirrors it touched; the
+        // re-check rejects those even where the operand's own type is plain (measured: `Dict` methods and a derived `summon`, the three
+        // asserts in the build that a type-only check let through).
+        val inlinesCode = new TreeAccumulator[Boolean]:
+            def foldTree(found: Boolean, tree: Tree)(owner: Symbol): Boolean =
+                found ||
+                    (tree match
+                        case _: Inlined => true
+                        case _          => foldOverTree(false, tree)(owner))
+        def capturable(operand: Term): Boolean =
+            !mentionsOpaque(operand.tpe.widen, 0) && !inlinesCode.foldTree(false, operand)(Symbol.spliceOwner)
+        Expr(equalityOperands(cond.asTerm).exists((lhs, _, rhs) => capturable(lhs) && capturable(rhs)))
+    end isPlainEqualityImpl
+
+    /** The operands and the `==` selection of a top-level equality, looking through the inline wrappers around an inline argument. */
+    private def equalityOperands(using
+        Quotes
+    )(term: quotes.reflect.Term): Option[(quotes.reflect.Term, quotes.reflect.Select, quotes.reflect.Term)] =
+        import quotes.reflect.*
+        term match
+            case Inlined(_, Nil, inner)                    => equalityOperands(inner)
+            case Typed(inner, _)                           => equalityOperands(inner)
+            case Apply(sel @ Select(lhs, "=="), List(rhs)) => Some((lhs, sel, rhs))
+            case _                                         => None
+        end match
+    end equalityOperands
+
+    /** `assert(left == right)` with both operands captured, for a condition [[isPlainEquality]] admits. */
+    inline def equality(inline cond: Boolean, inline f: Frame, inline as: AssertScope): Unit =
+        ${ equalityImpl('cond, '{ Maybe.empty[String] }, 'f, 'as) }
+
+    /** [[equality]] with the assert's message. */
+    inline def equalityWithMsg(inline cond: Boolean, inline msg: String, inline f: Frame, inline as: AssertScope): Unit =
+        ${ equalityWithMsgImpl('cond, 'msg, 'f, 'as) }
+
+    private def equalityWithMsgImpl(cond: Expr[Boolean], msg: Expr[String], frame: Expr[Frame], scope: Expr[AssertScope])(using
+        Quotes
+    ): Expr[Unit] =
+        equalityImpl(cond, '{ Maybe($msg) }, frame, scope)
+
+    private def equalityImpl(cond: Expr[Boolean], msg: Expr[Maybe[String]], frame: Expr[Frame], scope: Expr[AssertScope])(using
+        Quotes
+    ): Expr[Unit] =
+        import quotes.reflect.*
+        val source = callSourceImpl
+        equalityOperands(cond.asTerm) match
+            case Some((lhs, sel, rhs)) =>
+                lhs.tpe.widen.asType match
+                    case '[l] =>
+                        rhs.tpe.widen.asType match
+                            case '[r] =>
+                                '{
+                                    $scope.recordEvaluated()
+                                    // Left before right, as the `==` it stands for evaluates them.
+                                    val _left: l  = ${ lhs.asExprOf[l] }
+                                    val _right: r = ${ rhs.asExprOf[r] }
+                                    if ! ${ Apply(Select(('{ _left }).asTerm, sel.symbol), List(('{ _right }).asTerm)).asExprOf[Boolean] }
+                                    then
+                                        AssertMacro.raiseEquality($msg, $source, _left, _right, $frame, $scope)
+                                }
+            case None =>
+                '{
+                    $scope.recordEvaluated()
+                    if ! $cond then AssertMacro.raise($msg, $source, $frame, $scope)
+                }
+        end match
+    end equalityImpl
 
     // A splice has to be the whole right-hand side of its inline def, so each of the two power-assert
     // entry points gets one of its own.

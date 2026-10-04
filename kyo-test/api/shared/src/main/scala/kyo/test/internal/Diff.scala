@@ -38,10 +38,11 @@ object Diff:
     def render[A](actual: A, expected: A)(using r: Render[A]): String =
         val rendered =
             (actual, expected) match
-                case (a: Product, e: Product) if a.productPrefix == e.productPrefix =>
-                    caseClassDiff(a, e)
+                // Before the Product case: a List cell is a Product too, and would render as `::(head = .., next = ..)`.
                 case (a: Iterable[?], e: Iterable[?]) =>
                     collectionDiff(a, e)
+                case (a: Product, e: Product) if a.productPrefix == e.productPrefix =>
+                    caseClassDiff(a, e)
                 case (a: String, e: String) if a.contains('\n') || e.contains('\n') =>
                     stringDiff(a, e)
                 case _ =>
@@ -122,18 +123,23 @@ object Diff:
             !valuesEqual(a, e)
         }.toSet
 
-        def renderList(items: Chunk[?]): String =
+        // The collection's own name, as its `toString` spells it: `className` is not public, and an empty `take` keeps the kind
+        // without rendering the elements.
+        def labelOf(c: Iterable[?]): String = c.take(0).toString.takeWhile(_ != '(')
+
+        def renderList(label: String, items: Chunk[?]): String =
             val rendered = (0 until maxLen).map { i =>
                 if i < items.length then renderValue(items(i))
                 else "<missing>"
             }
-            "Chunk(" + rendered.mkString(", ") + ")"
+            label + "(" + rendered.mkString(", ") + ")"
         end renderList
 
-        val actualStr   = renderList(actList)
-        val expectedStr = renderList(expList)
+        val actualLabel = labelOf(actual)
+        val actualStr   = renderList(actualLabel, actList)
+        val expectedStr = renderList(labelOf(expected), expList)
 
-        val prefix       = "  actual:   Chunk("
+        val prefix       = s"  actual:   $actualLabel("
         val underlineBuf = new StringBuilder(" " * prefix.length)
 
         val actRendered = (0 until maxLen).map { i =>

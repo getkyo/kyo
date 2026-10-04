@@ -106,10 +106,23 @@ class DiffTest extends AsyncFreeSpec with NonImplicitAssertions:
             Future.successful(succeed)
         }
 
-        "collectionDiff: output starts with Chunk prefix" in {
-            val result = Diff.collectionDiff(List(1, 2, 3), List(1, 9, 3))
-            assert(result.startsWith("  actual:   Chunk("), s"Expected output to start with '  actual:   Chunk(' but got:\n$result")
-            assert(result.contains("  expected: Chunk("), s"Expected output to contain '  expected: Chunk(' but got:\n$result")
+        "collectionDiff: each side is named by its own collection" in {
+            val result = Diff.collectionDiff(List(1, 2, 3), Vector(1, 9, 3))
+            assert(
+                result.startsWith("  actual:   List(1, 2, 3)"),
+                s"Expected output to start with '  actual:   List(1, 2, 3)' but got:\n$result"
+            )
+            assert(
+                result.contains("  expected: Vector(1, 9, 3)"),
+                s"Expected output to contain '  expected: Vector(1, 9, 3)' but got:\n$result"
+            )
+            Future.successful(succeed)
+        }
+
+        "render: a List is diffed as a collection, not as the cells it is built from" in {
+            val result = Diff.render[Any](List(1, 2, 4), List(1, 2, 3))
+            assert(result.contains("  actual:   List(1, 2, 4)"), s"got:\n$result")
+            assert(!result.contains("head ="), s"got:\n$result")
             Future.successful(succeed)
         }
 

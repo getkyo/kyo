@@ -112,7 +112,7 @@ Everything in this section is something you call inside a leaf body to make a cl
 
 ### `assert`: the power-assert
 
-There is one assertion. `assert(cond)` throws `AssertionFailed` on `false`, carrying a diagram of every subexpression's value so you see why the condition was false without re-running under a debugger. `assert(cond, msg)` appends your message to that diagram.
+There is one assertion. `assert(cond)` throws `AssertionFailed` on `false`, carrying the whole `assert(...)` call as written, every line of it. When the condition is a top-level `==`, the failure also shows both operands' values, as a structural diff for case classes, collections and multi-line strings; an operand whose type mentions an opaque type, or that calls an inline method, is reported by its source alone. Setting `KYO_TEST_POWER_ASSERT=1` (or `-Dkyo.test.powerAssert=true`) at compile time instruments every assertion instead, with a diagram of every subexpression's value, at a cost in test compile time. `assert(cond, msg)` appends your message to the failure.
 
 ```scala
 class AccountAssertTest extends Test[Any]:

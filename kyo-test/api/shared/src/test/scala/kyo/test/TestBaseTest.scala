@@ -80,6 +80,76 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
+    "- a failing assert that spans lines renders the whole asserted expression" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "multi-line" in {
+                    val expected = List(1, 2, 3)
+                    assert(
+                        List(1, 2, 4).map(_ + 0) ==
+                            expected
+                    )
+                }
+        }.map { case (_, result) =>
+            result match
+                case f: TestResult.Failed =>
+                    assert(f.diagram.contains("List(1, 2, 4).map(_ + 0) =="), f.diagram)
+                    assert(f.diagram.contains("expected"), f.diagram)
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing == assert shows both compared values" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "equality" in {
+                    val actual   = List(1, 2, 4)
+                    val expected = List(1, 2, 3)
+                    assert(actual == expected)
+                }
+        }.map { case (_, result) =>
+            result match
+                case f: TestResult.Failed =>
+                    assert(f.diagram.contains("List(1, 2, 4)"), f.diagram)
+                    assert(f.diagram.contains("List(1, 2, 3)"), f.diagram)
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing == over an opaque type is reported by its source alone" in {
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "opaque" in {
+                    val actual = kyo.Maybe(1)
+                    assert(actual == kyo.Maybe(2))
+                }
+        }.map { case (_, result) =>
+            result match
+                case f: TestResult.Failed =>
+                    assert(f.diagram == "assert(actual == kyo.Maybe(2))", f.diagram)
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
+    "- a failing == whose operand expands an inline call over an opaque type compiles and is reported by its source" in {
+        // `Dict.filter` is inline over the opaque `Dict`: capturing this operand put its expansion's proxies inside the assert's
+        // macro, which `-Xcheck-macros` rejects as a malformed tree.
+        runLeaf {
+            new kyo.test.Test[Any]:
+                "inline-operand" in {
+                    assert(kyo.Dict("a" -> 1).filter((k, _) => k == "a").toChunk == kyo.Chunk("a" -> 2))
+                }
+        }.map { case (_, result) =>
+            result match
+                case f: TestResult.Failed =>
+                    assert(
+                        f.diagram == """assert(kyo.Dict("a" -> 1).filter((k, _) => k == "a").toChunk == kyo.Chunk("a" -> 2))""",
+                        f.diagram
+                    )
+                case other => fail(s"Expected Failed, got $other")
+        }
+    }
+
     "- F[Unit] registers async leaf, framework awaits" in {
         runLeaf {
             new kyo.test.Test[Any]:

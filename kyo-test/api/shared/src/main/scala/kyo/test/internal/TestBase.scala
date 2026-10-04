@@ -349,18 +349,22 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
     protected inline def assert(inline cond: Boolean)(using inline f: Frame, inline as: kyo.test.AssertScope): Unit =
         inline if kyo.test.internal.AssertMacro.powerAssertCompiledIn then
             kyo.test.internal.AssertMacro.power(cond, f, as)
+        else inline if kyo.test.internal.AssertMacro.isPlainEquality(cond) then
+            kyo.test.internal.AssertMacro.equality(cond, f, as)
         else
             kyo.test.internal.AssertMacro.evaluated(as)
-            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe.empty[String], f, as)
+            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe.empty[String], kyo.test.internal.AssertMacro.callSource, f, as)
             end if
 
     /** Power-assert with an explicit user message appended to the diagram on failure. */
     protected inline def assert(inline cond: Boolean, inline msg: String)(using inline f: Frame, inline as: kyo.test.AssertScope): Unit =
         inline if kyo.test.internal.AssertMacro.powerAssertCompiledIn then
             kyo.test.internal.AssertMacro.powerWithMsg(cond, msg, f, as)
+        else inline if kyo.test.internal.AssertMacro.isPlainEquality(cond) then
+            kyo.test.internal.AssertMacro.equalityWithMsg(cond, msg, f, as)
         else
             kyo.test.internal.AssertMacro.evaluated(as)
-            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe(msg), f, as)
+            if !cond then kyo.test.internal.AssertMacro.raise(kyo.Maybe(msg), kyo.test.internal.AssertMacro.callSource, f, as)
             end if
 
     /** Marks a leaf as intentionally asserting no runtime value: its verification is structural (it compiles,
