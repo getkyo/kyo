@@ -206,6 +206,31 @@ object LspHandler:
 
     // MARK: -- Document types (LspDocument + Uri opaque + identifier records + TextDocumentContentChangeEvent + TextDocumentSyncKind)
 
+    // In an object of its own: in the template declaring `opaque type Uri = String` a Tag for String is refused, which the
+    // schema derived beside it needs. Outside LspDocument's companion: nested there, scaladoc reading LspHandler's TASTy
+    // fails with a CyclicReference on the holder object, so `doc` and the publish of kyo-lsp fail.
+    object LspDocumentUris:
+        /** Opaque URI for a text document. Use `parse` to construct; the engine uses `fromWire`.
+          *
+          * Validation: non-empty, not all-whitespace. Mirrors `McpResourceUri` shape.
+          */
+        opaque type Uri = String
+
+        object Uri:
+            /** Constructs a URI from a string, returning `Absent` if empty or blank. */
+            def parse(s: String): Maybe[Uri] =
+                if s.nonEmpty && !s.forall(_.isWhitespace) then Present(s) else Absent
+
+            private[kyo] def fromWire(s: String): Uri = s
+
+            extension (u: Uri)
+                def asString: String = u
+
+            given Schema[Uri]        = Schema.stringSchema.transform[Uri](fromWire)(_.asString)
+            given CanEqual[Uri, Uri] = CanEqual.derived
+        end Uri
+    end LspDocumentUris
+
     /** A managed text document tracked by the document registry.
       *
       * Users receive instances through `Lsp.documents.get(uri)`. The `encoding` field is stamped
@@ -221,30 +246,7 @@ object LspHandler:
 
     object LspDocument:
 
-        // In an object of its own: in the template declaring `opaque type Uri = String` a Tag for String is refused, which the
-        // schema derived beside it needs.
-        object Uris:
-            /** Opaque URI for a text document. Use `parse` to construct; the engine uses `fromWire`.
-              *
-              * Validation: non-empty, not all-whitespace. Mirrors `McpResourceUri` shape.
-              */
-            opaque type Uri = String
-
-            object Uri:
-                /** Constructs a URI from a string, returning `Absent` if empty or blank. */
-                def parse(s: String): Maybe[Uri] =
-                    if s.nonEmpty && !s.forall(_.isWhitespace) then Present(s) else Absent
-
-                private[kyo] def fromWire(s: String): Uri = s
-
-                extension (u: Uri)
-                    def asString: String = u
-
-                given Schema[Uri]        = Schema.stringSchema.transform[Uri](fromWire)(_.asString)
-                given CanEqual[Uri, Uri] = CanEqual.derived
-            end Uri
-        end Uris
-        export Uris.Uri
+        export LspDocumentUris.Uri
 
         given Schema[LspDocument] = Schema.derived
 

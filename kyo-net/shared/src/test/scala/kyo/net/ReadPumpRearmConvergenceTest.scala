@@ -38,9 +38,13 @@ class ReadPumpRearmConvergenceTest extends Test:
         def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
-        def close()(using AllowUnsafe, Frame): Unit                                            = ()
-        def label: String                                                                      = "StubDriver"
-        def handleLabel(handle: Unit): String                                                  = "stub"
+        def releaseFd(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit       = closeFd()
+        def closeListener(handle: Unit, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit   =
+            try cancel(handle)
+            finally releaseFd(handle, closeFd)
+        def close()(using AllowUnsafe, Frame): Unit = ()
+        def label: String                           = "StubDriver"
+        def handleLabel(handle: Unit): String       = "stub"
     end StubDriver
 
     "pump converges to delivery under residual liveness cases" - {
