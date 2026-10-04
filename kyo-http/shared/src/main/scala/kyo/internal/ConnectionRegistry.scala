@@ -45,6 +45,9 @@ final private[kyo] class ConnectionRegistry[C]:
       */
     def markClosing(): Unit = closingFlag = true
 
+    /** Whether shutdown has begun, through [[markClosing]] or [[closeAll]]. */
+    def isClosing: Boolean = closingFlag
+
     /** The connections registered now. After `markClosing` it is every connection that will ever be served, since a later registration
       * closes itself.
       */

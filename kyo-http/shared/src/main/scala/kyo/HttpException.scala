@@ -100,6 +100,17 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
            |  or reduce concurrent requests to this host.""".stripMargin
     )
 
+/** A request or connect on a client that was already closed. Nothing is sent and no connection is opened. */
+case class HttpClientClosedException private[kyo] (clientFrame: Frame)(using Frame)
+    extends HttpConnectionException(
+        s"""This HttpClient is closed.
+           |
+           |  This client was created at: ${clientFrame.position.show}
+           |
+           |  A closed client sends nothing. Use a client that is still open,
+           |  or keep this one open until its last request has completed.""".stripMargin
+    )
+
 /** The connection closed before or during a message with bytes still owed: before its head arrived, before the body its framing declared
   * was complete, or, over TLS, without a `close_notify` on a close-framed body (RFC 9112 section 9.8): a bare TCP FIN, a reset or a
   * fatal record. `phase` says which. The bytes of a streamed body that did arrive are delivered before the failure.

@@ -1170,31 +1170,35 @@ final private[kyo] class HttpClientBackend private (
       */
     private def owningConnect[C, E, A, S](open: AllowUnsafe ?=> Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(
         use: Fiber.Unsafe[C, Abort[E]] => A < S
-    )(using Frame): A < (S & Sync) =
+    )(using Frame): A < (S & Sync & Abort[HttpClientClosedException]) =
         Sync.Unsafe.defer {
-            var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
-            Sync.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))) {
-                Sync.Unsafe.defer {
-                    val started = open
-                    connecting = Present(started)
-                    use(started)
+            if registry.isClosing then Abort.fail(HttpClientClosedException(clientFrame))
+            else
+                var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
+                Sync.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))) {
+                    Sync.Unsafe.defer {
+                        val started = open
+                        connecting = Present(started)
+                        use(started)
+                    }
                 }
-            }
         }
 
     /** [[owningConnect]] for a connection that outlives the call: the release is a finalizer of the enclosing `Scope`. */
     private def owningConnectInScope[C, E, A, S](open: AllowUnsafe ?=> Fiber.Unsafe[C, Abort[E]], close: AllowUnsafe ?=> C => Unit)(
         use: Fiber.Unsafe[C, Abort[E]] => A < S
-    )(using Frame): A < (S & Sync & Scope) =
+    )(using Frame): A < (S & Sync & Scope & Abort[HttpClientClosedException]) =
         Sync.Unsafe.defer {
-            var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
-            Scope.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))).andThen {
-                Sync.Unsafe.defer {
-                    val started = open
-                    connecting = Present(started)
-                    use(started)
+            if registry.isClosing then Abort.fail(HttpClientClosedException(clientFrame))
+            else
+                var connecting: Maybe[Fiber.Unsafe[C, Abort[E]]] = Absent
+                Scope.ensure(Sync.Unsafe.defer(connecting.foreach(releaseConnect(_, close)))).andThen {
+                    Sync.Unsafe.defer {
+                        val started = open
+                        connecting = Present(started)
+                        use(started)
+                    }
                 }
-            }
         }
 
     /** One pooled request's hold on its connection and on the in-flight slot a fresh connect reserves, from the step that takes either
@@ -1407,6 +1411,9 @@ final private[kyo] class HttpClientBackend private (
             def sendFresh(lease: Lease)(using AllowUnsafe): A < (Async & Abort[HttpException]) =
                 if lease.reserve() then
                     lease.connect(url, config).safe.use(conn => Sync.Unsafe.defer(send(lease, conn)))
+                else if registry.isClosing then
+                    // A closed pool refuses every reserve, so a close that landed after the entry check reads as exhaustion here.
+                    Abort.fail(HttpClientClosedException(clientFrame))
                 else
                     val (h, p) = hostPort(url)
                     Abort.fail(HttpPoolExhaustedException(h, p, maxConnectionsPerHost, clientFrame))
@@ -1428,15 +1435,18 @@ final private[kyo] class HttpClientBackend private (
             end sendReused
 
             Sync.Unsafe.defer {
-                val lease = new Lease(key)
-                Sync.ensure(Sync.Unsafe.defer(lease.end())) {
-                    Sync.Unsafe.defer {
-                        lease.take() match
-                            case Present(conn) =>
-                                if replayable(route, request) then sendReused(lease, conn) else send(lease, conn)
-                            case Absent => sendFresh(lease)
+                if registry.isClosing then Abort.fail(HttpClientClosedException(clientFrame))
+                else
+                    val lease = new Lease(key)
+                    Sync.ensure(Sync.Unsafe.defer(lease.end())) {
+                        Sync.Unsafe.defer {
+                            lease.take() match
+                                case Present(conn) =>
+                                    if replayable(route, request) then sendReused(lease, conn) else send(lease, conn)
+                                case Absent => sendFresh(lease)
+                        }
                     }
-                }
+                end if
             }
         }.asInstanceOf[A < (Async & Abort[HttpException])]
     end poolWithImpl

@@ -785,6 +785,62 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    /** A closed client must say it is closed, whatever entry point the caller used, and before it reserves a pool slot or asks the
+      * transport for a connection. The call settles or reaches the transport, whichever comes first, so a call that wrongly connects
+      * fails the leaf instead of parking on the deferred connect.
+      */
+    "a closed client fails every request as closed, before it reserves or connects" - {
+
+        val url = HttpUrl.parse("http://test.invalid/ping").getOrThrow
+
+        def onClosed(start: HttpClientBackend => Any < (Async & Abort[HttpException] & Scope))(using
+            Frame,
+            kyo.test.AssertScope
+        ): Unit < (Async & Abort[Any]) =
+            val (clientConn, _) = TransportConnection.inMemoryPair()
+            val transport       = new DeferredConnectTransport(clientConn)
+            val backend         = HttpClientBackend.init(transport, 2, 60.seconds)
+            val settled         = new java.util.concurrent.atomic.AtomicBoolean(false)
+            for
+                _     <- backend.closeFiber(Duration.Zero).safe.get
+                fiber <- Fiber.initUnscoped(Sync.ensure(Sync.defer(settled.set(true)))(Scope.run(Abort.run[HttpException](start(backend)))))
+                _     <- pollUntil(settled.get() || transport.connectRequested)
+                requested <- Sync.defer(transport.connectRequested)
+                _         <- if settled.get() then Kyo.unit else fiber.interrupt.unit
+                result    <- fiber.getResult
+            yield
+                assert(!requested, "a closed client must not ask the transport for a connection")
+                result match
+                    case Result.Success(Result.Failure(e: HttpClientClosedException)) =>
+                        assert(e.clientFrame == backend.clientFrame)
+                    case other =>
+                        fail(s"expected HttpClientClosedException, got $other")
+                end match
+            end for
+        end onClosed
+
+        "a pooled request" in {
+            val route = HttpRoute.getRaw("ping").response(_.bodyText)
+            onClosed(_.sendWithConfig(
+                route,
+                HttpRequest.getRaw(url),
+                HttpClientConfig(timeout = HttpClientConfig.TimeLimit.unlimited)
+            )(identity))
+        }
+
+        "connectWith" in {
+            onClosed(_.connectWith(url, Duration.Infinity, HttpTlsConfig.default)(_ => Kyo.unit))
+        }
+
+        "connectWebSocket" in {
+            onClosed(_.connectWebSocket(url, HttpHeaders.empty, HttpWebSocket.Config())(_ => Kyo.unit))
+        }
+
+        "connectRaw" in {
+            onClosed(_.connectRaw(url, HttpMethod.GET, Span.empty, HttpHeaders.empty, Duration.Infinity))
+        }
+    }
+
     private def withRawPeer[A](response: String)(
         test: Int => A < (Async & Abort[Any] & Scope)
     )(using Frame): A < (Async & Abort[Any] & Scope) =
