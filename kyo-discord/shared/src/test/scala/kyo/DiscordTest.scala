@@ -835,18 +835,29 @@ class DiscordTest extends kyo.test.Test[Any]:
             refused    <- closedPort.map(each)
         yield
             Chunk(echoed, redirected, chunked, statusLine, closing, refused).foreach(clean)
-            assert(echoed.map(_.failure.collect { case e: DiscordApiException => e.description }) ==
-                Chunk.fill(4)(Present("no access to /webhooks/900/<redacted> with Bot <redacted>")))
-            assert(redirected.map(_.failure.collect { case e: DiscordUnexpectedStatusException => e.status }) ==
-                Chunk.fill(4)(Present(HttpStatus(301))))
-            assert(Chunk(chunked, statusLine, closing, refused).map(_.map(_.failure.collect {
-                case e: DiscordTransportException => e.kind
-            })) == Chunk(
-                Chunk.fill(4)(Present(DiscordTransportException.Kind.Protocol)),
-                Chunk.fill(4)(Present(DiscordTransportException.Kind.Protocol)),
-                Chunk.fill(4)(Present(DiscordTransportException.Kind.ConnectionClosed)),
-                Chunk.fill(4)(Present(DiscordTransportException.Kind.Connect))
-            ))
+            val descriptions = echoed.map(_.failure.collect { case e: DiscordApiException => e.description })
+            assert(
+                descriptions == Chunk.fill(4)(Present("no access to /webhooks/900/<redacted> with Bot <redacted>")),
+                s"echoed: $descriptions"
+            )
+            val statuses = redirected.map(_.failure.collect { case e: DiscordUnexpectedStatusException => e.status })
+            assert(statuses == Chunk.fill(4)(Present(HttpStatus(301))), s"redirected: $statuses")
+            val transport = Chunk(chunked, statusLine, closing, refused)
+            // Each failure by its class, and its kind and cause when it is a transport failure, so a platform that classifies one of
+            // these differently names what it saw.
+            def observed = Chunk("chunked", "statusLine", "closing", "refused").zip(transport.map(_.map(_.failure.map {
+                case e: DiscordTransportException => s"${e.kind} (${Maybe(e.getCause).map(_.toString).getOrElse("no cause")})"
+                case other                        => other.getClass.getSimpleName
+            })))
+            assert(
+                transport.map(_.map(_.failure.collect { case e: DiscordTransportException => e.kind })) == Chunk(
+                    Chunk.fill(4)(Present(DiscordTransportException.Kind.Protocol)),
+                    Chunk.fill(4)(Present(DiscordTransportException.Kind.Protocol)),
+                    Chunk.fill(4)(Present(DiscordTransportException.Kind.ConnectionClosed)),
+                    Chunk.fill(4)(Present(DiscordTransportException.Kind.Connect))
+                ),
+                s"transport kinds: $observed"
+            )
         end for
     }
 
