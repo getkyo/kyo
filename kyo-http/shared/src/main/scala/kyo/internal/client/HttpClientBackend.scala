@@ -602,10 +602,11 @@ final private[kyo] class HttpClientBackend private (
     /** Decode response body and complete the result promise. Closes the connection if the server indicated Connection: close
       * (isKeepAlive=false) so it won't be reused from the pool.
       *
-      * A streaming route's non-2xx response arrives here buffered (see `sendStreaming`). It is decoded as the stream its route
-      * declares, over the buffered bytes, with the bytes as `rawBody`: a buffered decode cannot produce a stream-typed body and would
-      * fail with an `HttpStatusException` that carries no headers, losing what the caller reads from a refusal (`Retry-After`).
-      * `rawBody` keeps the body on the status failure the body-only methods raise.
+      * A streaming route's non-2xx response, and its response to a HEAD, arrive here buffered (see `sendStreaming`, and `send`, which
+      * takes the buffered path for every HEAD). Either is decoded as the stream its route declares, over the buffered bytes (none for a
+      * HEAD), with the bytes as `rawBody`: a buffered decode cannot produce a stream-typed body. For a refusal it would fail with an
+      * `HttpStatusException` that carries no headers, losing what the caller reads from it (`Retry-After`); for a HEAD it would fail
+      * the request outright. `rawBody` keeps the body on the status failure the body-only methods raise.
       */
     private def decodeAndComplete[In, Out](
         conn: HttpConnection,
@@ -618,7 +619,7 @@ final private[kyo] class HttpClientBackend private (
         val status = HttpStatus(parsed.statusCode)
         try
             val decoded =
-                if !status.isSuccess && RouteUtil.isStreamingResponse(route) then
+                if (!status.isSuccess || request.method == HttpMethod.HEAD) && RouteUtil.isStreamingResponse(route) then
                     val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
                     RouteUtil.decodeStreamingResponse(route, status, parsed.headers, body, route.method.name, request.url)
                         .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))

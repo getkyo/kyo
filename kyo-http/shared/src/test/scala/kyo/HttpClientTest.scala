@@ -676,6 +676,24 @@ class HttpClientTest extends BaseHttpTest:
             }
         }
 
+        "a HEAD on a route that streams its response gets the head and an empty body stream" - {
+            val route = HttpRoute.getRaw("feed").response(_.bodyStream)
+            val ep    = route.handler(_ => HttpResponse.ok.addField("body", Stream.init(Chunk(Span.fromUnsafe("data".getBytes("UTF-8"))))))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    withClient { client =>
+                        val headRoute = HttpRoute.headRaw("feed").response(_.bodyStream)
+                        client.sendWith(headRoute, HttpRequest.headRaw(url.copy(path = "/feed")))(resp =>
+                            resp.fields.body.run.map(chunks => (resp.status, chunks.size))
+                        ).map { case (status, chunks) =>
+                            assert(status == HttpStatus.OK)
+                            assert(chunks == 0, s"a HEAD response has no body, observed $chunks chunks")
+                        }
+                    }
+                }
+            }
+        }
+
         "request" - {
             val route = HttpRoute.postRaw("upload")
                 .request(_.bodyStream)
