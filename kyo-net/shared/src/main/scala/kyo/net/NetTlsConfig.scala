@@ -59,15 +59,11 @@ case class NetTlsConfig(
       * ClientHello, and never finishes) would otherwise pin the fd, the TLS engine, and the per-connection buffers indefinitely (a slowloris
       * handshake-stall denial of service, CWE-400), and on the process-shared transport nothing later reclaims them. When finite, the
       * transport arms a `Clock`-driven deadline as the handshake begins and reaps the connection on expiry, running the same fd and engine
-      * teardown a failed handshake runs. `Duration.Infinity` arms no deadline. The default `30.seconds` arms the guard for both roles.
+      * teardown a failed handshake runs, so a zero deadline fails the handshake at once. `Duration.Infinity` arms no deadline. The default,
+      * 30 seconds, arms the guard for both roles.
       */
     handshakeTimeout: Duration = 30.seconds
-) derives CanEqual:
-    require(
-        handshakeTimeout > Duration.Zero || handshakeTimeout == Duration.Infinity,
-        s"handshakeTimeout must be positive or Infinity: $handshakeTimeout"
-    )
-end NetTlsConfig
+) derives CanEqual
 
 object NetTlsConfig:
     enum ClientAuth derives CanEqual:

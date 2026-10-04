@@ -59,6 +59,44 @@ class BackendEchoTest extends Test:
         end for
     }
 
+    "a zero read chunk size is narrowed to one byte and still round-trips, on both the accepted and the connected side" - eachBackend {
+        transport =>
+            val zero = NetConfig(readChunkSize = ByteSize.Zero)
+            for
+                listener <- transport.listen("127.0.0.1", 0, 128, zero)(echo).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
+                conn     <- transport.connect("127.0.0.1", listener.port, config = zero).safe.get
+                _        <- Scope.ensure(Sync.defer(conn.close()))
+                message = "kyo-zero-chunk".getBytes("UTF-8")
+                _      <- conn.outbound.safe.put(Span.fromUnsafe(message))
+                echoed <- collect(conn, message.length)
+            yield
+                conn.close()
+                listener.close()
+                assert(echoed.sameElements(message), s"zero read chunk echo mismatch: got '${new String(echoed, "UTF-8")}'")
+            end for
+    }
+
+    "a channel capacity of zero or less makes rendezvous pump channels that still round-trip several chunks, on both sides" - eachBackend {
+        transport =>
+            Kyo.foreach(Chunk(0, -1)) { capacity =>
+                val config = NetConfig(channelCapacity = capacity)
+                for
+                    listener <- transport.listen("127.0.0.1", 0, 128, config)(echo).safe.get
+                    conn     <- transport.connect("127.0.0.1", listener.port, config = config).safe.get
+                    messages = Chunk("kyo-", "rendezvous-", s"capacity-$capacity").map(_.getBytes("UTF-8"))
+                    _      <- Kyo.foreachDiscard(messages)(m => conn.outbound.safe.put(Span.fromUnsafe(m)))
+                    echoed <- collect(conn, messages.map(_.length).sum)
+                yield
+                    conn.close()
+                    listener.close()
+                    capacity -> new String(echoed, "UTF-8")
+                end for
+            }.map { results =>
+                assert(results == Chunk(0 -> "kyo-rendezvous-capacity-0", -1 -> "kyo-rendezvous-capacity--1"))
+            }
+    }
+
     "concurrent full-duplex echo over many connections round-trips every byte in order (no dropped submission under overlap)" -
         eachBackend {
             transport =>

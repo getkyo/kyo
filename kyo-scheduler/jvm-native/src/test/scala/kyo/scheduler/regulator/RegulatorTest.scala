@@ -10,7 +10,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
     "load average" - {
         "below target" - {
             "when no jitter is present" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0
                 jitter = 0
 
@@ -23,7 +23,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter below low threshold" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0
                 jitter = jitterLowerThreshold - 1
 
@@ -33,7 +33,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter between low and high thresholds" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0
                 jitter = (jitterLowerThreshold + jitterUpperThreshold) / 2
 
@@ -43,7 +43,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter above high threshold" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0
                 jitter = jitterUpperThreshold + 1
 
@@ -54,7 +54,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
         "above target" - {
             "when no jitter is present" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0.9
                 jitter = 0
 
@@ -64,7 +64,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter below low threshold" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0.9
                 jitter = jitterLowerThreshold - 1
 
@@ -74,7 +74,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter between low and high thresholds" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0.9
                 jitter = jitterUpperThreshold
 
@@ -84,7 +84,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
 
             "with jitter above high threshold" in new Context {
-                val regulator = new TestRegulator
+                val regulator = new TestRegulator().start()
                 loadAvg = 0.9
                 jitter = jitterUpperThreshold * 10
 
@@ -97,7 +97,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "uses exponential steps" - {
         "up" in new Context {
-            val regulator = new TestRegulator
+            val regulator = new TestRegulator().start()
             loadAvg = 0.9
             jitter = jitterLowerThreshold - 1
 
@@ -107,7 +107,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "down" in new Context {
-            val regulator = new TestRegulator
+            val regulator = new TestRegulator().start()
             loadAvg = 0.9
             jitter = jitterUpperThreshold * 10
 
@@ -117,7 +117,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "reset" in new Context {
-            val regulator = new TestRegulator
+            val regulator = new TestRegulator().start()
             loadAvg = 0.9
 
             jitter = jitterLowerThreshold - 1
@@ -160,7 +160,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
                     if (thrown.compareAndSet(false, true)) throw new StackOverflowError("injected")
                     else { val _ = probes.incrementAndGet() }
                 def update(diff: Int): Unit = ()
-            }
+            }.start()
             awaitCount(() => probes.get(), 20, "probing")
         }
 
@@ -174,7 +174,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             val _ = new Regulator(loadAvg, timer, cfg) {
                 def probe(): Unit           = ()
                 def update(diff: Int): Unit = ()
-            }
+            }.start()
             awaitCount(() => reads.get(), 20, "adjusting")
         }
     }
@@ -204,7 +204,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             var probe      = null: SleepingProbe
             var terminated = false
             val bugs       = bugsOf("SleepingProbe") {
-                probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
+                probe = new SleepingProbe(kyo.scheduler.InternalTimer(exec), sleeping).start()
                 assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
                 probe.stop()
                 exec.shutdownNow(): Unit
@@ -221,7 +221,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
             try {
                 var probe = null: SleepingProbe
                 val bugs  = bugsOf("SleepingProbe") {
-                    probe = new SleepingProbe(probeFirstTimer(exec), sleeping)
+                    probe = new SleepingProbe(kyo.scheduler.InternalTimer(exec), sleeping).start()
                     assert(sleeping.await(30, java.util.concurrent.TimeUnit.SECONDS))
                     probe.thread.interrupt()
                     // The report is logged on the timer thread; a no-op run behind it on the same thread waits for it.
@@ -234,35 +234,60 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    // The regulator schedules its probe from its own constructor, so on a loaded host the first probe can run before a subclass body is
-    // initialized. This timer makes that order certain: scheduling the first task returns only once that task's first run has begun.
-    private def probeFirstTimer(exec: java.util.concurrent.ScheduledExecutorService): kyo.scheduler.InternalTimer = {
-        val timer = kyo.scheduler.InternalTimer(exec)
-        val first = new java.util.concurrent.atomic.AtomicBoolean(true)
+    "construction" - {
+        "never runs probe or update before the subclass is constructed" in {
+            val seen      = new java.util.concurrent.ConcurrentLinkedQueue[String]
+            val regulator = new ConstructionWitness(synchronousTimer, seen)
+            assert(seen.isEmpty, s"ran before start: $seen")
+            val _ = regulator.start()
+            assert(List.from(seen.toArray(Array.empty[String])) == List("probe:true", "update:true"))
+        }
+
+        "start after stop schedules nothing" in {
+            val seen      = new java.util.concurrent.ConcurrentLinkedQueue[String]
+            val regulator = new ConstructionWitness(synchronousTimer, seen)
+            regulator.stop()
+            val _ = regulator.start()
+            assert(seen.isEmpty, s"ran after stop: $seen")
+        }
+
+        "a second start schedules nothing more" in {
+            val seen      = new java.util.concurrent.ConcurrentLinkedQueue[String]
+            val regulator = new ConstructionWitness(synchronousTimer, seen).start()
+            val _         = regulator.start()
+            assert(List.from(seen.toArray(Array.empty[String])) == List("probe:true", "update:true"))
+        }
+    }
+
+    // Runs each scheduled task once, on the scheduling thread, before `schedule` returns: a task scheduled while the regulator is still
+    // being constructed would run then, with the subclass body not yet initialized.
+    private def synchronousTimer: kyo.scheduler.InternalTimer =
         new kyo.scheduler.InternalTimer {
-            def schedule(interval: Duration)(f: => Unit) =
-                if (!first.compareAndSet(true, false)) timer.schedule(interval)(f)
-                else {
-                    val started = new java.util.concurrent.CountDownLatch(1)
-                    val task    = timer.schedule(interval) { started.countDown(); f }
-                    assert(started.await(30, java.util.concurrent.TimeUnit.SECONDS), "the first scheduled task never ran")
-                    task
-                }
-            def scheduleOnce(delay: Duration)(f: => Unit) = timer.scheduleOnce(delay)(f)
+            def schedule(interval: Duration)(f: => Unit)  = { f; () => true }
+            def scheduleOnce(delay: Duration)(f: => Unit) = { f; () => true }
+        }
+
+    // Records whether its body field was set when probe and update ran. The field is an object so the compiler cannot fold it to a
+    // constant; the load average and thresholds make the first adjustment call update.
+    final private class ConstructionWitness(timer: kyo.scheduler.InternalTimer, seen: java.util.concurrent.ConcurrentLinkedQueue[String])
+        extends Regulator(() => 1d, timer, Config(10, 1.millis, 1.millis, 200, 100, 0.8, 1.3)) {
+        private val marker = new Object
+        def probe(): Unit  = {
+            val _ = seen.add(s"probe:${marker != null}")
+            measure(0)
+        }
+        def update(diff: Int): Unit = {
+            val _ = seen.add(s"update:${marker != null}")
         }
     }
 
     // A member class, not a local one: Scala 2 names a local class `SleepingProbe$1`, and the regulator's reports carry the simple name.
-    // Its state is constructor parameters, which are assigned before the regulator's constructor schedules the first probe; a body field
-    // is still null when that probe runs.
-    final private class SleepingProbe(
-        timer: kyo.scheduler.InternalTimer,
-        sleeping: java.util.concurrent.CountDownLatch,
-        val interrupted: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(false),
-        sleeper: java.util.concurrent.atomic.AtomicReference[Thread] = new java.util.concurrent.atomic.AtomicReference[Thread](null),
-        first: java.util.concurrent.atomic.AtomicBoolean = new java.util.concurrent.atomic.AtomicBoolean(true)
-    ) extends Regulator(() => 0d, timer, Config(10, 1.millis, 1.hour, 200, 100, 0.8, 1.3)) {
-        def thread: Thread = sleeper.get()
+    final private class SleepingProbe(timer: kyo.scheduler.InternalTimer, sleeping: java.util.concurrent.CountDownLatch)
+        extends Regulator(() => 0d, timer, Config(10, 1.millis, 1.hour, 200, 100, 0.8, 1.3)) {
+        val interrupted     = new java.util.concurrent.atomic.AtomicBoolean(false)
+        private val sleeper = new java.util.concurrent.atomic.AtomicReference[Thread](null)
+        private val first   = new java.util.concurrent.atomic.AtomicBoolean(true)
+        def thread: Thread  = sleeper.get()
         // Only the first probe sleeps, so the timer thread is free again once it is interrupted.
         def probe(): Unit =
             if (first.compareAndSet(true, false)) {

@@ -37,7 +37,8 @@ import kyo.net.internal.transport.WriteResult
   * JS uses `sendNow`; all leaves gate on isJS.
   *
   * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before any write; `backend.registeredWrite(writeFd).safe.get`
-  * latches on the real `registerWrite` (the flush arm); `fifoBarrier` proves the deferred free ran; `spy.onSend` fires before delegating to real
+  * latches on the real `registerWrite` (the flush arm); `fifoBarrier` proves the deferred free ran; `spy.closed(writeFd)` proves the deferred
+  * fd close ran; `spy.onSend` fires before delegating to real
   * (while `beginWrite` is held). No sleep.
   *
   * Drives a real BoringSSL engine through a `RecordingTlsEngine` decorator. All three leaves assert `freeCount.get() == 1`, `!usedAfterFree`,
@@ -143,6 +144,9 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         _ = driver.closeHandle(handle)
                         _ <- fifoBarrier(driver).safe.get
                         _ <- fifoBarrier(driver).safe.get
+                        // freeResources runs the real close(fd) last, on whichever carrier releases the last guard holder, after it
+                        // has queued the engine free: the barriers above order the free, not the fd close.
+                        _ <- spy.closed(writeFd).safe.get
                         // A write on the closed handle must bail Error.
                         freedBefore = engine.freeCount.get()
                         after <- Sync.defer(driver.write(handle, Span.fromUnsafe(Array[Byte](1, 2)), 0))
@@ -220,9 +224,11 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         // re-submits the flush. The flush acquires beginWrite, calls sockets.send -> onSend fires closeHandle re-entrantly.
                         _ = drainAll(peerFd)
                         // Latch on the close hook actually firing inside the re-flush (a real Promise.Unsafe completed by the onSend hook).
-                        _     <- hookFired.safe.get
-                        _     <- fifoBarrier(driver).safe.get
-                        _     <- fifoBarrier(driver).safe.get
+                        _ <- hookFired.safe.get
+                        _ <- fifoBarrier(driver).safe.get
+                        _ <- fifoBarrier(driver).safe.get
+                        // As in the first leaf, the barriers do not order the real close(fd).
+                        _     <- spy.closed(writeFd).safe.get
                         after <- Sync.defer(driver.write(handle, Span.fromUnsafe(Array[Byte](7, 8)), 0))
                     yield
                         driver.close()
