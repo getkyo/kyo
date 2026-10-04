@@ -17,13 +17,15 @@
 # stacks: 1.0 to 1.6GB measured) and the OS and runner agent need beside it.
 #
 # Roles:
-#   compile   compile-main and compile-test drivers, the doc site build
-#   docs      doctest and scaladoc, which compile every module's tests at the build's task limit
-#   test-jvm  the JVM run phase; its tests run in forked JVMs (build.sbt Test / javaOptions)
-#   run       the JS, Wasm and Native run phases; tests run in Node or the linked binary
-#   link      Native link batches and the heavy-module pre-link; clang jobs fork beside it
-#   publish   publishLocal and ci-release over many modules, one ++ reapply per module
-#   tool      planning, ffiCompileAll, packaging checks, release staging, formatting
+#   compile     compile-main and compile-test drivers, the doc site build
+#   docs        doctest and scaladoc, which compile every module's tests at the build's task limit
+#   classnames  checkClassNames, which compiles in one driver every JVM module's tests the doctest step
+#               left uncompiled; at 8192 it ran out of heap compiling kyo-net's tests
+#   test-jvm    the JVM run phase; its tests run in forked JVMs (build.sbt Test / javaOptions)
+#   run         the JS, Wasm and Native run phases; tests run in Node or the linked binary
+#   link        Native link batches and the heavy-module pre-link; clang jobs fork beside it
+#   publish     publishLocal and ci-release over many modules, one ++ reapply per module
+#   tool        planning, ffiCompileAll, packaging checks, release staging, formatting
 
 SBT_HEAP_RESERVE_MB=4096
 
@@ -34,14 +36,15 @@ fi
 
 sbt_heap_role_mb() {
     case "$1" in
-        compile)  echo 8192 ;;
-        docs)     echo 12288 ;;
-        test-jvm) echo 12288 ;;
-        run)      echo 6144 ;;
-        link)     echo 8192 ;;
-        publish)  echo 6144 ;;
-        tool)     echo 3072 ;;
-        *)        return 1 ;;
+        compile)    echo 8192 ;;
+        docs)       echo 12288 ;;
+        classnames) echo 12288 ;;
+        test-jvm)   echo 12288 ;;
+        run)        echo 6144 ;;
+        link)       echo 8192 ;;
+        publish)    echo 6144 ;;
+        tool)       echo 3072 ;;
+        *)          return 1 ;;
     esac
 }
 
