@@ -431,6 +431,8 @@ A trait can extend the parameter-carrying base because the concrete leaf supplie
 
 **Every leaf carries its own message, built from typed fields.** The leaf's fields are typed (`name: String`, `uri: Uri`, `requested: Version`) and its `message` is constructed from them in the case-class body; no free-form `detail: String` parameter stands in for structure. See [KyoException Convention](#kyoexception-convention) for the base-class mechanics.
 
+**An exception never contains sensitive information.** Not in a field, not in its message, and not in anything reachable through `getCause`: a wrapped cause is part of what the exception holds. A field comes from the module's own vocabulary (a name, a code, a status, a size, a position, a host and port), never from text copied out of a credential, a request's query, or a header value. kyo-http's leaves are the model. Every constructor strips the query from the URL it stores, because the query is where sensitive data travels, and `HttpInvalidFieldException.field` names the offending element without carrying its value, which can hold a credential. The path of a URL is stored, so a module never puts a secret in a path it hands to kyo-http. Where a platform forces a secret into the path, the module's failure for that call holds typed fields and no kyo-http cause.
+
 **Construction-time validation panics; it does not appear on a tracked `Abort` row.** A bad configuration (an empty required set, a non-positive timeout, a handler claiming a framework-reserved code) is a construction-time programmer error, so `require` throws rather than threading an `Abort[ConfigError]` through every `init` signature, exactly as the sibling `JsonRpcHandler.Config.require` does. Prefer a typed leaf for the thrown payload (`McpConfigurationError`) over a raw `IllegalArgumentException` so the message stays structured, but that leaf carries no operation-trait and never reaches a row. Impossible states and misuse (an accessor used outside its dynamic extent, a partition invariant) are likewise bugs, not tracked failures: they panic and stay off every row.
 
 ### Method Signatures
@@ -1456,6 +1458,7 @@ Follow this pattern for all new exception types:
 - Take `(using Frame)` to capture context
 - Use `String` for messages
 - Keep the message concise; the `Frame` provides the location context
+- Hold no sensitive information, in a field, the message, or the cause: see [Failure Tracking](#failure-tracking)
 
 ---
 
