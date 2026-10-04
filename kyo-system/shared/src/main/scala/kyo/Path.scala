@@ -942,7 +942,7 @@ object Path extends PathPlatformSpecific:
           * buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
           */
         def readStream(charset: Charset, bufferSize: ByteSize)(using Frame): Stream[String, PathRead & Scope & Sync] =
-            val capacity = readBufferCapacity(bufferSize)
+            val capacity = StreamCoreExtensions.readBufferCapacity(bufferSize)
             Stream {
                 Scope.acquireRelease(
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
@@ -996,7 +996,7 @@ object Path extends PathPlatformSpecific:
           * buffer that holds nothing, and anything above `Int.MaxValue` bytes reads through the largest buffer there is.
           */
         def readBytesStream(bufferSize: ByteSize)(using Frame): Stream[Byte, PathRead & Scope & Sync] =
-            val capacity = readBufferCapacity(bufferSize)
+            val capacity = StreamCoreExtensions.readBufferCapacity(bufferSize)
             Stream {
                 Scope.acquireRelease(
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
@@ -1429,7 +1429,7 @@ object Path extends PathPlatformSpecific:
     )(
         step: (St, Array[Byte], Int) => Step[V, St]
     )(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, PathRead & Async & Scope] =
-        val capacity = readBufferCapacity(bufferSize)
+        val capacity = StreamCoreExtensions.readBufferCapacity(bufferSize)
         Stream {
             Scope.acquireRelease(
                 ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
@@ -1485,23 +1485,6 @@ object Path extends PathPlatformSpecific:
             }
         }
     end watch
-
-    /** Narrows a read buffer size to the array capacity the read loops allocate.
-      *
-      * Two ends need a rule. `ByteSize.Zero` would allocate a buffer that reads nothing, which turns every read loop into a spin, so it
-      * becomes one byte. A size above `Int.MaxValue` names more bytes than an array can address, so it becomes `Int.MaxValue`: the caller
-      * asked for the largest buffer it could name and gets the largest one there is, which is what the `Int`-typed parameter this replaced
-      * already did at its own ceiling.
-      *
-      * Clamping rather than failing keeps the read APIs total, so the effect row of a stream stays what the read itself needs and does not
-      * grow an argument-validation failure that no realistic buffer size can reach.
-      */
-    private[kyo] def readBufferCapacity(bufferSize: ByteSize): Int =
-        val bytes = bufferSize.toBytes
-        if bytes <= 0L then 1
-        else if bytes > Int.MaxValue.toLong then Int.MaxValue
-        else bytes.toInt
-    end readBufferCapacity
 
     /** Returns the number of trailing bytes that form an incomplete UTF-8 sequence. */
     private def incompleteUtf8Tail(bytes: Array[Byte], len: Int): Int =
