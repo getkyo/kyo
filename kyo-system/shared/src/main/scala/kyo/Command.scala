@@ -62,19 +62,13 @@ object Command:
 
         /** Spawns the process and registers it with the enclosing `Scope` for automatic cleanup.
           *
-          * If the scope closes before `waitFor` completes, the process is forcibly killed.
+          * If the scope closes before the process exits, the process and every process it started are forcibly killed (see
+          * [[Process.destroyTree]]), and the scope's close completes only once none of them is running.
           */
         def spawn(using Frame): Process < (Sync & Scope & Abort[CommandException]) =
             // `.safe` is a pure `Result.map` inside the unsafe block, not a kernel
             // `.map` a stop could park on between the fork and `acquireRelease`'s `ensureMap`.
-            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
-                Sync.Unsafe.defer {
-                    // Feeds are stopped unconditionally: the process may have exited
-                    // while a feed is still parked reading its own source.
-                    p.unsafe.stopInputFeeds()
-                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                }
-            }
+            Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe))))(Command.release)
 
         /** Spawns the process WITHOUT registering it with any `Scope`: the caller owns the process
           * lifetime and must close it. The unscoped analog of [[spawn]] (mirrors `Fiber.initUnscoped`),
@@ -95,49 +89,44 @@ object Command:
         /** Spawns the process and returns its stdout as a byte stream (scope-managed). */
         def stream(using Frame): Stream[Byte, Async & Scope & Abort[CommandException]] =
             Stream {
-                Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe)))) { p =>
-                    Sync.Unsafe.defer {
-                        p.unsafe.stopInputFeeds()
-                        if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                    }
-                }.map { p =>
+                Scope.acquireRelease(Sync.Unsafe.defer(Abort.get(self.unsafe.spawn().map(_.safe))))(Command.release).map { p =>
                     p.stdout.emit
                 }
             }
 
-        /** Spawns the process and waits for it to exit, returning the `ExitCode`. */
+        /** Spawns the process and waits for it to exit, returning the `ExitCode`. Interrupting the wait kills the process and every process
+          * it started.
+          */
         def waitFor(using Frame): ExitCode < (Async & Abort[CommandException]) =
-            Sync.Unsafe.defer(self.unsafe.waitFor().safe.get)
+            // Called as `Command.spawn(self)`: inside this extension the bare name resolves to the `Unsafe` member.
+            Scope.run(Command.spawn(self).map(_.waitFor))
 
-        /** Spawns the process, waits for it to exit, and aborts with the `ExitCode` if the exit is non-successful.
+        /** Spawns the process, waits for it to exit, and aborts with the `ExitCode` if the exit is non-successful. Interrupting the wait
+          * kills the process and every process it started.
           *
           * Effect type includes `Abort[CommandException | ExitCode]` to signal either a launch failure or a non-zero exit.
           */
         def waitForSuccess(using Frame): Unit < (Async & Abort[CommandException | ExitCode]) =
-            Sync.Unsafe.defer(self.unsafe.waitForSuccess().safe.get)
+            Command.waitFor(self).map(code => if code.isSuccess then () else Abort.fail(code))
 
         /** Spawns the process, collects its stdout as a UTF-8 string, waits for exit, and returns both the text and the `ExitCode`.
           *
           * The `ExitCode` is returned as a value — the caller decides what to do with non-zero exits. stdout and stderr are drained
-          * concurrently so large outputs do not deadlock. `Abort[CommandException]` fires only if the process cannot be spawned.
+          * concurrently so large outputs do not deadlock. `Abort[CommandException]` fires only if the process cannot be spawned. Interrupting
+          * the wait kills the process and every process it started.
           */
         def textWithExitCode(using Frame): (String, ExitCode) < (Async & Abort[CommandException]) =
             Scope.run {
                 for
                     proc <- Sync.Unsafe.defer {
-                        Abort.get(self.unsafe.spawn()).map { p =>
-                            Scope.acquireRelease(p.safe) { p =>
-                                Sync.Unsafe.defer {
-                                    // Feeds are stopped unconditionally: the process may have exited
-                                    // while a feed is still parked reading its own source.
-                                    p.unsafe.stopInputFeeds()
-                                    if p.unsafe.isAlive() then p.unsafe.destroyForcibly()
-                                }
-                            }
-                        }
+                        Abort.get(self.unsafe.spawn()).map(p => Scope.acquireRelease(p.safe)(Command.release))
                     }
-                    outFib   <- Fiber.init(Scope.run(proc.stdout.run))
-                    errFib   <- Fiber.init(Scope.run(proc.stderr.run))
+                    outFib <- Fiber.init(Scope.run(proc.stdout.run))
+                    errFib <- Fiber.init(Scope.run(proc.stderr.run))
+                    // Releases run last-registered first, and closing the scope waits for the readers. A read blocks until every holder of
+                    // the pipe is gone, so the tree is killed before the readers are awaited, or a child holding stdout keeps the close
+                    // waiting forever.
+                    _        <- Scope.ensure(proc.destroyTree)
                     code     <- proc.waitFor
                     outBytes <- outFib.get
                     _        <- errFib.get
@@ -227,6 +216,10 @@ object Command:
         def unsafe: Command.Unsafe = self
 
     end extension
+
+    // The feeds are stopped unconditionally: the process may have exited while a feed is still parked reading its own source.
+    private def release(p: Process)(using Frame): Unit < Async =
+        Sync.Unsafe.defer(p.unsafe.stopInputFeeds()).andThen(p.destroyTree)
 
     /** How the child process environment is composed relative to the parent. */
     private[kyo] enum EnvMode derives CanEqual:
