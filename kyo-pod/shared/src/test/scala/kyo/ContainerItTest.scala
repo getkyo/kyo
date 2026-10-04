@@ -761,16 +761,40 @@ class ContainerItTest extends BasePodTest:
             }
         }
 
+        // Init runs on virtual monotonic time with the wall clock frozen, and a driver fiber advances that time one second whenever
+        // init is sleeping, so the 5s budget passes without any real wait. Only the port-wait polls sleep on this clock: the HTTP
+        // request timeout is infinite inside it, which arms no timer on init's calls, and the probe's grace observes the forwarder on
+        // the live clock. The scope, and with it the container's teardown, closes outside the controlled clock.
         "a published port with nothing listening fails init on monotonic time while the wall clock stands still" - runBackends {
             val config = alpine.port(8080, 0)
                 .requireService(true)
                 .portMappingTimeout(5.seconds)
-            Clock.let(Clock(Clock.Unsafe.withWall(Clock.live.unsafe)(() => Instant.Epoch))) {
-                Abort.run[ContainerException](Scope.run(Container.init(config)))
+            ensureImage(alpine.image).andThen {
+                Scope.run {
+                    HttpClient.withConfig(_.timeout(Duration.Infinity)) {
+                        Clock.withTimeControl { control =>
+                            Clock.use { controlled =>
+                                Clock.let(Clock(Clock.Unsafe.withWall(controlled.unsafe)(() => Instant.Epoch))) {
+                                    val advancing = Loop.foreach {
+                                        control.awaitPendingSleepers(1)
+                                            .andThen(control.advance(1.second, Duration.Zero))
+                                            .andThen(Loop.continue)
+                                    }
+                                    Fiber.init(advancing).map { driver =>
+                                        Abort.run[ContainerException](Container.init(config)).map { result =>
+                                            driver.interrupt.andThen(Clock.nowMonotonic.map(elapsed => (result, elapsed)))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }.map {
-                case Result.Failure(e: ContainerStartFailedException) =>
+                case (Result.Failure(e: ContainerStartFailedException), elapsed) =>
                     assert(e.reason.contains("does not hold a connection"), s"expected a reachability reason, got ${e.reason}")
-                case other => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
+                    assert(elapsed >= 5.seconds, s"the budget must have passed on the monotonic clock, which reads $elapsed")
+                case (other, _) => fail(s"expected ContainerStartFailedException for an unserved port, got $other")
             }
         }
 

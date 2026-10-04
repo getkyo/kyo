@@ -2584,8 +2584,10 @@ object Container:
             case _ => false
         }
 
+    // The grace runs on the live clock, as kyo-net's own connect deadlines do: it observes a real forwarder dropping a real connection.
+    // On a caller's virtual clock it would end whenever the caller advanced time, and a probe racing the peer's close would read as held.
     private def connectionHeld(conn: kyo.net.Connection)(using Frame): Boolean < Async =
-        Abort.run[Timeout](Async.timeout(portProbeGrace)(conn.onClosing.safe.get)).map {
+        Abort.run[Timeout](Clock.let(Clock.live)(Async.timeout(portProbeGrace)(conn.onClosing.safe.get))).map {
             // The grace expiring with no close observed is the readiness signal.
             case Result.Failure(_: Timeout) => true
             // A close within the grace is the unserved-port signature. Anything else is not a proof of
