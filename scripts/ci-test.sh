@@ -44,7 +44,7 @@ set -uo pipefail
 # Between Native test batches the runner sweeps leftover containers and pins the
 # per-module test-worker count; both are hygiene, neither can change a verdict.
 #
-# Reads CI, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
+# Reads CI, GITHUB_ACTIONS, SBT_TASK_LIMIT, JAVA_OPTS, JVM_OPTS, NATIVE_HEAVY, NATIVE_SKIP,
 # NATIVE_LINK_CPUS, NATIVE_LINK_BATCH, NATIVE_TEST_BATCH, NATIVE_WORKER_MAX,
 # JS_TEST_BATCH, WASM_TEST_BATCH, and CONTAINER_SWEEP from the environment; mutates none of them except
 # JAVA_OPTS, which gains the sbt server switches below (the nativeLink invocations also append
@@ -156,13 +156,15 @@ if [ "${1:-}" = "--self-test" ]; then
     # code) and leaves the recorded calls in CALLS and the runner's own output in
     # OUT for the assertion. Trailing VAR=value pairs enter the runner's
     # environment. CONTAINER_SWEEP=0 by default so a case that does not opt in
-    # can never touch a real runtime on a developer machine.
+    # can never touch a real runtime on a developer machine, and GITHUB_ACTIONS
+    # empty so the session a case runs in does not depend on where the self-test
+    # itself runs.
     run_runner_env() {
         local body="$1" platform="$2" action="$3"; shift 3
         : > "$CALLS"; : > "$HEAP"; : > "$OUT"; : > "$PODCALLS"
         make_fake_sbt "$body"
         env PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 RESOLVE_BACKOFF=0 \
-            CONTAINER_SWEEP=0 SBT_HEAP_MEMORY_MB=16384 "$@" \
+            CONTAINER_SWEEP=0 SBT_HEAP_MEMORY_MB=16384 GITHUB_ACTIONS= "$@" \
             "$SELF" "$platform" "$action" > "$OUT" 2>&1
         CT_EXIT=$?
     }
@@ -684,6 +686,37 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
     then record ok "every sbt gets the boot socket and server switches"
     else record no "every sbt gets the boot socket and server switches"; fi
 
+    # 55-56: on a Linux runner the build leads a session of its own and its exit status survives the re-exec; a run
+    # outside Actions stays in the caller's session. The fake sbt records the session it runs in. A host without
+    # /proc or setsid takes neither branch, so there only the exit status is asserted.
+    SID_FILE="$SELFDIR/sbt-sid"
+    SID_BODY='[ -r /proc/self/stat ] && { s=$(cat /proc/self/stat); set -- ${s##*) }; printf "%s" "$4" > "'"$SID_FILE"'"; }'
+    session_of() {
+        [ -r "/proc/$1/stat" ] || return 1
+        local s; s=$(cat "/proc/$1/stat")
+        # shellcheck disable=SC2086
+        set -- ${s##*) }
+        printf '%s' "$4"
+    }
+    if [ "$(uname -s)" = "Linux" ] && command -v setsid >/dev/null 2>&1; then linux_session=yes; else linux_session=no; fi
+    own_sid=$(session_of $$ || true)
+
+    rm -f "$SID_FILE"
+    run_runner_env "$SID_BODY; exit 1" JVM compile GITHUB_ACTIONS=true
+    sbt_sid=$(cat "$SID_FILE" 2>/dev/null || true)
+    if exit_is 1 && calls_count 1 \
+       && { [ "$linux_session" = no ] || { [ -n "$sbt_sid" ] && [ "$sbt_sid" != "$own_sid" ]; }; }
+    then record ok "on a Linux runner the build runs in its own session and keeps its exit status"
+    else record no "on a Linux runner the build runs in its own session and keeps its exit status"; fi
+
+    rm -f "$SID_FILE"
+    run_runner_env "$SID_BODY; exit 0" JVM compile
+    sbt_sid=$(cat "$SID_FILE" 2>/dev/null || true)
+    if exit_is 0 && calls_count 4 \
+       && { [ "$linux_session" = no ] || [ "$sbt_sid" = "$own_sid" ]; }
+    then record ok "outside Actions the build stays in the caller's session"
+    else record no "outside Actions the build stays in the caller's session"; fi
+
     # Negative control: a deliberately wrong expectation MUST flip FAIL,
     # proving the harness is not vacuous. Not counted in the scenario total.
     run_runner JVM test 'exit 0'
@@ -691,7 +724,7 @@ echo "Tests: succeeded 100, failed 0"; echo "[testKyo] completed"; exit 0'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 61 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 63 ]
     exit $?
 fi
 
@@ -706,6 +739,27 @@ if ! contains_word "$PLATFORM" "$PLATFORMS"; then
 fi
 if ! contains_word "$ACTION" "$ACTIONS"; then
     echo "ci-test.sh: unknown action '$ACTION'" >&2; usage; exit 2
+fi
+
+# Whether this process leads its own session, read from /proc on Linux. Git Bash on Windows emulates /proc with ids of
+# its own, so it never counts.
+own_session() {
+    [ "$(uname -s)" = "Linux" ] && [ -r "/proc/$$/stat" ] || return 1
+    local stat
+    stat=$(cat "/proc/$$/stat") || return 1
+    # shellcheck disable=SC2086
+    set -- ${stat##*) }
+    [ "$4" = "$$" ]
+}
+
+# A Linux CI build runs in a session of its own. The step shell does no job control, so without this the build shares
+# the step shell's process group, and on a hosted runner that group is the runner's own (Runner.Worker, Runner.Listener
+# and the hosted-compute agent): a group-wide signal from the build (the monitor's disk abort) TERMs the runner. `exec`
+# keeps the pid, so the step shell still waits on this process for its exit status; `-w` covers the case where setsid
+# has to fork. Local runs keep their terminal, so Ctrl-C still reaches the build. Windows has no setsid and keeps the
+# shared group.
+if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "$(uname -s)" = "Linux" ] && command -v setsid >/dev/null 2>&1 && ! own_session; then
+    exec setsid -w bash "$0" "$@"
 fi
 
 MAX_RETRIES=${MAX_RETRIES:-3}
@@ -1228,7 +1282,11 @@ sched_file="${RUNNER_TEMP:-/tmp}/kyo-sched-$PLATFORM.status"
 rm -f "$sched_file"
 export KYO_SCHEDULER_TOPSTATUSFILE="$sched_file"
 export KYO_SCHEDULER_TOPSTATUSFILEMS=5000
-KYO_SCHED_FILE="$sched_file" bash "$monitor" &
+# In a session of its own the build's process group is this process's pid, and the monitor's disk abort signals that
+# group only.
+kill_pgid=""
+own_session && kill_pgid=$$
+KYO_SCHED_FILE="$sched_file" CI_MON_KILL_PGID="$kill_pgid" bash "$monitor" &
 monitor_pid=$!
 
 if [ "$PLATFORM" = "Native" ]; then
