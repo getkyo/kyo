@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.LeafContainers
+
 abstract class BasePodTest extends kyo.test.Test[Any]:
 
     /** Test infrastructure runs synchronously at registration time (`runBackends`/`runRuntimes` test-scope registration), so we provide a
@@ -72,14 +74,15 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
     /** Runs `v` under its own `Scope` and returns its result with the containers the leaf may have left behind.
       *
       * The daemon is shared with other suites and other builds, so a before/after diff of its container set would count their containers
-      * too. Every container `v` causes kyo-pod to create carries this leaf's label instead, and only those are candidates.
+      * too. Every container `v` causes kyo-pod to create carries this leaf's label instead, and only those are candidates. The labels also
+      * name this process as the owner, so a later process removes them if this one dies before its `Scope` does.
       */
     private[kyo] def leafCandidates[A](v: A < (Async & Abort[Any] & Scope))(using
         Frame
     ): (A, Chunk[Container.Summary]) < (Async & Abort[Any]) =
-        Random.nextStringAlphanumeric(16).map { leaf =>
-            Container.ambientLabels.let(Dict(BasePodTest.leafLabel -> leaf))(Scope.run(v)).map { result =>
-                Container.list(all = true, filters = Dict("label" -> Chunk(s"${BasePodTest.leafLabel}=$leaf")))
+        LeafContainers.sweepOnce.andThen(Random.nextStringAlphanumeric(16)).map { leaf =>
+            Container.ambientLabels.let(LeafContainers.labels(leaf))(Scope.run(v)).map { result =>
+                Container.list(all = true, filters = Dict("label" -> Chunk(s"${LeafContainers.leafLabelKey}=$leaf")))
                     .map(candidates => (result, candidates))
             }
         }
@@ -281,6 +284,3 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
             cancel(s"the $runtime CLI is not available on this host, so the shell backend cannot run")
 
 end BasePodTest
-
-object BasePodTest:
-    private[kyo] val leafLabel = "kyo.pod.test.leaf"
