@@ -6,12 +6,12 @@ import kyo.Chunk
 import kyo.Codec
 import kyo.OrderedDictBuilder
 import kyo.ParseException
-import kyo.RangeException
 import kyo.Span
 import kyo.Structure
 import kyo.TruncatedInputException
 import kyo.TypeMismatchException
 import kyo.discard
+import kyo.internal.Numeric
 
 final class BsonReader private (
     root: BsonValue,
@@ -52,7 +52,7 @@ final class BsonReader private (
                 current = None
                 fields.size
             case other =>
-                mismatch("document", other)
+                mismatch(Codec.Kind.Object, other)
     end objectStart
 
     def objectEnd(): Unit =
@@ -74,7 +74,7 @@ final class BsonReader private (
                 current = None
                 values.size
             case other =>
-                mismatch("array", other)
+                mismatch(Codec.Kind.Array, other)
     end arrayStart
 
     def arrayEnd(): Unit =
@@ -137,48 +137,42 @@ final class BsonReader private (
         val result =
             value match
                 case StringValue(value) => value
-                case other              => mismatch("string", other)
+                case other              => mismatch(Codec.Kind.String, other)
         consumeCurrent()
         result
     end string
 
-    def int(): Int =
-        val result =
-            value match
-                case Int32Value(value) => value
-                case Int64Value(value) =>
-                    if value < Int.MinValue || value > Int.MaxValue then
-                        throw RangeException(value, "Int", Int.MinValue.toLong, Int.MaxValue.toLong)(using frame)
-                    value.toInt
-                case other => mismatch("int", other)
-        consumeCurrent()
-        result
-    end int
+    def int(): Int = integral(Numeric.Target.Int32).toInt
 
-    def long(): Long =
-        val result =
-            value match
-                case Int32Value(value) => value.toLong
-                case Int64Value(value) => value
-                case other             => mismatch("long", other)
-        consumeCurrent()
-        result
-    end long
+    def long(): Long = integral(Numeric.Target.Int64)
 
-    def float(): Float =
-        val result =
+    def short(): Short = integral(Numeric.Target.Int16).toShort
+
+    def byte(): Byte = integral(Numeric.Target.Int8).toByte
+
+    private def integral(target: Numeric.Target): Long =
+        given kyo.Frame = frame
+        val result      =
             value match
-                case DoubleValue(value) => value.toFloat
-                case other              => mismatch("float", other)
+                case Int32Value(value)      => Numeric.whole(value.toLong, target)
+                case Int64Value(value)      => Numeric.whole(value, target)
+                case DoubleValue(value)     => Numeric.whole(value, target)
+                case Decimal128Value(value) => Numeric.whole(value, target)
+                case other                  => mismatch(Codec.Kind.Number, other)
         consumeCurrent()
         result
-    end float
+    end integral
+
+    def float(): Float = double().toFloat
 
     def double(): Double =
         val result =
             value match
-                case DoubleValue(value) => value
-                case other              => mismatch("double", other)
+                case DoubleValue(value)     => value
+                case Int32Value(value)      => value.toDouble
+                case Int64Value(value)      => value.toDouble
+                case Decimal128Value(value) => value.toDouble
+                case other                  => mismatch(Codec.Kind.Number, other)
         consumeCurrent()
         result
     end double
@@ -187,28 +181,15 @@ final class BsonReader private (
         val result =
             value match
                 case BooleanValue(value) => value
-                case other               => mismatch("boolean", other)
+                case other               => mismatch(Codec.Kind.Boolean, other)
         consumeCurrent()
         result
     end boolean
 
-    def short(): Short =
-        val value = int()
-        if value < Short.MinValue || value > Short.MaxValue then
-            throw RangeException(value.toLong, "Short", Short.MinValue.toLong, Short.MaxValue.toLong)(using frame)
-        value.toShort
-    end short
-
-    def byte(): Byte =
-        val value = int()
-        if value < Byte.MinValue || value > Byte.MaxValue then
-            throw RangeException(value.toLong, "Byte", Byte.MinValue.toLong, Byte.MaxValue.toLong)(using frame)
-        value.toByte
-    end byte
-
     def char(): Char =
         val value = string()
-        if value.length != 1 then mismatch("char", StringValue(value))
+        if value.length != 1 then
+            throw TypeMismatchException(Seq.empty, "a single character", s"a string of length ${value.length}")(using frame)
         value.charAt(0)
     end char
 
@@ -235,7 +216,7 @@ final class BsonReader private (
         val result =
             value match
                 case BinaryValue(value, _) => value
-                case other                 => mismatch("binary", other)
+                case other                 => mismatch(Codec.Kind.Bytes, other)
         consumeCurrent()
         result
     end bytes
@@ -250,7 +231,7 @@ final class BsonReader private (
                     catch
                         case _: NumberFormatException =>
                             throw ParseException(kyo.Bson(config), value, "BigInt")(using frame)
-                case other => mismatch("big integer", other)
+                case other => mismatch(Codec.Kind.Number, other)
         consumeCurrent()
         result
     end bigInt
@@ -270,7 +251,7 @@ final class BsonReader private (
                         throw ParseException(kyo.Bson(config), value.toString, "finite BigDecimal")(using frame)
                     BigDecimal(value)
                 case Decimal128Value(value) => value
-                case other                  => mismatch("decimal", other)
+                case other                  => mismatch(Codec.Kind.Number, other)
         consumeCurrent()
         result
     end bigDecimal
@@ -279,7 +260,7 @@ final class BsonReader private (
         val result =
             value match
                 case DateTimeValue(value) => value
-                case other                => mismatch("datetime", other)
+                case other                => mismatch(Codec.Kind.Timestamp, other)
         consumeCurrent()
         result
     end instant
@@ -295,12 +276,12 @@ final class BsonReader private (
                         case (Some(Int32Value(seconds)), Some(Int32Value(nanos))) =>
                             java.time.Duration.ofSeconds(seconds.toLong, nanos.toLong)
                         case _ =>
-                            mismatch("duration document", value)
+                            mismatch(Codec.Kind.Duration, value)
                     end match
                 case Int64Value(nanos) =>
                     java.time.Duration.ofNanos(nanos)
                 case other =>
-                    mismatch("duration", other)
+                    mismatch(Codec.Kind.Duration, other)
         consumeCurrent()
         result
     end duration
@@ -372,28 +353,25 @@ final class BsonReader private (
         end match
     end toStructure
 
-    private def mismatch(expected: String, actual: BsonValue): Nothing =
-        throw TypeMismatchException(Seq.empty, expected, actualName(actual))(using frame)
+    private def mismatch(expected: Codec.Kind, actual: BsonValue): Nothing =
+        throw Codec.kindMismatch(expected, kindOf(actual))(using frame)
     end mismatch
 
     private def parseError(expected: String): Nothing =
         throw ParseException(kyo.Bson(config), "", expected)(using frame)
     end parseError
 
-    private def actualName(value: BsonValue): String =
+    private def kindOf(value: BsonValue): Codec.Kind =
         value match
-            case DocumentValue(_)   => "document"
-            case ArrayValue(_)      => "array"
-            case StringValue(_)     => "string"
-            case DoubleValue(_)     => "double"
-            case BinaryValue(_, _)  => "binary"
-            case BooleanValue(_)    => "boolean"
-            case DateTimeValue(_)   => "datetime"
-            case NullValue          => "null"
-            case Int32Value(_)      => "int32"
-            case Int64Value(_)      => "int64"
-            case Decimal128Value(_) => "decimal128"
-    end actualName
+            case DocumentValue(_)                                                    => Codec.Kind.Object
+            case ArrayValue(_)                                                       => Codec.Kind.Array
+            case StringValue(_)                                                      => Codec.Kind.String
+            case DoubleValue(_) | Int32Value(_) | Int64Value(_) | Decimal128Value(_) => Codec.Kind.Number
+            case BinaryValue(_, _)                                                   => Codec.Kind.Bytes
+            case BooleanValue(_)                                                     => Codec.Kind.Boolean
+            case DateTimeValue(_)                                                    => Codec.Kind.Timestamp
+            case NullValue                                                           => Codec.Kind.Null
+    end kindOf
 
 end BsonReader
 

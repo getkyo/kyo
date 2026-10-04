@@ -688,8 +688,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         // method except toStructureValue delegates to the strict schema.
         val strictCodec     = internal.codec.JsonRpcEnvelopeSchema.strict
         val bothFieldsCodec = new Schema[JsonRpcEnvelope](Seq.empty):
-            override private[kyo] def toStructureValue(env: JsonRpcEnvelope): Structure.Value =
-                given Frame = Frame.internal
+            override private[kyo] def toStructureValue(env: JsonRpcEnvelope)(using Frame): Structure.Value =
                 env match
                     case JsonRpcResponse(id, Present(r), Present(e), _) =>
                         Structure.Value.Record(Chunk(

@@ -1,7 +1,6 @@
 package kyo.internal
 
 import kyo.*
-import kyo.db.Backend
 import kyo.internal.dolt.DoltBackendFactory
 import kyo.internal.mysql.MysqlConnection
 
@@ -10,13 +9,9 @@ import kyo.internal.mysql.MysqlConnection
   * Every capability answer below starts as MySQL's, since Dolt runs go-mysql-server and answers `8.0.31` to `version()`, and the battery is
   * what tests that hypothesis. An answer that differs from MySQL's carries the measurement that made it differ.
   */
-final class DoltConformanceBackend extends ContainerConformanceBackend:
+final class DoltConformanceBackend extends ContainerConformanceBackend(new DoltBackendFactory()):
 
-    def id: String        = "dolt"
-    def label: String     = "Dolt"
-    def urlScheme: String = "dolt"
-
-    def backend: Backend = new DoltBackendFactory()
+    def label: SqlConformanceBackend.Label = SqlConformanceBackend.Label("Dolt")
 
     /** Backticks, matching MysqlDialect.quoteIdent, which this dialect inherits unchanged. */
     def quoteIdent(name: String): String =

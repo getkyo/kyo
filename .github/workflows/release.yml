@@ -34,27 +34,18 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: macos-14
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # No ci leg runs on macOS, so this producer is the only writer of its pole; it saves after the
+      # compile below.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-macos-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-macos-arm64-
+          os: macos-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -76,6 +67,7 @@ jobs:
       # at the 10 GB budget where eviction is continuous. Re-running a producer is cheap: the staging
       # scripts skip what is already staged.
       - name: Compile every module's darwin natives (darwin-aarch64 + darwin-x86_64)
+        id: compile
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
@@ -91,12 +83,21 @@ jobs:
             # failure in any of them fails the attempt instead of being retried into a false success.
             set -euo pipefail
             # Host build: build.sbt resolves the BoringSSL staged dir and the target to darwin-aarch64.
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             # Cross build: -Dos.arch=x86_64 points the host-keyed resolution at darwin-x86_64 (so the
             # boringssl shim links the x86_64 archives), -arch x86_64 makes clang emit x86_64 code.
             # ffiCFlags is a build-wide setting, so one ThisBuild append covers every project this leg
             # cross-builds. Same form the plugin's own generated workflow uses.
-            sbt -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM -Dos.arch=x86_64 'set ThisBuild / ffiCFlags ++= Seq("-arch", "x86_64")' ffiCompileAll
+      # Saves only on a push to main (the action's guard), and only once the compile has resolved: a key is
+      # immutable once written, so a tree from a failed setup would own the generation.
+      - if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
+        continue-on-error: true
+        uses: ./.github/actions/caches
+        with:
+          os: macos-arm64
+          mode: save
+          browser: false
       - name: Collect darwin natives
         shell: bash
         run: |
@@ -130,27 +131,18 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write. A producer resolves a JVM-only tree, and a key is
+      # immutable once written, so saving here would lock out ci's fuller tree for the hash.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-x64-
+          os: linux-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -177,7 +169,7 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-x86_64.so' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
@@ -221,21 +213,22 @@ jobs:
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-x86_64
               bash kyo-sql-sqlite/scripts/build-sqlite.sh
               bash kyo-sql-doltlite/scripts/build-doltlite.sh
-              sbt -Dplatform=JVM ffiCompileAll
+              bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-x86_64.so" -exec cp -n {} natives-out/ \;
             '
-      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+      # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-net/build/boringssl/staged
           key: ${{ steps.natives-musl.outputs.boringssl-key }}
-      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.aeron-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-aeron/build/aeron/staged
           key: ${{ steps.natives-musl.outputs.aeron-key }}
-      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.doltlite-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-sql-doltlite/build/doltlite/staged
@@ -266,27 +259,17 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-24.04-arm
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-linux-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-linux-arm64-
+          os: linux-arm64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -313,7 +296,7 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            sbt -Dplatform=JVM ffiCompileAll
+            scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
             mkdir -p natives-out
             find . -path '*/target/ffi/lib*-linux-aarch64.so' -exec cp -n {} natives-out/ \;
       # The musl trees are staged inside the container below, so this restores only; the saves
@@ -351,21 +334,22 @@ jobs:
               bash kyo-aeron/scripts/build-aeron.sh linux-musl-aarch64
               bash kyo-sql-sqlite/scripts/build-sqlite.sh
               bash kyo-sql-doltlite/scripts/build-doltlite.sh
-              sbt -Dplatform=JVM ffiCompileAll
+              bash scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
               mkdir -p natives-out
               find . -path "*/target/ffi/lib*-linux-musl-aarch64.so" -exec cp -n {} natives-out/ \;
             '
-      - if: ${{ steps.natives-musl.outputs.boringssl-hit != 'true' }}
+      # Push to main only, as every cache save: a tag or /release run would write a scope nothing reads.
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.boringssl-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-net/build/boringssl/staged
           key: ${{ steps.natives-musl.outputs.boringssl-key }}
-      - if: ${{ steps.natives-musl.outputs.aeron-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.aeron-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-aeron/build/aeron/staged
           key: ${{ steps.natives-musl.outputs.aeron-key }}
-      - if: ${{ steps.natives-musl.outputs.doltlite-hit != 'true' }}
+      - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.natives-musl.outputs.doltlite-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: kyo-sql-doltlite/build/doltlite/staged
@@ -405,27 +389,17 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: windows-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-windows-x64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-windows-x64-
+          os: windows-x64
+          mode: restore
+          browser: false
       - uses: coursier/setup-action@v3.0.3
         with:
           jvm: corretto:25
@@ -443,7 +417,7 @@ jobs:
           # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
           retry_on: error
           shell: bash
-          command: sbt -Dplatform=JVM ffiCompileAll
+          command: scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-x86_64
@@ -454,7 +428,7 @@ jobs:
           if-no-files-found: error
 
   # windows-11-arm is free for public repositories and the same 4 vCPU / 16 GB tier as every other
-  # pole, so the memory tuning above carries over unchanged.
+  # pole.
   natives-windows-aarch64:
     if: |
       github.repository == 'getkyo/kyo' && (
@@ -463,27 +437,17 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: windows-11-arm
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
-      # Same key as .github/actions/setup, so producers reuse what ci already populated.
-      - uses: actions/cache@v6
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Restore only: the ci legs on this pole write.
+      - uses: ./.github/actions/caches
         with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-windows-arm64-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-windows-arm64-
+          os: windows-arm64
+          mode: restore
+          browser: false
       # setup-java, not coursier: coursier publishes no aarch64-pc-win32 launcher, so setup-action 404s
       # trying to install itself here. sbt is preinstalled on this image; only the JDK needs replacing,
       # since the one it ships is 21. Microsoft's build because Amazon ships no Corretto for Windows on
@@ -507,7 +471,7 @@ jobs:
           # job's 360-minute default budget, so a hung producer would burn the whole slot before failing.
           retry_on: error
           shell: bash
-          command: sbt -Dplatform=JVM ffiCompileAll
+          command: scripts/sbt.sh tool -Dplatform=JVM ffiCompileAll
       - uses: ./.github/actions/windows-native-collect
         with:
           os-arch: windows-aarch64
@@ -526,9 +490,6 @@ jobs:
          github.event.issue.pull_request &&
          github.event.comment.body == '/release'))
     runs-on: ubuntu-latest
-    env:
-      JAVA_OPTS: -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
-      JVM_OPTS:  -Xms4G -Xmx4G -XX:ReservedCodeCacheSize=256M
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -569,7 +530,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
+          command: rm -rf target/sona-staging && scripts/sbt.sh publish -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -583,7 +544,7 @@ jobs:
           timeout_minutes: 120
           # The Scala.js artifact bundles the same shim (under kyo-ffi/native/<os>-<arch>), and koffi loads
           # it on macOS exactly as the JVM does, so the JS stage stages the darwin natives too.
-          command: sbt -Dplatform=JS 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
+          command: scripts/sbt.sh publish -Dplatform=JS 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -596,7 +557,7 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: sbt -Dplatform=Native "ci-release"
+          command: scripts/sbt.sh publish -Dplatform=Native "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
           CI_CLEAN: ""
@@ -611,7 +572,7 @@ jobs:
       - name: Native classifier completeness guard (pre-release belt)
         shell: bash
         run: |
-          sbt -Dplatform=JVM \
+          scripts/sbt.sh tool -Dplatform=JVM \
             'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' \
             kyo-netJVM/kyoNetNativeClassifierGuard
       # Every FFI module, on both publishing platforms: each staged native must match the platform
@@ -623,8 +584,8 @@ jobs:
       - name: FFI native packaging guard, every module (pre-release belt)
         shell: bash
         run: |
-          sbt -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
-          sbt -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          scripts/sbt.sh tool -Dplatform=JVM 'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
+          scripts/sbt.sh tool -Dplatform=JS  'set ThisBuild / ffiPrebuiltPool := Some(file("ffi-prebuilt"))' ffiPackagingCheckAll
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
@@ -634,7 +595,7 @@ jobs:
         with:
           max_attempts: 1
           timeout_minutes: 120
-          command: sbt -Dplatform=JVM "sonaRelease"
+          command: scripts/sbt.sh tool -Dplatform=JVM "sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}

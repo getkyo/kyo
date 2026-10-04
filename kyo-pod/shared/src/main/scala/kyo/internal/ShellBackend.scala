@@ -263,13 +263,26 @@ final private[kyo] class ShellBackend(
 
     def checkpoint(id: Container.Id, name: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit(ResourceContext.Container(id), "container", "checkpoint", id.value, "--export", s"/tmp/$name.tar")
+            runUnit(
+                ResourceContext.Container(id),
+                "container",
+                "checkpoint",
+                id.value,
+                "--export",
+                ContainerBackend.checkpointArchive(name).toString
+            )
         else
             runUnit(ResourceContext.Container(id), "checkpoint", "create", id.value, name)
 
     def restore(id: Container.Id, checkpoint: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if cmd == "podman" then
-            runUnit(ResourceContext.Container(id), "container", "restore", "--import", s"/tmp/$checkpoint.tar")
+            runUnit(
+                ResourceContext.Container(id),
+                "container",
+                "restore",
+                "--import",
+                ContainerBackend.checkpointArchive(checkpoint).toString
+            )
         else
             runUnit(ResourceContext.Container(id), "start", "--checkpoint", checkpoint, id.value)
 
@@ -2223,13 +2236,16 @@ final private[kyo] class ShellBackend(
                             lower.contains("bearer token") || lower.contains("denied"))
                     then
                         ContainerAuthException(ctx.describe, output)
-                    // The pull reached the registry and the registry failed. Podman prints the status it received
-                    // verbatim ("received unexpected HTTP status: 502 Bad Gateway"), which is the only part of the
-                    // sentence that distinguishes an outage from an absent image; the rest reads the same either way.
-                    // It must be caught before the surgery below, which files anything else under "initializing source"
-                    // as permanently missing, and missing is the classification callers never retry. An output that
-                    // names the image absent has already matched ErrorPatterns.ImageNotFound in the table above.
-                    else if lower.contains("initializing source") && matchesAny(DaemonErrorPhrases.ServerError) then
+                    // The registry failed or could not be reached. Podman prints the status it received verbatim
+                    // ("received unexpected HTTP status: 502 Bad Gateway") or the failed connection, which are the only
+                    // parts of the sentence that distinguish an outage from an absent image; the rest reads the same either
+                    // way. It must be caught before the surgery below, which files anything else under "initializing source"
+                    // as permanently missing, and missing is the classification callers never retry. The docker CLI prints
+                    // the same failures as the daemon's message on an image operation, with no "initializing source". An
+                    // output that names the image absent has already matched ErrorPatterns.ImageNotFound in the table above.
+                    else if (lower.contains("initializing source") || ctx.isInstanceOf[ResourceContext.Image]) &&
+                        (matchesAny(DaemonErrorPhrases.ServerError) || matchesAny(DaemonErrorPhrases.RegistryUnreachable))
+                    then
                         ContainerRegistryUnavailableException(ctx.describe, output)
                     // initializing source: multi-step string surgery to extract the image ref
                     else if lower.contains("initializing source") then

@@ -149,7 +149,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions {
                 loadAvgTarget,
                 stepExp
             )
-        )
+        ).start()
     }
 
 }

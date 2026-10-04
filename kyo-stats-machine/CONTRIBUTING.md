@@ -431,9 +431,9 @@ above do.
   `KYO_MACHINE_DISABLED=true` as an env var (`build.sbt:1139`), and JS sets
   the same env var through the Node test environment config
   (`build.sbt:1150`). A test that needs an actually-running sampler starts
-  and stops it explicitly and locally (`MachineStatFactoryTest`,
-  sequential-suite `stopForTest`/`resetForTest` seams,
-  `MachineStatFactoryTest.scala:10,36-47`).
+  and stops it explicitly and locally: `triggerStart` answers the fiber it
+  started, the test interrupts that fiber, and the sequential suite resets
+  the start CAS with `resetForTest` (`MachineStatFactoryTest`).
 
 ## kyo-core and kyo-stats-registry touches
 

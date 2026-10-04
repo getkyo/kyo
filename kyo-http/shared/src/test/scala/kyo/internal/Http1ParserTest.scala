@@ -1206,4 +1206,246 @@ class Http1ParserTest extends kyo.BaseHttpTest:
         }
     }
 
+    /** Feeds `reads` to a parser, one span per read, after injecting `leftover` as the bytes a previous cycle left behind, and returns what
+      * it produced: every request parsed, as its path and the body bytes that shared its read, and whether the parser reported the channel
+      * closed. The parser is restarted after each request, as the dispatch does for keep-alive.
+      */
+    private def parsedFromReads(maxHeaderSize: Int, leftover: String, reads: String*): (List[(String, String)], Boolean) =
+        val channel = Channel.Unsafe.init[Span[Byte]](64)
+        reads.foreach(r => discard(channel.offer(Span.fromUnsafe(r.getBytes(StandardCharsets.ISO_8859_1)))))
+        val results                  = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        var closed                   = false
+        lazy val parser: Http1Parser = new Http1Parser(
+            channel,
+            new ParsedRequestBuilder,
+            maxHeaderSize,
+            onRequestParsed = (req, body) =>
+                results += ((req.pathAsString, new String(body.toArray, StandardCharsets.ISO_8859_1)))
+                parser.reset()
+                parser.start()
+            ,
+            onClosed = () => closed = true
+        )
+        if leftover.nonEmpty then parser.injectLeftover(Span.fromUnsafe(leftover.getBytes(StandardCharsets.ISO_8859_1)))
+        parser.start()
+        (results.toList, closed)
+    end parsedFromReads
+
+    /** A GET head of exactly `size` bytes, terminator included, padded through one header value. */
+    private def headOf(size: Int): String =
+        val fixed = "GET /u HTTP/1.1\r\nHost: h\r\nX-Pad: \r\n\r\n".length
+        s"GET /u HTTP/1.1\r\nHost: h\r\nX-Pad: ${"p" * (size - fixed)}\r\n\r\n"
+    end headOf
+
+    "the head limit binds the head, not the read that carries it" - {
+
+        val body        = "b" * 200
+        val lengthHead  = s"POST /u HTTP/1.1\r\nHost: h\r\nContent-Length: ${body.length}\r\n\r\n"
+        val chunkedHead = "POST /u HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n"
+        val chunkedBody = s"c8\r\n$body\r\n0\r\n\r\n"
+
+        "a head of exactly the limit in one read is parsed" in {
+            assert(parsedFromReads(64, "", headOf(64)) == ((List(("/u", "")), false)))
+        }
+
+        "a head of exactly the limit whose terminator straddles two reads is parsed" in {
+            val head = headOf(64)
+            assert(parsedFromReads(64, "", head.take(62), head.drop(62)) == ((List(("/u", "")), false)))
+        }
+
+        "a head within the limit followed in the same read by a Content-Length body larger than the limit is parsed with its body" in {
+            assert(lengthHead.length < 64)
+            assert(parsedFromReads(64, "", lengthHead + body) == ((List(("/u", body)), false)))
+        }
+
+        "a head within the limit followed in the same read by a chunked body larger than the limit hands every byte after the head to the decoder" in {
+            assert(chunkedHead.length < 64)
+            assert(parsedFromReads(64, "", chunkedHead + chunkedBody) == ((List(("/u", chunkedBody)), false)))
+        }
+
+        "a head split across two reads whose second read carries a body larger than the limit is parsed with its body" in {
+            assert(parsedFromReads(64, "", lengthHead.take(20), lengthHead.drop(20) + body) == ((List(("/u", body)), false)))
+        }
+
+        "more than the limit's worth of pipelined requests in one read are each parsed, in order" in {
+            val requests = (0 until 40).map(i => s"GET /r$i HTTP/1.1\r\nHost: h\r\n\r\n")
+            assert(requests.mkString.length > 256)
+            val expected = (0 until 40).map(i => (s"/r$i", "")).toList
+            assert(parsedFromReads(256, "", requests.mkString) == ((expected, false)))
+        }
+
+        "leftover injected beyond the limit is parsed in full" in {
+            val requests = (0 until 40).map(i => s"GET /r$i HTTP/1.1\r\nHost: h\r\n\r\n")
+            val expected = (0 until 40).map(i => (s"/r$i", "")).toList
+            assert(parsedFromReads(256, requests.mkString) == ((expected, false)))
+        }
+
+        // A restart requested from inside the parsed-request callback, as every synchronous answer does, must not nest a parse inside the
+        // parse that is still on the stack: the depth would be the number of pipelined requests in hand, and the leftover puts a whole
+        // read in hand.
+        "100,000 pipelined requests injected as leftover are each parsed, on one stack frame each" in {
+            val n                = 100000
+            val (parsed, closed) = parsedFromReads(65536, "GET / HTTP/1.1\r\n\r\n" * n)
+            assert(parsed.size == n, s"observed ${parsed.size} requests")
+            val odd = parsed.zipWithIndex.find(_._1 != (("/", "")))
+            assert(odd.isEmpty, s"observed: $odd")
+            assert(!closed)
+        }
+
+        "100,000 pipelined requests in one read are each parsed, on one stack frame each" in {
+            val n                = 100000
+            val (parsed, closed) = parsedFromReads(65536, "", "GET / HTTP/1.1\r\n\r\n" * n)
+            assert(parsed.size == n, s"observed ${parsed.size} requests")
+            assert(!closed)
+        }
+
+        "takeRemainingBytes returns every byte after an upgrade head whose read exceeds the limit" in {
+            val head    = "GET /ws HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+            val frames  = "f" * 1000
+            val channel = Channel.Unsafe.init[Span[Byte]](16)
+            discard(channel.offer(Span.fromUnsafe((head + frames).getBytes(StandardCharsets.ISO_8859_1))))
+            var upgrade: ParsedRequest = null.asInstanceOf[ParsedRequest]
+            val parser = new Http1Parser(channel, new ParsedRequestBuilder, 256, onRequestParsed = (req, _) => upgrade = req)
+            parser.start()
+            assert(upgrade != null && upgrade.isUpgrade, "the upgrade head within the limit must be parsed whatever the read's size")
+            assert(new String(parser.takeRemainingBytes().toArray, StandardCharsets.ISO_8859_1) == frames)
+        }
+
+        /** Feeds `reads` one span per read to a parser and returns what it refused with, or Absent when it refused nothing, together with
+          * whether any request was parsed and how many takes are still registered on the channel afterwards.
+          */
+        def refusal(maxHeaderSize: Int, reads: String*): (Maybe[HttpStatus], Boolean, Int) =
+            val channel                    = Channel.Unsafe.init[Span[Byte]](64)
+            var refused: Maybe[HttpStatus] = Absent
+            var parsed                     = false
+            val parser                     = new Http1Parser(
+                channel,
+                new ParsedRequestBuilder,
+                maxHeaderSize,
+                onRequestParsed = (_, _) => parsed = true,
+                onRefused = status => refused = Present(status)
+            )
+            parser.start()
+            reads.foreach(r => discard(channel.offer(Span.fromUnsafe(r.getBytes(StandardCharsets.ISO_8859_1)))))
+            (refused, parsed, channel.pendingTakes().getOrElse(-1))
+        end refusal
+
+        "a head one byte over the limit in one read is refused with 431 and nothing more is read" in {
+            assert(refusal(64, headOf(65)) == ((Present(HttpStatus.RequestHeaderFieldsTooLarge), false, 0)))
+        }
+
+        "a head one byte over the limit whose terminator straddles two reads is refused with 431" in {
+            val head = headOf(65)
+            assert(refusal(64, head.take(63), head.drop(63)) == ((Present(HttpStatus.RequestHeaderFieldsTooLarge), false, 0)))
+        }
+
+        "a head one byte over the limit followed in the same read by a body is refused with 431" in {
+            assert(refusal(64, headOf(65) + "b" * 200) == ((Present(HttpStatus.RequestHeaderFieldsTooLarge), false, 0)))
+        }
+
+        "a request line alone longer than the limit is refused with 414" in {
+            assert(refusal(64, "GET /" + "a" * 100 + " HTTP/1.1\r\nHost: h\r\n\r\n") == ((Present(HttpStatus.URITooLong), false, 0)))
+        }
+
+        "a head that never ends is refused with 431 once the limit is passed, not before" in {
+            // 30 bytes of request line and Host, then 50-byte header lines with no blank line: the fifth carries the head past 256.
+            val line = "X-" + "a" * 40 + ": bbbb\r\n"
+            assert(line.length == 50)
+            assert(refusal(256, "GET /u HTTP/1.1\r\nHost: h\r\n", line, line, line, line) == ((Absent, false, 1)))
+            assert(refusal(256, "GET /u HTTP/1.1\r\nHost: h\r\n", line, line, line, line, line) ==
+                ((Present(HttpStatus.RequestHeaderFieldsTooLarge), false, 0)))
+        }
+    }
+
+    /** What the parser refused `reads` with, one span per read, or Absent when it parsed a request instead. */
+    private def refusedWith(reads: String*): Maybe[HttpStatus] =
+        val channel                    = Channel.Unsafe.init[Span[Byte]](64)
+        var refused: Maybe[HttpStatus] = Absent
+        val parser                     = new Http1Parser(
+            channel,
+            new ParsedRequestBuilder,
+            65536,
+            onRequestParsed = (_, _) => (),
+            onRefused = status => refused = Present(status)
+        )
+        parser.start()
+        reads.foreach(r => discard(channel.offer(Span.fromUnsafe(r.getBytes(StandardCharsets.ISO_8859_1)))))
+        refused
+    end refusedWith
+
+    // The terminator search resumes where the previous read's search stopped, so a terminator whose four bytes arrive over several reads
+    // has to be found from the join: a resume point past the first byte already in hand would miss it.
+    "the head terminator is found wherever the reads split it" - {
+
+        val head = "GET /u HTTP/1.1\r\nHost: h\r\nX-A: 1\r\nX-B: 2\r\n\r\n"
+
+        "at every split into two reads" in {
+            (1 until head.length).foreach { at =>
+                assert(parsedFromReads(65536, "", head.take(at), head.drop(at)) == ((List(("/u", "")), false)), s"split at $at")
+            }
+            succeed
+        }
+
+        "one byte per read" in {
+            assert(parsedFromReads(65536, "", head.map(_.toString)*) == ((List(("/u", "")), false)))
+        }
+
+        "a terminator whose reads split a CRLF pair that is not the terminator's" in {
+            val first = "GET /u HTTP/1.1\r"
+            assert(parsedFromReads(65536, "", first, head.drop(first.length)) == ((List(("/u", "")), false)))
+        }
+
+        "the terminator of the second pipelined request, when the first's head ended in the previous read" in {
+            val second = "GET /v HTTP/1.1\r\nHost: h\r\n\r\n"
+            assert(parsedFromReads(65536, "", head + second.take(second.length - 3), second.takeRight(3)) ==
+                ((List(("/u", ""), ("/v", "")), false)))
+        }
+    }
+
+    "framing and targets RFC 9112 does not admit" - {
+
+        // RFC 9112 section 6.1: a recipient of an HTTP/1.0 message carrying Transfer-Encoding treats the framing as faulty and closes the
+        // connection after processing it; framing it by the chunked coding and keeping it alive on Connection: keep-alive is what a
+        // front end that speaks 1.0 to this server disagrees with.
+        "an HTTP/1.0 request carrying Transfer-Encoding is refused with 400" in {
+            assert(refusedWith("POST /u HTTP/1.0\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n") == Present(HttpStatus.BadRequest))
+            assert(refusedWith("POST /u HTTP/1.0\r\nHost: h\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n") ==
+                Present(HttpStatus.BadRequest))
+        }
+
+        // The request line of a message with no header fields ends at the same CRLF that starts the head's terminator. Searching for it
+        // short of the terminator finds nothing, and the request was then built from the builder's defaults: method GET, no path.
+        "a request with no header fields has its request line parsed" in {
+            val req = parseRequest("POST /x?q=1 HTTP/1.1\r\n\r\n")
+            assert(req != null, "the request must be parsed")
+            assert(req.method == HttpMethod.POST)
+            assert(req.pathAsString == "/x")
+            assert(req.hasQuery)
+            assert(req.isKeepAlive)
+            assert(!req.hasHost)
+            val old = parseRequest("GET /y HTTP/1.0\r\n\r\n")
+            assert(old.pathAsString == "/y")
+            assert(!old.isKeepAlive)
+        }
+
+        "an HTTP/1.0 request framed by Content-Length is parsed" in {
+            assert(refusedWith("POST /u HTTP/1.0\r\nHost: h\r\nContent-Length: 2\r\n\r\nab") == Absent)
+            assert(parseRequest("POST /u HTTP/1.0\r\nHost: h\r\nContent-Length: 2\r\n\r\nab").contentLength == 2)
+        }
+
+        // RFC 9112 section 3: the request-target is made of visible characters; a control character or DEL in it is not one an origin
+        // server parses, and a target with one is routed by whichever bytes each intermediary keeps.
+        "a request target carrying a control character or DEL is refused with 400" in {
+            assert(refusedWith("GET /a\tb HTTP/1.1\r\nHost: h\r\n\r\n") == Present(HttpStatus.BadRequest))
+            assert(refusedWith("GET /a\u0001b HTTP/1.1\r\nHost: h\r\n\r\n") == Present(HttpStatus.BadRequest))
+            assert(refusedWith("GET /a\u007fb HTTP/1.1\r\nHost: h\r\n\r\n") == Present(HttpStatus.BadRequest))
+            assert(refusedWith("GET /a?q=\u0001 HTTP/1.1\r\nHost: h\r\n\r\n") == Present(HttpStatus.BadRequest))
+            assert(refusedWith("GET http://h/a\u0001b HTTP/1.1\r\nHost: h\r\n\r\n") == Present(HttpStatus.BadRequest))
+        }
+
+        "a request target of visible characters is parsed" in {
+            assert(refusedWith("GET /a~b!$&'()*+,;=:@/%7e?q=1&r=~ HTTP/1.1\r\nHost: h\r\n\r\n") == Absent)
+        }
+    }
+
 end Http1ParserTest

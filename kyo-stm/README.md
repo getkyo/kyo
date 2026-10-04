@@ -16,7 +16,7 @@ val transfer: Unit < (Async & Abort[FailedTransaction]) =
     for
         from <- TRef.init(500)
         to   <- TRef.init(300)
-        _ <- STM.run:
+        _    <- STM.run:
             for
                 _ <- from.update(_ - 100)
                 _ <- to.update(_ + 100)
@@ -36,7 +36,7 @@ A `TRef[A]` holds one value of type `A`. Use it when the state is a scalar (a co
 val balanceAfter: Int < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        _ <- STM.run:
+        _       <- STM.run:
             balance.update(_ - 100)
         result <- STM.run(balance.get)
     yield result
@@ -48,7 +48,7 @@ The four operations on `TRef[A]` are read-only `get` and `use(f)`, and mutating 
 val balanceMatched: String < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        result <- STM.run:
+        result  <- STM.run:
             balance.use:
                 case b if b <= 0  => "empty"
                 case b if b < 100 => "low"
@@ -82,7 +82,7 @@ When many transactions update different keys of a shared map concurrently, reach
 val stockAfter: Map[String, Int] < (Async & Abort[FailedTransaction]) =
     for
         stock <- TMap.init[String, Int]("sku-1" -> 10, "sku-2" -> 5)
-        _ <- STM.run:
+        _     <- STM.run:
             for
                 _ <- stock.updateWith("sku-1"):
                     case Present(n) => Maybe(n - 1)
@@ -113,7 +113,7 @@ The write surface is `put`, `updateWith`, `remove`, `removeDiscard`, `removeAll(
 val reserved: Map[String, Int] < (Async & Abort[FailedTransaction]) =
     for
         stock <- TMap.init[String, Int]("sku-1" -> 1)
-        _ <- STM.run:
+        _     <- STM.run:
             stock.updateWith("sku-1"):
                 case Present(n) if n > 0 => Maybe(n - 1)
                 case Present(_)          => Absent
@@ -211,7 +211,7 @@ The second `STM.run` overload takes a `Schedule` from kyo-core. Use it when the 
 val tightlyBudgeted: Int < (Async & Abort[FailedTransaction]) =
     for
         ref <- TRef.init(0)
-        _ <- STM.run(Schedule.fixed(1.millis).take(10)):
+        _   <- STM.run(Schedule.fixed(1.millis).take(10)):
             ref.update(_ + 1)
         r <- STM.run(ref.get)
     yield r
@@ -229,7 +229,7 @@ The default schedule (`STM.defaultRetrySchedule`) is `Schedule.fixed(1.millis).j
 val withdraw: Int < (Async & Abort[FailedTransaction]) =
     for
         balance <- TRef.init(500)
-        _ <- STM.run:
+        _       <- STM.run:
             for
                 b <- balance.get
                 _ <- STM.retryIf(b < 100)
@@ -251,7 +251,7 @@ An `STM.run` call inside another `STM.run` does NOT start a new transaction. It 
 val composite: Int < (Async & Abort[FailedTransaction]) =
     for
         ref <- TRef.init(0)
-        r <- STM.run:
+        r   <- STM.run:
             for
                 _ <- ref.update(_ + 1)
                 _ <- STM.run(ref.update(_ + 10)) // not a new transaction
@@ -275,7 +275,7 @@ val transferAndNotify: Unit < (Async & Abort[FailedTransaction] & Sync) =
     for
         from <- TRef.init(500)
         to   <- TRef.init(300)
-        _ <- STM.run:
+        _    <- STM.run:
             for
                 _ <- from.update(_ - 100)
                 _ <- to.update(_ + 100)
@@ -323,7 +323,7 @@ val handled: String < Async =
     val tx: Int < (Async & Abort[FailedTransaction]) =
         for
             ref <- TRef.init(0)
-            _ <- STM.run(Schedule.fixed(1.millis).take(1)):
+            _   <- STM.run(Schedule.fixed(1.millis).take(1)):
                 STM.retry
         yield 0
     tx.handle(Abort.run).map:

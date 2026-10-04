@@ -34,7 +34,9 @@ object FieldsMacros:
             sym.caseFields.zipWithIndex.flatMap: (field, idx) =>
                 val methodName = s"$$lessinit$$greater$$default$$${idx + 1}"
                 companion.methodMember(methodName).headOption.map: method =>
-                    val call = Ref(companion).select(method)
+                    val select = Ref(companion).select(method)
+                    // A generic case class's default method takes the class's type parameters.
+                    val call = if method.paramSymss.exists(_.exists(_.isTypeParam)) then select.appliedToTypes(tpe.typeArgs) else select
                     field.name -> call.asExprOf[Any]
             .toMap
         else

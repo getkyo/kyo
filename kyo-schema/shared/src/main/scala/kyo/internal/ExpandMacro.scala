@@ -40,7 +40,7 @@ object ExpandMacro:
 
             // Sealed traits / enums first (an enum case can itself be a case class).
             if sym.isClassDef && sym.flags.is(Flags.Sealed) then
-                val children = sym.children
+                val children = FocusMacro.sumVariants(dealiased, sym)
                 if children.nonEmpty then
                     val tildeType = TypeRepr.of[Record.~]
                     val variants  = children.map: child =>

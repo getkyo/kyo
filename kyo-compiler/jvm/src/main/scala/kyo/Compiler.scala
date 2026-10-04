@@ -158,16 +158,21 @@ object Compiler:
       */
     type AsMessage[A] = Schema[A]
 
-    /** A neutral, offset-based file identity. Opaque over String so the surface stays free of
-      * java.net.URI / lsp4j coupling; it IS a String on the wire. The `given Schema[Uri]` (over the
-      * String form, via `transform`) keeps `Uri` opaque-over-String through serialization.
-      */
-    opaque type Uri = String
-    object Uri:
-        def apply(value: String): Uri             = value
-        extension (uri: Uri) def asString: String = uri
-        given Schema[Uri]                         = summon[Schema[String]].transform[Uri](Uri.apply)(_.asString)
-    end Uri
+    // In an object of its own: in the template declaring `opaque type Uri = String` a Tag for String is refused, which every
+    // schema derived beside it needs.
+    object Uris:
+        /** A neutral, offset-based file identity. Opaque over String so the surface stays free of
+          * java.net.URI / lsp4j coupling; it IS a String on the wire. The `given Schema[Uri]` (over the
+          * String form, via `transform`) keeps `Uri` opaque-over-String through serialization.
+          */
+        opaque type Uri = String
+        object Uri:
+            def apply(value: String): Uri             = value
+            extension (uri: Uri) def asString: String = uri
+            given Schema[Uri]                         = summon[Schema[String]].transform[Uri](Uri.apply)(_.asString)
+        end Uri
+    end Uris
+    export Uris.Uri
 
     /** An offset span [start, end) in UTF-16 code units. */
     final case class Span(start: Int, end: Int) derives CanEqual, Compiler.AsMessage

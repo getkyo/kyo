@@ -34,7 +34,7 @@ class LinuxPressureTest extends kyo.test.Test[Any]:
         "a PSI some line decodes avg fields to gauges and total to a scaled rate" in {
             val (baselineBytes, baselineLen) = span("some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
             val (tickBytes, tickLen)         = span("some avg10=1.10 avg60=2.20 avg300=3.30 total=4000\n")
-            val psi                          = PsiHandles(Stat.initScope("lptest-someline"), MachineHandles.nanosPerSecFor(8L))
+            val psi = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("lptest-someline"), MachineHandles.nanosPerSecFor(8L)))
             LinuxPressure.observeLine(baselineBytes, baselineLen, LinuxPressure.SomeLine, psi.cpuSome) // baseline tick
             LinuxPressure.observeLine(tickBytes, tickLen, LinuxPressure.SomeLine, psi.cpuSome)
             val rateSummary = histogramSummary("lptest-someline", "cpu", "some", "rate")
@@ -50,7 +50,7 @@ class LinuxPressureTest extends kyo.test.Test[Any]:
                 "some avg10=1.00 avg60=1.00 avg300=1.00 total=1000\n" +
                     "full avg10=9.00 avg60=9.00 avg300=9.00 total=9000\n"
             )
-            val psi    = PsiHandles(Stat.initScope("lptest-cpu-nofull"), MachineHandles.nanosPerSecFor(8L))
+            val psi    = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("lptest-cpu-nofull"), MachineHandles.nanosPerSecFor(8L)))
             val decode = new LinuxPressure.PsiDecode(psi.cpuSome, Absent) // cpu carries no full cells, matching production
             decode.apply(bytes, len)
             assert(gaugePath("lptest-cpu-nofull", "cpu", "some", "avg10") == 1.00)
@@ -67,7 +67,7 @@ class LinuxPressureTest extends kyo.test.Test[Any]:
                 "some avg10=1.50 avg60=1.50 avg300=1.50 total=3000\n" +
                     "full avg10=2.50 avg60=2.50 avg300=2.50 total=5000\n"
             )
-            val psi    = PsiHandles(Stat.initScope("lptest-io-full"), MachineHandles.nanosPerSecFor(8L))
+            val psi    = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("lptest-io-full"), MachineHandles.nanosPerSecFor(8L)))
             val decode = new LinuxPressure.PsiDecode(psi.ioSome, Present(psi.ioFull))
             decode.apply(baselineBytes, baselineLen) // baseline tick for both rate cells
             decode.apply(tickBytes, tickLen)
@@ -82,10 +82,10 @@ class LinuxPressureTest extends kyo.test.Test[Any]:
 
         "an absent PSI file writes and registers nothing" in {
             for
-                handles <- MachineHandles.init
+                handles <- MachineHandlesOwners.init
                 sampler = new MachineSampler(handles)
             yield
-                val psi    = PsiHandles(Stat.initScope("lptest-absent-file"), MachineHandles.nanosPerSecFor(8L))
+                val psi = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("lptest-absent-file"), MachineHandles.nanosPerSecFor(8L)))
                 val decode = new LinuxPressure.PsiDecode(psi.cpuSome, Absent)
                 val ok     = sampler.readInto(Absent, decode) // an Absent slot is exactly what a missing PSI file yields
                 assert(!ok)
@@ -99,7 +99,7 @@ class LinuxPressureTest extends kyo.test.Test[Any]:
 
         "a PSI line missing its tagged fields degrades to the sentinel" in {
             val (bytes, len) = span("some \n")
-            val psi          = PsiHandles(Stat.initScope("lptest-missing-tags"), MachineHandles.nanosPerSecFor(8L))
+            val psi = MachineHandlesOwners.retain(PsiHandles(Stat.initScope("lptest-missing-tags"), MachineHandles.nanosPerSecFor(8L)))
             LinuxPressure.observeLine(bytes, len, LinuxPressure.SomeLine, psi.cpuSome)
             assert(!gaugeRegistered("lptest-missing-tags", "cpu", "some", "avg10"))
             assert(!histogramRegistered("lptest-missing-tags", "cpu", "some", "rate"))

@@ -46,4 +46,8 @@ object SqliteAttach:
     /** The statements `config` asks for, empty when it names no attachment. */
     private[kyo] def statementsFor(config: SqlConfig): Chunk[String] =
         config.extensionFor[SqliteAttach].fold(Chunk.empty)(_.statements)
+
+    /** The schema names `config` attaches, empty when it names no attachment. */
+    private[kyo] def schemasFor(config: SqlConfig): Chunk[String] =
+        config.extensionFor[SqliteAttach].fold(Chunk.empty[String])(a => Chunk.from(a.databases.keys.toSeq.sorted))
 end SqliteAttach

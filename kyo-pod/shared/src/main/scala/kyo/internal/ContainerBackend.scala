@@ -340,6 +340,11 @@ end ContainerBackend
 
 private[kyo] object ContainerBackend:
 
+    /** Where a podman checkpoint archive lives on the client host. Both backends read and write the same path, so a checkpoint taken by
+      * one restores through the other.
+      */
+    def checkpointArchive(name: String): Path = Path("/tmp", s"$name.tar")
+
     /** Parse a container state string (from Docker/Podman API) to the State enum.
       *
       * `configured` and `initialized` are podman-specific pre-start states that map to `Created`. Unknown states default to `Stopped` since

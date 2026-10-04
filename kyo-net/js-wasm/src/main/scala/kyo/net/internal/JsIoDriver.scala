@@ -21,12 +21,17 @@ import scala.scalajs.js
   * to Array[Byte]) is needed.
   */
 final private[kyo] class JsIoDriver private (
-    private val shutdownPromise: IOPromise[Any, Unit]
+    private val shutdownPromise: IOPromise[Any, Unit],
+    private val closedFlag: AtomicBoolean.Unsafe
 ) extends IoDriver[JsHandle]:
 
-    // Unsafe: created at driver construction with no ambient AllowUnsafe; the danger bridge builds it here and every get/compareAndSet runs
-    // under the caller's AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    // Diagnostics state. Node's event loop has no poll cycle to count, so progress is the number of reads and writable waits armed: a pump
+    // arms its next one only after the previous completed, so the count stands still exactly when no I/O completes. Every access runs on
+    // the single event-loop thread.
+    private var armedOps: Long                                                 = 0L
+    private var pendingWritables: Int                                          = 0
+    private val readArmed: scala.collection.mutable.Set[JsHandle]              = scala.collection.mutable.Set.empty
+    private var diagRegistration: kyo.internal.Diagnostics.Registration | Null = null
 
     def label: String = "JsIoDriver"
 
@@ -45,6 +50,24 @@ final private[kyo] class JsIoDriver private (
                     Log.live.unsafe.error(s"$label sentinel crashed", t)
         }
 
+        // Same naming as PollerIoDriver's registration, including the marker the stranded-op gate exempts for a process-lifetime transport.
+        val diagName =
+            "JsIoDriver@" + java.lang.System.identityHashCode(this) +
+                (if ProcessSharedTransport.isBuilding then " processSharedTransport" else "")
+        diagRegistration = kyo.internal.Diagnostics.register(diagName)(
+            dump = () =>
+                val reads = new StringBuilder
+                pendingReadHandles().foreach(h => discard(reads.append(handleLabel(h)).append(' ')))
+                s"closed=${closedFlag.get()} armedOps=$armedOps pendingWritables=$pendingWritables pendingReads=[$reads]"
+            ,
+            probe = () =>
+                kyo.internal.Diagnostics.Probe(
+                    closed = closedFlag.get(),
+                    cycles = armedOps,
+                    pending = pendingWritables > 0 || pendingReadHandles().nonEmpty
+                )
+        )
+
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed IOPromise[Any, Unit], even though both erase to the same runtime object; the alias is transparent only inside
         // kyo.Fiber's own defining scope, so exposing shutdownPromise as the locked IoDriver.start return needs this erased-boundary cast.
@@ -53,6 +76,7 @@ final private[kyo] class JsIoDriver private (
     end start
 
     def awaitRead(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        armedOps += 1
         // Node's net.Socket#destroyed / #readableEnded are documented boolean properties; js.Dynamic erases them to untyped JS values, so recovering
         // the typed Boolean needs these narrowing casts. Safe per Node's documented property types.
         if handle.hasLeftover then
@@ -70,6 +94,7 @@ final private[kyo] class JsIoDriver private (
         else
             // (iv) Request the next chunk: the permanent 'data' listener delivers it (or 'end'/'error' the EOF/failure).
             handle.pendingRead = Present(promise)
+            readArmed += handle
             discard(handle.socket.resume())
         end if
     end awaitRead
@@ -125,6 +150,7 @@ final private[kyo] class JsIoDriver private (
             var errorFn: js.Function1[js.Dynamic, Unit] = null
 
             def removeAll(): Unit =
+                pendingWritables -= 1
                 discard(handle.socket.removeListener("drain", drainFn))
                 discard(handle.socket.removeListener("close", closeFn))
                 discard(handle.socket.removeListener("error", errorFn))
@@ -146,6 +172,8 @@ final private[kyo] class JsIoDriver private (
             closeFn = (() => completeFailure("socket closed before writable")): js.Function0[Unit]
             errorFn = ((_: js.Dynamic) => completeFailure("socket error before writable")): js.Function1[js.Dynamic, Unit]
 
+            armedOps += 1
+            pendingWritables += 1
             discard(handle.socket.once("drain", drainFn))
             discard(handle.socket.once("close", closeFn))
             discard(handle.socket.once("error", errorFn))
@@ -169,6 +197,13 @@ final private[kyo] class JsIoDriver private (
         end if
     end write
 
+    // Node's sockets are objects, never fd numbers this driver keys anything by, so a recycled number cannot reach a closed handle's state.
+    def releaseFd(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit = closeFd()
+
+    def closeListener(handle: JsHandle, closeFd: () => Unit)(using AllowUnsafe, Frame): Unit =
+        try cancel(handle)
+        finally releaseFd(handle, closeFd)
+
     def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
         discard(handle.socket.pause())
         val closed = Closed(s"connection ${handleLabel(handle)}", handle.createdAt, "canceled")
@@ -189,7 +224,7 @@ final private[kyo] class JsIoDriver private (
       * `socket.write` accepted the bytes. `end()` flushes that output and then sends the FIN; `finish` is Node's signal that every accepted
       * write reached the underlying socket, and the destroy follows it.
       *
-      * The wait is bounded by the handle's `peerCloseGrace`, the window the transport already grants a peer that has stopped reading: a
+      * The wait is bounded by the handle's `closeFlushGrace`, the window a closing connection grants a peer that has stopped reading: a
       * peer that never drains never lets the output finish, and the socket is destroyed regardless when the window ends. `Duration.Infinity`
       * (stdio, whose shim owns no socket) arms no timer. An abort keeps the immediate destroy: the upgrade abandon, the handshake deadline
       * and a peer reset destroy the socket themselves before this runs, and a socket Node already destroyed is left alone.
@@ -198,13 +233,14 @@ final private[kyo] class JsIoDriver private (
         // Node's net.Socket#destroyed and #writableFinished are documented boolean properties; js.Dynamic erases them to untyped JS values,
         // so recovering the typed Boolean needs these narrowing casts. Safe per Node's documented property types; they cannot dissolve
         // without a typed facade for Node's net.Socket.
+        readArmed -= handle
         val socket = handle.socket
         if !socket.destroyed.asInstanceOf[Boolean] then
             def destroyNow(): Unit =
                 if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
             val settle: js.Function0[Unit] =
-                if handle.peerCloseGrace.isFinite then
-                    val timer = handle.clock.unsafe.sleep(handle.peerCloseGrace)
+                if handle.closeFlushGrace.isFinite then
+                    val timer = handle.clock.unsafe.sleep(handle.closeFlushGrace)
                     timer.onComplete(_ => destroyNow())
                     () =>
                         destroyNow()
@@ -221,9 +257,17 @@ final private[kyo] class JsIoDriver private (
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            val reg = diagRegistration
+            if reg ne null then reg.close()
             shutdownPromise.completeDiscard(Result.unit)
         end if
     end close
+
+    /** The handles whose armed read is still outstanding, dropping the ones whose read has since completed or been cancelled. */
+    private def pendingReadHandles(): List[JsHandle] =
+        readArmed.filterInPlace(_.pendingRead.isDefined)
+        readArmed.toList
+    end pendingReadHandles
 
     private def deliverLeftover(handle: JsHandle)(using AllowUnsafe): Unit =
         // Deliver exactly ONE queued chunk (the oldest), the FIFO head; a later awaitRead delivers the next. Called only with a pending read set.
@@ -262,5 +306,5 @@ private[kyo] object JsIoDriver:
     private[net] val PeerProbeBufferCap: Int = 1 << 20
 
     def init()(using AllowUnsafe): JsIoDriver =
-        new JsIoDriver(new IOPromise[Any, Unit])
+        new JsIoDriver(new IOPromise[Any, Unit], AtomicBoolean.Unsafe.init(false))
 end JsIoDriver

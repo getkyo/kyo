@@ -2,6 +2,7 @@ package kyo.net
 
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
@@ -52,6 +53,105 @@ class StartTlsInteropClientTest extends Test:
         sb.toString
     end outputString
 
+    /** An s_server that printed ACCEPT, the port it accepts on, and its output so far. */
+    final private case class Server(proc: java.lang.Process, port: Int, output: ConcurrentLinkedQueue[String])
+
+    /** Why one s_server launch did not reach ACCEPT. Only `PortTaken` is worth another port. */
+    private enum ServeFailure derives CanEqual:
+        case PortTaken(port: Int, output: String)
+        case NotStarted(message: String)
+
+    /** Starts `openssl s_server -rev` on 127.0.0.1 at a port outside the ephemeral range, choosing another while the one chosen is taken,
+      * or answers why it could not. `choose` maps each port [[NonEphemeralPort]] picks to the one launched, so a leaf can hand it a port it
+      * holds.
+      *
+      * Served on the loopback address the client connects to: with SO_REUSEADDR a wildcard bind can share a port another process
+      * listens on at 127.0.0.1, and the client's connect then reaches that listener. No -starttls (removed in newer container images),
+      * no -no_dhe.
+      */
+    private def serve(certPath: String, keyPath: String, choose: Int => Int = identity)(using Frame): Result[String, Server] < Async =
+        val attempts = new java.util.concurrent.atomic.AtomicInteger(0)
+        Abort.run[ServeFailure](
+            NonEphemeralPort.bind[Server, ServeFailure, Any] {
+                case _: ServeFailure.PortTaken => true
+                case _                         => false
+            } { port =>
+                discard(attempts.incrementAndGet())
+                startOnce(certPath, keyPath, choose(port))
+            }
+        ).map {
+            case Result.Success(server)                               => Result.succeed(server)
+            case Result.Failure(ServeFailure.PortTaken(port, output)) =>
+                Result.fail(s"openssl s_server found port $port taken after ${attempts.get()} attempts. Output:\n$output")
+            case Result.Failure(ServeFailure.NotStarted(message)) =>
+                Result.fail(s"$message after ${attempts.get()} attempts")
+            case Result.Panic(e) => Result.panic(e)
+        }
+    end serve
+
+    /** One s_server launch on `port`: waits for it to print ACCEPT or to exit. The bind failure is read from the output because OpenSSL 3
+      * exits with status 0 after `BIO_bind`.
+      */
+    private def startOnce(certPath: String, keyPath: String, port: Int)(using Frame): Server < (Async & Abort[ServeFailure]) =
+        val output = new ConcurrentLinkedQueue[String]()
+        val ready  = new AtomicBoolean(false)
+        val ended  = new AtomicBoolean(false)
+        Sync.defer {
+            val pb = new java.lang.ProcessBuilder(
+                "openssl",
+                "s_server",
+                "-accept",
+                s"127.0.0.1:$port",
+                "-cert",
+                certPath,
+                "-key",
+                keyPath,
+                "-rev"
+            )
+            pb.redirectErrorStream(true)
+            val proc = pb.start()
+            // Capture all s_server output in a daemon thread so it is visible on failure; the end of the stream is the exit.
+            val readerThread = new Thread(
+                () =>
+                    try
+                        val reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
+                        var line   = reader.readLine()
+                        while line != null do
+                            discard(output.offer(line))
+                            if line.contains("ACCEPT") then ready.set(true)
+                            line = reader.readLine()
+                        end while
+                    catch case _: Exception => ()
+                    finally ended.set(true),
+                "openssl-reader"
+            )
+            readerThread.setDaemon(true)
+            readerThread.start()
+            proc
+        }.map { proc =>
+            Abort.run[Timeout](
+                Async.timeout(15.seconds) {
+                    Loop.foreach {
+                        if ready.get() || ended.get() then Loop.done(())
+                        else Async.sleep(10.millis).andThen(Loop.continue)
+                    }
+                }
+            ).map { waited =>
+                val text = outputString(output)
+                if ready.get() then Server(proc, port, output)
+                else
+                    Sync.defer(proc.destroy()).andThen {
+                        if waited.isSuccess && text.contains("Address already in use") then
+                            Abort.fail(ServeFailure.PortTaken(port, text))
+                        else
+                            val why = if waited.isSuccess then "exited before printing ACCEPT" else "did not print ACCEPT within 15s"
+                            Abort.fail(ServeFailure.NotStarted(s"openssl s_server $why on port $port. Output:\n$text"))
+                    }
+                end if
+            }
+        }
+    end startOnce
+
     "external TLS interop: kyo-net io_uring client vs openssl s_server, echo round-trip across 8 connections" in {
         PosixTestSockets.assumeUring()
         TlsRealEngines.assumeTlsReady()
@@ -64,108 +164,81 @@ class StartTlsInteropClientTest extends Test:
 
         TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
             Sync.defer(uringEntry.transport).flatMap { transport =>
-                val serverOutput = new ConcurrentLinkedQueue[String]()
-                val serverReady  = new AtomicBoolean(false)
+                // -rev: s_server reverses each input line and echoes it back.
+                // A server that would not start is the host's openssl failing, not kyo-net, so the leaf cancels with its output.
+                serve(certPath, keyPath).map {
+                    case Result.Success(server) => server
+                    case Result.Failure(why)    => cancel(why)
+                    case Result.Panic(e)        => throw e
+                }.flatMap { server =>
+                    val port         = server.port
+                    val serverOutput = server.output
+                    Sync.ensure(Sync.defer { server.proc.destroy(); () }) {
+                        val clientTls =
+                            NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
 
-                // Pick an ephemeral port then start openssl s_server with minimal flags.
-                // -rev: server reverses each input line and echoes it back.
-                // No -starttls (removed in newer container images), no -no_dhe.
-                Sync.defer {
-                    val s    = new ServerSocket(0)
-                    val port = s.getLocalPort
-                    s.close()
-                    val pb = new java.lang.ProcessBuilder(
-                        "openssl",
-                        "s_server",
-                        "-accept",
-                        port.toString,
-                        "-cert",
-                        certPath,
-                        "-key",
-                        keyPath,
-                        "-rev"
-                    )
-                    pb.redirectErrorStream(true)
-                    val proc = pb.start()
-                    // Capture all s_server output in a daemon thread so it is visible on failure.
-                    val readerThread = new Thread(
-                        () =>
-                            try
-                                val reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
-                                var line   = reader.readLine()
-                                while line != null do
-                                    discard(serverOutput.offer(line))
-                                    if line.contains("ACCEPT") then serverReady.set(true)
-                                    line = reader.readLine()
-                                end while
-                            catch case _: Exception => (),
-                        "openssl-reader"
-                    )
-                    readerThread.setDaemon(true)
-                    readerThread.start()
-                    (proc, port)
-                }.flatMap { case (proc, port) =>
-                    Sync.ensure(Sync.defer { proc.destroy(); () }) {
-                        // Poll serverReady up to 15s; cancel (not fail) on timeout since this
-                        // is infrastructure, not a code defect.
-                        Abort.run[Timeout](
-                            Async.timeout(15.seconds) {
-                                Loop.foreach {
-                                    if serverReady.get() then Loop.done(())
-                                    else Async.sleep(100.millis).andThen(Loop.continue)
-                                }
-                            }
-                        ).flatMap {
-                            case Result.Failure(_) =>
-                                Sync.defer(cancel(
-                                    s"openssl s_server did not print ACCEPT within 15s on port $port " +
-                                        s"(process alive=${proc.isAlive}). Output:\n${outputString(serverOutput)}"
-                                ))
-                            case Result.Success(_) =>
-                                val clientTls =
-                                    NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-
-                                // 8 iterations: each opens a new TCP connection, upgrades to TLS,
-                                // sends "ping\n", and reads the reversed echo from openssl -rev.
-                                // The TLS handshake would fail with bad_record_mac if the kyo-net
-                                // send-order mechanism were broken.
-                                Loop(0) { i =>
-                                    if i >= 8 then Loop.done(())
-                                    else
-                                        Abort.run[Timeout | Closed](
-                                            Async.timeout(15.seconds) {
-                                                // Scoped per-iteration (not the leaf's Scope): 8 rounds run in this loop, and deferring
-                                                // conn/tlsConn cleanup to the leaf's own Scope would hold every round's connection open
-                                                // simultaneously until the whole leaf ends, matching the startTlsClient idiom in
-                                                // TransportStartTlsTest.scala.
-                                                Scope.run(
-                                                    for
-                                                        conn    <- transport.connect("127.0.0.1", port).safe.get
-                                                        _       <- Scope.ensure(Sync.defer(conn.close()))
-                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                                                        _       <- Scope.ensure(Sync.defer(tlsConn.close()))
-                                                        payload = "ping\n".getBytes
-                                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                                                        echoed <- tlsConn.inbound.safe.take
-                                                        _ = assert(
-                                                            echoed.size > 0,
-                                                            s"iteration $i: expected echo from openssl s_server -rev, got empty"
-                                                        )
-                                                    yield ()
+                        // 8 iterations: each opens a new TCP connection, upgrades to TLS,
+                        // sends "ping\n", and reads the reversed echo from openssl -rev.
+                        // The TLS handshake would fail with bad_record_mac if the kyo-net
+                        // send-order mechanism were broken.
+                        Loop(0) { i =>
+                            if i >= 8 then Loop.done(())
+                            else
+                                Abort.run[Timeout | Closed](
+                                    Async.timeout(15.seconds) {
+                                        // Scoped per-iteration (not the leaf's Scope): 8 rounds run in this loop, and deferring
+                                        // conn/tlsConn cleanup to the leaf's own Scope would hold every round's connection open
+                                        // simultaneously until the whole leaf ends, matching the startTlsClient idiom in
+                                        // TransportStartTlsTest.scala.
+                                        Scope.run(
+                                            for
+                                                conn    <- transport.connect("127.0.0.1", port).safe.get
+                                                _       <- Scope.ensure(Sync.defer(conn.close()))
+                                                tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                                _       <- Scope.ensure(Sync.defer(tlsConn.close()))
+                                                payload = "ping\n".getBytes
+                                                _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                                echoed <- tlsConn.inbound.safe.take
+                                                _ = assert(
+                                                    echoed.size > 0,
+                                                    s"iteration $i: expected echo from openssl s_server -rev, got empty"
                                                 )
-                                            }
-                                        ).map {
-                                            case Result.Failure(e) =>
-                                                fail(
-                                                    s"iteration $i: TLS handshake or echo failed: $e. " +
-                                                        s"openssl s_server output:\n${outputString(serverOutput)}"
-                                                )
-                                                Loop.continue(i + 1)
-                                            case Result.Success(_) =>
-                                                Loop.continue(i + 1)
-                                        }
+                                            yield ()
+                                        )
+                                    }
+                                ).map {
+                                    case Result.Failure(e) =>
+                                        fail(
+                                            s"iteration $i: TLS handshake or echo failed: $e. " +
+                                                s"openssl s_server output:\n${outputString(serverOutput)}"
+                                        )
+                                        Loop.continue(i + 1)
+                                    case Result.Success(_) =>
+                                        Loop.continue(i + 1)
                                 }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    "s_server is started on another port when the one chosen is taken" in {
+        if !probeOpenssl() then cancel("openssl not available on this host")
+        TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
+            // Holds a port from a probe socket, as another process that took it between the choice and s_server's bind does.
+            NonEphemeralPort.bind[ServerSocket, java.io.IOException, Any](_ => true) { port =>
+                Abort.catching[java.io.IOException](new ServerSocket(port, 50, InetAddress.getLoopbackAddress()))
+            }.map { held =>
+                // s_server's first launch gets the held port; every later one gets the port the helper chose.
+                val first = new AtomicBoolean(true)
+                Sync.ensure(Sync.defer(held.close())) {
+                    serve(certPath, keyPath, port => if first.getAndSet(false) then held.getLocalPort else port).map {
+                        case Result.Success(server) =>
+                            Sync.ensure(Sync.defer(server.proc.destroy())) {
+                                assert(server.port != held.getLocalPort && server.proc.isAlive, outputString(server.output))
+                            }
+                        case other => fail(s"s_server did not start on another port: $other")
                     }
                 }
             }

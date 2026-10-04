@@ -384,6 +384,7 @@ class CodecTest extends kyo.test.Test[Any]:
 
     "capable writer projects Capabilities(true)" in {
         val writer = new Codec.Writer:
+            def frame: Frame                                           = summon[Frame]
             override def canWriteTopLevelNonObject: Boolean            = true
             def objectStart(name: String, size: Int): Unit             = ()
             def objectEnd(): Unit                                      = ()
@@ -414,6 +415,7 @@ class CodecTest extends kyo.test.Test[Any]:
 
     "default writer projects Capabilities(false)" in {
         val writer = new Codec.Writer:
+            def frame: Frame                                           = summon[Frame]
             def objectStart(name: String, size: Int): Unit             = ()
             def objectEnd(): Unit                                      = ()
             def arrayStart(size: Int): Unit                            = ()

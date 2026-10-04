@@ -123,6 +123,18 @@ private[kyo] trait DoltLiteBindings extends SqliteBindings:
     /** The linked library's version as an integer, `X*1000000 + Y*1000 + Z`. */
     def libversionNumber()(using AllowUnsafe): Int
 
+    /** Nonzero when running `stmt` takes no write lock; BEGIN IMMEDIATE and BEGIN EXCLUSIVE answer zero, the other transaction verbs nonzero. */
+    def stmtReadonly(stmt: Ffi.Handle[SqliteStmt])(using AllowUnsafe): Int
+
+    /** Nonzero while no transaction is open on `db`. */
+    def getAutocommit(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** The highest transaction state across every schema on `db`: 0 none, 1 reading, 2 holding a write lock. */
+    def txnState(db: Ffi.Handle[SqliteDb])(using AllowUnsafe): Int
+
+    /** The absolute path of the file behind `schema`, `""` for an in-memory or temporary database and for a schema not attached. */
+    def dbFilename(db: Ffi.Handle[SqliteDb], schema: String)(using AllowUnsafe): Ffi.Borrowed[String]
+
 end DoltLiteBindings
 
 private[kyo] object DoltLiteBindings extends Ffi.Config(
@@ -156,7 +168,11 @@ private[kyo] object DoltLiteBindings extends Ffi.Config(
             "changes64"           -> "sqlite3_changes64",
             "lastInsertRowid"     -> "sqlite3_last_insert_rowid",
             "interrupt"           -> "sqlite3_interrupt",
-            "libversionNumber"    -> "sqlite3_libversion_number"
+            "libversionNumber"    -> "sqlite3_libversion_number",
+            "stmtReadonly"        -> "sqlite3_stmt_readonly",
+            "getAutocommit"       -> "sqlite3_get_autocommit",
+            "txnState"            -> "kyo_sqlite3_txn_state",
+            "dbFilename"          -> "kyo_sqlite3_db_filename"
         ),
         headers = Chunk("doltlite.h"),
         nativeBundled = true

@@ -72,9 +72,12 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         if fdClosing then
-            // The fd is already closed. The OS auto-removes all kqueue filters on close; issuing EV_DELETE on the fd number would target a
-            // recycled fd and must be skipped.
-            ()
+            // The close removes the fd's filters, so no EV_DELETE is issued. The driver closes the fd once this returns, so a change still
+            // staged for it is submitted now: left for the next poll, its EV_ADD could run while close(2) of the same fd is in progress,
+            // which XNU's close can livelock on, or land on a closed or recycled fd.
+            scratch.kqueueData.foreach { data =>
+                if stagesChangeFor(data, fd) then flushChanges(pollerFd, data)
+            }
         else
             // Immediate delete: deregister must remove filters from the kernel BEFORE the next poll so that stale events from this fd are not
             // delivered. Uses changeNow (immediate keventNow) rather than the batch change path, because the batch is consumed at poll time
@@ -212,6 +215,16 @@ private[net] object KqueuePollerBackend extends PollerBackend:
       * A rejected entry cannot be reported to whoever staged it, since `change` returned 0 to that caller cycles ago. It is recorded on the
       * scratch instead and drained by the driver through [[drainFailedRegistrations]].
       */
+    private def stagesChangeFor(data: KqueuePollData, fd: Int)(using AllowUnsafe): Boolean =
+        var i     = 0
+        var found = false
+        while !found && i < data.nChanges do
+            found = KEvent.ident(data.changelistBuf, i) == fd.toLong
+            i += 1
+        end while
+        found
+    end stagesChangeFor
+
     private def flushChanges(pollerFd: Int, data: KqueuePollData)(using AllowUnsafe, Frame): Unit =
         val n = data.nChanges
         var i = 0
