@@ -360,4 +360,72 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    /** A CLI call's arguments carry registry credentials (`--creds user:password`) and environment values (`-e KEY=value`), so a failed
+      * call must not repeat them in its exception.
+      */
+    "a failed CLI call does not repeat its arguments" - {
+        val secret = "s3cret-pa55word"
+        val image  = ContainerImage("alpine", "3.20")
+        val auth   = ContainerImage.RegistryAuth("user", secret)
+
+        /** A `podman` whose every call fails with output no classification recognises. */
+        def withFailingCli[A](test: String => A < (Async & Abort[Throwable] & Scope))(
+            using Frame
+        ): A < (Async & Abort[Throwable] & Scope) =
+            Path.run(Path.tempDir("kyo-pod-cli")).map { dir =>
+                val cli = Path(dir, "podman")
+                Path.run(cli.write("#!/bin/sh\necho 'Error: an outcome no classification recognises' >&2\nexit 125\n"))
+                    .andThen(Command("chmod", "+x", cli.toString).waitFor)
+                    .andThen(test(cli.toString))
+            }
+
+        def causes(t: Throwable): Chunk[Throwable] =
+            if t eq null then Chunk.empty else causes(t.getCause).prepended(t)
+
+        def assertHidden(result: Result[ContainerException, Any], described: String)(using Frame, kyo.test.AssertScope): Unit =
+            result match
+                case Result.Failure(e) =>
+                    val leaked = causes(e).filter(t => String.valueOf(t.getMessage).contains(secret) || t.toString.contains(secret))
+                    assert(leaked.isEmpty, s"the failure repeats the secret: ${leaked.map(_.getMessage)}")
+                    assert(e.getMessage.contains(described), s"expected the failure to name `$described`, got ${e.getMessage}")
+                case other => fail(s"expected a failure, got $other")
+
+        "a pull with credentials the CLI fails" in {
+            withFailingCli { cli =>
+                Abort.run[ContainerException](new ShellBackend(cli).imagePull(image, Absent, Present(auth)))
+                    .map(assertHidden(_, s"$cli pull"))
+            }
+        }
+
+        "a pull with credentials whose CLI cannot be started" in {
+            val cli = "/nonexistent-kyo-pod-cli/podman"
+            Abort.run[ContainerException](new ShellBackend(cli).imagePull(image, Absent, Present(auth)))
+                .map(assertHidden(_, s"$cli pull"))
+        }
+
+        "a pull with credentials on a closed meter" in {
+            withFailingCli { cli =>
+                for
+                    meter  <- Meter.initSemaphoreUnscoped(1)
+                    _      <- meter.close
+                    result <- Abort.run[ContainerException](new ShellBackend(cli, meter).imagePull(image, Absent, Present(auth)))
+                yield assertHidden(result, s"$cli pull")
+            }
+        }
+
+        "a create with a secret environment value the CLI fails" in {
+            withFailingCli { cli =>
+                Abort.run[ContainerException](new ShellBackend(cli).create(Container.Config(image).env("DB_PASSWORD", secret)))
+                    .map(assertHidden(_, s"$cli create"))
+            }
+        }
+
+        "a management command is named with its operation" in {
+            withFailingCli { cli =>
+                Abort.run[ContainerException](new ShellBackend(cli).networkRemove(Container.Network.Id("kyo-net")))
+                    .map(assertHidden(_, s"$cli network rm"))
+            }
+        }
+    }
+
 end ShellBackendTest

@@ -2100,18 +2100,28 @@ final private[kyo] class ShellBackend(
                         val errMsg = if stderr.trim.nonEmpty then stderr.trim else stdout.trim
                         Abort.fail(mapError(errMsg, ctx, args))
                 case Result.Failure(cmdEx) =>
-                    Abort.fail(ContainerOperationException(s"Command failed: ${(cmd +: args).mkString(" ")}", cmdEx))
+                    Abort.fail(ContainerOperationException(s"Command failed: ${describe(args)}", cmdEx))
                 case Result.Panic(ex) =>
-                    Abort.fail(ContainerBackendException(s"Command panicked: ${(cmd +: args).mkString(" ")}", ex))
+                    Abort.fail(ContainerBackendException(s"Command panicked: ${describe(args)}", ex))
             }
         }) {
             case Result.Success(v) => v
             case Result.Failure(_) =>
-                Abort.fail(ContainerBackendException(s"Concurrency meter closed during ${cmd} ${args.mkString(" ")}", "meter was closed"))
+                Abort.fail(ContainerBackendException(s"Concurrency meter closed during ${describe(args)}", "meter was closed"))
             case Result.Panic(ex) =>
-                Abort.fail(ContainerBackendException(s"Concurrency meter panicked during ${cmd} ${args.mkString(" ")}", ex))
+                Abort.fail(ContainerBackendException(s"Concurrency meter panicked during ${describe(args)}", ex))
         }
     end run
+
+    /** The CLI and its subcommand, for an exception message. The arguments after the subcommand carry registry credentials
+      * (`--creds user:password`) and environment values (`-e KEY=value`), so a message never repeats them.
+      */
+    private def describe(args: Seq[String]): String =
+        val subcommand = args.headOption match
+            case Some(group) if CommandGroups.contains(group) => args.take(2)
+            case _                                            => args.take(1)
+        (cmd +: subcommand).mkString(" ")
+    end describe
 
     /** Spawn the underlying CLI directly and return (stdout, stderr, exitCode). */
     private def runWithStreams(args: String*)(using Frame): (String, String, ExitCode) < (Async & Abort[CommandException]) =
@@ -2262,7 +2272,7 @@ final private[kyo] class ShellBackend(
                                     case other                      => other.describe
                         ContainerImageMissingException(ContainerImage(imageRef))
                     else
-                        ContainerOperationException(s"${cmd} ${args.mkString(" ")} failed", output)
+                        ContainerOperationException(s"${describe(args)} failed", output)
                     end if
                 }
         end if
@@ -2391,6 +2401,9 @@ private[kyo] object ShellBackend:
       * `BackendConfig.Shell(... , streamBufferSize = N)`.
       */
     val defaultStreamBufferSize: Int = 256
+
+    /** The CLI's management commands, whose second word names the operation. */
+    private val CommandGroups: Set[String] = Set("image", "network", "volume", "container", "checkpoint", "system")
 
     /** Extract the last non-empty trimmed line from CLI output. Used to parse the resource ID emitted by `docker create`, `podman create`,
       * and `docker/podman volume create` — those commands print the ID on the final line, but stdout may also include image-pull progress
