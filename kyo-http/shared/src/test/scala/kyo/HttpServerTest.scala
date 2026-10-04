@@ -1491,6 +1491,28 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
         }
+
+        // A close that returns while the listen descriptor is still open leaves the port accepting for a moment, so the connect right
+        // after it gets through instead of being refused and the rebind right after it fails as the port in use. The port is outside the
+        // ephemeral range, so the leaf assumes only that nothing else binds that fixed port between the close and the rebind.
+        "a closed server's port is free once close returns: a connect is refused and a rebind succeeds".times(50) in {
+            val route   = HttpRoute.getRaw("test").response(_.bodyText)
+            val handler = route.handler(_ => HttpResponse.ok("ok"))
+            for
+                port <- Scope.run(
+                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException, Scope](_ => true)(port =>
+                        HttpServer.init(loopback.port(port))(handler)
+                    ).map(server => server.closeNow.andThen(server.port))
+                )
+                refused <- Abort.run[HttpException](HttpClient.getText(s"http://127.0.0.1:$port/test"))
+                rebound <- Abort.run[HttpBindException](Scope.run(HttpServer.init(port, "127.0.0.1")(handler).unit))
+            yield
+                refused match
+                    case Result.Failure(e: HttpConnectException) => assert(e.port == port)
+                    case other                                   => fail(s"a connect right after close must be refused; got $other")
+                assert(rebound.isSuccess, s"a rebind right after close must succeed; got $rebound")
+            end for
+        }
     }
 
     "HttpServer convenience APIs" - {
@@ -4051,7 +4073,8 @@ class HttpServerTest extends BaseHttpTest:
     }
 
     "init under interruption" - {
-        // A listener nobody closes holds its port for good, so the re-bind never succeeds and the leaf ends as its timeout.
+        // A listener nobody closes holds its port for good, so the re-bind never succeeds and the leaf ends as its timeout. The port is
+        // outside the ephemeral range, so another suite's listener cannot be handed it once this one releases it.
         "a server whose owning fiber is interrupted releases its port".times(80) in {
             val route                            = HttpRoute.getRaw("test").response(_.bodyText)
             val handler                          = route.handler(_ => HttpResponse.ok("hello"))
@@ -4060,9 +4083,9 @@ class HttpServerTest extends BaseHttpTest:
             for
                 bound <- Promise.init[Int, Any]
                 fiber <- Fiber.initUnscoped(Scope.run(
-                    HttpServer.init(loopback)(handler).map(server => bound.completeDiscard(Result.succeed(server.port))).andThen(
-                        Async.never
-                    )
+                    kyo.net.NonEphemeralPort.bind[HttpServer, HttpBindException, Scope](_ => true)(port =>
+                        HttpServer.init(loopback.port(port))(handler)
+                    ).map(server => bound.completeDiscard(Result.succeed(server.port))).andThen(Async.never)
                 ))
                 port <- bound.get
                 _    <- fiber.interrupt

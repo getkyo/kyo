@@ -262,7 +262,7 @@ Backend tests must cover the same behavior a user can observe:
 Self-contained demo command shape:
 
 ```sh
-JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=codex sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+KYO_AI_PROVIDER=codex scripts/sbt.sh compile -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
 ```
 
 ## The exception hierarchy
@@ -340,9 +340,6 @@ Follow the 1:1 rule; the module-wide invariants live in the per-source `*Test.sc
 ## Building and testing
 
 ```sh
-export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-export JVM_OPTS="$JAVA_OPTS"
-
 # All tests on JVM
 sbt 'kyo-aiJVM/test'
 

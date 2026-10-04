@@ -51,7 +51,11 @@ class PosixTransportUpgradeRejectTest extends Test:
                 // raw-mode STARTTLS over engine-routed reads must be rejected typed.
                 handle.tls = Present(new StubTlsEngine)
                 Abort.run[NetException | Timeout](
-                    Async.timeout(5.seconds)(transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 4).safe.get)
+                    Async.timeout(5.seconds)(transport.upgradeToTls(
+                        plaintext,
+                        NetTlsConfig(trustAll = true),
+                        4
+                    ).safe.get)
                 ).map { second =>
                     plaintext.close()
                     second match
@@ -82,7 +86,11 @@ class PosixTransportUpgradeRejectTest extends Test:
                 // The post-first-upgrade state: the upgraded connection reuses the handle, whose isUpgraded marker is durable.
                 handle.isUpgraded = true
                 Abort.run[NetException | Timeout](
-                    Async.timeout(5.seconds)(transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 4).safe.get)
+                    Async.timeout(5.seconds)(transport.upgradeToTls(
+                        plaintext,
+                        NetTlsConfig(trustAll = true),
+                        4
+                    ).safe.get)
                 ).map { second =>
                     plaintext.close()
                     second match

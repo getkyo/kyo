@@ -50,8 +50,9 @@ private[sqlite] object SqliteWriteGate:
       * wrote.
       *
       * A Meter lends its permit only for the duration of one `run`, and a transaction keeps the gates across many calls, so a holder fiber
-      * runs the nested `run`s and parks inside them until [[release]] completes its promise. Interrupting the holder returns any permit it
-      * took, through the Meter's own settlement.
+      * runs the nested `run`s and parks inside them until [[release]] completes its promise. That promise is the holder's one stop signal:
+      * completing it before the permits arrive withdraws the holder from the Meters, and after, returns them through the Meter's own
+      * settlement.
       */
     final class Hold private (gates: AtomicRef[Chunk[SqliteWriteGate]], slot: AtomicRef[Maybe[Promise[Unit, Any]]]):
 
@@ -92,27 +93,35 @@ private[sqlite] object SqliteWriteGate:
                             body = taking.foldRight[Unit < (Async & Abort[Closed])](acquired.completeUnitDiscard.andThen(done.get)) {
                                 (gate, inner) => gate.run(inner)
                             }
-                            holder <- Fiber.initUnscoped(Abort.run[Closed](body).map {
-                                case Result.Failure(closed) => acquired.completeDiscard(Result.fail(closed))
-                                case _                      => Kyo.unit
-                            })
-                            // The slot is filled inside the guarded region, so an interrupt landing anywhere after the permits are taken
-                            // still interrupts the holder, and leaves no promise in the slot for a later release to complete.
-                            taken <-
-                                Sync.ensure(error => if error.isEmpty then Kyo.unit else slot.set(Absent).andThen(holder.interrupt.unit)) {
+                            // Installed before the holder is spawned. An interrupt can land in the step after the spawn, and a finalizer
+                            // installed after it would never run there: the holder would take the permits once they free and park on
+                            // `done` with nothing left to complete it, and every later writer on the file would wait behind it.
+                            taken <- Sync.ensure(error =>
+                                if error.isEmpty then Kyo.unit else slot.set(Absent).andThen(done.completeUnitDiscard)
+                            ) {
+                                // Raced against `done` so completing it ends the holder in every state: one still queued for a permit
+                                // leaves the queue, and one holding the permits gives them back.
+                                Fiber.initUnscoped(Async.raceFirst(
+                                    Abort.run[Closed](body).map {
+                                        case Result.Failure(closed) => acquired.completeDiscard(Result.fail(closed))
+                                        case _                      => Kyo.unit
+                                    },
+                                    done.get
+                                )).andThen {
                                     val waited: Result[Timeout, Result[Closed, Unit]] < Async =
                                         if limit == Duration.Infinity then Abort.run[Closed](acquired.get).map(r => Result.succeed(r))
                                         else Abort.run[Timeout](Async.timeout(limit)(Abort.run[Closed](acquired.get)))
                                     waited.map {
                                         case Result.Success(Result.Success(_)) => slot.set(Present(done)).andThen(true)
-                                        // Interrupting the holder also returns a permit it took as the bound ran out.
-                                        case Result.Failure(_) => holder.interrupt.andThen(false)
+                                        // Also gives back a permit the holder took as the bound ran out.
+                                        case Result.Failure(_) => done.completeUnitDiscard.andThen(false)
                                         // Unreachable while the registry holds the meters, none of which is ever closed.
                                         case Result.Success(Result.Failure(closed)) => Abort.panic(closed)
                                         case Result.Success(Result.Panic(t))        => Abort.panic(t)
                                         case Result.Panic(t)                        => Abort.panic(t)
                                     }
                                 }
+                            }
                         yield taken
                 }
             }
