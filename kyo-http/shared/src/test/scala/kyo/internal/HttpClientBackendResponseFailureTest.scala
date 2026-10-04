@@ -630,7 +630,15 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
                             if streaming then
                                 val route = HttpRoute.getRaw("s").response(_.bodyStream)
                                 val req   = HttpRequest.getRaw(HttpUrl.fromUri("/s"))
-                                backend.sendStreaming(conn, route, req, 1 << 20, RouteUtil.BodyPlan.Direct, Absent).safe.get.map(
+                                backend.sendStreaming(
+                                    conn,
+                                    route,
+                                    RouteUtil.StreamedRead.Framed(RouteUtil.StreamedBody.ByteStream),
+                                    req,
+                                    1 << 20,
+                                    RouteUtil.BodyPlan.Empty,
+                                    Absent
+                                ).safe.get.map(
                                     _.fields.body.foreach(span =>
                                         received.updateAndGet(_ + new String(span.toArrayUnsafe, StandardCharsets.US_ASCII)).unit
                                     )
@@ -638,7 +646,7 @@ class HttpClientBackendResponseFailureTest extends kyo.BaseHttpTest:
                             else
                                 val route = HttpRoute.getRaw("b").response(_.bodyText)
                                 val req   = HttpRequest.getRaw(HttpUrl.fromUri("/b"))
-                                backend.sendBuffered(conn, route, req, 1 << 20, RouteUtil.BodyPlan.Direct).safe.get.map(res =>
+                                backend.sendBuffered(conn, route, req, 1 << 20, RouteUtil.BodyPlan.Empty).safe.get.map(res =>
                                     received.set(res.fields.body)
                                 )
                         Abort.run[HttpException](exchange).map(result => received.get.map(text => (text, result)))

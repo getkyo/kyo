@@ -29,15 +29,11 @@ private[kyo] object RouteUtil:
 
     /** Whether the route's request body requires streaming transport. */
     def isStreamingRequest[In, Out, S](route: HttpRoute[In, Out, S]): Boolean =
-        findBodyField(route.request.fields) match
-            case Present(body) => isStreamingContentType(body.contentType)
-            case Absent        => false
+        streamedRequest(route).isDefined
 
     /** Whether the route's response body requires streaming transport. */
     def isStreamingResponse[In, Out, S](route: HttpRoute[In, Out, S]): Boolean =
-        findBodyField(route.response.fields) match
-            case Present(body) => isStreamingContentType(body.contentType)
-            case Absent        => false
+        streamedResponse(route).isDefined
 
     // ==================== Client: encode request ====================
 
@@ -50,11 +46,12 @@ private[kyo] object RouteUtil:
         inline onStreaming: ( /* url */ String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
     )(using Frame): A < (S2 & Sync & Abort[HttpException]) =
         // A route without a multipart body is encoded now, not behind a `map` the scheduler may suspend.
-        if isMultipart(sentBodyField(route, request)) then
-            bodyPlanForRequest(route, request).map { plan =>
-                encodeRequestWith(route, request, plan)(onEmpty, onBuffered, onStreaming)
-            }
-        else encodeRequestWith(route, request, BodyPlan.Direct)(onEmpty, onBuffered, onStreaming)
+        immediatePlan(sentBodyField(route, request)) match
+            case Present(plan) => encodeRequestWith(route, request, plan)(onEmpty, onBuffered, onStreaming)
+            case Absent        =>
+                bodyPlanForRequest(route, request).map { plan =>
+                    encodeRequestWith(route, request, plan)(onEmpty, onBuffered, onStreaming)
+                }
     end encodeRequest
 
     private[kyo] inline def encodeRequestWith[In, Out, S, A](
@@ -76,7 +73,8 @@ private[kyo] object RouteUtil:
             if request.url.path.nonEmpty then request.url.path
             else buildPath(route.request.path, dict)
 
-        val effectiveBodyField = sentBodyField(route, request)
+        // A plan the client reuses across attempts is dropped for a GET or HEAD, which sends no body even when its route declares one.
+        val sentPlan = if sentBodyField(route, request).isEmpty then BodyPlan.Empty else plan
 
         if hasParams then
             val queryBuilder  = new StringBuilder
@@ -97,12 +95,12 @@ private[kyo] object RouteUtil:
                     else basePath
             val hdrs = if extraHeaders.isEmpty then request.headers
             else request.headers.concat(extraHeaders)
-            encodeBody(effectiveBodyField, dict, url, hdrs, plan)(onEmpty, onBuffered, onStreaming)
+            encodeBody(sentPlan, dict, url, hdrs)(onEmpty, onBuffered, onStreaming)
         else
             val url = request.url.rawQuery match
                 case Present(rq) => s"$basePath?$rq"
                 case _           => basePath
-            encodeBody(effectiveBodyField, dict, url, request.headers, plan)(onEmpty, onBuffered, onStreaming)
+            encodeBody(sentPlan, dict, url, request.headers)(onEmpty, onBuffered, onStreaming)
         end if
     end encodeRequestWith
 
@@ -115,11 +113,6 @@ private[kyo] object RouteUtil:
     )(using Frame): BodyPlan < (Sync & Abort[HttpException]) =
         bodyPlan(sentBodyField(route, request), request.fields.dict, request.headers)
 
-    private def isMultipart(bodyField: Maybe[HttpRoute.Field.Body[?, ?]]): Boolean =
-        bodyField.exists(body =>
-            body.contentType == HttpRoute.ContentType.Multipart || body.contentType == HttpRoute.ContentType.MultipartStream
-        )
-
     /** The body field a request is sent with: none for a GET or HEAD, whose route may still declare one after a 303 turned the method into
       * GET (RFC 9110 section 15.4.4).
       */
@@ -127,40 +120,30 @@ private[kyo] object RouteUtil:
         findBodyField(route.request.fields).filter(_ => request.method != HttpMethod.GET && request.method != HttpMethod.HEAD)
 
     private inline def encodeBody[A](
-        bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
+        plan: BodyPlan,
         dict: Dict[String, Any],
         url: String,
-        headers: HttpHeaders,
-        plan: BodyPlan
+        headers: HttpHeaders
     )(
         inline onEmpty: (String, HttpHeaders) => A,
         inline onBuffered: (String, HttpHeaders, Span[Byte]) => A,
         inline onStreaming: (String, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
-        bodyField match
-            case Absent        => onEmpty(url, headers)
-            case Present(body) =>
-                plan match
-                    case BodyPlan.MultipartBuffered(contentType, bytes) =>
-                        onBuffered(url, encodedBodyHeaders(body.contentType, headers, contentType), bytes)
-                    case BodyPlan.MultipartStreamed(boundary) =>
-                        val parts = dict(body.fieldName).asInstanceOf[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
-                        onStreaming(
-                            url,
-                            encodedBodyHeaders(body.contentType, headers, boundary.contentType),
-                            multipartStream(parts, boundary)
-                        )
-                    case BodyPlan.Direct =>
-                        val value = dict(body.fieldName)
-                        if isStreamingContentType(body.contentType) then
-                            encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                                onStreaming(url, encodedBodyHeaders(body.contentType, headers, ct), stream)
-                            }
-                        else
-                            encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                                onBuffered(url, encodedBodyHeaders(body.contentType, headers, ct), bytes)
-                            }
-                        end if
+        plan match
+            case BodyPlan.Empty                => onEmpty(url, headers)
+            case BodyPlan.Buffered(body, kind) =>
+                encodeBufferedBodyValueWith(kind, dict(body.fieldName)) { (ct, bytes) =>
+                    onBuffered(url, encodedBodyHeaders(body.contentType, headers, ct), bytes)
+                }
+            case BodyPlan.Streamed(body, kind) =>
+                encodeStreamBodyValueWith(kind, dict(body.fieldName)) { (ct, stream) =>
+                    onStreaming(url, encodedBodyHeaders(body.contentType, headers, ct), stream)
+                }
+            case BodyPlan.MultipartBuffered(body, contentType, bytes) =>
+                onBuffered(url, encodedBodyHeaders(body.contentType, headers, contentType), bytes)
+            case BodyPlan.MultipartStreamed(body, boundary) =>
+                val parts = dict(body.fieldName).asInstanceOf[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
+                onStreaming(url, encodedBodyHeaders(body.contentType, headers, boundary.contentType), multipartStream(parts, boundary))
 
     // ==================== Client: decode response ====================
 
@@ -231,8 +214,12 @@ private[kyo] object RouteUtil:
             case Result.Panic(e)   => Abort.panic(e)
     end decodeBufferedResponseWith
 
+    /** Decode a response whose body `read` says how to read: the caller decided the route streams its response, and this takes that
+      * decision rather than making it again.
+      */
     def decodeStreamingResponse[In, Out, S](
         route: HttpRoute[In, Out, S],
+        read: StreamedRead,
         status: HttpStatus,
         headers: HttpHeaders,
         stream: Stream[Span[Byte], Async & Abort[HttpException]],
@@ -247,7 +234,7 @@ private[kyo] object RouteUtil:
 
         // No response is declared with a multipart stream body, so the part bound, a server setting, does not apply here.
         def body(bf: HttpRoute.Field.Body[?, ?]): Any =
-            decodeStreamBodyValue(bf.contentType, stream, headers, method, url, maxPartSize = Int.MaxValue)
+            decodeStreamBodyValue(read, stream, headers, method, url, maxPartSize = Int.MaxValue)
         validateStreamingMultipartBoundary(bodyField, headers, method, url).flatMap { _ =>
             if !hasParams then
                 bodyField.foreach(bf => discard(builder.add(bf.fieldName, body(bf))))
@@ -260,17 +247,6 @@ private[kyo] object RouteUtil:
             end if
         }
     end decodeStreamingResponse
-
-    def decodeStreamingResponseWith[In, Out, S, A, S2](
-        route: HttpRoute[In, Out, S],
-        status: HttpStatus,
-        headers: HttpHeaders,
-        stream: Stream[Span[Byte], Async & Abort[HttpException]],
-        method: String,
-        url: HttpUrl
-    )(f: HttpResponse[Out] => A < S2)(using Frame): A < (S2 & Abort[HttpException]) =
-        Abort.get(decodeStreamingResponse(route, status, headers, stream, method, url)).flatMap(f)
-    end decodeStreamingResponseWith
 
     // ==================== Server: decode request ====================
 
@@ -307,8 +283,12 @@ private[kyo] object RouteUtil:
         }
     end decodeBufferedRequest
 
+    /** Decode a request whose body `read` says how to read: the router decided the route streams its request, and this takes that
+      * decision rather than making it again.
+      */
     def decodeStreamingRequest[In, Out, S](
         route: HttpRoute[In, Out, S],
+        read: StreamedRead,
         pathCaptures: Dict[String, String],
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
@@ -333,7 +313,7 @@ private[kyo] object RouteUtil:
                     bodyField.foreach(bf =>
                         discard(builder.add(
                             bf.fieldName,
-                            decodeStreamBodyValue(bf.contentType, stream, headers, ctxMethod, ctxUrl, maxPartSize)
+                            decodeStreamBodyValue(read, stream, headers, ctxMethod, ctxUrl, maxPartSize)
                         ))
                     )
                     buildRequest(route, headers, builder, path, queryParam, methodOverride)
@@ -353,12 +333,13 @@ private[kyo] object RouteUtil:
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A < S2
     )(using Frame): A < (S2 & Sync & Abort[HttpException]) =
         val bodyField = findBodyField(route.response.fields)
-        if isMultipart(bodyField) then
-            bodyPlan(bodyField, response.fields.dict, response.headers).map { plan =>
-                encodeResponseWith(route, response, plan)(onEmpty, onBuffered, onStreaming)
-            }
-        else encodeResponseWith(route, response, BodyPlan.Direct)(onEmpty, onBuffered, onStreaming)
-        end if
+        immediatePlan(bodyField) match
+            case Present(plan) => encodeResponseWith(route, response, plan)(onEmpty, onBuffered, onStreaming)
+            case Absent        =>
+                bodyPlan(bodyField, response.fields.dict, response.headers).map { plan =>
+                    encodeResponseWith(route, response, plan)(onEmpty, onBuffered, onStreaming)
+                }
+        end match
     end encodeResponse
 
     private def encodeResponseWith[In, Out, S, A](
@@ -378,7 +359,7 @@ private[kyo] object RouteUtil:
 
         // Fast path: no param headers to encode
         if !hasParams then
-            encodeResponseBody(bodyField, response.fields.dict, status, response.headers, plan)(onEmpty, onBuffered, onStreaming)
+            encodeResponseBody(plan, response.fields.dict, status, response.headers)(onEmpty, onBuffered, onStreaming)
         else
             val dict          = response.fields.dict
             val headerBuilder = ChunkBuilder.init[(String, String)]
@@ -386,45 +367,35 @@ private[kyo] object RouteUtil:
             val extraHeaders: HttpHeaders = headerBuilder.result()
             val headers                   = if extraHeaders.isEmpty then response.headers
             else response.headers.concat(extraHeaders)
-            encodeResponseBody(bodyField, dict, status, headers, plan)(onEmpty, onBuffered, onStreaming)
+            encodeResponseBody(plan, dict, status, headers)(onEmpty, onBuffered, onStreaming)
         end if
     end encodeResponseWith
 
     private def encodeResponseBody[A](
-        bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
+        plan: BodyPlan,
         dict: Dict[String, Any],
         status: HttpStatus,
-        headers: HttpHeaders,
-        plan: BodyPlan
+        headers: HttpHeaders
     )(
         onEmpty: (HttpStatus, HttpHeaders) => A,
         onBuffered: (HttpStatus, HttpHeaders, Span[Byte]) => A,
         onStreaming: (HttpStatus, HttpHeaders, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
-        bodyField match
-            case Absent        => onEmpty(status, headers)
-            case Present(body) =>
-                plan match
-                    case BodyPlan.MultipartBuffered(contentType, bytes) =>
-                        onBuffered(status, encodedBodyHeaders(body.contentType, headers, contentType), bytes)
-                    case BodyPlan.MultipartStreamed(boundary) =>
-                        val parts = dict(body.fieldName).asInstanceOf[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
-                        onStreaming(
-                            status,
-                            encodedBodyHeaders(body.contentType, headers, boundary.contentType),
-                            multipartStream(parts, boundary)
-                        )
-                    case BodyPlan.Direct =>
-                        val value = dict(body.fieldName)
-                        if isStreamingContentType(body.contentType) then
-                            encodeStreamBodyValueWith(body.contentType, value) { (ct, stream) =>
-                                onStreaming(status, encodedBodyHeaders(body.contentType, headers, ct), stream)
-                            }
-                        else
-                            encodeBufferedBodyValueWith(body.contentType, value) { (ct, bytes) =>
-                                onBuffered(status, encodedBodyHeaders(body.contentType, headers, ct), bytes)
-                            }
-                        end if
+        plan match
+            case BodyPlan.Empty                => onEmpty(status, headers)
+            case BodyPlan.Buffered(body, kind) =>
+                encodeBufferedBodyValueWith(kind, dict(body.fieldName)) { (ct, bytes) =>
+                    onBuffered(status, encodedBodyHeaders(body.contentType, headers, ct), bytes)
+                }
+            case BodyPlan.Streamed(body, kind) =>
+                encodeStreamBodyValueWith(kind, dict(body.fieldName)) { (ct, stream) =>
+                    onStreaming(status, encodedBodyHeaders(body.contentType, headers, ct), stream)
+                }
+            case BodyPlan.MultipartBuffered(body, contentType, bytes) =>
+                onBuffered(status, encodedBodyHeaders(body.contentType, headers, contentType), bytes)
+            case BodyPlan.MultipartStreamed(body, boundary) =>
+                val parts = dict(body.fieldName).asInstanceOf[Stream[HttpRequest.Part, Async & Abort[HttpException]]]
+                onStreaming(status, encodedBodyHeaders(body.contentType, headers, boundary.contentType), multipartStream(parts, boundary))
 
     // ==================== Server: encode error ====================
 
@@ -687,41 +658,39 @@ private[kyo] object RouteUtil:
     // ==================== Internal: body encoding ====================
 
     private def encodeBufferedBodyValueWith[A](
-        ct: HttpRoute.ContentType[?],
+        kind: BufferedBody,
         value: Any
     )(f: (String, Span[Byte]) => A)(using Frame): A =
-        ct match
-            case HttpRoute.ContentType.Text =>
+        kind match
+            case BufferedBody.Text =>
                 f("text/plain; charset=utf-8", stringToSpan(value.asInstanceOf[String]))
-            case HttpRoute.ContentType.Binary =>
+            case BufferedBody.Binary =>
                 f("application/octet-stream", value.asInstanceOf[Span[Byte]])
-            case json: HttpRoute.ContentType.Json[?] =>
+            case BufferedBody.Json(json) =>
                 val str = Json.encode(value)(using json.schema.asInstanceOf[Schema[Any]])
                 f("application/json", stringToSpan(str))
-            case form: HttpRoute.ContentType.Form[?] =>
+            case BufferedBody.Form(form) =>
                 val str = form.codec.asInstanceOf[HttpFormCodec[Any]].encode(value)
                 f("application/x-www-form-urlencoded", stringToSpan(str))
-            case _ =>
-                throw new IllegalStateException(s"Cannot encode streaming ContentType as buffered: $ct")
     end encodeBufferedBodyValueWith
 
     private def encodeStreamBodyValueWith[A](
-        ct: HttpRoute.ContentType[?],
+        kind: StreamedBody,
         value: Any
     )(
         f: (String, Stream[Span[Byte], Async & Abort[HttpException]]) => A
     )(using Frame): A =
-        ct match
-            case HttpRoute.ContentType.ByteStream =>
+        kind match
+            case StreamedBody.ByteStream =>
                 f("application/octet-stream", value.asInstanceOf[Stream[Span[Byte], Async & Abort[HttpException]]])
-            case ndjson: HttpRoute.ContentType.Ndjson[?] =>
+            case StreamedBody.Ndjson(ndjson) =>
                 val stream     = value.asInstanceOf[Stream[Any, Async & Abort[HttpException]]]
                 val schema     = ndjson.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { v =>
                     stringToSpan(Json.encode(v)(using schema) + "\n")
                 }(using ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("application/x-ndjson", byteStream)
-            case sse: HttpRoute.ContentType.Sse[?] =>
+            case StreamedBody.Sse(sse) =>
                 val stream     = value.asInstanceOf[Stream[HttpSseEvent[Any], Async & Abort[HttpException]]]
                 val schema     = sse.schema.asInstanceOf[Schema[Any]]
                 val byteStream = stream.mapPure { event =>
@@ -739,7 +708,7 @@ private[kyo] object RouteUtil:
                     stringToSpan(sb.toString)
                 }(using sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]], Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
-            case sseText: HttpRoute.ContentType.SseText =>
+            case StreamedBody.SseText(sseText) =>
                 val stream     = value.asInstanceOf[Stream[HttpSseEvent[String], Async & Abort[HttpException]]]
                 val byteStream = stream.mapPure { event =>
                     val sb = new StringBuilder
@@ -763,8 +732,6 @@ private[kyo] object RouteUtil:
                     stringToSpan(sb.toString)
                 }(using sseText.emitTag, Tag[Emit[Chunk[Span[Byte]]]])
                 f("text/event-stream", byteStream)
-            case _ =>
-                throw new IllegalStateException(s"Cannot encode non-streaming ContentType as stream: $ct")
     end encodeStreamBodyValueWith
 
     /** How a body goes on the wire, decided before its head is built. A multipart body needs a boundary, which may be generated, and its
@@ -773,10 +740,86 @@ private[kyo] object RouteUtil:
       * Every other body is encoded by the synchronous encoders.
       */
     private[kyo] enum BodyPlan derives CanEqual:
-        case Direct
-        case MultipartBuffered(contentType: String, bytes: Span[Byte])
-        case MultipartStreamed(boundary: MultipartBoundary)
+        case Empty
+        case Buffered(field: HttpRoute.Field.Body[?, ?], kind: BufferedBody)
+        case Streamed(field: HttpRoute.Field.Body[?, ?], kind: StreamedBody)
+        case MultipartBuffered(field: HttpRoute.Field.Body[?, ?], contentType: String, bytes: Span[Byte])
+        case MultipartStreamed(field: HttpRoute.Field.Body[?, ?], boundary: MultipartBoundary)
     end BodyPlan
+
+    /** A body read or written whole. Its encoder and decoder take only these, so no other content type can reach them. */
+    private[kyo] enum BufferedBody derives CanEqual:
+        case Text, Binary
+        case Json(contentType: HttpRoute.ContentType.Json[?])
+        case Form(contentType: HttpRoute.ContentType.Form[?])
+    end BufferedBody
+
+    /** A body written or read as a stream of framed elements: bytes, NDJSON records or SSE events. The streamed encoder takes only these. */
+    private[kyo] enum StreamedBody derives CanEqual:
+        case ByteStream
+        case Ndjson(contentType: HttpRoute.ContentType.Ndjson[?])
+        case Sse(contentType: HttpRoute.ContentType.Sse[?])
+        case SseText(contentType: HttpRoute.ContentType.SseText)
+    end StreamedBody
+
+    /** How a streamed body is read: framed into its elements, or split into multipart parts. The router keeps one per streamed route, and
+      * the streaming decoder takes only these, so a body read whole never reaches it.
+      */
+    private[kyo] enum StreamedRead derives CanEqual:
+        case Framed(kind: StreamedBody)
+        case Parts
+    end StreamedRead
+
+    /** How a content type goes on the wire, decided once by an exhaustive match. The two multipart kinds stand apart: each needs a boundary
+      * before it can be written, which `bodyPlan` supplies.
+      */
+    private enum BodyKind derives CanEqual:
+        case Buffered(kind: BufferedBody)
+        case Streamed(kind: StreamedBody)
+        case Multipart
+        case MultipartStream
+    end BodyKind
+
+    private def bodyKind(contentType: HttpRoute.ContentType[?]): BodyKind =
+        contentType match
+            case HttpRoute.ContentType.Text              => BodyKind.Buffered(BufferedBody.Text)
+            case HttpRoute.ContentType.Binary            => BodyKind.Buffered(BufferedBody.Binary)
+            case json: HttpRoute.ContentType.Json[?]     => BodyKind.Buffered(BufferedBody.Json(json))
+            case form: HttpRoute.ContentType.Form[?]     => BodyKind.Buffered(BufferedBody.Form(form))
+            case HttpRoute.ContentType.Multipart         => BodyKind.Multipart
+            case HttpRoute.ContentType.ByteStream        => BodyKind.Streamed(StreamedBody.ByteStream)
+            case HttpRoute.ContentType.MultipartStream   => BodyKind.MultipartStream
+            case ndjson: HttpRoute.ContentType.Ndjson[?] => BodyKind.Streamed(StreamedBody.Ndjson(ndjson))
+            case sse: HttpRoute.ContentType.Sse[?]       => BodyKind.Streamed(StreamedBody.Sse(sse))
+            case sseText: HttpRoute.ContentType.SseText  => BodyKind.Streamed(StreamedBody.SseText(sseText))
+    end bodyKind
+
+    /** How a route's request body is read when it is streamed, or `Absent` when it is read whole or there is none. */
+    private[kyo] def streamedRequest[In, Out, S](route: HttpRoute[In, Out, S]): Maybe[StreamedRead] =
+        findBodyField(route.request.fields).flatMap(streamedRead)
+
+    /** How a route's response body is read when it is streamed, or `Absent` when it is read whole or there is none. */
+    private[kyo] def streamedResponse[In, Out, S](route: HttpRoute[In, Out, S]): Maybe[StreamedRead] =
+        findBodyField(route.response.fields).flatMap(streamedRead)
+
+    private def streamedRead(field: HttpRoute.Field.Body[?, ?]): Maybe[StreamedRead] =
+        bodyKind(field.contentType) match
+            case BodyKind.Streamed(kind)                   => Present(StreamedRead.Framed(kind))
+            case BodyKind.MultipartStream                  => Present(StreamedRead.Parts)
+            case BodyKind.Buffered(_) | BodyKind.Multipart => Absent
+
+    /** The plan for a body that needs no effect to plan, or `Absent` for a multipart one, whose boundary may be generated and whose parts'
+      * headers may fail to render.
+      */
+    private def immediatePlan(bodyField: Maybe[HttpRoute.Field.Body[?, ?]]): Maybe[BodyPlan] =
+        bodyField match
+            case Absent        => Present(BodyPlan.Empty)
+            case Present(body) =>
+                bodyKind(body.contentType) match
+                    case BodyKind.Buffered(kind)                       => Present(BodyPlan.Buffered(body, kind))
+                    case BodyKind.Streamed(kind)                       => Present(BodyPlan.Streamed(body, kind))
+                    case BodyKind.Multipart | BodyKind.MultipartStream => Absent
+    end immediatePlan
 
     private def bodyPlan(
         bodyField: Maybe[HttpRoute.Field.Body[?, ?]],
@@ -784,19 +827,20 @@ private[kyo] object RouteUtil:
         headers: HttpHeaders
     )(using Frame): BodyPlan < (Sync & Abort[HttpException]) =
         bodyField match
+            case Absent        => BodyPlan.Empty
             case Present(body) =>
-                body.contentType match
-                    case HttpRoute.ContentType.Multipart =>
+                bodyKind(body.contentType) match
+                    case BodyKind.Buffered(kind) => BodyPlan.Buffered(body, kind)
+                    case BodyKind.Streamed(kind) => BodyPlan.Streamed(body, kind)
+                    case BodyKind.Multipart      =>
                         val parts = dict(body.fieldName).asInstanceOf[Seq[HttpRequest.Part]]
                         multipartBoundary(headers).map { boundary =>
                             Abort.get(encodeMultipartParts(parts, boundary.value)).map { bytes =>
-                                BodyPlan.MultipartBuffered(boundary.contentType, bytes)
+                                BodyPlan.MultipartBuffered(body, boundary.contentType, bytes)
                             }
                         }
-                    case HttpRoute.ContentType.MultipartStream =>
-                        multipartBoundary(headers).map(BodyPlan.MultipartStreamed(_))
-                    case _ => BodyPlan.Direct
-            case Absent => BodyPlan.Direct
+                    case BodyKind.MultipartStream =>
+                        multipartBoundary(headers).map(BodyPlan.MultipartStreamed(body, _))
     end bodyPlan
 
     /** The boundary the caller's Content-Type supplies when it is usable, or a generated one. */
@@ -945,17 +989,17 @@ private[kyo] object RouteUtil:
       * part. A line or frame whose JSON does not decode fails the stream with `HttpJsonDecodeException` on the row the stream declares.
       */
     private def decodeStreamBodyValue(
-        ct: HttpRoute.ContentType[?],
+        read: StreamedRead,
         stream: Stream[Span[Byte], Async & Abort[HttpException]],
         headers: HttpHeaders,
         method: String,
         url: HttpUrl,
         maxPartSize: Int
     )(using Frame): Any =
-        ct match
-            case HttpRoute.ContentType.ByteStream =>
+        read match
+            case StreamedRead.Framed(StreamedBody.ByteStream) =>
                 stream
-            case ndjson: HttpRoute.ContentType.Ndjson[?] =>
+            case StreamedRead.Framed(StreamedBody.Ndjson(ndjson)) =>
                 val schema = ndjson.schema.asInstanceOf[Schema[Any]]
                 framed(
                     stream,
@@ -968,7 +1012,7 @@ private[kyo] object RouteUtil:
                     summon[Frame],
                     ndjson.emitTag.asInstanceOf[Tag[Emit[Chunk[Any]]]]
                 )
-            case sse: HttpRoute.ContentType.Sse[?] =>
+            case StreamedRead.Framed(StreamedBody.Sse(sse)) =>
                 val schema = sse.schema.asInstanceOf[Schema[Any]]
                 val decode = decodeJson(schema, method, url)
                 framed(
@@ -978,16 +1022,14 @@ private[kyo] object RouteUtil:
                     finishSse,
                     (event: HttpSseEvent[String]) => decode(event.data).map(value => event.copy(data = value))
                 )(using summon[Frame], sse.emitTag.asInstanceOf[Tag[Emit[Chunk[HttpSseEvent[Any]]]]])
-            case sseText: HttpRoute.ContentType.SseText =>
+            case StreamedRead.Framed(StreamedBody.SseText(sseText)) =>
                 framed(stream, SseFraming.empty, (st, span) => feedSse(st, span), finishSse, Result.succeed)(
                     using
                     summon[Frame],
                     sseText.emitTag
                 )
-            case HttpRoute.ContentType.MultipartStream =>
+            case StreamedRead.Parts =>
                 parseMultipartStream(stream, headers, maxPartSize)
-            case _ =>
-                throw new IllegalStateException(s"Cannot decode non-streaming ContentType as stream: $ct")
     end decodeStreamBodyValue
 
     // ==================== Streamed body framing ====================
@@ -1577,12 +1619,6 @@ private[kyo] object RouteUtil:
       */
     private def isUnitSchema(schema: Schema[Any]): Boolean =
         (schema: AnyRef) eq (Schema.unitSchema: AnyRef)
-
-    private def isStreamingContentType(ct: HttpRoute.ContentType[?]): Boolean =
-        ct match
-            case HttpRoute.ContentType.ByteStream | _: HttpRoute.ContentType.Ndjson[?] |
-                _: HttpRoute.ContentType.Sse[?] | _: HttpRoute.ContentType.SseText | HttpRoute.ContentType.MultipartStream => true
-            case _ => false
 
     private def findBodyField(fields: Chunk[HttpRoute.Field[?]]): Maybe[HttpRoute.Field.Body[?, ?]] =
         @tailrec def loop(i: Int): Maybe[HttpRoute.Field.Body[?, ?]] =

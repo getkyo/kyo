@@ -25,6 +25,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
         new String(s.toArray, StandardCharsets.US_ASCII)
 
     private val dripRoute  = HttpRoute.getRaw("drip").response(_.bodyStream)
+    private val bytes      = RouteUtil.StreamedRead.Framed(RouteUtil.StreamedBody.ByteStream)
     private val plainRoute = HttpRoute.getRaw("plain").response(_.bodyText)
     private def dripReq    = HttpRequest.getRaw(HttpUrl.fromUri("/drip"))
     private def plainReq   = HttpRequest.getRaw(HttpUrl.fromUri("/plain"))
@@ -58,7 +59,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
+            val respFiber                =
+                backend.sendStreaming(conn, dripRoute, bytes, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Empty, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { requestSpan =>
                 assert(spanToString(requestSpan).startsWith("GET /drip HTTP/1.1\r\n"))
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
@@ -75,7 +77,7 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
                         resp.fields.body.run.map { chunks =>
                             assert(chunks.foldLeft("")(_ + spanToString(_)) == "chunk1chunk2")
                             // A clean connection serves a subsequent buffered request correctly.
-                            val respFiber2 = backend.sendBuffered(conn, plainRoute, plainReq, 1024 * 1024, RouteUtil.BodyPlan.Direct)
+                            val respFiber2 = backend.sendBuffered(conn, plainRoute, plainReq, 1024 * 1024, RouteUtil.BodyPlan.Empty)
                             serverConn.inbound.safe.take.map { _ =>
                                 discard(serverConn.outbound.offer(spanOf(plainHeaders)))
                                 discard(serverConn.outbound.offer(spanOf(plainBody)))
@@ -95,7 +97,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
+            val respFiber                =
+                backend.sendStreaming(conn, dripRoute, bytes, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Empty, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { _ =>
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
                 // Enough body chunks to fill the decoded channel and leave the decoder blocked in `put`, and deliberately no
@@ -137,7 +140,8 @@ class HttpClientBackendStreamingTest extends kyo.BaseHttpTest:
             val conn                     = new HttpConnection(clientConn, http1, "test", 80, false, "test")
             val backend                  = HttpClientBackend.init(new TestChannelTransport(Seq.empty), 2, 60.seconds)
             val bodyOutcome              = Promise.Unsafe.init[Boolean, Any]()
-            val respFiber = backend.sendStreaming(conn, dripRoute, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Direct, Present(bodyOutcome))
+            val respFiber                =
+                backend.sendStreaming(conn, dripRoute, bytes, dripReq, 1024 * 1024, RouteUtil.BodyPlan.Empty, Present(bodyOutcome))
             serverConn.inbound.safe.take.map { _ =>
                 discard(serverConn.outbound.offer(spanOf(streamHeaders)))
                 discard(serverConn.outbound.offer(spanOf(chunk1)))

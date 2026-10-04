@@ -21,7 +21,7 @@ final private[kyo] class HttpRouter private (
     private val nodes: Span[HttpRouter.Node],
     private val endpoints: Span[HttpHandler[?, ?, ?]],
     private val captureWireNames: Span[Span[String]],
-    private val streamingReqFlags: Span[Boolean],
+    private val streamedRequests: Span[Maybe[RouteUtil.StreamedRead]],
     private val streamingRespFlags: Span[Boolean],
     /** Next endpoint registered for the same node and method, or -1.
       *
@@ -68,7 +68,7 @@ final private[kyo] class HttpRouter private (
         if next < 0 then false
         else
             lookup.endpointIdx = next
-            lookup.isStreamingRequest = streamingReqFlags(next)
+            lookup.streamedRequest = streamedRequests(next)
             lookup.isStreamingResponse = streamingRespFlags(next)
             true
         end if
@@ -111,14 +111,14 @@ final private[kyo] class HttpRouter private (
             val handlerIdx = node.endpointIndices(methodIdx)
             if handlerIdx >= 0 then
                 lookup.endpointIdx = handlerIdx
-                lookup.isStreamingRequest = streamingReqFlags(handlerIdx)
+                lookup.streamedRequest = streamedRequests(handlerIdx)
                 lookup.isStreamingResponse = streamingRespFlags(handlerIdx)
                 ResultUnit
             else if methodIdx == HeadMethodIdx then
                 val getIdx = node.endpointIndices(GetMethodIdx)
                 if getIdx >= 0 then
                     lookup.endpointIdx = getIdx
-                    lookup.isStreamingRequest = streamingReqFlags(getIdx)
+                    lookup.streamedRequest = streamedRequests(getIdx)
                     lookup.isStreamingResponse = streamingRespFlags(getIdx)
                     ResultUnit
                 else methodNotAllowedResult(node).asInstanceOf[Result[FindError, Unit]]
@@ -252,7 +252,7 @@ private[kyo] object HttpRouter:
             val flatNodes        = new Array[Node](nodeCount)
             val flatEndpoints    = new Array[HttpHandler[?, ?, ?]](epCount)
             val flatCaptureNames = new Array[Span[String]](epCount)
-            val flatStreamReq    = new Array[Boolean](epCount)
+            val flatStreamReq    = Array.fill[Maybe[RouteUtil.StreamedRead]](epCount)(Absent)
             val flatStreamResp   = new Array[Boolean](epCount)
             val flatNextCand     = Array.fill(epCount)(-1)
             val state = new SerializeState(flatNodes, flatEndpoints, flatCaptureNames, flatStreamReq, flatStreamResp, flatNextCand)
@@ -397,7 +397,7 @@ private[kyo] object HttpRouter:
         val nodes: Array[Node],
         val endpoints: Array[HttpHandler[?, ?, ?]],
         val captureNames: Array[Span[String]],
-        val streamReq: Array[Boolean],
+        val streamReq: Array[Maybe[RouteUtil.StreamedRead]],
         val streamResp: Array[Boolean],
         val nextCandidate: Array[Int]
     ):
@@ -443,7 +443,7 @@ private[kyo] object HttpRouter:
                 val epIdx = state.allocEpIdx()
                 state.endpoints(epIdx) = endpoint
                 state.captureNames(epIdx) = extractCaptureNames(endpoint.route.request.path)
-                state.streamReq(epIdx) = RouteUtil.isStreamingRequest(endpoint.route)
+                state.streamReq(epIdx) = RouteUtil.streamedRequest(endpoint.route)
                 state.streamResp(epIdx) = RouteUtil.isStreamingResponse(endpoint.route)
                 if previousIdx < 0 then endpointIndices(methodIndex(method)) = epIdx
                 else state.nextCandidate(previousIdx) = epIdx

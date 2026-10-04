@@ -11,6 +11,12 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
     private val maxPartSize = HttpServerConfig.default.maxMultipartPartSize
 
+    private def requestRead(route: HttpRoute[?, ?, ?])(using kyo.test.AssertScope): RouteUtil.StreamedRead =
+        RouteUtil.streamedRequest(route).getOrElse(fail("the route does not stream its request"))
+
+    private def responseRead(route: HttpRoute[?, ?, ?])(using kyo.test.AssertScope): RouteUtil.StreamedRead =
+        RouteUtil.streamedResponse(route).getOrElse(fail("the route does not stream its response"))
+
     case class User(name: String, age: Int) derives Schema, CanEqual
     case class LoginForm(username: String, password: String) derives HttpFormCodec
 
@@ -1584,6 +1590,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
             RouteUtil.decodeStreamingResponse(
                 route,
+                responseRead(route),
                 HttpStatus.OK,
                 HttpHeaders.empty,
                 rawStream,
@@ -1634,6 +1641,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         )(using Frame, kyo.test.AssertScope): Stream[A, Async & Abort[HttpException]] =
             RouteUtil.decodeStreamingResponse(
                 route,
+                responseRead(route),
                 HttpStatus.OK,
                 HttpHeaders.empty,
                 stream,
@@ -1804,6 +1812,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             )(using Frame, kyo.test.AssertScope) =
                 RouteUtil.decodeStreamingRequest(
                     multipartRoute,
+                    requestRead(multipartRoute),
                     Dict.empty[String, String],
                     Absent,
                     multipartHeaders,
@@ -1885,7 +1894,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 Frame,
                 kyo.test.AssertScope
             ): Chunk[HttpRequest.Part] < (Async & Abort[HttpException]) =
-                RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
+                RouteUtil.decodeStreamingRequest(
+                    route,
+                    requestRead(route),
+                    Dict.empty[String, String],
+                    Absent,
+                    headers,
+                    stream,
+                    maxPartSize
+                ) match
                     case Result.Success(request) => request.fields.body.run
                     case Result.Failure(err)     => fail(s"decode failed: $err")
                     case p: Result.Panic         => throw p.exception
@@ -1999,7 +2016,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
                 val body    = sections.map(s => s"--b\r\n$s").mkString("", "", "--b--\r\n")
                 val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
                 val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=b")
-                Abort.get(RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize))
+                Abort.get(RouteUtil.decodeStreamingRequest(
+                    route,
+                    RouteUtil.StreamedRead.Parts,
+                    Dict.empty[String, String],
+                    Absent,
+                    headers,
+                    stream,
+                    maxPartSize
+                ))
                     .map(_.fields.body.run)
             end streamedPartsOf
 
@@ -2304,9 +2329,18 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val route  = HttpRoute.postRaw("upload").request(_.bodyMultipartStream)
             val chunks = body.grouped(chunkSize).map(c => Span.fromUnsafe(c)).toSeq
             val stream = Stream.init[Span[Byte], Async & Abort[HttpException]](chunks)
-            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, boundaryHeaders, stream, maxPartSize) match
+            RouteUtil.decodeStreamingRequest(
+                route,
+                requestRead(route),
+                Dict.empty[String, String],
+                Absent,
+                boundaryHeaders,
+                stream,
+                maxPartSize
+            ) match
                 case Result.Success(request) => Abort.run[HttpException](request.fields.body.run).map(_.map(_.toSeq))
                 case other                   => fail(s"decode failed: $other")
+            end match
         end streamedParts
 
         def bufferedParts(body: Array[Byte])(using kyo.test.AssertScope): Result[HttpException, Seq[HttpRequest.Part]] =
@@ -2385,7 +2419,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; charset=utf-8; Boundary=\"abc:def\"")
 
-            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
+            RouteUtil.decodeStreamingRequest(
+                route,
+                requestRead(route),
+                Dict.empty[String, String],
+                Absent,
+                headers,
+                stream,
+                maxPartSize
+            ) match
                 case Result.Success(request) =>
                     request.fields.body.run.map { parts =>
                         assert(parts.size == 1)
@@ -2405,7 +2447,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val headers =
                 HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=\"abc \"")
 
-            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
+            RouteUtil.decodeStreamingRequest(
+                route,
+                requestRead(route),
+                Dict.empty[String, String],
+                Absent,
+                headers,
+                stream,
+                maxPartSize
+            ) match
                 case Result.Success(request) =>
                     request.fields.body.run.map { parts =>
                         assert(parts.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))) == Seq(("field", "value")))
@@ -2421,7 +2471,15 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             val stream  = Stream.init[Span[Byte], Async](Seq(Span.fromUnsafe(body.getBytes("UTF-8"))))
             val headers = HttpHeaders.empty.add("Content-Type", "multipart/form-data; boundary=abc def")
 
-            RouteUtil.decodeStreamingRequest(route, Dict.empty[String, String], Absent, headers, stream, maxPartSize) match
+            RouteUtil.decodeStreamingRequest(
+                route,
+                requestRead(route),
+                Dict.empty[String, String],
+                Absent,
+                headers,
+                stream,
+                maxPartSize
+            ) match
                 case Result.Success(request) =>
                     request.fields.body.run.map { parts =>
                         assert(parts.map(p => (p.name, new String(p.data.toArrayUnsafe, "UTF-8"))) == Seq(("field", "value")))
@@ -2443,6 +2501,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
             RouteUtil.decodeStreamingResponse(
                 route,
+                responseRead(route),
                 HttpStatus.OK,
                 HttpHeaders.empty,
                 rawStream,
@@ -2473,6 +2532,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
 
             RouteUtil.decodeStreamingResponse(
                 route,
+                responseRead(route),
                 HttpStatus.OK,
                 HttpHeaders.empty,
                 rawStream,

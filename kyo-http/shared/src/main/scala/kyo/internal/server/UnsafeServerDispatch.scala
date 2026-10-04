@@ -691,194 +691,198 @@ private[kyo] object UnsafeServerDispatch:
         // re-parsing via string interpolation to avoid unnecessary allocation.
         val queryParam = buildQueryParam(request, path)
 
-        if lookup.isStreamingRequest && request.isChunked then
-            // Chunked streaming: decode chunked framing via ChunkedBodyDecoder
-            // into a temporary channel, then stream from that channel.
-            val initialBytes = streamCtx.takeBodySpan()
-            val state        = new ChunkedBodyDecoder.DecoderState
-            // Two atomics cross from the decode fiber to the handler's stream and to the dispatch: `fault`, why the decode ended before the
-            // terminal chunk, written before the decoded channel is closed and read after it closed or after the handler settled; and
-            // `decoded`, whether the decode reached the terminal chunk and recorded the bytes after it as the next request. Until it has,
-            // the body's remaining bytes are on the connection, and a keep-alive restart would read them as the next request (RFC 9112
-            // section 9.3).
-            AtomicRef.initWith[Maybe[Throwable], Unit, Async](Absent) { fault =>
-                AtomicBoolean.initWith(false) { decoded =>
-                    Channel.initUnscopedWith[Span[Byte]](16) { decodedChan =>
-                        Fiber.initUnscoped {
-                            Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](
-                                ChunkedBodyDecoder.readStreaming(
-                                    streamCtx.bodyChannel,
-                                    initialBytes,
-                                    decodedChan.unsafe,
-                                    maxControlBytes = config.maxContentLength,
-                                    state,
-                                    onProgress = () => streamCtx.noteBodyProgress(),
-                                    onAwait = () => streamCtx.awaitPeer()
-                                )
-                            ).map {
-                                case Result.Success(_) =>
-                                    // Unsafe: hands the bytes after the terminal chunk to the connection's context and says so in one
-                                    // step, so the settle below never reads the flag between the two.
-                                    Sync.Unsafe.defer {
-                                        streamCtx.setLeftover(state.takePending())
-                                        streamCtx.bodyComplete()
-                                        decoded.unsafe.set(true)
+        (if request.isChunked then lookup.streamedRequest else Absent) match
+            case Present(read) =>
+                // Chunked streaming: decode chunked framing via ChunkedBodyDecoder
+                // into a temporary channel, then stream from that channel.
+                val initialBytes = streamCtx.takeBodySpan()
+                val state        = new ChunkedBodyDecoder.DecoderState
+                // Two atomics cross from the decode fiber to the handler's stream and to the dispatch: `fault`, why the decode ended before the
+                // terminal chunk, written before the decoded channel is closed and read after it closed or after the handler settled; and
+                // `decoded`, whether the decode reached the terminal chunk and recorded the bytes after it as the next request. Until it has,
+                // the body's remaining bytes are on the connection, and a keep-alive restart would read them as the next request (RFC 9112
+                // section 9.3).
+                AtomicRef.initWith[Maybe[Throwable], Unit, Async](Absent) { fault =>
+                    AtomicBoolean.initWith(false) { decoded =>
+                        Channel.initUnscopedWith[Span[Byte]](16) { decodedChan =>
+                            Fiber.initUnscoped {
+                                Abort.run[Closed | HttpMalformedBodyException | HttpPayloadTooLargeException](
+                                    ChunkedBodyDecoder.readStreaming(
+                                        streamCtx.bodyChannel,
+                                        initialBytes,
+                                        decodedChan.unsafe,
+                                        maxControlBytes = config.maxContentLength,
+                                        state,
+                                        onProgress = () => streamCtx.noteBodyProgress(),
+                                        onAwait = () => streamCtx.awaitPeer()
+                                    )
+                                ).map {
+                                    case Result.Success(_) =>
+                                        // Unsafe: hands the bytes after the terminal chunk to the connection's context and says so in one
+                                        // step, so the settle below never reads the flag between the two.
+                                        Sync.Unsafe.defer {
+                                            streamCtx.setLeftover(state.takePending())
+                                            streamCtx.bodyComplete()
+                                            decoded.unsafe.set(true)
+                                        }
+                                    case Result.Failure(_: Closed) =>
+                                        fault.set(Present(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated)))
+                                    // A refused framing, an over-limit control plane and a decode that did not end (the handler settled first
+                                    // and interrupted it) all leave the rest of the body on the wire: the close that follows drains it first.
+                                    case Result.Failure(malformed: HttpMalformedBodyException)  => fault.set(Present(malformed))
+                                    case Result.Failure(tooLarge: HttpPayloadTooLargeException) => fault.set(Present(tooLarge))
+                                    case Result.Panic(t)                                        => fault.set(Present(t))
+                                }.andThen(decodedChan.closeAwaitEmpty.unit)
+                            }.map { decoderFiber =>
+                                // The stream ends with the decode's fault after the bytes that arrived: a body that ends before its terminal
+                                // chunk is incomplete (RFC 9112 section 8), and a stream that merely ended would pass for a complete one. An
+                                // HttpException is a failure on the stream's row; anything else was a panic and stays one.
+                                val bodyStream = Stream[Span[Byte], Async & Abort[HttpException]] {
+                                    decodedChan.streamUntilClosed().emit.andThen(fault.get).map {
+                                        case Present(e: HttpException) => Abort.fail(e)
+                                        case Present(t)                => Abort.panic(t)
+                                        case Absent                    => Kyo.unit
                                     }
-                                case Result.Failure(_: Closed) =>
-                                    fault.set(Present(HttpConnectionClosedException(HttpConnectionClosedException.Phase.BodyTruncated)))
-                                // A refused framing, an over-limit control plane and a decode that did not end (the handler settled first
-                                // and interrupted it) all leave the rest of the body on the wire: the close that follows drains it first.
-                                case Result.Failure(malformed: HttpMalformedBodyException)  => fault.set(Present(malformed))
-                                case Result.Failure(tooLarge: HttpPayloadTooLargeException) => fault.set(Present(tooLarge))
-                                case Result.Panic(t)                                        => fault.set(Present(t))
-                            }.andThen(decodedChan.closeAwaitEmpty.unit)
-                        }.map { decoderFiber =>
-                            // The stream ends with the decode's fault after the bytes that arrived: a body that ends before its terminal
-                            // chunk is incomplete (RFC 9112 section 8), and a stream that merely ended would pass for a complete one. An
-                            // HttpException is a failure on the stream's row; anything else was a panic and stays one.
-                            val bodyStream = Stream[Span[Byte], Async & Abort[HttpException]] {
-                                decodedChan.streamUntilClosed().emit.andThen(fault.get).map {
-                                    case Present(e: HttpException) => Abort.fail(e)
-                                    case Present(t)                => Abort.panic(t)
-                                    case Absent                    => Kyo.unit
                                 }
-                            }
-                            val serveResult =
-                                endpoint.serveStreaming(
-                                    captures,
-                                    queryParam,
-                                    headers,
-                                    bodyStream,
-                                    config.maxMultipartPartSize,
-                                    path,
-                                    method
-                                )
-                            // Unsafe: marks the connection for closure on the handler's fiber, before its completion reads the mark.
-                            // The decode is stopped before `decoded` is read: a decode that had already reached the terminal chunk stays
-                            // decoded, one still running is interrupted and the body stays owed.
-                            val settle = decoderFiber.interrupt.andThen(decoded.get).map { d =>
-                                if !d then Sync.Unsafe.defer(streamCtx.requestConnectionClose()) else Kyo.unit
-                            }
-                            Sync.ensure(settle) {
-                                serveResult match
-                                    case Result.Failure(error) =>
-                                        writeDecodeError(streamCtx, error)
-                                    case Result.Panic(e) =>
-                                        Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
-                                            Sync.Unsafe.defer(writeInternalError(streamCtx))
-                                        )
-                                    case Result.Success(handlerComputation) =>
-                                        dispatchHandler(handlerComputation, endpoint, streamCtx, isHead, config, clock, Present(fault))
-                                end match
+                                val serveResult =
+                                    endpoint.serveStreaming(
+                                        read,
+                                        captures,
+                                        queryParam,
+                                        headers,
+                                        bodyStream,
+                                        config.maxMultipartPartSize,
+                                        path,
+                                        method
+                                    )
+                                // Unsafe: marks the connection for closure on the handler's fiber, before its completion reads the mark.
+                                // The decode is stopped before `decoded` is read: a decode that had already reached the terminal chunk stays
+                                // decoded, one still running is interrupted and the body stays owed.
+                                val settle = decoderFiber.interrupt.andThen(decoded.get).map { d =>
+                                    if !d then Sync.Unsafe.defer(streamCtx.requestConnectionClose()) else Kyo.unit
+                                }
+                                Sync.ensure(settle) {
+                                    serveResult match
+                                        case Result.Failure(error) =>
+                                            writeDecodeError(streamCtx, error)
+                                        case Result.Panic(e) =>
+                                            Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
+                                                Sync.Unsafe.defer(writeInternalError(streamCtx))
+                                            )
+                                        case Result.Success(handlerComputation) =>
+                                            dispatchHandler(handlerComputation, endpoint, streamCtx, isHead, config, clock, Present(fault))
+                                    end match
+                                }
                             }
                         }
                     }
                 }
-            }
-        else
-            // Body bytes (for buffered requests). A chunked request body carries no Content-Length, so it is
-            // dechunked here bounded by maxContentLength (RFC 9112 section 6.1); a Content-Length body is read by
-            // readBody, which accumulates from the inbound channel. Both suspend the Kyo fiber (channel.safe.take)
-            // without blocking OS threads. readBuffered aborts HttpPayloadTooLargeException when the decoded body
-            // exceeds the limit.
-            val readBodyEffect: Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
-                if request.isChunked then
-                    val state = new ChunkedBodyDecoder.DecoderState
-                    ChunkedBodyDecoder.readBuffered(
-                        streamCtx.bodyChannel,
-                        streamCtx.takeBodySpan(),
-                        config.maxContentLength,
-                        state,
-                        () => streamCtx.noteBodyProgress(),
-                        () => streamCtx.awaitPeer()
-                    ).map { body =>
-                        // The bytes the decoder read past the terminal chunk and trailers are the next request.
-                        Sync.defer {
-                            streamCtx.setLeftover(state.takePending())
-                            streamCtx.bodyComplete()
-                            body
+            case Absent =>
+                // Body bytes (for buffered requests). A chunked request body carries no Content-Length, so it is
+                // dechunked here bounded by maxContentLength (RFC 9112 section 6.1); a Content-Length body is read by
+                // readBody, which accumulates from the inbound channel. Both suspend the Kyo fiber (channel.safe.take)
+                // without blocking OS threads. readBuffered aborts HttpPayloadTooLargeException when the decoded body
+                // exceeds the limit.
+                val readBodyEffect: Span[Byte] < (Async & Abort[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException]) =
+                    if request.isChunked then
+                        val state = new ChunkedBodyDecoder.DecoderState
+                        ChunkedBodyDecoder.readBuffered(
+                            streamCtx.bodyChannel,
+                            streamCtx.takeBodySpan(),
+                            config.maxContentLength,
+                            state,
+                            () => streamCtx.noteBodyProgress(),
+                            () => streamCtx.awaitPeer()
+                        ).map { body =>
+                            // The bytes the decoder read past the terminal chunk and trailers are the next request.
+                            Sync.defer {
+                                streamCtx.setLeftover(state.takePending())
+                                streamCtx.bodyComplete()
+                                body
+                            }
                         }
-                    }
-                else
-                    streamCtx.readBody()
-            Abort.run[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException](readBodyEffect).map {
-                case Result.Failure(_: HttpPayloadTooLargeException) =>
-                    // The chunked body exceeded maxContentLength. Answer 413 and close: the unread body tail cannot be
-                    // left on a reused connection (RFC 9112 section 9.3), so mark the connection for closure.
-                    Sync.Unsafe.defer {
-                        streamCtx.requestConnectionClose()
-                        writePayloadTooLarge(streamCtx)
-                    }
-                case Result.Failure(malformed: HttpMalformedBodyException) =>
-                    // The chunked framing is malformed (embedded CR, bare LF, invalid size, missing CRLF). Answer 400
-                    // and close: the body boundary is undeterminable, so the connection cannot be safely reused.
-                    Sync.Unsafe.defer(streamCtx.requestConnectionClose()).andThen(writeDecodeError(streamCtx, malformed))
-                case Result.Failure(_: Closed) =>
-                    // Channel closed before full body arrived -- connection lost, nothing to respond to
-                    Log.error("UnsafeServerDispatch: inbound channel closed before body was fully read")
-                case Result.Panic(t) =>
-                    Log.error("UnsafeServerDispatch: panic reading body", t).andThen(
-                        Sync.Unsafe.defer(writeInternalError(streamCtx))
-                    )
-                case Result.Success(bodyBytes) =>
+                    else
+                        streamCtx.readBody()
+                Abort.run[Closed | HttpPayloadTooLargeException | HttpMalformedBodyException](readBodyEffect).map {
+                    case Result.Failure(_: HttpPayloadTooLargeException) =>
+                        // The chunked body exceeded maxContentLength. Answer 413 and close: the unread body tail cannot be
+                        // left on a reused connection (RFC 9112 section 9.3), so mark the connection for closure.
+                        Sync.Unsafe.defer {
+                            streamCtx.requestConnectionClose()
+                            writePayloadTooLarge(streamCtx)
+                        }
+                    case Result.Failure(malformed: HttpMalformedBodyException) =>
+                        // The chunked framing is malformed (embedded CR, bare LF, invalid size, missing CRLF). Answer 400
+                        // and close: the body boundary is undeterminable, so the connection cannot be safely reused.
+                        Sync.Unsafe.defer(streamCtx.requestConnectionClose()).andThen(writeDecodeError(streamCtx, malformed))
+                    case Result.Failure(_: Closed) =>
+                        // Channel closed before full body arrived -- connection lost, nothing to respond to
+                        Log.error("UnsafeServerDispatch: inbound channel closed before body was fully read")
+                    case Result.Panic(t) =>
+                        Log.error("UnsafeServerDispatch: panic reading body", t).andThen(
+                            Sync.Unsafe.defer(writeInternalError(streamCtx))
+                        )
+                    case Result.Success(bodyBytes) =>
 
-                    // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts.
-                    //
-                    // When several routes are registered on the same node and method
-                    // — `/block/{height}` and `/block/{hash}` differ only in what
-                    // their captures accept — a path that fails to decode is not an
-                    // error yet: it means this candidate did not match. Follow the
-                    // chain and try the next. The loop runs at most once per
-                    // registered alternative and only on a request that would
-                    // otherwise be rejected; the single-route case exits on the
-                    // first iteration having done one extra array read.
-                    @tailrec def serveCandidate(
-                        current: HttpHandler[?, ?, ?],
-                        currentCaptures: Dict[String, String]
-                    ): Unit < Async =
-                        val serveResult =
-                            if lookup.isStreamingRequest then
-                                val bodyStream =
-                                    if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
-                                    else Stream.init(Seq(bodyBytes))
-                                current.serveStreaming(
-                                    currentCaptures,
-                                    queryParam,
-                                    headers,
-                                    bodyStream,
-                                    config.maxMultipartPartSize,
-                                    path,
-                                    method
-                                )
-                            else
-                                current.serveBuffered(currentCaptures, queryParam, headers, bodyBytes, path, method)
+                        // Decode + invoke via HttpHandler.serve* -- types resolved through endpoint, no casts.
+                        //
+                        // When several routes are registered on the same node and method
+                        // (`/block/{height}` and `/block/{hash}` differ only in what
+                        // their captures accept), a path that fails to decode is not an
+                        // error yet: it means this candidate did not match. Follow the
+                        // chain and try the next. The loop runs at most once per
+                        // registered alternative and only on a request that would
+                        // otherwise be rejected; the single-route case exits on the
+                        // first iteration having done one extra array read.
+                        @tailrec def serveCandidate(
+                            current: HttpHandler[?, ?, ?],
+                            currentCaptures: Dict[String, String]
+                        ): Unit < Async =
+                            val serveResult =
+                                lookup.streamedRequest match
+                                    case Present(read) =>
+                                        val bodyStream =
+                                            if bodyBytes.isEmpty then Stream.empty[Span[Byte]]
+                                            else Stream.init(Seq(bodyBytes))
+                                        current.serveStreaming(
+                                            read,
+                                            currentCaptures,
+                                            queryParam,
+                                            headers,
+                                            bodyStream,
+                                            config.maxMultipartPartSize,
+                                            path,
+                                            method
+                                        )
+                                    case Absent =>
+                                        current.serveBuffered(currentCaptures, queryParam, headers, bodyBytes, path, method)
 
-                        serveResult match
-                            case Result.Failure(error) =>
-                                // Only a path decode failure can mean "wrong
-                                // candidate". A bad query param, header or body is
-                                // a genuine client error on a route that did match,
-                                // and must not silently fall through to another.
-                                val pathMismatch = error match
-                                    case _: HttpPathDecodeException => true
-                                    case _                          => false
-                                if pathMismatch && router.advanceToNextCandidate(lookup) then
-                                    val next = router.endpoint(lookup)
-                                    serveCandidate(next, buildCaptures(request, lookup, router.captureNames(lookup)))
-                                else writeDecodeError(streamCtx, error)
-                                end if
-                            case Result.Panic(e) =>
-                                Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
-                                    Sync.Unsafe.defer(writeInternalError(streamCtx))
-                                )
-                            case Result.Success(handlerComputation) =>
-                                dispatchHandler(handlerComputation, current, streamCtx, isHead, config, clock)
-                        end match
-                    end serveCandidate
+                            serveResult match
+                                case Result.Failure(error) =>
+                                    // Only a path decode failure can mean "wrong
+                                    // candidate". A bad query param, header or body is
+                                    // a genuine client error on a route that did match,
+                                    // and must not silently fall through to another.
+                                    val pathMismatch = error match
+                                        case _: HttpPathDecodeException => true
+                                        case _                          => false
+                                    if pathMismatch && router.advanceToNextCandidate(lookup) then
+                                        val next = router.endpoint(lookup)
+                                        serveCandidate(next, buildCaptures(request, lookup, router.captureNames(lookup)))
+                                    else writeDecodeError(streamCtx, error)
+                                    end if
+                                case Result.Panic(e) =>
+                                    Log.error("UnsafeServerDispatch: serve decode panic", e).andThen(
+                                        Sync.Unsafe.defer(writeInternalError(streamCtx))
+                                    )
+                                case Result.Success(handlerComputation) =>
+                                    dispatchHandler(handlerComputation, current, streamCtx, isHead, config, clock)
+                            end match
+                        end serveCandidate
 
-                    serveCandidate(endpoint, captures)
-            }
-        end if
+                        serveCandidate(endpoint, captures)
+                }
+        end match
     end serveRequest
 
     /** Runs the handler computation and encodes the response.

@@ -155,6 +155,7 @@ final private[kyo] class HttpClientBackend private (
     def sendStreaming[In, Out](
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
+        read: RouteUtil.StreamedRead,
         request: HttpRequest[In],
         maxResponseLength: Int,
         bodyPlan: RouteUtil.BodyPlan,
@@ -199,6 +200,7 @@ final private[kyo] class HttpClientBackend private (
                                             buildBodyStream(conn, parsed, request.method, lastBodySpan, maxResponseLength, bodyOutcome)
                                         RouteUtil.decodeStreamingResponse(
                                             route,
+                                            read,
                                             HttpStatus(parsed.statusCode),
                                             parsed.headers,
                                             bodyStream,
@@ -254,13 +256,12 @@ final private[kyo] class HttpClientBackend private (
         RouteUtil.bodyPlanForRequest(route, request).map { bodyPlan =>
             Sync.Unsafe.defer {
                 val fiber =
-                    if request.method == HttpMethod.HEAD then
-                        sendBuffered(conn, route, request, maxResponseLength, bodyPlan)
-                    else if RouteUtil.isStreamingResponse(route) then
-                        // Caller-scoped connection (not pooled): no pool-reuse obligation to defer.
-                        sendStreaming(conn, route, request, maxResponseLength, bodyPlan, Absent)
-                    else
-                        sendBuffered(conn, route, request, maxResponseLength, bodyPlan)
+                    (if request.method == HttpMethod.HEAD then Absent else RouteUtil.streamedResponse(route)) match
+                        case Present(read) =>
+                            // Caller-scoped connection (not pooled): no pool-reuse obligation to defer.
+                            sendStreaming(conn, route, read, request, maxResponseLength, bodyPlan, Absent)
+                        case Absent =>
+                            sendBuffered(conn, route, request, maxResponseLength, bodyPlan)
                 Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                     onRelease(error)
                 } {
@@ -619,12 +620,13 @@ final private[kyo] class HttpClientBackend private (
         val status = HttpStatus(parsed.statusCode)
         try
             val decoded =
-                if !status.isSuccess && RouteUtil.isStreamingResponse(route) then
-                    val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
-                    RouteUtil.decodeStreamingResponse(route, status, parsed.headers, body, route.method.name, request.url)
-                        .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))
-                else
-                    RouteUtil.decodeBufferedResponse(route, status, parsed.headers, bodyBytes, route.method.name, request.url)
+                (if status.isSuccess then Absent else RouteUtil.streamedResponse(route)) match
+                    case Present(read) =>
+                        val body = if bodyBytes.isEmpty then Stream.empty[Span[Byte]] else Stream.init(Chunk(bodyBytes))
+                        RouteUtil.decodeStreamingResponse(route, read, status, parsed.headers, body, route.method.name, request.url)
+                            .map(_.copy(rawBody = Maybe.when(bodyBytes.nonEmpty)(new String(bodyBytes.toArrayUnsafe, "UTF-8"))))
+                    case Absent =>
+                        RouteUtil.decodeBufferedResponse(route, status, parsed.headers, bodyBytes, route.method.name, request.url)
             decoded match
                 case Result.Success(response) =>
                     if !parsed.isKeepAlive then conn.transport.close()
@@ -1483,15 +1485,14 @@ final private[kyo] class HttpClientBackend private (
     )(using AllowUnsafe, Frame): (Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]], Maybe[Promise.Unsafe[Boolean, Any]]) =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
-        if request.method == HttpMethod.HEAD then
-            (sendBuffered(conn, route, request, maxResponseLength, bodyPlan), Absent)
-        else if RouteUtil.isStreamingResponse(route) then
-            // A streaming response body outlives the response fiber (lazy stream at headers time), so its reuse decision travels
-            // as a separate promise (true = reusable, false = discard); buffered routes complete their body first, so no obligation (Absent).
-            val bodyOutcome = Promise.Unsafe.init[Boolean, Any]()
-            (sendStreaming(conn, route, request, maxResponseLength, bodyPlan, Present(bodyOutcome)), Present(bodyOutcome))
-        else
-            (sendBuffered(conn, route, request, maxResponseLength, bodyPlan), Absent)
+        (if request.method == HttpMethod.HEAD then Absent else RouteUtil.streamedResponse(route)) match
+            case Present(read) =>
+                // A streaming response body outlives the response fiber (lazy stream at headers time), so its reuse decision travels
+                // as a separate promise (true = reusable, false = discard); buffered routes complete their body first, so no obligation (Absent).
+                val bodyOutcome = Promise.Unsafe.init[Boolean, Any]()
+                (sendStreaming(conn, route, read, request, maxResponseLength, bodyPlan, Present(bodyOutcome)), Present(bodyOutcome))
+            case Absent =>
+                (sendBuffered(conn, route, request, maxResponseLength, bodyPlan), Absent)
 
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed

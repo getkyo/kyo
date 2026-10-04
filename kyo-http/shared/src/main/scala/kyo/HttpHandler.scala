@@ -55,6 +55,7 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
 
     /** Decode a streaming request from raw wire data and invoke the handler. */
     final private[kyo] def serveStreaming(
+        read: internal.server.RouteUtil.StreamedRead,
         pathCaptures: Dict[String, String],
         queryParam: Maybe[HttpUrl],
         headers: HttpHeaders,
@@ -63,7 +64,17 @@ sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E])
         path: String,
         method: HttpMethod
     )(using Frame): Result[HttpException, HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])] =
-        internal.server.RouteUtil.decodeStreamingRequest(route, pathCaptures, queryParam, headers, body, maxPartSize, path, Present(method))
+        internal.server.RouteUtil.decodeStreamingRequest(
+            route,
+            read,
+            pathCaptures,
+            queryParam,
+            headers,
+            body,
+            maxPartSize,
+            path,
+            Present(method)
+        )
             .map(request => this(request))
 
     /** Encode a successful response to wire format using RouteUtil callbacks. Fails when the response's multipart boundary cannot go on

@@ -19,8 +19,11 @@ final private[kyo] class RouteLookup(maxCaptures: Int):
     /** Segment indices (into ParsedRequest) of each captured path segment, in order. */
     val captureSegmentIndices: Array[Int] = new Array[Int](maxCaptures)
 
+    /** How the matched endpoint reads a streaming request body, or `Absent` when it reads its body whole. */
+    private[internal] var streamedRequest: Maybe[RouteUtil.StreamedRead] = Absent
+
     /** Whether the matched endpoint expects a streaming request body. */
-    private[internal] var isStreamingRequest: Boolean = false
+    private[internal] def isStreamingRequest: Boolean = streamedRequest.isDefined
 
     /** Whether the matched endpoint produces a streaming response. */
     private[internal] var isStreamingResponse: Boolean = false
