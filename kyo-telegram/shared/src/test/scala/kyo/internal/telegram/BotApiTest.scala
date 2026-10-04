@@ -50,4 +50,16 @@ class BotApiTest extends kyo.test.Test[Any]:
         assert(answers.map(BotApi.nextAttempt(Present(three), cap, _, now)) == answers.map(_ => Absent))
     }
 
+    "an empty secret redacts nothing" in {
+        assert(BotApi.redact(Chunk("", "s3cr3t"), "Bad Request: s3cr3t is wrong") == "Bad Request: <redacted> is wrong")
+    }
+
+    "a secret echoed percent-encoded is redacted, in either hex case" in {
+        val secret = "a b/c:d"
+        assert(
+            BotApi.redact(Chunk(secret), s"raw=$secret upper=a%20b%2Fc%3Ad lower=a%20b%2fc%3ad") ==
+                "raw=<redacted> upper=<redacted> lower=<redacted>"
+        )
+    }
+
 end BotApiTest

@@ -1,6 +1,7 @@
 package kyo.internal.telegram
 
 import kyo.*
+import kyo.internal.PercentEncoding
 import kyo.internal.charset.Utf8
 import scala.reflect.TypeTest
 
@@ -348,11 +349,19 @@ private[kyo] object BotApi:
     /** An `ok:false` answer's fields, with the request's secrets already redacted from `description`. */
     final private[kyo] case class Failure(code: Int, description: String, parameters: Maybe[ResponseParameters])
 
-    /** `description` with every secret the request carried replaced, raw and with `:` percent-encoded in either case, for a
-      * server that echoes the request's path or body.
+    /** `description` with every non-empty secret the request carried replaced, raw and percent-encoded as a URL component with hex in
+      * either case, for a server that echoes the request's path or body. Longer forms go first so a secret containing another is
+      * replaced whole; an empty secret is skipped because `replace` would match it between every character.
       */
     private[kyo] def redact(secrets: Chunk[String], description: String): String =
-        secrets.flatMap(s => Chunk(s, s.replace(":", "%3A"), s.replace(":", "%3a"))).foldLeft(description)(_.replace(_, "<redacted>"))
+        secrets.filter(_.nonEmpty).flatMap(echoes).distinct.sortBy(-_.length).foldLeft(description)(_.replace(_, "<redacted>"))
+
+    private def echoes(secret: String): Chunk[String] =
+        val upper = PercentEncoding.encode(secret, PercentEncoding.Mode.Component)
+        Chunk(secret, upper, PercentEscape.replaceAllIn(upper, _.matched.toLowerCase))
+    end echoes
+
+    private val PercentEscape = "%[0-9A-F]{2}".r
 
     /** The leaf an `ok:false` answer names, on whichever operation received it. */
     private[kyo] def leafFor(method: String, status: HttpStatus, f: Failure, retryAfterHeader: Maybe[Duration])(using
