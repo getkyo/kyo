@@ -68,6 +68,50 @@ class ProcessTest extends kyo.test.Test[Any]:
         }
     }
 
+    // The pids still running; a zombie awaiting its reaper counts as gone.
+    private def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
+        Kyo.filter(pids) { pid =>
+            Command("ps", "-o", "stat=", "-p", pid.toString).textWithExitCode.map { (out, code) =>
+                code.isSuccess && out.trim.nonEmpty && !out.trim.startsWith("Z")
+            }
+        }
+
+    "destroyTree kills the process and the processes it started, and returns once they are gone" in {
+        unixOnly
+        Path.run(Path.tempDir("kyo-process-tree")).map { dir =>
+            // Two generations below the root, each holding the root's stdout, so a kill that stops at the first level leaves one behind.
+            val script =
+                s"sh -c 'sleep 100000 & echo $$! > $dir/grandchild; wait' & echo $$! > '$dir/child'; echo $$$$ > '$dir/root'; " +
+                    s"while [ ! -s '$dir/grandchild' ]; do :; done; echo ready > '$dir/ready'; wait"
+            Scope.run {
+                for
+                    _    <- Command("mkfifo", s"$dir/ready").waitFor
+                    proc <- Command("sh", "-c", script).spawn
+                    _    <- Command("cat", s"$dir/ready").text
+                    pids <- Kyo.foreach(Chunk("root", "child", "grandchild"))(n => Command("cat", s"$dir/$n").text.map(_.trim.toLong))
+                    _    <- proc.destroyTree
+                    left <- running(pids)
+                    code <- proc.exitCode
+                yield
+                    assert(left.isEmpty, s"processes left running: $left of $pids")
+                    assert(code == Present(ExitCode.Signaled(9)), s"expected the root to die of SIGKILL, got $code")
+                end for
+            }
+        }
+    }
+
+    "destroyTree on a process that already exited returns without signalling anything" in {
+        unixOnly
+        Scope.run {
+            for
+                proc <- Command("true").spawn
+                code <- proc.waitFor
+                _    <- proc.destroyTree
+                same <- proc.exitCode
+            yield assert(code == ExitCode.Success && same == Present(ExitCode.Success))
+        }
+    }
+
     "a signalled process reports the signal, not a generic failure" in {
         unixOnly
         // Reachable on JVM through the exit status and on JS through the 'exit' event's second

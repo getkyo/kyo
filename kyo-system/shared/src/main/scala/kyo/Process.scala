@@ -122,9 +122,18 @@ object Process:
         def destroy(using Frame): Unit < Sync =
             Sync.Unsafe.defer(self.unsafe.destroy())
 
-        /** Forcibly terminates the process (SIGKILL on Unix). */
+        /** Forcibly terminates the process (SIGKILL on Unix). Processes it started keep running; see [[destroyTree]]. */
         def destroyForcibly(using Frame): Unit < Sync =
             Sync.Unsafe.defer(self.unsafe.destroyForcibly())
+
+        /** Forcibly terminates the process and every process descended from it, and returns once none of them is running.
+          *
+          * A program commonly forks helpers that inherit its pipes. Killing only the program leaves them running, and their open pipe
+          * ends keep a read of its output from ever reaching end of stream. This is what the release registered by [[Command.spawn]]
+          * runs, so a closed scope or an interrupted fiber leaves nothing the command started behind.
+          */
+        def destroyTree(using Frame): Unit < Async =
+            Sync.Unsafe.defer(self.unsafe.destroyTree().safe.get)
 
         /** Returns the underlying `Unsafe` implementation for direct use in unsafe contexts. */
         def unsafe: Process.Unsafe = self
@@ -254,6 +263,16 @@ object Process:
 
         /** Forcibly kills the process (SIGKILL / equivalent). */
         def destroyForcibly()(using AllowUnsafe): Unit
+
+        /** Forcibly kills the process and every process descended from it; the returned fiber completes once none of them is running. */
+        def destroyTree()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+            Fiber.Unsafe.init(kyo.internal.ProcessTree.destroy(this))
+
+        /** The still-running processes whose trees make up this process: itself, plus every pipeline stage the platform started as a
+          * separate child rather than under a shell.
+          */
+        private[kyo] def liveTreeRoots()(using AllowUnsafe): Chunk[Long] =
+            if isAlive() then Chunk(pid()) else Chunk.empty
 
         /** Returns `true` if the process is still running. */
         def isAlive()(using AllowUnsafe): Boolean

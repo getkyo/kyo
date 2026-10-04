@@ -306,6 +306,62 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A command that forks a child holding its stdout, records both pids, and then signals `ready` over a named pipe.
+    private def forking(dir: Path): Command =
+        Command("sh", "-c", s"sleep 100000 & echo $$! > '$dir/child'; echo $$$$ > '$dir/root'; echo ready > '$dir/ready'; wait")
+
+    private def withForking[A](test: (
+        Command,
+        Unit < (Async & Abort[CommandException]),
+        Chunk[Long] < (Async & Abort[CommandException])
+    ) => A < (Async & Abort[CommandException] & Scope))(
+        using Frame
+    ): A < (Async & Abort[CommandException | FileSystemException] & Scope) =
+        Path.run(Path.tempDir("kyo-cmd-tree")).map { dir =>
+            val ready = Command("cat", s"$dir/ready").text.unit
+            val pids  = Kyo.foreach(Chunk("root", "child"))(name => Command("cat", s"$dir/$name").text.map(_.trim.toLong))
+            Command("mkfifo", s"$dir/ready").waitFor.andThen(test(forking(dir), ready, pids))
+        }
+
+    // The pids still running; a zombie awaiting its reaper counts as gone.
+    private def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
+        Kyo.filter(pids) { pid =>
+            Command("ps", "-o", "stat=", "-p", pid.toString).textWithExitCode.map { (out, code) =>
+                code.isSuccess && out.trim.nonEmpty && !out.trim.startsWith("Z")
+            }
+        }
+
+    "closing the scope of a spawned command kills every process the command started" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(command.spawn.andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
+    "interrupting a wait on a command kills every process the command started" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(Fiber.init(command.waitFor).andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
+    // The forked child holds the stdout the wait's readers block on, so the readers can only finish once the tree is gone.
+    "interrupting textWithExitCode on a command kills every process the command started" in {
+        assumeUnix()
+        withForking { (command, ready, pids) =>
+            for
+                started <- Scope.run(Fiber.init(command.textWithExitCode).andThen(ready).andThen(pids))
+                left    <- running(started)
+            yield assert(left.isEmpty, s"processes left running: $left of $started")
+        }
+    }
+
     // A spawn must not hand its pipes to a child another spawn forks at the same time: a long-lived child holding a short command's
     // stdout keeps that command's read from ever reaching EOF. Each round forks a long-lived child while a short command's output is
     // read; every read must complete, and one that does not is counted within its bound rather than left to hang the leaf.

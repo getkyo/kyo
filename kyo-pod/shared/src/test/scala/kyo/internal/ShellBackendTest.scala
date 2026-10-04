@@ -268,6 +268,69 @@ class ShellBackendTest extends kyo.BasePodTest:
         }
     }
 
+    /** A container CLI commonly forks helpers (a conmon, a credential helper) that inherit its pipes, so an interrupted call must end
+      * them along with the CLI.
+      */
+    "an interrupted CLI call" - {
+
+        /** A CLI that forks a child, records both pids, signals `ready` over a named pipe, and then waits forever. */
+        def withForkingCli[A](test: (String, Chunk[Long] < (Async & Abort[CommandException])) => A < (Async & Abort[Throwable] & Scope))(
+            using Frame
+        ): A < (Async & Abort[Throwable] & Scope) =
+            Path.run(Path.tempDir("kyo-pod-cli")).map { dir =>
+                def at(name: String) = Path(dir, name).toString
+                val cli              = at("cli")
+                val script           =
+                    s"""#!/bin/sh
+                       |sleep 100000 &
+                       |echo $$! > '${at("child")}'
+                       |echo $$$$ > '${at("root")}'
+                       |echo ready > '${at("ready")}'
+                       |wait
+                       |""".stripMargin
+                val pids = Command("cat", at("ready")).text.andThen(
+                    Kyo.foreach(Chunk("root", "child"))(name => Command("cat", at(name)).text.map(_.trim.toLong))
+                )
+                Path.run(Path(dir, "cli").write(script))
+                    .andThen(Command("chmod", "+x", cli).waitFor)
+                    .andThen(Command("mkfifo", at("ready")).waitFor)
+                    .andThen(test(cli, pids))
+            }
+
+        // The pids still running; a zombie awaiting its reaper counts as gone.
+        def running(pids: Chunk[Long])(using Frame): Chunk[Long] < (Async & Abort[CommandException]) =
+            Kyo.filter(pids) { pid =>
+                Command("ps", "-o", "stat=", "-p", pid.toString).textWithExitCode.map { (out, code) =>
+                    code.isSuccess && out.trim.nonEmpty && !out.trim.startsWith("Z")
+                }
+            }
+
+        // Closing the scope interrupts the call and waits for its releases, the tree kill among them.
+        def assertInterruptKillsTree(call: ShellBackend => Any < (Async & Abort[ContainerException]))(using
+            Frame,
+            kyo.test.AssertScope
+        ): Unit < (Async & Abort[Throwable] & Scope) =
+            withForkingCli { (cli, readyPids) =>
+                for
+                    pids <- Scope.run(Fiber.init(Abort.run[ContainerException](call(new ShellBackend(cli)))).andThen(readyPids))
+                    left <- running(pids)
+                yield assert(left.isEmpty, s"processes left running: $left of $pids")
+                end for
+            }
+
+        "interrupting an exec kills its CLI and every process it forked" in {
+            assertInterruptKillsTree(_.exec(Container.Id("abc"), Command("true")))
+        }
+
+        "interrupting a logs read kills its CLI and every process it forked" in {
+            assertInterruptKillsTree(_.logs(Container.Id("abc"), true, true, Instant.Min, Instant.Max, false, 0))
+        }
+
+        "interrupting an inspect kills its CLI and every process it forked" in {
+            assertInterruptKillsTree(_.inspect(Container.Id("abc")))
+        }
+    }
+
     /** A pull that reached the registry and got a server error is not a pull that found nothing.
       *
       * Everything podman prints about a failed pull opens with `initializing source docker://<ref>`, whether the manifest was absent or the

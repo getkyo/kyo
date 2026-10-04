@@ -550,7 +550,7 @@ The built `Command` is readable without launching: `args` returns `Chunk[String]
 
 ### Process handles
 
-After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
+After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed together with every process it started, and the close completes only once none of them is running. The same holds when a fiber waiting in `waitFor`, `waitForSuccess` or `textWithExitCode` is interrupted. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
 
 ```scala
 import kyo.*
@@ -562,10 +562,10 @@ val example: Unit < (Async & Sync & Scope & Abort[CommandException]) =
         alive <- proc.isAlive
         _     <- Sync.defer(println(s"alive: $alive"))
     yield ()
-    // proc is forcibly killed when the Scope closes
+    // proc, and anything it started, is forcibly killed when the Scope closes
 ```
 
-`spawnUnscoped` omits scope registration. The caller is responsible for calling `destroy` or `destroyForcibly` at the appropriate moment: after a timed run, on application shutdown, or when the work unit completes:
+`spawnUnscoped` omits scope registration. The caller is responsible for calling `destroy`, `destroyForcibly` or `destroyTree` at the appropriate moment: after a timed run, on application shutdown, or when the work unit completes:
 
 ```scala
 import kyo.*
@@ -603,7 +603,8 @@ Other lifecycle operations on a `Process`:
 | `isAlive` | `Boolean < Sync` | Non-blocking liveness check |
 | `pid` | `Long < Sync` | OS process identifier |
 | `destroy` | `Unit < Sync` | Requests termination (SIGTERM or equivalent) |
-| `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent) |
+| `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent); processes it started keep running |
+| `destroyTree` | `Unit < Async` | Forces termination of the process and every process descended from it, returning once none is running |
 
 ### Exit codes
 

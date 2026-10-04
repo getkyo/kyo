@@ -204,13 +204,18 @@ end NodeOutputStream
 
 final private[kyo] class NodeProcessUnsafe(
     val child: NodeChildProcessInstance,
-    val stderrEnded: Boolean = false
+    val stderrEnded: Boolean = false,
+    upstream: Seq[NodeChildProcessInstance] = Seq.empty
 ) extends Process.Unsafe:
 
     // Stores a spawn error (e.g. ENOENT) so it can be surfaced via waitFor().
     private var spawnError: js.Any = null
 
     def markError(err: js.Any): Unit = spawnError = err
+
+    // A pipeline's earlier stages are children of this runtime, not of the last stage, so no walk from the last stage reaches them.
+    override private[kyo] def liveTreeRoots()(using AllowUnsafe): Chunk[Long] =
+        Chunk.from((upstream :+ child).filter(NodeProcessUnsafe.running).map(_.pid.toLong))
 
     def waitFor()(using AllowUnsafe, Frame): Fiber.Unsafe[Process.ExitCode, Any] =
         val p        = Promise.Unsafe.init[Process.ExitCode, Any]()
@@ -345,11 +350,7 @@ final private[kyo] class NodeProcessUnsafe(
     def destroy()(using AllowUnsafe): Unit         = discard(child.kill("SIGTERM"))
     def destroyForcibly()(using AllowUnsafe): Unit = discard(child.kill("SIGKILL"))
 
-    // child.killed reports that a signal was *delivered*, not that the child died. Consulting it
-    // makes a process that has been sent SIGTERM but has not yet exited look dead, so Command's
-    // scope release skips the force-kill and leaves it running.
-    def isAlive()(using AllowUnsafe): Boolean = (child.exitCode == null || js.isUndefined(child.exitCode)) &&
-        (child.signalCode == null || js.isUndefined(child.signalCode))
+    def isAlive()(using AllowUnsafe): Boolean = NodeProcessUnsafe.running(child)
 
     def pid()(using AllowUnsafe): Long = child.pid.toLong
 
@@ -368,6 +369,15 @@ final private[kyo] class NodeProcessUnsafe(
     def stdoutJava(using AllowUnsafe): InputStream = _stdout
     def stderrJava(using AllowUnsafe): InputStream = _stderr
     def stdinJava(using AllowUnsafe): OutputStream = new NodeOutputStream(child.stdin)
+
+end NodeProcessUnsafe
+
+private[kyo] object NodeProcessUnsafe:
+
+    // `child.killed` reports that a signal was delivered, not that the child died: a child sent SIGTERM that has not exited yet is still
+    // running, and reading it as dead would skip the kill that release owes it.
+    def running(child: NodeChildProcessInstance): Boolean =
+        (child.exitCode == null || js.isUndefined(child.exitCode)) && (child.signalCode == null || js.isUndefined(child.signalCode))
 
 end NodeProcessUnsafe
 
@@ -781,7 +791,8 @@ final private[kyo] class NodeCommandUnsafe(
                                     // Return the last process
                                     val lastChild = children.last
                                     val lastCmd   = chain.last
-                                    val proc      = new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError)
+                                    val proc      =
+                                        new NodeProcessUnsafe(lastChild, stderrEnded = lastCmd.redirectError, upstream = children.init)
                                     discard(lastChild.on("error", { (err: js.Any) => proc.markError(err) }))
 
                                     // Handle stdout/stderr sinks on the last process
