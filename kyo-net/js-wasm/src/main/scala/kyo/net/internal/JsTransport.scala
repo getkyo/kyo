@@ -39,8 +39,8 @@ import scala.util.control.NonFatal
   * Note: Unix-domain sockets do not support TCP_NODELAY, so the `setNoDelay` call is skipped for those connections.
   *
   * TLS introspection: `Connection.serverCertificateHash` is wired through `installCertHashFn`, which reads the leaf peer-certificate DER
-  * via Node's `tls.TLSSocket.getPeerCertificate(true).raw` and SHA-256-hashes it with `crypto.createHash("sha256")`. Used by SCRAM-PLUS
-  * channel binding (RFC 5929 tls-server-end-point).
+  * via Node's `tls.TLSSocket.getPeerCertificate(true).raw` and hashes it with `crypto.createHash` under the hash RFC 5929 selects
+  * ([[TlsServerEndPoint]]). Used by SCRAM-PLUS channel binding (RFC 5929 tls-server-end-point).
   */
 final private[kyo] class JsTransport private (
     val pool: IoDriverPool[JsHandle],
@@ -571,36 +571,42 @@ final private[kyo] class JsTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectSocket
 
-    /** Install the certHashFn on `connection` from the leaf peer certificate of the post-handshake TLS socket, SHA-256 over its DER bytes
-      * (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
+    /** Install the certHashFn on `connection` from the leaf peer certificate of the post-handshake TLS socket: its DER bytes hashed with the
+      * hash [[TlsServerEndPoint.hashOf]] selects (RFC 5929 tls-server-end-point). Used by SCRAM-PLUS channel binding.
       *
       * The hash is read ONCE here, at handshake completion, and served from that value gated on `connection.isOpen`, as the posix and NIO
       * transports do. The leaf certificate is fixed for the connection's lifetime, and the socket outlives `close()` by the graceful close's
       * flush, so the socket's own state is not what "closed" means to a caller.
       *
       * Node's `tls.TLSSocket.getPeerCertificate(true)` returns an object with a `.raw` Buffer holding the DER bytes; Node's `crypto`
-      * `createHash("sha256").update(buf).digest()` returns a 32-byte Buffer.
+      * `createHash(name).update(buf).digest()` returns the digest as a Buffer.
       */
     private def installCertHashFn(connection: Connection[JsHandle], tlsSocket: js.Dynamic)(using AllowUnsafe): Unit =
         val cert   = tlsSocket.getPeerCertificate(true)
         val cached =
             if js.isUndefined(cert) || cert == null || js.isUndefined(cert.raw) then Absent
             else
-                val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
-                val digestBuffer = cryptoModule.createHash("sha256").update(cert.raw).digest()
-                // Node's Hash.digest() returns a Buffer, and Buffer extends Uint8Array in the Node runtime; js.Dynamic erases that to an
-                // untyped JS value with no static Scala.js type, so recovering the typed Uint8Array view needs this narrowing cast. Safe per
-                // Node's documented Buffer/Uint8Array relationship; it cannot dissolve without a typed facade for Node's crypto Hash object.
-                val typed = digestBuffer.asInstanceOf[js.typedarray.Uint8Array]
-                val len   = typed.length
-                val out   = new Array[Byte](len)
-                var i     = 0
-                while i < len do
-                    out(i) = typed(i).toByte
-                    i += 1
-                Present(Span.from(out))
+                TlsServerEndPoint.hashOf(bytesOf(cert.raw)).map { hash =>
+                    val cryptoModule = NodeCrypto.asInstanceOf[js.Dynamic]
+                    Span.from(bytesOf(cryptoModule.createHash(hash.nodeName).update(cert.raw).digest()))
+                }
         connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
     end installCertHashFn
+
+    /** The bytes of a Node Buffer. */
+    private def bytesOf(buffer: js.Dynamic): Array[Byte] =
+        // Node's Buffer extends Uint8Array in the Node runtime; js.Dynamic erases that to an untyped JS value with no static Scala.js type, so
+        // recovering the typed Uint8Array view needs this narrowing cast. Safe per Node's documented Buffer/Uint8Array relationship; it cannot
+        // dissolve without a typed facade for Node's Buffer.
+        val typed = buffer.asInstanceOf[js.typedarray.Uint8Array]
+        val len   = typed.length
+        val out   = new Array[Byte](len)
+        var i     = 0
+        while i < len do
+            out(i) = typed(i).toByte
+            i += 1
+        out
+    end bytesOf
 
     private def listenServer(
         server: js.Dynamic,
@@ -1208,7 +1214,7 @@ final private[kyo] class JsTransport private (
                         upgradeConnection(newConn, tls2, channelCapacity)
                     }
                     // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
-                    // tls-server-end-point) can read the peer-cert SHA-256.
+                    // tls-server-end-point) can read the peer-cert hash.
                     installCertHashFn(newConn, tlsSocket)
                     if newConn.start() then
                         // Checked complete, mirroring the NIO completeConnect: the abandon path can settle `promise` (and destroy the raw

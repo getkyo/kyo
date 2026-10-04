@@ -19,8 +19,8 @@ import kyo.net.NetTlsConfig
   * Pure-unit leaves (byte-exact client-final-message, c= attribute decoding) live in kyo.internal.postgres.auth.ScramSha256SharedTest.
   *
   * Fixture architecture (shared-container, post-startup SSL enable):
-  *   - One Postgres container started lazily by a per-class CAS-singleton (see [[tlsRef]]); shared across all TLS leaves and surviving the
-  *     test class. It carries the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every
+  *   - One Postgres container per [[ServerCert]], each started lazily by a CAS-singleton (see [[tlsRef]]); shared across the TLS leaves
+  *     using that certificate and surviving the test class. It carries the `kyo-test-container` and `kyo-test-owner-pid` labels, and `TestContainers.initSingleton` removes every
   *     dead-owner container, together with its anonymous volumes, before creating a new singleton. There is no build-level cleanup task: a
   *     force-killed test process runs no sbt hook either.
   *   - SSL is enabled AFTER startup via `ALTER SYSTEM SET ssl = on` (and ssl_cert_file/ssl_key_file) followed by `pg_reload_conf()`. These
@@ -43,8 +43,8 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     // ── Helpers: access shared fixture values inside leaves ───────────────────
 
-    /** Runs the test body against the shared TLS+SCRAM-SHA-256 Postgres container. */
-    private def withPostgresTls[A, S](
+    /** Runs the test body against the shared TLS+SCRAM-SHA-256 Postgres container presenting `cert`. */
+    private def withPostgresTls[A, S](cert: ServerCert = ServerCert.RsaSha256)(
         f: (
             host: String,
             port: Int,
@@ -54,7 +54,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
             tlsConfig: NetTlsConfig
         ) => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException | ContainerException]) =
-        withTlsContainer { ctx =>
+        withTlsContainer(cert) { ctx =>
             f(ctx.host, ctx.port, ctx.user, ctx.password, ctx.db, NetTlsConfig(trustAll = true))
         }
 
@@ -62,7 +62,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     "connecting to PG with SCRAM-SHA-256-PLUS over TLS succeeds".tagged("kyo.OwnContainer") in {
         Scope.run {
-            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 AtomicRef.init("").flatMap { mechanismRef =>
                     PostgresConnection.connectWithCertHashOverride(
                         host,
@@ -99,6 +99,46 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
                                             }
                                         }
                                     }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── SCRAM-SHA-256-PLUS with a certificate not signed with SHA-256 ─────────
+
+    // RFC 5929 section 4.1: Postgres binds to the hash of the certificate's own signature algorithm, SHA-384 here, so a client that
+    // always sends SHA-256 is refused.
+    "SCRAM-SHA-256-PLUS succeeds against a server certificate signed with ecdsa-with-SHA384".tagged("kyo.OwnContainer") in {
+        Scope.run {
+            withPostgresTls(ServerCert.EcdsaSha384) { (host, port, user, password, db, tlsConfig) =>
+                AtomicRef.init("").flatMap { mechanismRef =>
+                    PostgresConnection.connectWithCertHashOverride(
+                        host,
+                        port,
+                        user,
+                        db,
+                        Present(password),
+                        tls = Present(tlsConfig),
+                        certHashOverride = Absent,
+                        mechanismCapture = Present(mechanismRef),
+                        preparedStmtCacheSize = 64
+                    ).flatMap { conn =>
+                        Scope.ensure(Abort.run(conn.terminate).unit).andThen {
+                            conn.serverCertificateHash.flatMap { certHash =>
+                                assert(
+                                    certHash.exists(_.size == 48),
+                                    s"expected a 48-byte SHA-384 binding, got ${certHash.map(_.size)} bytes"
+                                )
+                                mechanismRef.get.flatMap { selectedMechanism =>
+                                    assert(
+                                        selectedMechanism == "SCRAM-SHA-256-PLUS",
+                                        s"expected SCRAM-SHA-256-PLUS, got '$selectedMechanism'"
+                                    )
+                                    conn.simpleQuery("SELECT 1").map(rows => assert(rows.size == 1))
+                                }
                             }
                         }
                     }
@@ -159,7 +199,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     "channel binding mismatch (e.g., MITM with different cert) is rejected by the server".tagged("kyo.OwnContainer") in {
         Scope.run {
-            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 // Inject a deliberately wrong cert hash: 32 bytes of 0xAA.
                 // The client will attempt SCRAM-PLUS with this fake hash, which does NOT match
                 // the actual channel binding the server computes from the TLS session.
@@ -211,7 +251,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
 
     "client without serverCertificateHash refuses to advertise PLUS".tagged("kyo.OwnContainer") in {
         Scope.run {
-            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 // Force cert hash override to Absent. Even though the TLS connection has a real cert,
                 // the client code will see Absent and pick SCRAM-SHA-256 (not PLUS).
                 val forceAbsent: Maybe[Maybe[Span[Byte]]] = Present(Absent)
@@ -263,7 +303,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
             // TLS PG offers both SCRAM-SHA-256 and SCRAM-SHA-256-PLUS.
             // We connect with TLS but override cert hash to Absent, client picks non-PLUS.
             // Server must accept non-PLUS even though PLUS is offered.
-            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 val forceAbsent: Maybe[Maybe[Span[Byte]]] = Present(Absent)
 
                 AtomicRef.init("").flatMap { mechanismRef =>
@@ -313,7 +353,7 @@ class ScramPlusIntegrationTest extends SqlContainerTest:
         "kyo.OwnContainer"
     ) in {
         Scope.run {
-            withPostgresTls { (host, port, user, password, db, tlsConfig) =>
+            withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 // Attempt 1: TLS + correct cert hash + WRONG password → must fail with 28P01.
                 Abort.run[SqlException] {
                     PostgresConnection.connectWithCertHashOverride(
@@ -381,43 +421,62 @@ object ScramPlusIntegrationTest:
 
     private type TlsPromise = Promise[TlsCtx, Abort[ContainerException]]
 
+    /** The server certificate a TLS container presents. Its signature hash decides the RFC 5929 tls-server-end-point hash both peers
+      * compute, so a certificate not signed with SHA-256 is the case that tells a SHA-256-only client apart.
+      */
+    enum ServerCert(val singletonName: String, val opensslKeyArgs: Seq[String]) derives CanEqual:
+        case RsaSha256 extends ServerCert("postgres-scram-plus", Seq.empty)
+        case EcdsaSha384
+            extends ServerCert("postgres-scram-plus-ecdsa384", Seq("-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:secp384r1", "-sha384"))
+    end ServerCert
+
     // Unsafe: module-load AtomicRef init (no live Frame yet).
-    private val tlsRef: AtomicRef[Maybe[TlsPromise]] =
+    private val rsaSha256Ref: AtomicRef[Maybe[TlsPromise]] =
         import AllowUnsafe.embrace.danger
         AtomicRef.Unsafe.init[Maybe[TlsPromise]](Maybe.empty).safe
+
+    // Unsafe: module-load AtomicRef init (no live Frame yet).
+    private val ecdsaSha384Ref: AtomicRef[Maybe[TlsPromise]] =
+        import AllowUnsafe.embrace.danger
+        AtomicRef.Unsafe.init[Maybe[TlsPromise]](Maybe.empty).safe
+
+    private def tlsRef(cert: ServerCert): AtomicRef[Maybe[TlsPromise]] = cert match
+        case ServerCert.RsaSha256   => rsaSha256Ref
+        case ServerCert.EcdsaSha384 => ecdsaSha384Ref
 
     private val username = "scramplus_user"
     private val password = "scramplus_pass"
     private val database = "scramplus_db"
 
-    /** Acquires the shared SCRAM-PLUS TLS Postgres container, lazily starting it on first call. */
-    def withTlsContainer[A, S](f: TlsCtx => A < (S & Async & Abort[ContainerException]))(using
+    /** Acquires the shared SCRAM-PLUS TLS Postgres container presenting `cert`, lazily starting it on first call. */
+    def withTlsContainer[A, S](cert: ServerCert = ServerCert.RsaSha256)(f: TlsCtx => A < (S & Async & Abort[ContainerException]))(using
         Frame
     ): A < (S & Async & Abort[ContainerException]) =
-        tlsRef.use {
+        val ref = tlsRef(cert)
+        ref.use {
             case Maybe.Present(p) => p.get.flatMap(f)
             case Maybe.Absent     =>
                 Promise.init[TlsCtx, Abort[ContainerException]].flatMap { p =>
-                    tlsRef.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
+                    ref.compareAndSet(Maybe.empty, Maybe.Present(p)).flatMap {
                         case false =>
                             // Lost the race; await the winner (or recurse if the slot was reset due to failure).
-                            tlsRef.use {
+                            ref.use {
                                 case Maybe.Present(winner) => winner.get.flatMap(f)
-                                case Maybe.Absent          => withTlsContainer(f)
+                                case Maybe.Absent          => withTlsContainer(cert)(f)
                             }
                         case true =>
-                            Fiber.initUnscoped(initContainer).flatMap { fiber =>
+                            Fiber.initUnscoped(initContainer(cert)).flatMap { fiber =>
                                 fiber.getResult.flatMap {
                                     case Result.Success(ctx) =>
                                         p.completeDiscard(Result.succeed(ctx)).andThen(f(ctx))
                                     case Result.Failure(e: ContainerException) =>
                                         // Reset slot first so the next caller retries instead of seeing a poisoned Promise.
-                                        tlsRef.set(Maybe.empty)
+                                        ref.set(Maybe.empty)
                                             .andThen(p.completeDiscard(Result.fail(e)))
                                             .andThen(p.get)
                                             .flatMap(f)
                                     case Result.Panic(t) =>
-                                        tlsRef.set(Maybe.empty)
+                                        ref.set(Maybe.empty)
                                             .andThen(p.completeDiscard(Result.panic(t)))
                                             .andThen(p.get)
                                             .flatMap(f)
@@ -426,6 +485,7 @@ object ScramPlusIntegrationTest:
                     }
                 }
         }
+    end withTlsContainer
 
     /** Starts the TLS-enabled Postgres container with SCRAM-SHA-256 auth.
       *
@@ -442,7 +502,7 @@ object ScramPlusIntegrationTest:
       * next container-using run once this process is gone. The temp dir for cert files is cleaned by `Scope.ensure` registered inside the
       * singleton's lifetime; it survives the JVM in the happy path and is removed only if init throws.
       */
-    private def initContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
+    private def initContainer(cert: ServerCert)(using Frame): TlsCtx < (Async & Abort[ContainerException]) =
         Scope.run {
             // tempDirUnscoped, not the `Scope`-managed Path.tempDir: the container this directory is
             // bind-mounted into is a singleton that outlives this `Scope.run`, so a scope-registered
@@ -453,8 +513,8 @@ object ScramPlusIntegrationTest:
                 case Result.Panic(t) =>
                     Abort.fail(ContainerBackendException(s"temp dir creation panic: ${t.getMessage}"))
                 case Result.Success(tempDirPath) =>
-                    val tempDir = tempDirPath.toString
-                    Abort.run[Throwable](Command(
+                    val tempDir     = tempDirPath.toString
+                    val opensslArgs = Seq(
                         "openssl",
                         "req",
                         "-new",
@@ -468,7 +528,8 @@ object ScramPlusIntegrationTest:
                         s"$tempDir/server.key",
                         "-out",
                         s"$tempDir/server.crt"
-                    ).text).flatMap {
+                    ) ++ cert.opensslKeyArgs
+                    Abort.run[Throwable](Command(opensslArgs*).text).flatMap {
                         case Result.Failure(e) =>
                             Abort.fail(ContainerBackendException(s"openssl cert generation failed: ${e.getMessage}"))
                         case Result.Panic(t) =>
@@ -482,14 +543,14 @@ object ScramPlusIntegrationTest:
                                 case Result.Panic(t) =>
                                     Abort.fail(ContainerBackendException(s"cert directory chmod panic: ${t.getMessage}"))
                                 case Result.Success(_) =>
-                                    startContainer(tempDirPath)
+                                    startContainer(tempDirPath, cert)
                             }
                     }
             }
         }
     end initContainer
 
-    private def startContainer(tempDirPath: Path)(using Frame): TlsCtx < (Async & Abort[ContainerException] & Scope) =
+    private def startContainer(tempDirPath: Path, cert: ServerCert)(using Frame): TlsCtx < (Async & Abort[ContainerException] & Scope) =
         // Start a plain postgres container with the cert directory bind-mounted.
         // SSL is enabled AFTER startup via ALTER SYSTEM SET + pg_reload_conf().
         // This avoids the custom-entrypoint approach (postgres:16-alpine's
@@ -513,7 +574,7 @@ object ScramPlusIntegrationTest:
                 Schedule.fixed(1.second).take(60)
             ))
 
-        TestContainers.initSingleton(containerConfig, "postgres-scram-plus").flatMap { container =>
+        TestContainers.initSingleton(containerConfig, cert.singletonName).flatMap { container =>
             container.awaitHealthy.andThen {
                 // Container is healthy: PG is fully up.
                 // Step 1: Copy certs from the bind mount into /tmp/ and fix permissions.

@@ -16,7 +16,7 @@ import kyo.ffi.Ffi
   * Native with no `UnsatisfiedLinkError`.
   *
   * The full `BoringSslBindings` (ctx/ssl lifecycle, the two-BIO feed/drain handshake state machine,
-  * `kyo_bssl_peer_cert_sha256`) builds on this probe, which is the loadable seam those bindings share.
+  * `kyo_bssl_peer_cert_end_point_hash`) builds on this probe, which is the loadable seam those bindings share.
   */
 private[net] trait BoringSslProbe extends Ffi:
 

@@ -67,7 +67,7 @@ class IoUringTlsWriteSqFullTest extends Test:
         override def readPlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = 0
         override def hasBufferedPlaintext(using AllowUnsafe): Boolean                    = false
         override def readBuffered()(using AllowUnsafe): Span[Byte]                       = Span.empty
-        override def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                  = Absent
+        override def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]          = Absent
         override def shutdownStep()(using AllowUnsafe): Int                              = 0
         override def free()(using AllowUnsafe): Unit                                     = ()
     end PassThroughEngine

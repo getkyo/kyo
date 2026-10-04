@@ -107,7 +107,7 @@ A native `SSL` (or a JVM `SSLEngine`) is not safe to touch from two carriers at 
 
 This single-owner structure is what replaced per-engine locking: there is no `synchronized` in the TLS engines. The default `IoDriver.submitEngineOp` runs the op directly on the calling carrier, which is correct for the already-single-owner drivers (`NioIoDriver`, `JsIoDriver`, `BlockingReaderDriver`); `PollerIoDriver` and `IoUringDriver` override it with the FIFO.
 
-`serverCertificateHash` does not touch the live engine on the caller's carrier. The leaf certificate is fixed for a connection's lifetime, so its SHA-256 (RFC 5929 tls-server-end-point) is computed once at handshake completion, before `start()` launches the pumps and therefore before any concurrent engine op can exist, and is then served from a cache. The cache returns `Absent` after the connection closes.
+`serverCertificateHash` does not touch the live engine on the caller's carrier. The leaf certificate is fixed for a connection's lifetime, so its RFC 5929 tls-server-end-point hash is computed once at handshake completion, before `start()` launches the pumps and therefore before any concurrent engine op can exist, and is then served from a cache. The cache returns `Absent` after the connection closes.
 
 ### Reused-buffer ownership
 

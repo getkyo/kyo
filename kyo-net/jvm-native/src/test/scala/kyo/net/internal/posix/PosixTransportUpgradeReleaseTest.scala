@@ -32,13 +32,13 @@ private class ParkedWantReadEngine extends TlsEngine:
     def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
     def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
     def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   = Absent
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]           = Absent
     def shutdownStep()(using AllowUnsafe): Int                               = 0
     def free()(using AllowUnsafe): Unit                                      = freed.set(true)
 end ParkedWantReadEngine
 
 /** A scripted [[TlsEngine]] fake whose handshake completes on the first step (`handshakeStep` returns `1` immediately), with a one-shot
-  * callback fired from `certSha256` (the first engine call `upgradeRole.onFinished` makes after winning the handshake's outcome gate, via
+  * callback fired from `serverEndPointHash` (the first engine call `upgradeRole.onFinished` makes after winning the handshake's outcome gate, via
   * `wireUpgraded` -> `installCertHash`). The callback therefore runs INSIDE onFinished's body, after the discharge hook has already lost the
   * outcome gate and before the upgrade promise's success completion, which is exactly the window a caller interrupt or a plaintext-connection
   * close() can land in on a real race.
@@ -54,7 +54,7 @@ private class FinishWithCertHookEngine(onCertSha: () => Unit) extends TlsEngine:
     def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
     def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
     def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   =
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]           =
         if once.compareAndSet(false, true) then onCertSha()
         Absent
     def shutdownStep()(using AllowUnsafe): Int = 0
@@ -78,7 +78,7 @@ private class ThrowOnFeedEngine(cause: Throwable) extends TlsEngine:
     def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int      = len
     def hasBufferedPlaintext(using AllowUnsafe): Boolean                     = false
     def readBuffered()(using AllowUnsafe): Span[Byte]                        = Span.empty
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]]                   = Absent
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]]           = Absent
     def shutdownStep()(using AllowUnsafe): Int                               = 0
     def free()(using AllowUnsafe): Unit                                      = freed.set(true)
 end ThrowOnFeedEngine
@@ -526,7 +526,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
             PosixTestSockets.assumePoller()
             val driver = PollerIoDriver.init()
             discard(driver.start())
-            // The engine must reference the plaintext connection this transport creates (its certSha256 hook closes it), so it is built after
+            // The engine must reference the plaintext connection this transport creates (its serverEndPointHash hook closes it), so it is built after
             // the transport and published into a slot the injected factory reads at upgrade time; the slot lives entirely in the test tree.
             val engineSlot = new AtomicReference[TlsEngine]()
             val transport  =
@@ -542,7 +542,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent, Frame.internal)
                         val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
-                        // The engine completes its handshake immediately, and its certSha256 (called by onFinished's wireUpgraded, after
+                        // The engine completes its handshake immediately, and its serverEndPointHash (called by onFinished's wireUpgraded, after
                         // the outcome gate is won and before the success completion) closes the plaintext connection: the close routes to
                         // the upgrade's owner promise, which settles as a failure while onFinished is still mid-body. The discharge hook
                         // loses the already-won outcome gate and releases nothing, so the success completion that follows is the only

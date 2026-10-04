@@ -908,10 +908,10 @@ final class RecordingTlsEngine(real: TlsEngine) extends TlsEngine:
         real.readBuffered()
     end readBuffered
 
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] =
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]] =
         touch()
-        real.certSha256()
-    end certSha256
+        real.serverEndPointHash()
+    end serverEndPointHash
 
     def shutdownStep()(using AllowUnsafe): Int =
         touch()

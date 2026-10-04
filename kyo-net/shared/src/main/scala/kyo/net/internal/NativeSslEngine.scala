@@ -9,12 +9,13 @@ import kyo.internal.Diagnostics
   * `ssl` is the per-SSL state pointer the shim returned from `sslNew` (carried as a `Long`, the shim's `intptr_t` ABI). Every method forwards
   * 1:1 to a neutral `lib` call against that pointer: the engine adds no TLS logic of its own, only the buffer marshalling the surface requires.
   * The backend `lib` is a [[BoringSslBindings]] (the bundled-BoringSSL primary) or an [[OpenSslBindings]] (the system-OpenSSL fallback); both
-  * hash the peer leaf DER with the same `i2d_X509` + SHA-256, so [[certSha256]] returns the same 32 bytes for the same certificate on either
-  * backend and either platform (RFC 5929 tls-server-end-point), and a session negotiated by either yields the identical channel-binding token.
+  * run the same `kyo_ssl_common.h` hash selection over the same `i2d_X509` DER, so [[serverEndPointHash]] returns the same bytes for the same
+  * certificate on either backend and either platform (RFC 5929 tls-server-end-point), and a session negotiated by either yields the identical
+  * channel-binding token.
   *
   * Concurrency: all engine ops for a connection route through the per-driver `submitEngineOp` FIFO, which drains one op at a time on a single
   * dedicated worker carrier. This guarantees that no two callers (read pump, write pump, handshake) can invoke `SSL_read` or `SSL_write` on
-  * the same `ssl` object concurrently. [[certSha256]] is read once at handshake completion on that same serialized path and cached by the
+  * the same `ssl` object concurrently. [[serverEndPointHash]] is read once at handshake completion on that same serialized path and cached by the
   * transport (the leaf cert is fixed for the connection), so the channel-binding query never touches a live `ssl` on the caller's carrier;
   * [[free]] is likewise enqueued on the FIFO, so the SSL teardown is serialized behind every read/write op. Each method is a brief CPU-bound
   * shim call over in-memory BIO buffers with no socket I/O (the driver does all syscalls outside these calls).
@@ -94,17 +95,18 @@ final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, ssl: Long)
         end if
     end readBuffered
 
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] =
+    def serverEndPointHash()(using AllowUnsafe): Maybe[Span[Byte]] =
         if freed.get() then
-            reportUseAfterFree("certSha256")
+            reportUseAfterFree("serverEndPointHash")
             Absent
         else
-            Buffer.use[Byte, Maybe[Span[Byte]]](32) { out =>
-                val n = lib.peerCertSha256(ssl, out, 32)
-                if n == 32 then Present(Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, 32))) else Absent
+            // 64 bytes is EVP_MAX_MD_SIZE, the SHA-512 digest, the longest hash RFC 5929 can select.
+            Buffer.use[Byte, Maybe[Span[Byte]]](64) { out =>
+                val n = lib.peerCertEndPointHash(ssl, out, 64)
+                if n > 0 then Present(Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))) else Absent
             }
         end if
-    end certSha256
+    end serverEndPointHash
 
     def shutdownStep()(using AllowUnsafe): Int =
         if freed.get() then
