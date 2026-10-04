@@ -82,7 +82,8 @@ class TelegramExceptionMembershipTest extends kyo.test.Test[Any]:
                     }
                     assert(cause.map {
                         case c: kyo.net.NetConnectException => Present((c.host, c.port))
-                        case _: (kyo.net.NetConnectionException | kyo.net.NetTlsException | kyo.net.NetCapabilityException) => Absent
+                        case _: (kyo.net.NetConnectionException | kyo.net.NetTlsException | kyo.net.NetCapabilityException |
+                                kyo.net.NetConfigException) => Absent
                     } == Present(Present(("127.0.0.1", 1))))
             }
         }
