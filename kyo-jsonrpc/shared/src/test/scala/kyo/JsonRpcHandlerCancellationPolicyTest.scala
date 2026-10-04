@@ -108,6 +108,22 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end GatedTransport
 
+    /** Holds the writer in its first send, signalling `held` there, until `gate` opens; the writer channel then fills behind it. */
+    private class HeldTransport(
+        inner: JsonRpcTransport,
+        held: Fiber.Promise[Unit, Any],
+        gate: Fiber.Promise[Unit, Any]
+    ) extends JsonRpcTransport:
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed | JsonRpcError]) =
+            held.completeUnitDiscard.andThen(gate.get).andThen(inner.send(env))
+
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
+            inner.incoming
+
+        def close(using Frame): Unit < Async =
+            inner.close
+    end HeldTransport
+
     /** Returns once the peer has read every message `a` sent before it: a call to a method the peer does not know is answered
       * directly by the peer's reader, so its reply proves the reader got past everything sent earlier. Any other outcome means
       * the barrier did not hold, so it fails the test. The method name is not checked: the reply crosses the engine's JSON codec,
@@ -681,6 +697,55 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
                                                 }
                                             }).andThen(succeed)
                                         case other => fail(s"expected -32800, got $other")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "a call whose timeout fires while its request waits for room on the writer fails with -32800, and the request never runs" in {
+        // The writer is held in its first send, so 64 more notifications fill its channel and the call's put waits for room. The
+        // call's extras encoder runs inside the encode callback, after the call is registered, so `registered` places the timeout
+        // between the call's registration and its request reaching the channel.
+        Fiber.Promise.init[Unit, Any].map { held =>
+            Fiber.Promise.init[Unit, Any].map { gate =>
+                Fiber.Promise.init[Unit, Any].map { registered =>
+                    AtomicBoolean.init.map { ran =>
+                        val echo = JsonRpcRoute.request[EchoReq, EchoResp]("echo") {
+                            (req, _) => ran.set(true).andThen(EchoResp(req.text))
+                        }
+                        Clock.withTimeControl { control =>
+                            JsonRpcTransport.inMemory.map { (ta, tb) =>
+                                val config =
+                                    JsonRpcHandler.Config(cancellation = Present(cancellationWithReply), requestTimeout = 150.millis)
+                                JsonRpcHandler.init(new HeldTransport(ta, held, gate), Seq.empty, config).map { a =>
+                                    JsonRpcHandler.init(tb, Seq(echo), expectReplyConfig).map { _ =>
+                                        a.notify("fill", EchoReq("held")).andThen(held.get).andThen {
+                                            Kyo.foreach(Chunk.range(0, 64))(i => a.notify("fill", EchoReq(i.toString)))
+                                        }.andThen {
+                                            val marking = JsonRpcExtrasEncoder(_ => registered.completeUnitDiscard.andThen(Absent))
+                                            Fiber.initUnscoped(
+                                                Abort.run[JsonRpcError | Closed](a.call[EchoReq, EchoResp]("echo", EchoReq("x"), marking))
+                                            ).map { callFib =>
+                                                registered.get
+                                                    .andThen(control.awaitPendingSleeper(150.millis))
+                                                    .andThen(control.advance(300.millis))
+                                                    .andThen(gate.completeUnitDiscard)
+                                                    .andThen(callFib.get)
+                                                    .map {
+                                                        case Result.Failure(e: JsonRpcError) =>
+                                                            assert(e.code == -32800)
+                                                            flush(a).andThen(ran.get).map(r =>
+                                                                assert(!r, "the peer ran a request whose put the timeout interrupted")
+                                                            )
+                                                        case other => fail(s"expected -32800, got $other")
+                                                    }
+                                            }
+                                        }
                                     }
                                 }
                             }
